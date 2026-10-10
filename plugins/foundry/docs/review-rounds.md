@@ -54,3 +54,8 @@ decides, in either of these cases:
   `plugins/foundry/tests/test_process_contract.py` prove that the rules are written, not
   that they are followed. Which parts only the reviewer can judge is listed
   in `AGENTS.md#R9`.
+- No gate sees the "fix before merge" mark or the existence of the follow-up issue. The
+  review proof keeps `quality=mergeable` (`quality` is only `mergeable` or `blocked`:
+  `skills/review-pr/SKILL.md`, Output section; `tooling/foundry/evidence_plane.py:233`),
+  so the merge command does not refuse a diff because a marked remark was left
+  uncorrected or because the follow-up issue does not exist.

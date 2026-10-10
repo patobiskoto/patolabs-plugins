@@ -121,15 +121,22 @@ def _flat(text: str) -> str:
 @pytest.mark.parametrize("name", ["start-issue", "resume-issue"])
 def test_implementer_packet_requires_r9_and_the_source_of_each_doc_sentence(name):
     text = _flat(_skill_text(name))
-    assert "AGENTS.md#R9" in text
+    assert "AGENTS.md#R9 in a repository that carries it" in text
     assert "six-point checklist" in text
     assert "points 1 to 5" in text
     assert "(constant, file:line, or page)" in text
+    # the six points travel inside the packet, in the order of R9 (a)
+    positions = [text.index(f"({n}) ") for n in range(1, 7)]
+    assert positions == sorted(positions)
+    for fragment in ("cites its constant, file or page", "observed, deduced or unknown",
+                     "searched for across the repository", "names the compared sets",
+                     "run once, on a copy", "no proper name or user name"):
+        assert fragment in text
 
 
 def test_merge_pr_applies_r9_to_every_correction_commit_including_the_coordinator():
     text = _flat(_skill_text("merge-pr"))
-    assert "(a) checklist and (c) minimal-change rule apply to every correction commit" in text
+    assert "(a) checklist and (c) minimal-change rule, of a repository that carries them, apply to every correction commit" in text
     assert "including one written by the coordinator itself" in text
 
 
@@ -145,6 +152,20 @@ def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
     # campaign: the coordinator does not create the follow-up on its own authority
     assert "does not create the follow-up issue on its own authority" in text
     assert "re-review in full" in text
+    # standing authorization outside an Epic campaign: two writes, nothing else
+    assert "authorized in advance by rule R9" in text
+    assert "without asking and report the follow-up issue ID" in text
+    assert "every other intake write keeps its confirmation" in text
+    # the rule is read after the review and before the merge command
+    flat_raw = _skill_text("merge-pr")
+    assert (flat_raw.index("### Grouped deferral") < flat_raw.index("### 4. Merge")
+            < flat_raw.index("### Correction commits"))
+
+
+def test_intake_points_to_the_standing_authorization_of_the_two_writes():
+    text = _flat(_skill_text("intake"))
+    assert "authorizes in advance outside an Epic campaign" in text
+    assert "creating the batch follow-up issue" in text
 
 
 def test_merge_pr_writes_the_per_round_pr_description_line_format():

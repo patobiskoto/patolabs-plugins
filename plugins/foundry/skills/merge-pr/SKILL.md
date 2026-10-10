@@ -179,6 +179,41 @@ on the same diff.
 For any UI/runtime surface: derive a 3-5 step test procedure from the diff, rebuild/
 deploy, and STOP for explicit validation. Exception: pure refactor (justify in the merge).
 
+### Grouped deferral of non-blocking remarks (rule R9 (b))
+After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
+non-blocking remarks are not corrected in the PR. Put them in one follow-up issue per
+batch (per Epic or per series of issues), not one per PR. Create it through
+`foundry:intake` before the merge and cite it in the PR description. Three cases are
+still corrected before the merge and then fully re-reviewed:
+
+- a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
+- a remark on a page frozen after publication (release note, migration guide, a
+  CHANGELOG section of a published version);
+- a missing or generic documentation status under rule R5 of a repository that carries
+  it, and FOUNDRY-ADR-0018.
+
+Inside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016) the coordinator does not
+create the follow-up issue on its own authority: the maintainer creates or approves it.
+Without that, correct the remarks before the merge and re-review in full, as before. This
+is an operating choice of rule R9, not an ADR decision. Whether a remark is rightly
+classed as deferrable is judged by the reviewer.
+
+Outside an Epic campaign, creating the follow-up issue and adding the deferred remarks to
+it are authorized in advance by rule R9 (maintainer decision of 2026-10-10), as an
+exception to the confirmation `foundry:intake` requires before a write: perform them
+without asking and report the follow-up issue ID and the number of deferred remarks in the
+PR description. Nothing else is pre-authorized: the follow-up issue is not started
+without the maintainer, and every other intake write keeps its confirmation.
+
+The PR description carries one line per review round, kept current through
+`foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):
+
+```text
+round <N>; <validated|blocked>; follows <first|blocking|remarks>; <K> remarks deferred, follow-up <ISSUE-ID|none>
+```
+
+Baseline, observation window and return triggers: `docs/review-rounds.md`.
+
 ### 4. Merge (CI gate enforced in code)
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue merge <ISSUE-ID> <PR-NUMBER>
@@ -214,37 +249,11 @@ reported by that role's last route as `--current-tier`. If the decision reports
 campaign, merge, release, edit, or external-write authority. Review escalation changes
 model/effort only.
 
-### Correction commits and grouped deferral (AGENTS.md#R9)
-AGENTS.md#R9 (a) checklist and (c) minimal-change rule apply to every correction commit,
-including one written by the coordinator itself: change as few sentences as possible and
-re-check each new sentence against the code before the next review. This is judged by the
-reviewer; no check enforces it.
-
-After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
-non-blocking remarks are not corrected in the PR. Put them in one follow-up issue per
-batch (per Epic or per series of issues), not one per PR. Create it through
-`foundry:intake` before the merge and cite it in the PR description. Three cases are
-still corrected before the merge and then fully re-reviewed:
-
-- a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
-- a remark on a page frozen after publication (release note, migration guide, a
-  CHANGELOG section of a published version);
-- a missing or generic documentation status under R5 and FOUNDRY-ADR-0018.
-
-Inside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016) the coordinator does not
-create the follow-up issue on its own authority: the maintainer creates or approves it.
-Without that, correct the remarks before the merge and re-review in full, as before. This
-is an operating choice of AGENTS.md#R9, not an ADR decision. Whether a remark is rightly
-classed as deferrable is judged by the reviewer.
-
-The PR description carries one line per review round, kept current through
-`foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):
-
-```text
-round <N>; <validated|blocked>; follows <first|blocking|remarks>; <K> remarks deferred, follow-up <ISSUE-ID|none>
-```
-
-Baseline, observation window and return triggers: `plugins/foundry/docs/review-rounds.md`.
+### Correction commits
+Rule R9 (a) checklist and (c) minimal-change rule, of a repository that carries them,
+apply to every correction commit, including one written by the coordinator itself:
+change as few sentences as possible and re-check each new sentence against the code
+before the next review. This is judged by the reviewer; no check enforces it.
 
 ### 5. Accept the framed ADRs
 After the merge, promote only each `proposed` ADR that the exact delivery issue frames

@@ -8,7 +8,9 @@
   `start-issue`, `resume-issue`, `merge-pr`, `review-pr` and `open-pr` skills and the
   `maigret` output format (optional "fix before merge" mark on a nit; verdict line and
   JSON object unchanged). Baseline, observation window and return triggers:
-  [review rounds](docs/review-rounds.md). Text and tests only; no change under `tooling/`.
+  [review rounds](docs/review-rounds.md). Outside an Epic campaign R9 pre-authorizes the
+  two intake writes of the grouped deferral (follow-up issue and its remarks). Text and
+  tests only; no change under `tooling/`.
 
 ## 1.1.0 — 2026-10-10
 

@@ -190,14 +190,21 @@ a bounded packet containing the literal `Goal:`, `Inputs:`, `Constraints:`, and
 `Done when:` sections, preceded by
 `FOUNDRY_ROUTE_REQUEST={"issue":"<ISSUE-ID>"}`. Include only the remaining AC, relevant diff/paths, cited ADRs,
 and the next validation — never the full conversation. Its `Constraints:` section must
-require AGENTS.md#R9: the six-point checklist on every documentation sentence added or
-changed, and in its report, for each such sentence under points 1 to 5, its source
-(constant, file:line, or page). Wait for it and do not duplicate
+carry this six-point checklist (AGENTS.md#R9 in a repository that carries it) for every
+documentation sentence added or changed: (1) a sentence about what a tool launches,
+loads, calls or writes cites its constant, file or page, or points to that page without
+summarising; (2) a cause is stated as observed, deduced or unknown; (3) a rule,
+threshold or quantity is copied from the code or source, then searched for across the
+repository to correct statements it made false; (4) a comparison names the compared sets
+and checks they are equal; (5) a documented procedure has been run once, on a copy;
+(6) no proper name or user name in any file, tests included. It must also require, in its
+report, for each such sentence under points 1 to 5, its source (constant, file:line, or
+page). Wait for it and do not duplicate
 its implementation in the coordinator; inspect the returned diff and perform final
 repository-level validation afterwards.
-When the remaining work is the correction of a review finding, AGENTS.md#R9 (a) and (c)
-apply to that correction, including a local one written by the coordinator: change as few
-sentences as possible and re-check each new sentence against the code before handing it
+When the remaining work is the correction of a review finding, R9 (a) and (c) of a
+repository that carries AGENTS.md#R9 apply to that correction, including a local one
+written by the coordinator: change as few sentences as possible and re-check each new sentence against the code before handing it
 back. Under Codex, write the same packet to a scratch
 file and run:
 

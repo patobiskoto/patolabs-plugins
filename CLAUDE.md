@@ -256,6 +256,14 @@ Without that, the remarks are corrected before the merge and fully re-reviewed, 
 the practice before this rule. This is an operating choice of this contract, not an ADR
 decision.
 
+Outside an Epic campaign, this rule gives in advance the confirmation that
+`foundry:intake` requires before a write ("3. Apply (human-confirmed)"), for exactly two
+writes: creating the batch follow-up issue, and adding deferred non-blocking remarks to
+it (maintainer decision of 2026-10-10). The coordinator performs them without asking and
+reports the follow-up issue ID and the number of deferred remarks in the PR description.
+Nothing else is pre-authorized: the follow-up issue is not started without the
+maintainer, and every other intake write keeps its confirmation.
+
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.
 
@@ -265,5 +273,8 @@ changed "as few sentences as possible"; that a remark was rightly classed as def
 `plugins/foundry/tests/test_skills.py` and `plugins/foundry/tests/test_process_contract.py`
 prove only that these rules are written in the skills and in this contract, not that they
 are followed (FOUNDRY-ADR-0018: a mechanical
-check never proves that documentation is true). The checklist is an obligation of the
+check never proves that documentation is true). Likewise, neither the "fix before merge"
+mark nor the existence of the follow-up issue is seen by any gate: the review proof stays
+`quality=mergeable`, so the merge command does not refuse a diff because a marked remark
+was left uncorrected or because the follow-up issue does not exist. The checklist is an obligation of the
 author judged by the reviewer, not a gate.

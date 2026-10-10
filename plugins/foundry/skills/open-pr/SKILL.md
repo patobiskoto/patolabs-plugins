@@ -41,5 +41,5 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 If a review round has already happened, the summary keeps the per-round line described in
 `foundry:merge-pr` and cites the follow-up issue that holds the deferred non-blocking
-remarks (AGENTS.md#R9 (b)).
+remarks (rule R9 (b) of a repository that carries it).
 When ready to ship, invoke `foundry:merge-pr <ISSUE-ID> <pr#>`.
