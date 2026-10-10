@@ -1317,8 +1317,15 @@ The ten Sonnet 5.5 versioned profiles (`routed-{readonly,worker}-{low,medium,hig
 carry `experimental: {cacheTtl: 1h}` as a nested map; no other profile does. The profile generator
 (`claude_pin_profile_text`, the pins listed in `CLAUDE_CACHE_TTL_1H_PINS`) renders exactly that block and
 `claude_invocation_binding()` refuses a divergent preloaded profile (field missing, on another pin, another
-value, another key) before any launch. This is the last, separable commit of the PAT-134 branch: it is
-kept only if the native trial observes the 1-hour class on the modified profile.
+value, another key) before any launch. The native trial of 2026-10-10 (one run, host 2.1.294, recorded as
+written in [`pat-134-native-trial.json`](qualification/pat-134-native-trial.json), verdict `conforming`)
+observed one Sonnet 5.5 read-only subagent writing 4,768 cache tokens in the 1-hour class and none in the
+5-minute class, and the Opus 5.5 control 5,301 in the 5-minute class only. One run of two subagents does not
+show the field is honoured on the other nine profiles, under usage credits or on another host version, and
+says nothing about cost or quota (unknown). `--dry-run` of both trial modes now creates nothing on disk.
+The rollback rule reads `delta_usd` = simulated 5-minute cost minus real 1-hour cost of the
+`favourable` bound of the replay (the least favourable to keeping 1 hour): keep only if strictly
+positive (`cache_ttl_replay.rollback_decision`).
 
 Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
 (and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`

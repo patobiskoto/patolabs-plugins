@@ -2,6 +2,7 @@
 
 Offline only: no host, no model, no network. The trial itself is never run here (fake launcher, synthetic logs).
 Every value below is a generic placeholder: no name, no home path, no raw session identifier."""
+import getpass
 import json
 import re
 from pathlib import Path
@@ -140,9 +141,12 @@ def test_the_trial_is_never_replayed_and_a_dry_run_launches_nothing(tmp_path, ca
     assert trial.run_cache_ttl(args, launch=lambda *a, **k: pytest.fail("launched")) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["dry_run"] and "--plugin-dir" in printed["command"] and not (tmp_path / "result.json").exists()
-    with pytest.raises(trial.TrialError, match="never replayed"):  # the dry run used that directory
-        trial.run_cache_ttl(args, launch=lambda *a, **k: pytest.fail("launched"))
+    assert not (tmp_path / "work").exists() and list(tmp_path.iterdir()) == []  # a dry run creates nothing on disk
     args.dry_run = False
+    assert trial.run_cache_ttl(args, launch=_fake_host(tmp_path)) == 0  # the same path is still usable for the real run
+    (tmp_path / "result.json").unlink()
+    with pytest.raises(trial.TrialError, match="never replayed"):  # the real run used that directory
+        trial.run_cache_ttl(args, launch=lambda *a, **k: pytest.fail("launched"))
     args.work_dir = str(tmp_path / "work2")
     (tmp_path / "result.json").write_text("{}")
     with pytest.raises(trial.TrialError, match="never replayed"):  # the result file exists
@@ -211,3 +215,38 @@ def test_the_shipped_checkout_requests_1h_for_the_modified_profile_and_nothing_f
     monkeypatch.undo()  # the real reader on the shipped profiles
     assert trial.profile_cache_ttl(ROOT, MODIFIED) == "1h"
     assert trial.profile_cache_ttl(ROOT, CONTROL) is None
+
+
+def _personal_patterns():
+    """What a committed file must not carry, derived at run time (no name is written in this file)."""
+    names = {Path.home().name}
+    try:
+        names.add(getpass.getuser())
+    except (KeyError, OSError, ImportError):
+        pass
+    patterns = [re.escape(f) for f in ("/Users/", "/home/", "/.claude")]
+    patterns += [rf"/{re.escape(n)}(?:/|\"|$)" for n in names if len(n) >= 3]
+    patterns += [rf"\b{re.escape(n)}\b" for n in names if len(n) >= 3]
+    return patterns
+
+
+def test_the_committed_native_trial_result_is_clean_and_consistent_with_its_own_verdict_rule():
+    text = (ROOT / "docs/qualification/pat-134-native-trial.json").read_text(encoding="utf-8")
+    body = json.loads(text)
+    assert not any(re.search(pattern, text, re.M) for pattern in _personal_patterns())
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text)  # a raw session id
+    assert "session_id" not in text and ".jsonl" not in text and "projects" not in text
+    assert body["schema"] == trial.CACHE_TTL_TRIAL_SCHEMA and body["bounds"]["executions"] == 1
+    assert body["source"]["dirty"] is False and re.fullmatch(r"[0-9a-f]{40}", body["source"]["commit"])
+    # the verdict is the tool's rule applied to the recorded facts
+    facts = {key: body[key] for key in ("host", "observed", "conformity")}
+    assert trial.cache_ttl_verdict(body["process"], facts) == (body["verdict"], body["not_established"])
+    observed = body["observed"]["by_subject"]
+    modified, control = observed["modified"], observed["control"]
+    expected = body["verdict"] == "conforming"
+    assert expected == (modified["cache_write_tokens_1h"] > 0 and modified["cache_write_tokens_5m"] == 0
+                        and control["cache_write_tokens_5m"] > 0 and control["cache_write_tokens_1h"] == 0
+                        and min(modified["requests"], control["requests"]) >= 2)
+    assert body["subjects"]["modified"]["requested"]["profile_field_experimental_cacheTtl"] == "1h"
+    assert body["subjects"]["control"]["requested"]["profile_field_experimental_cacheTtl"] is None
+    assert body["host"]["usage_credits_drawn"].startswith("unknown")

@@ -392,8 +392,11 @@ def test_trial_is_never_replayed_and_a_dry_run_launches_nothing(tmp_path, capsys
     printed = json.loads(capsys.readouterr().out)
     assert printed["dry_run"] is True and printed["command"][0] == "claude" and not launched
     assert not (tmp_path / "result.json").exists()
+    assert not (tmp_path / "work").exists()  # PAT-134: a dry run creates nothing, so a real run may use the same path
     args.dry_run = False
-    with pytest.raises(trial.TrialError, match="never replayed"):  # the dry run used that directory
+    assert trial.run(args, launch=_fake_host(tmp_path)) == 0
+    (tmp_path / "result.json").unlink()
+    with pytest.raises(trial.TrialError, match="never replayed"):  # the real run used that directory
         trial.run(args, launch=_fake_host(tmp_path))
     args.work_dir = str(tmp_path / "second")
     assert trial.run(args, launch=_fake_host(tmp_path)) == 0

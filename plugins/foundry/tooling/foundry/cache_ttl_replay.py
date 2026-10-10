@@ -746,6 +746,37 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
             "lineages_replayed": replayed_1h_to_5m}} if subagent_1h_to_5m else {})}
 
 
+# ------------------------------------------------------------------------ PAT-134 observation rule
+
+ROLLBACK_MIN_SESSIONS = 3
+ROLLBACK_MODEL = "claude-sonnet-5-5"
+
+
+def rollback_decision(replay: Mapping[str, Any], model: str = ROLLBACK_MODEL) -> dict[str, Any]:
+    """PAT-134 rule, read from the output of ``analyse_interactive(..., subagent_1h_to_5m=True)``.
+
+    The observed setting is 1 hour and the replay simulates 5 minutes, so ``delta_usd`` = simulated 5-minute cost minus
+    real 1-hour cost: POSITIVE means the 1 hour was cheaper. The bound least favourable to keeping the 1 hour is the one
+    with the smaller ``delta_usd``, the ``favourable`` reading (fewest simulated expirations). ``keep`` only when that
+    bound is strictly positive; ``roll_back`` when it is zero or negative, or when no lineage of the model was observed at
+    1 hour at all (the field has no observable effect); ``unknown`` when the replay was not made with the option, covers
+    fewer than ``ROLLBACK_MIN_SESSIONS`` sessions, or the lineages of the model cannot be priced. No other input is read;
+    the subscription quota is not one."""
+    if "subagent_1h_to_5m" not in replay:
+        return {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
+    if len(replay.get("sessions", ())) < ROLLBACK_MIN_SESSIONS:
+        return {"decision": "unknown", "reason": "fewer_than_3_sessions"}
+    group = replay.get("by_kind_and_model", {}).get(f"{SUBAGENT_1H}/{model}")
+    if group is None:
+        return {"decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
+    usd = group.get("usd")
+    if not isinstance(usd, Mapping):
+        return {"decision": "unknown", "reason": "lineages_not_priced"}
+    delta = usd["bounds"]["favourable"]["delta_usd"]
+    return {"decision": "keep" if delta > 0 else "roll_back", "reason": "delta_usd_of_the_favourable_bound",
+            "delta_usd_favourable": delta, "result": usd["result"]}
+
+
 # --------------------------------------------------------------------------------------------------- CLI
 
 def analyse(ledgers: Sequence[Path], logs_dir: Path, grid: Path = GRID_PATH) -> dict[str, Any]:

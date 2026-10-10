@@ -9,7 +9,7 @@ d'agents Sonnet 5.5, adoptée sous observation, sans banc ; un essai natif born�
 
 Légende. **[doc]** : fait de la documentation d'Anthropic **lu par le coordinateur le 2026-10-09** (`code.claude.com/docs/en/sub-agents` et
 `prompt-caching`), **non revérifié par l'outillage**. **[code]** : lu dans le dépôt. **[essai]** : à lire dans le fichier de résultat de l'essai
-natif (voir plus bas ; **en attente** tant qu'il n'est pas consigné).
+natif consigné dans [`pat-134-native-trial.json`](pat-134-native-trial.json) (voir plus bas).
 
 ## Ce que dit la documentation [doc]
 
@@ -66,7 +66,35 @@ d'usage ne sont pas observables par l'outil : `unknown`.
 Bornes : une exécution, un parent, deux enfants, aucune relance (l'outil refuse un répertoire de travail ou un fichier de résultat existant : il
 bloque un rejeu par chemin, pas une nouvelle exécution avec de nouveaux chemins ; l'autorisation reste celle de l'opérateur).
 Le résultat est consigné tel quel. **Si la classe « 1 heure » n'est pas observée, le dernier commit n'est pas retenu, les profils ne sont pas
-modifiés et le ticket le dit.** Résultat : **[essai] en attente.**
+modifiés et le ticket le dit.**
+
+### Résultat de l'essai (2026-10-10, une exécution, consigné tel quel)
+
+Fichier : [`pat-134-native-trial.json`](pat-134-native-trial.json), écrit par l'outil et versé sans modification (octet pour octet), lancé sur
+le commit `50c83f4` d'un arbre propre (`source.dirty` = false), hôte Claude Code 2.1.294, 20,4 s, sortie 0. **Verdict `conforming`**,
+`not_established` vide.
+
+| Sujet | Profil journalisé | Requêtes | Écrit « 1 heure » | Écrit « 5 minutes » | Lu |
+|---|---|---|---|---|---|
+| modifié (Sonnet 5.5, lecture seule) | `routed-readonly-low-sonnet-5.5` | 3 | 4 768 | 0 | 9 103 |
+| témoin (Opus 5.5, exécution) | `routed-worker-medium-opus-5.5` | 3 | 0 | 5 301 | 10 242 |
+
+Demandé (`cacheTtl` du profil) : `1h` pour le sujet modifié, absent pour le témoin ; transmis : les deux profils attendus ; observé : le
+tableau ci-dessus. **Ce qu'une exécution de deux sous-agents n'établit pas** : que le champ soit honoré pour les neuf autres profils Sonnet 5.5
+(un seul a été lancé : lecture seule, effort `low`) ni pour des sessions longues ; que l'effet tienne sur d'autres versions de l'hôte ; que
+l'effet soit le même sous crédits d'usage (inconnu) ; un coût, un gain ou un effet sur le quota (inconnus) ; une régularité (deux
+sous-agents, une exécution, pas un échantillon ; le témoin est un profil d'exécution, non de lecture seule). Les empreintes des journaux
+sont dans le fichier ; les journaux eux-mêmes restent hors dépôt.
+
+### Incident de l'essai, déclaré
+
+Avant l'exécution réelle, le coordinateur a lancé `--dry-run`. À ce moment l'outil créait quand même le répertoire de travail (fichiers du
+fixture) avant de s'arrêter ; la première invocation réelle sur ce chemin a donc été **refusée avant tout lancement** (« the work directory and
+the result file must not exist »). **Aucun appel infonuagique n'a été fait par cette invocation refusée.** L'essai a ensuite tourné **une seule
+fois**, avec un nouveau répertoire de travail. Correction (commit de cette section) : `--dry-run` ne crée plus rien sur le disque (la politique
+du fixture est construite dans un répertoire temporaire supprimé ensuite), dans le mode de PAT-134 **et** dans le mode par défaut de PAT-125, qui
+avait le même défaut ; tests dans `tests/test_cache_ttl_trial.py` et `tests/test_claude_haiku55.py`. Rien d'autre ne change dans le mode
+par défaut de PAT-125 ; ses résultats enregistrés sont intacts.
 
 ## Rejeu après coup
 
@@ -91,11 +119,21 @@ antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas obse
 - **Quantité lue.** Dans la sortie du rejeu, le groupe `subagent_1h` du modèle `claude-sonnet-5-5` (clé `by_kind_and_model`), lignées tarifables
   seulement, même requêtes des deux côtés : `usd.bounds.<borne>.delta_usd` = coût simulé à 5 minutes moins coût réel à 1 heure, au prix de liste
   (un poids sous abonnement, jamais une facture).
-- **Seuil, sur la borne prudente.** Pour l'affirmation « le 1 heure coûte moins », la borne prudente est celle qui donne le **plus petit** écart,
-  c'est-à-dire la lecture `favourable` du rejeu (le moins d'expirations simulées à 5 minutes). **Retour à 5 minutes si `delta_usd` de cette borne est
-  ≤ 0** (équivalent : `usd.result` différent de `net_loss`, ce nom désignant ici une perte du 5 minutes, donc un gain du 1 heure sur les deux
-  bornes). Pas de marge de sécurité ajoutée : aucune ne peut être justifiée par trois sessions.
-- **Autres lectures, sans seuil.** Si aucune lignée Sonnet 5.5 de sous-agent n'est observée à « 1 heure » dans la fenêtre, le champ n'a aucun effet
+- **Seuil, sur la borne la moins favorable au maintien du 1 heure.** Le réglage observé sera « 1 heure » et le rejeu simule « 5 minutes » :
+  `delta_usd` = **coût simulé à 5 minutes moins coût réel à 1 heure**. **`delta_usd` positif veut dire que le 1 heure a coûté moins** (le 5 minutes
+  aurait coûté plus) ; négatif ou nul, que le 1 heure n'a pas coûté moins. Les deux bornes du rejeu diffèrent par le nombre d'expirations
+  simulées à 5 minutes : la lecture `prudent` en simule le plus (écart `delta_usd` le plus grand, la plus favorable au 1 heure), la lecture
+  `favourable` le moins (écart le plus petit). **La borne la moins favorable au maintien du 1 heure est donc la lecture `favourable`**, dont
+  l'écart est le plus petit (le nom `favourable` vient du rejeu de PAT-133, où il désigne le moins d'expirations, non un jugement ici).
+  **Règle : on garde le 1 heure seulement si `delta_usd` de la lecture `favourable` est strictement positif ; le retour à 5 minutes est
+  déclenché quand, sur cette borne, le 1 heure n'est pas moins cher (`delta_usd` ≤ 0).** Équivalence avec `usd.result` : l'écart de la lecture
+  `prudent` est toujours au moins égal à celui de `favourable`, donc `favourable` > 0 équivaut à « les deux écarts > 0 », c'est-à-dire
+  `net_loss` ; `net_gain` et `undecidable_between_the_bounds` donnent tous deux un `favourable` ≤ 0, donc le retour. Cette équivalence est
+  vérifiée par un test sur trois cas (`net_loss`, `net_gain`, `undecidable_between_the_bounds`). La règle est implémentée par
+  `rollback_decision` (`cache_ttl_replay.py`), qui rend `keep`, `roll_back` ou `unknown` (rejeu fait sans l'option, moins de 3 sessions,
+  lignées non tarifables) ; l'écart étant arrondi à six décimales, un écart plus petit que cela vaut 0 et déclenche le retour. Pas de marge
+  de sécurité ajoutée : aucune ne peut être justifiée par trois sessions.
+- **Autres lectures.** Si aucune lignée Sonnet 5.5 de sous-agent n'est observée à « 1 heure » dans la fenêtre (`rollback_decision` : `roll_back`), le champ n'a aucun effet
   observable (crédits d'usage, hôte ou précédence : causes **non distinguables** ici) : retour à 5 minutes par simple retrait du champ, sans
   conclusion sur la cause. Si un sous-agent d'un profil non modifié (Opus, etc.) apparaît à « 1 heure », la mesure est **inconnue** (un réglage
   extérieur a changé) et la règle ne conclut pas. Le quota d'abonnement n'est **pas** une entrée de la règle : effet inconnu.
@@ -110,9 +148,9 @@ antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas obse
 
 | Cas | Documenté [doc] | Observé | Inconnu |
 |---|---|---|---|
-| Hôte ≥ 2.1.248 | le champ est lu | l'essai tourne sur l'hôte de cette machine (2.1.294) : **[essai] en attente** | le comportement des versions intermédiaires |
+| Hôte ≥ 2.1.248 | le champ est lu | **sur l'hôte 2.1.294, le champ est honoré pour un sous-agent Sonnet 5.5 en lecture seule** (1 heure seulement, essai du 2026-10-10) | le comportement des versions intermédiaires et des neuf autres profils Sonnet 5.5 |
 | Hôte < 2.1.248 | le champ exige 2.1.248 ou plus | rien (l'essai ne peut observer que l'hôte installé) | si l'hôte ignore le champ, le rejette ou l'accepte |
-| Crédits d'usage tirés | `1h` est ignoré | rien (non observable par l'essai ni par les journaux permis) | quand l'abonnement tire des crédits ; l'écriture alors observée est « 5 minutes » |
+| Crédits d'usage tirés | `1h` est ignoré | rien : l'état des crédits pendant l'essai est inconnu (non observable par l'essai ni par les journaux permis) | quand l'abonnement tire des crédits ; l'écriture alors observée est « 5 minutes » |
 
 **Aucune garde n'est inventée** : ni refus de lancement sur un hôte plus ancien, ni détection des crédits d'usage. Dans les deux cas le sous-agent
 tourne comme avant (profil sans effet observable), et le rejeu le montre comme une lignée « 5 minutes ».
@@ -125,7 +163,9 @@ tourne comme avant (profil sans effet observable), et le rejeu le montre comme u
   `observe_cache_ttl`, `cache_ttl_verdict`, `run_cache_ttl` : documentées ici et dans la docstring du module.
 - **Option nouvelle de `python3 -m foundry.cache_ttl_replay`** : `--subagent-1h-to-5m` (avec `--host-session` seulement) ; groupe `subagent_1h`,
   clé `subagent_1h_to_5m` (règle et nombre de lignées rejouées, présente avec l'option seulement) ; constantes `SUBAGENT_1H`, `ALL_KINDS`,
-  `DIRECTION_A` et fonction `observed_one_hour_only` : documentés ici et dans la docstring.
+  `DIRECTION_A`, `ROLLBACK_MIN_SESSIONS`, `ROLLBACK_MODEL` et fonctions `observed_one_hour_only`, `rollback_decision` : documentés ici et dans la docstring.
 - **Champ de profil `experimental.cacheTtl`**, règle d'observation et de retour arrière : documentés ici et dans `docs/model-routing.md`.
+- **`--dry-run` des deux modes de `claude_profile_trial`** : ne crée plus rien sur le disque (incident ci-dessus).
+- **Nouveau fichier** : `pat-134-native-trial.json`, résultat de l'essai, versé tel quel.
 - **Fichiers non modifiés** : tous les résultats de PAT-132 et de PAT-133, les résultats enregistrés de PAT-125.
 - Le détecteur de FOUNDRY-123 n'est pas livré : ce statut est affirmé ici et vérifié en revue, non appliqué mécaniquement.

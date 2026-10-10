@@ -488,6 +488,46 @@ def test_cli_accepts_the_flag_only_with_host_session_and_writes_the_group(tmp_pa
     assert not any(re.search(pattern, target.read_text(), re.M) for pattern in _personal_patterns())
 
 
+# --- PAT-134: the rollback rule, read from a replay output
+
+def _three_sessions(tmp_path, records, count=3):
+    mains = [_session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)], name=f"s{n}", project=f"p{n}")
+             for n in range(count)]
+    return ttl.analyse_interactive(mains, subagent_1h_to_5m=True)
+
+
+def _straddling():
+    """L = 250 s (not expired) and U = 350 s (expired) at the third request: the bounds disagree."""
+    return [_rec("s0", 0, w=1_000_000, one_hour=True), _rec("s1", 100, r=1_000_000, w=1000, one_hour=True),
+            _rec("s2", 350, r=1_001_000, w=10, one_hour=True)]
+
+
+@pytest.mark.parametrize("records,decision,result", [
+    (_one_hour_sub(400), "keep", "net_loss"),               # 5 minutes would have cost more under both bounds
+    (_one_hour_sub(200), "roll_back", "net_gain"),          # no expiry at 5 minutes: the 1-hour write premium is lost
+    (_straddling(), "roll_back", "undecidable_between_the_bounds"),
+])
+def test_the_rollback_rule_is_keep_only_when_the_least_favourable_bound_says_one_hour_was_cheaper(tmp_path, records, decision, result):
+    out = _three_sessions(tmp_path, records)
+    usd = _kind(out, "subagent_1h")["usd"]
+    bounds = usd["bounds"]
+    assert usd["result"] == result and bounds["favourable"]["delta_usd"] <= bounds["prudent"]["delta_usd"]
+    verdict = ttl.rollback_decision(out)
+    assert verdict["decision"] == decision and verdict["delta_usd_favourable"] == bounds["favourable"]["delta_usd"]
+    # the two formulations are the same decision: favourable delta > 0  <=>  result == net_loss
+    assert (verdict["decision"] == "keep") == (usd["result"] == "net_loss") == (bounds["favourable"]["delta_usd"] > 0)
+
+
+def test_the_rollback_rule_is_unknown_without_enough_evidence_and_rolls_back_when_the_field_has_no_effect(tmp_path):
+    assert ttl.rollback_decision(_three_sessions(tmp_path / "a", _one_hour_sub(400), count=2))["reason"] == "fewer_than_3_sessions"
+    plain = ttl.analyse_interactive([_session(tmp_path / "b", [_rec("m0", 0, w=10, one_hour=True)])])
+    assert ttl.rollback_decision(plain) == {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
+    assert ttl.rollback_decision(_three_sessions(tmp_path / "c", _sub(500))) == {
+        "decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
+    unpriced = [_rec(r["message"]["id"], 0, model="claude-sonnet-5", w=5, one_hour=True) for r in _sub(5)[:1]]
+    assert ttl.rollback_decision(_three_sessions(tmp_path / "d", unpriced), "claude-sonnet-5")["decision"] == "unknown"
+
+
 # --- committed evidence
 
 def test_committed_interactive_aggregates_are_clean_and_consistent():

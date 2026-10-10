@@ -48,6 +48,7 @@ LAST commit of the branch, which is the one that carries the field.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -57,6 +58,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -190,6 +192,21 @@ def profile_cache_ttl(plugin_root: Path, profile: str) -> str | None:
     return values["cacheTtl"] if set(values) == {"cacheTtl"} else f"divergent:{','.join(sorted(values))}"
 
 
+@contextlib.contextmanager
+def _policy_root(work: Path, policy: dict[str, Any], dry_run: bool):
+    """Directory holding the fixture's project policy. A dry run builds it in a temporary directory that is removed, so
+    it leaves nothing at ``work`` (PAT-134: a dry run used to create it, and the next real run was then refused)."""
+    if dry_run:
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / ".foundry").mkdir()
+            (Path(temporary) / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
+            yield Path(temporary)
+        return
+    (work / ".foundry").mkdir(parents=True)
+    (work / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
+    yield work
+
+
 def _sha256(path: Path) -> str | None:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -306,12 +323,12 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
     neutral = bool(getattr(args, "neutral_fixture", False))
     token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}" if neutral else f"PAT125-{secrets.token_hex(8)}"
     session_id = str(uuid.uuid4())
-    (work / ".foundry").mkdir(parents=True)
-    (work / "fixture").mkdir()
-    (work / ".foundry" / "model-routing.json").write_text(json.dumps(POLICY), encoding="utf-8")
     token_file = work / "fixture" / ("marker.txt" if neutral else "token.txt")
-    token_file.write_text(token + "\n", encoding="utf-8")
-    route = _load_claude_policy(work).resolve(ROLE, "claude")
+    with _policy_root(work, POLICY, args.dry_run) as root:
+        if not args.dry_run:
+            (work / "fixture").mkdir()
+            token_file.write_text(token + "\n", encoding="utf-8")
+        route = _load_claude_policy(root).resolve(ROLE, "claude")
     binding = claude_invocation_binding(route, CAPABILITY, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused here
     if (route.model, route.effort, binding["transmitted_model"]) != (MODEL, EFFORT, WIRE_MODEL):
         raise TrialError("this checkout does not resolve the fixture to haiku-5.5 / medium")
@@ -475,22 +492,22 @@ def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch,
     if _inside_repository(work):
         raise TrialError("the work directory must be outside any git repository: the fixture carries its own policy")
     session_id = str(uuid.uuid4())
-    (work / ".foundry").mkdir(parents=True)
-    (work / "fixture").mkdir()
-    (work / ".foundry" / "model-routing.json").write_text(json.dumps(CACHE_TTL_POLICY), encoding="utf-8")
-    files = []
-    for name in ("first.txt", "second.txt"):
-        files.append(work / "fixture" / name)
-        files[-1].write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
-    policy = _load_claude_policy(work)
+    files = [work / "fixture" / name for name in ("first.txt", "second.txt")]
     subjects: dict[str, dict[str, Any]] = {}
-    for name, (role, capability, requested_expected, expected_class) in CACHE_TTL_SUBJECTS.items():
-        route = policy.resolve(role, "claude")
-        binding = claude_invocation_binding(route, capability, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused
-        subjects[name] = {"role": role, "logical": CACHE_TTL_LOGICAL[role], "capability": capability, "route": route,
-                          "binding": binding, "wire": binding["transmitted_model"], "profile": binding["profile"],
-                          "requested": profile_cache_ttl(PLUGIN_ROOT, binding["profile"]),
-                          "requested_expected": requested_expected, "expected_class": expected_class}
+    with _policy_root(work, CACHE_TTL_POLICY, args.dry_run) as root:
+        if not args.dry_run:
+            (work / "fixture").mkdir()
+            for file in files:
+                file.write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
+        policy = _load_claude_policy(root)
+        for name, (role, capability, requested_expected, expected_class) in CACHE_TTL_SUBJECTS.items():
+            route = policy.resolve(role, "claude")
+            binding = claude_invocation_binding(route, capability, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused
+            subjects[name] = {"role": role, "logical": CACHE_TTL_LOGICAL[role], "capability": capability,
+                              "route": route, "binding": binding, "wire": binding["transmitted_model"],
+                              "profile": binding["profile"],
+                              "requested": profile_cache_ttl(PLUGIN_ROOT, binding["profile"]),
+                              "requested_expected": requested_expected, "expected_class": expected_class}
     command = argv(args.claude, cache_ttl_parent_prompt(files), session_id, args.parent_model)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
     body: dict[str, Any] = {

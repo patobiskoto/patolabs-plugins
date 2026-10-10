@@ -1,0 +1,142 @@
+{
+  "schema": "foundry.pat134-cache-ttl-trial.v1",
+  "kind": "bounded native trial of the subagent cache lifetime (PAT-134); not a benchmark, a cost measure or a statement about the subscription quota (unknown)",
+  "date": "2026-10-10",
+  "bounds": {
+    "executions": 1,
+    "parents": 1,
+    "children_expected": 2,
+    "timeout_seconds": 1200,
+    "concurrency": 1,
+    "replays": 0,
+    "environment_names": [
+      "FOUNDRY_DATA",
+      "FOUNDRY_RUNTIME_CONFIG_ISOLATED",
+      "HOME",
+      "LOGNAME",
+      "PATH",
+      "TMPDIR",
+      "USER"
+    ]
+  },
+  "limits": [
+    "the control is a worker profile (Opus 5.5) and the modified one a read-only profile (Sonnet 5.5): the two roles that resolve to the two models without a review claim",
+    "two subagents of one parent run: not a sample",
+    "usage credits drawn during the run are not observable here"
+  ],
+  "source": {
+    "commit": "50c83f441b6cbdde5231a8b618f82b196103aa51",
+    "dirty": false
+  },
+  "argv": [
+    "claude",
+    "-p",
+    "<parent prompt>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--session-id",
+    "<session id>",
+    "--model",
+    "sonnet",
+    "--strict-mcp-config",
+    "--plugin-dir",
+    "<plugins/foundry of this checkout>"
+  ],
+  "subjects": {
+    "modified": {
+      "role": "scout",
+      "logical_agent": "foundry:lupin",
+      "requested": {
+        "tier": "economy",
+        "model": "sonnet-5.5",
+        "effort": "low",
+        "profile_field_experimental_cacheTtl": "1h",
+        "expected_by_the_trial": "1h"
+      },
+      "transmitted": {
+        "profile": "routed-readonly-low-sonnet-5.5",
+        "model": "claude-sonnet-5-5",
+        "basis": "computed offline from this checkout before launch; the agent type the host logged is under observed"
+      }
+    },
+    "control": {
+      "role": "implementer",
+      "logical_agent": "foundry:eiffel",
+      "requested": {
+        "tier": "balanced",
+        "model": "opus-5.5",
+        "effort": "medium",
+        "profile_field_experimental_cacheTtl": null,
+        "expected_by_the_trial": null
+      },
+      "transmitted": {
+        "profile": "routed-worker-medium-opus-5.5",
+        "model": "claude-opus-5-5",
+        "basis": "computed offline from this checkout before launch; the agent type the host logged is under observed"
+      }
+    }
+  },
+  "process": {
+    "exit_code": 0,
+    "timed_out": false,
+    "seconds": 20.441
+  },
+  "host": {
+    "claude_code_version": "2.1.294",
+    "documented_minimum_for_cache_ttl": "2.1.248",
+    "version_against_documented_minimum": "at_or_above",
+    "usage_credits_drawn": "unknown (not observable here; documented to make the host ignore 1h)"
+  },
+  "observed": {
+    "children": 2,
+    "children_unreadable": 0,
+    "children_unattributed": 0,
+    "by_subject": {
+      "modified": {
+        "agent_type": "foundry:routed-readonly-low-sonnet-5.5",
+        "models": [
+          "claude-sonnet-5-5"
+        ],
+        "requests": 3,
+        "requests_ambiguous_counters": 0,
+        "cache_write_tokens_1h": 4768,
+        "cache_write_tokens_5m": 0,
+        "cache_read_tokens": 9103,
+        "log_sha256": "1a41a7bd0fc75d3847d59515fe1736710a66612523b93483c7d3cfcae0cef5be"
+      },
+      "control": {
+        "agent_type": "foundry:routed-worker-medium-opus-5.5",
+        "models": [
+          "claude-opus-5-5"
+        ],
+        "requests": 3,
+        "requests_ambiguous_counters": 0,
+        "cache_write_tokens_1h": 0,
+        "cache_write_tokens_5m": 5301,
+        "cache_read_tokens": 10242,
+        "log_sha256": "7065570ab0196999995aca14d36458bc0caf8e023e1b5a15151abdf3a0ee44c6"
+      }
+    }
+  },
+  "parent_result": {
+    "is_error": false,
+    "subtype": "success"
+  },
+  "conformity": {
+    "modified": {
+      "child": "exact",
+      "profile": "exact",
+      "requested": "exact",
+      "cache_class": "exact"
+    },
+    "control": {
+      "child": "exact",
+      "profile": "exact",
+      "requested": "exact",
+      "cache_class": "exact"
+    }
+  },
+  "verdict": "conforming",
+  "not_established": []
+}
