@@ -1770,7 +1770,7 @@ def test_public_ci_executes_only_internal_prs_on_ephemeral_secret_free_runners()
     workflow = _ci_workflow()
     public_jobs = {
         "foundry": "ubuntu-24.04",
-        "ship-ios": "macos-14",
+        "ship-ios": "ubuntu-24.04",
         "catalogue": "ubuntu-24.04",
     }
 

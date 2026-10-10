@@ -541,6 +541,7 @@ def test_local_attempt_is_bounded_in_time_and_the_group_is_killed(tmp_path):
         pytest.fail("the child of the killed attempt survived")
 
 
+@pytest.mark.timing_sensitive
 def test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them(tmp_path):
     runner, _, _, tasks = make_runner(tmp_path, "screen", {**FIX_ALL, "local": ["many_steps"]})
     rec = runner.screen(tasks[:1], ["cand-a"])[0]
