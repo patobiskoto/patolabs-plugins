@@ -1015,7 +1015,7 @@
     },
     {
       "id": "ghprojects-companion-epic-refusal",
-      "test": "test_tracker_conformance_v1.py::test_ghprojects_companion_epic_without_type_option_refuses_before_any_write",
+      "test": "test_tracker_conformance_v1.py::test_ghprojects_companion_epic_without_type_option_is_refused_at_project_read",
       "providers": [
         "ghprojects"
       ],

@@ -123,7 +123,7 @@ the `Epic` type is not available:
 |---|---|---|
 | YouTrack | a value of the project's `Type` field, sent by name (`_cf_write`, `tooling/foundry/trackers/youtrack.py`) | the adapter does not check before it posts; the provider's answer is not verified. The test simulates a refusal and shows that no later write follows |
 | Linear | the `Epic` entry of the binding's `type_label_ids` | the adapter refuses with `type_unmapped` before the create mutation (`tooling/foundry/trackers/linear.py`) |
-| `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `field_option:type:Epic` before the issue is created (`_write_catalog`, `tooling/foundry/trackers/ghprojects.py`) |
+| `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `invalid_field_options:type` when it reads the Project, before any write (`_field_map`, `tooling/foundry/trackers/ghprojects.py`), because it requires the options of that field to be exactly the declared set; a read of that Project is refused the same way |
 
 What the coordinator does then is in `AGENTS.md#R9` (b): this is a durable refusal, so
 no substitute write, the remarks are corrected before the merge and fully re-reviewed,

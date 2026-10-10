@@ -24,8 +24,7 @@ import pytest
 
 from foundry import config, registry, write
 from foundry.models import Adr, Issue, Link, Project
-from foundry.trackers.base import TrackerCapabilityUnavailableError
-from foundry.trackers.ghprojects import GitHubProjectsTracker
+from foundry.trackers.ghprojects import GitHubProjectsTracker, GitHubProjectsTrackerError
 from foundry.trackers.ghprojects import _Binding as GitHubBinding
 from foundry.trackers.ghprojects import _CreateCandidate as GitHubCreateCandidate
 from foundry.trackers.ghprojects import _FieldBinding as GitHubFieldBinding
@@ -934,21 +933,75 @@ def test_ghprojects_companion_epic_child_issue_and_comment(
     ]
 
 
-def test_ghprojects_companion_epic_without_type_option_refuses_before_any_write(
+def test_ghprojects_companion_epic_without_type_option_is_refused_at_project_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ):
-    # A Project whose "Foundry type" field has no ``Epic`` option: the adapter's own
-    # ``_write_catalog`` refuses before the REST issue is created.
-    provider = _GitHubCompanionProvider(type_options=("Task",))
-    tracker = GitHubProjectsTracker(state_dir=tmp_path)
-    provider.install(monkeypatch, tracker)
-    issues_before = copy.deepcopy(provider.issues)
+    """A Project whose "Foundry type" field has no ``Epic`` option is refused when the
+    adapter reads the Project, before any write.
 
-    with pytest.raises(TrackerCapabilityUnavailableError, match="field_option:type:Epic"):
-        tracker.create_issue(_GH_PROJECT, "Nits GH-1", "", fields=_COMPANION_FIELDS)
+    Only the ``runner=`` seam is doubled (the ``gh`` process): the binding check,
+    ``_write_catalog``, ``_field_catalog``, ``_project_page`` and ``_field_map`` are the
+    adapter's own code. ``_field_map`` requires the options of the type field to be
+    exactly the declared set, so the refusal is ``invalid_field_options:type`` and not
+    the ``field_option:`` refusal of ``_write_catalog``.
+    """
+    project = Project(
+        key="GH", id="PVT_1",
+        extra={"owner": "acme", "number": "7",
+               "canonical_repo": "github.com/acme/widgets"},
+    )
+    monkeypatch.setattr(
+        "foundry.trackers.ghprojects.registry.repository_tracker_selection",
+        lambda cwd=None: {
+            "tracker": "ghprojects", "mode": "v1",
+            "binding": registry.RepositoryTrackerBinding(
+                tracker="ghprojects", repository=project.extra["canonical_repo"],
+                project=project, registry_binding_digest="sha256:" + "1" * 64,
+                migration_manifest_digest=None,
+                configuration_digest="sha256:" + "2" * 64,
+                activation_kind="bootstrap",
+            ),
+        },
+    )
 
-    assert provider.writes == []
-    assert provider.issues == issues_before
+    def select(field_id, name, options):
+        return {
+            "id": field_id, "name": name, "dataType": "SINGLE_SELECT",
+            "options": [{"id": f"{field_id}-{option}", "name": option} for option in options],
+        }
+
+    end = {"hasNextPage": False, "endCursor": None}
+    page = {"data": {"user": {"projectV2": {
+        "id": "PVT_1", "number": 7, "public": False,
+        "fields": {"nodes": [
+            select("state", "Foundry normalized state", (
+                "backlog", "ready", "in-progress", "review", "blocked", "done", "dropped",
+            )),
+            select("type", "Foundry type", ("Bug", "Feature", "Task")),  # no Epic
+            select("priority", "Foundry priority", ("P1", "P2")),
+            {"id": "estimate", "name": "Foundry estimate", "dataType": "NUMBER"},
+        ], "pageInfo": end},
+        "items": {"nodes": [], "pageInfo": end},
+    }}}}
+    commands: list[list[str]] = []
+
+    def runner(command, **_kwargs):
+        commands.append(command)
+        assert command[2] == "graphql", command
+        return subprocess.CompletedProcess(command, 0, json.dumps(page), "")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+
+    with pytest.raises(GitHubProjectsTrackerError) as refusal:
+        tracker.create_issue(project, "Nits GH-1", "", fields=_COMPANION_FIELDS)
+
+    assert (refusal.value.operation, refusal.value.reason) == (
+        "project.read", "invalid_field_options:type",
+    )
+    # one Project read, no mutation, no REST write, no create intent
+    assert len(commands) == 1
+    assert "mutation" not in " ".join(commands[0])
+    assert not any("-X" in command for command in commands)
     assert not list(tmp_path.rglob("*.json"))
 
 

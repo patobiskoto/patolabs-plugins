@@ -127,8 +127,9 @@ _THREE_MISSING_PIECES = (
 _PORTABILITY_CODE_CITATIONS = (
     ("trackers/youtrack.py", "def _cf_write("),
     ("trackers/linear.py", 'LinearBindingError("type_unmapped")'),
-    ("trackers/ghprojects.py", "def _write_catalog("),
-    ("trackers/ghprojects.py", 'f"field_option:{semantic}:{value}"'),
+    ("trackers/ghprojects.py", "def _field_map("),
+    ("trackers/ghprojects.py", 'GitHubProjectsTrackerError("project.read", f"invalid_field_options:{semantic}")'),
+    ("trackers/ghprojects.py", '!= _FIELD_OPTIONS[semantic])'),
     ("trackers/youtrack.py", "class _YouTrackHTTPError("),
     ("trackers/linear.py", "class LinearQuotaExhaustedError("),
     ("trackers/linear.py", "self.reset_at_ms = reset_at_ms"),
@@ -310,7 +311,7 @@ def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_w
     for path, symbol in _R9_CODE_CITATIONS + _PORTABILITY_CODE_CITATIONS:
         assert f"`tooling/foundry/{path}`" in page
         assert symbol in _tooling_text(path), (path, symbol)
-    for cited in ("`_cf_write`", "`type_unmapped`", "`_write_catalog`", "`field_option:type:Epic`",
+    for cited in ("`_cf_write`", "`type_unmapped`", "`_field_map`", "`invalid_field_options:type`",
                   "`_YouTrackHTTPError`", "`LinearQuotaExhaustedError`", "`reset_at`",
                   "`rate_limited`", "`transport_failed`", "`_rest_write`"):
         assert cited in page
