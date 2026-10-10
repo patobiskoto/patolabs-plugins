@@ -520,17 +520,26 @@ pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark
 The second command runs, alone, the four tests marked `timing_sensitive` (declared in
 `pytest.ini`): three in `tests/test_local_scout.py` that assert a 0.5 s deadline, and
 `tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
-which races a reader thread against a producer. One `-n 4` run failed that last test
-(200 steps seen, bound is below 200); 42 of 60 copies of it started at once on a loaded
-machine failed, 0 of 20 run alone failed. The other tests ran in parallel without a
-failure in the runs recorded in the PAT-142 pull request.
+which races a reader thread against a producer. Only the last one was observed to fail
+under parallel load: one local `-n 4` run during PAT-142 (200 steps seen, bound is below
+200; that run was not recorded). The three scout tests are marked because they assert a
+wall-clock bound, not because a failure was observed. Other unmarked tests also assert a
+bound on time (for example `test_local_attempt_is_bounded_in_time_and_the_group_is_killed`);
+they were not observed to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
+parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
+step: 4 passed in 2.84s. The log does not show the number of xdist workers.
 
-Run it from a foreground shell. A background job of a non-interactive shell (`cmd &`)
-starts with SIGINT ignored, and `execute_driver` (`tooling/foundry/local_first_runner.py`)
-deliberately keeps an ignored SIGINT ignored, so
 `tests/test_local_first_runner.py::test_B1_an_interrupted_execution_kills_the_whole_process_group[2-KeyboardInterrupt]`
-fails there (reproduced in PAT-142: it fails in a `&` job and passes in the foreground;
-other causes of the failure reported earlier are not verified).
+used to fail when launched from a background job of a non-interactive shell (`cmd &`).
+Such a job starts with SIGINT ignored; `execute_driver` calls `_install_term_handlers`
+(`tooling/foundry/local_first_runner.py`), which does not replace the handler of a SIGINT
+that is ignored, so the test's own `os.kill(os.getpid(), SIGINT)` was a no-op and the call
+ended at `max_seconds=60` without `KeyboardInterrupt`. Reproduced in PAT-142 (3 of 3
+background launches failed after 60 s, `DID NOT RAISE KeyboardInterrupt`). The test now
+has a fixture that, only if SIGINT is ignored, installs Python's default handler for the
+test and restores the previous disposition afterwards; no assertion changed, and the
+three background launches then passed in under a second, as did a foreground launch. No
+other cause of the earlier failure report was verified.
 
 Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tested in
 `scripts/test_ci_plan.py`), not by workflow expressions:
@@ -548,9 +557,17 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   next to a real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
   `tooling/foundry/write.py`, tests
   `test_ci_gate_neutral_and_skipped_pass_alongside_a_success` and
-  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`). Not verified: the
-  GitHub behaviour of a failed `plan` is read from the documented semantics of status
-  check functions, not shown by a run; only a CI run shows it.
+  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`). Derived from GitHub
+  documentation, not shown by a run: a failed `plan` makes `foundry` run, and the fork
+  pull request behaviour.
+- Cancellation: if a run is cancelled while `plan` runs, `foundry` ends `skipped` (the
+  `!cancelled()` condition is false). `ci_gate` only tolerates `success`, `neutral` and
+  `skipped` conclusions on completed checks; any other conclusion, `cancelled` included,
+  is listed in `failing` and `passed` is false. So a `cancelled` check next to successes
+  blocks the merge gate by reading the code; no test in `tests/test_pure.py` feeds a
+  `cancelled` conclusion, and no run showed it. Residual risk: the gate reads all check
+  runs of the sha, so a cancelled run is expected to block until it is re-run; how it
+  treats the check runs of a re-run next to those of the cancelled one was not verified.
 - Release rule: a change is a release change, and runs everything even inside
   `plugins/ship-ios/`, when it touches a plugin manifest
   (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) or a marketplace catalogue
@@ -561,8 +578,11 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   manifest edit that is not a release also runs everything (safe side).
 - `ship-ios` runs on `ubuntu-24.04`: its tests call Python, `git` and `ruby` (to evaluate
   the Fastfile), and no test calls Xcode or a simulator. The job installs `ruby` with
-  `apt-get` only if the image lacks it. Not verified: whether the image has Ruby, which
-  version, and that the tests pass on Ubuntu; only a CI run shows it.
+  `apt-get` only if the image lacks it. Observed in CI run 38095058779 (head `d640c1a`):
+  `command -v ruby` printed `/usr/bin/ruby` (no install), and "Ran 35 tests" passed on
+  `ubuntu-24.04`. The log does not show the Ruby version. The `foundry` job took 5 min 49
+  in that run (23:27:06Z to 23:32:55Z); the previous `foundry` job, on a push to `main`
+  at `0814db2`, took 11 min 50.
 
 Benchmark-campaign and proof-of-concept tests (evidence under `benchmarks/`) carry the
 `benchmark_campaign` marker and are excluded from the default run above. See

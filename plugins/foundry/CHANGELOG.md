@@ -10,8 +10,13 @@
   catalogue is touched), on any doubt, and when `plan` itself fails (`!cancelled()` and
   `!= 'false'` in the condition). `ship-ios` moves from `macos-14` to `ubuntu-24.04` (`ruby` installed if the image
   lacks it). `ship-ios` and `catalogue` still always run. The expected runner of
-  `ship-ios` in `tests/test_youtrack_smoke.py` follows. Not verified here: CI durations,
-  runner core count, Ruby on the image. Documented in the Foundry README.
+  `ship-ios` in `tests/test_youtrack_smoke.py` follows. Observed in CI run 38095058779
+  (PR head `d640c1a`): `foundry` 5 min 49 (previous push to `main`: 11 min 50), Ruby
+  already on the image, 35 `ship-ios` tests pass on Ubuntu; the runner core count and the
+  Ruby version are not shown by the log. Not shown by any run (derived from GitHub
+  documentation): a failed `plan` makes `foundry` run; the fork pull request case. Also
+  fixes the flaky `test_B1_an_interrupted_execution_kills_the_whole_process_group` when
+  started from a background job (test fixture only). Documented in the Foundry README.
 
 - PAT-139 (PAT-ADR-0018): BEHAVIOUR CHANGE for every repository that uses the plugin.
   Rule R9 (b) of `AGENTS.md` / `CLAUDE.md` and the `merge-pr`, `intake` and `open-pr`
