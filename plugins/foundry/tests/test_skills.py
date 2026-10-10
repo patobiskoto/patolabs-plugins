@@ -153,7 +153,9 @@ def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
     assert "does not create the follow-up issue on its own authority" in text
     assert "re-review in full" in text
     # standing authorization outside an Epic campaign: two writes, nothing else
-    assert "authorized in advance by rule R9" in text
+    assert "authorized in advance by this skill's rule" in text
+    assert "every repository where the plugin is installed" in text
+    assert "recorded as rule R9 in the Foundry monorepo" in text
     assert "without asking and report the follow-up issue ID" in text
     assert "every other intake write keeps its confirmation" in text
     # the rule is read after the review and before the merge command
@@ -164,7 +166,9 @@ def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
 
 def test_intake_points_to_the_standing_authorization_of_the_two_writes():
     text = _flat(_skill_text("intake"))
-    assert "authorizes in advance outside an Epic campaign" in text
+    assert "authorizes in advance, in every repository where the plugin is installed, outside an Epic campaign" in text
+    assert "`foundry:merge-pr`" in text
+    assert "repository that carries it" not in text
     assert "creating the batch follow-up issue" in text
 
 

@@ -98,6 +98,7 @@ def test_process_contract_states_r9_checklist_deferral_and_minimal_corrections()
     assert "What only the reviewer can judge" in text
     assert "gives in advance the confirmation that `foundry:intake` requires" in flat
     assert "exactly two writes" in flat
+    assert "in every repository where the plugin is installed, by the maintainer's decision of 2026-10-10" in flat
     assert "every other intake write keeps its confirmation" in flat
     assert "is seen by any gate" in flat
     assert (REPOSITORY_ROOT / "CLAUDE.md").read_bytes() == (REPOSITORY_ROOT / "AGENTS.md").read_bytes()

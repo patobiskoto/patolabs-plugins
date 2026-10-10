@@ -180,6 +180,9 @@ For any UI/runtime surface: derive a 3-5 step test procedure from the diff, rebu
 deploy, and STOP for explicit validation. Exception: pure refactor (justify in the merge).
 
 ### Grouped deferral of non-blocking remarks (rule R9 (b))
+This is the behaviour of the Foundry skills in every repository where the plugin is
+installed (maintainer decision of 2026-10-10); it is recorded as rule R9 in the Foundry
+monorepo's `AGENTS.md` / `CLAUDE.md`, and this skill's text is what applies it.
 After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
 non-blocking remarks are not corrected in the PR. Put them in one follow-up issue per
 batch (per Epic or per series of issues), not one per PR. Create it through
@@ -189,8 +192,8 @@ still corrected before the merge and then fully re-reviewed:
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
   CHANGELOG section of a published version);
-- a missing or generic documentation status under rule R5 of a repository that carries
-  it, and FOUNDRY-ADR-0018.
+- a missing or generic documentation status under FOUNDRY-ADR-0018 (rule R5 where the
+  repository's contract carries it).
 
 Inside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016) the coordinator does not
 create the follow-up issue on its own authority: the maintainer creates or approves it.
@@ -199,7 +202,8 @@ is an operating choice of rule R9, not an ADR decision. Whether a remark is righ
 classed as deferrable is judged by the reviewer.
 
 Outside an Epic campaign, creating the follow-up issue and adding the deferred remarks to
-it are authorized in advance by rule R9 (maintainer decision of 2026-10-10), as an
+it are authorized in advance by this skill's rule, in every repository where the plugin
+is installed (maintainer decision of 2026-10-10), as an
 exception to the confirmation `foundry:intake` requires before a write: perform them
 without asking and report the follow-up issue ID and the number of deferred remarks in the
 PR description. Nothing else is pre-authorized: the follow-up issue is not started

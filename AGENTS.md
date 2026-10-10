@@ -264,6 +264,10 @@ reports the follow-up issue ID and the number of deferred remarks in the PR desc
 Nothing else is pre-authorized: the follow-up issue is not started without the
 maintainer, and every other intake write keeps its confirmation.
 
+The Foundry skills apply this grouped deferral and this standing authorization in every
+repository where the plugin is installed, by the maintainer's decision of 2026-10-10;
+this contract is where the rule is recorded.
+
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.
 
