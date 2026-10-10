@@ -28,7 +28,8 @@ the tag, so their "candidate" wording is superseded by the
 [setup and migration guide](docs/migration-1.0.0.md) covers a first repository, 0.9.0
 upgrades, legacy YouTrack binding, loaded-version verification and bounded rollback.
 
-**1.1.0 prepared on 2026-10-10, not yet published or verified installed.** The
+**1.1.0 prepared on 2026-10-10: effectively distributed from the merge of its release
+pull request (derived, not observed), not tagged, not verified installed.** The
 [release notes](docs/release-1.1.0.md) open with the breaking changes and risks (Claude
 Code 2.1.293 minimum for the default `economy` tier, refused `economy` mappings, the
 availability list, the unguarded cache field of the Sonnet 5.5 profiles, the guarded

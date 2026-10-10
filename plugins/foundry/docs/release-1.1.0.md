@@ -1,13 +1,23 @@
 # Foundry 1.1.0 — release candidate, 2026-10-10
 
-**Prepared, not yet published or verified installed.** Both host manifests (Claude Code
-and Codex) declare `1.1.0`. Ship-iOS retains its independent `0.3.0` version (see
-[Ship-iOS](#ship-ios)). The versionless marketplace catalogues continue to point at
-`./plugins/foundry` and `./plugins/ship-ios`. No tag exists for this version at the time
-of writing, and nothing here is a claim that an installed host loads it. The catalogues
-name no ref, so a host that updates is expected to receive this version from the merge
-of the release pull request, before any tag: see
+**Release candidate: effectively distributed from the merge of its pull request
+(derived, not observed); not tagged, not verified installed.** Both host manifests
+(Claude Code and Codex) declare `1.1.0`. Ship-iOS retains its independent `0.3.0`
+version (see [Ship-iOS](#ship-ios)). The versionless marketplace catalogues continue to
+point at `./plugins/foundry` and `./plugins/ship-ios`. No tag exists for this version
+at the time of writing, and nothing here is a claim that an installed host loads it.
+The catalogues name no ref, so a host that updates is expected to receive this version
+from the merge of the release pull request, before any tag: see
 [Release phases and evidence](#release-phases-and-evidence).
+
+Three states are kept apart on this page, in the migration guide and in both READMEs,
+each under its own word. **Effectively distributed:** from the merge of the release
+pull request, a host that runs an official update is expected to receive 1.1.0; this
+is derived, not observed. **Tagged:** `foundry-v1.1.0` exists on the merged commit; the
+tag is the named reference, not the delivery. **Verified installed:** the version a
+host actually loaded was read back after an official update. The word "publication"
+is not used for any of these three states of 1.1.0: it appears only where a
+maintainer's decision that uses it is reported.
 
 1.1.0 packages what was merged on `main` after the tag `foundry-v1.0.0`: 37 commits,
 PAT-93 to PAT-134, listed [at the end of this page](#merged-issues-in-this-release).
@@ -251,7 +261,10 @@ and [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md); 
 tests never launch it and use fakes only.
 It refuses an existing work directory or result file, so a path cannot be replayed.
 `--dry-run` prints the command and launches nothing; it creates nothing under the work
-directory. Installing or upgrading 1.1.0 does not run it.
+directory. That is the current behaviour, since PAT-134: the sentence of the PAT-125
+page linked above that says `--dry-run` prepares the fixture in the given directory
+predates PAT-134 and is not corrected by this release. Installing or upgrading 1.1.0
+does not run the tool.
 
 ### Local-first qualification (PAT-19): concluded, no local role qualified
 
@@ -260,10 +273,17 @@ The package now ships the comparison launcher and its corpus tooling
 PAT-112, PAT-120, PAT-121, PAT-123, PAT-124, PAT-126, PAT-128) and the frozen protocols
 v1 to v5 with their recorded results (PAT-109, PAT-110, PAT-114 to PAT-117, PAT-122,
 PAT-127). These are qualification instruments, not a product feature: 1.1.0 activates
-no local model, profile or default. **The launcher is not an offline tool:** its
-campaign modes load local models and launch real cloud sessions (the recorded runs
-did both), and it is run by hand by an operator. Its tests use fake arms only, and
-nothing in Foundry starts it. The decision by use, recorded by PAT-130, is to
+no local model, profile or default. **The launcher is not an offline tool, and it
+loads no model itself.** Its campaign modes drive a local model that must already be
+loaded (its preflight refuses when the expected model is not), and they launch real
+cloud sessions; the recorded campaigns did both. Loading is done outside the launcher,
+by the operator: by hand, or by the operator scripts shipped for protocols v3, v4 and
+v5 (`docs/qualification/pat-19-v3-operator.sh`, `-v4-`, `-v5-`), which unload, run the
+pinned load command and then start the launcher, once per launch. The launcher is
+started by hand, directly or through those scripts. No Foundry skill, hook, agent
+profile or `foundry_cli.py` verb refers to it or to those scripts (established by a
+search of the package at this revision); its tests use fake arms only. The decision by
+use, recorded by PAT-130, is to
 keep the cloud for autonomous local implementation and for local read-only exploration
 (gain not demonstrated), and to abandon the one-call local compression track on this
 corpus without measuring it:
@@ -293,16 +313,19 @@ corpus without measuring it:
 | Change | Rule | Where it is written |
 | --- | --- | --- |
 | Haiku 5.5 / `medium` on `economy` (PAT-ADR-0016) | Window: the first 10 issues delivered by Foundry on the Claude host after the merge of PAT-125 (2026-10-09), or 30 days, whichever comes first. Reference: the last 10 issues delivered before that merge. Immediate trigger: on a conforming host, a `haiku-5.5` profile unavailable or divergent, an executed model other than `claude-haiku-5-5`, or a transmitted effort other than `medium`. Regression trigger: the number of issues with a blocking first-pass review, an escalation or a red CI on the delivered SHA exceeds the reference by at least two. The maintainer may roll back at any time without justification. | PAT-ADR-0016; [pat-125-haiku-55-promotion.md](qualification/pat-125-haiku-55-promotion.md) |
-| 1-hour cache on the Sonnet 5.5 profiles (PAT-134) | Window: from the publication of 1.1.0 (maintainer's decision of 2026-10-10, below) to the first 10 issues delivered after it, or 30 days, whichever comes first; not extended without a written decision. At closure the 5 most recent main conversations are replayed and `rollback_decision` (`cache_ttl_replay.py`) returns `keep`, `roll_back` or `unknown`. It keeps 1 hour only if the smaller bound of `usd.entry_reads_not_expired.delta_usd_exact` is strictly positive; it returns `roll_back` when no Sonnet 5.5 lineage is observed at 1 hour; fewer than 3 contributing sessions is `unknown`. | [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md) |
+| 1-hour cache on the Sonnet 5.5 profiles (PAT-134) | Window: from the merge of the release pull request (effective distribution; start explained below) to the first 10 issues delivered after it, or 30 days, whichever comes first; not extended without a written decision. At closure the 5 most recent main conversations are replayed and `rollback_decision` (`cache_ttl_replay.py`) returns `keep`, `roll_back` or `unknown`. It keeps 1 hour only if the smaller bound of `usd.entry_reads_not_expired.delta_usd_exact` is strictly positive; it returns `roll_back` when no Sonnet 5.5 lineage is observed at 1 hour; fewer than 3 contributing sessions is `unknown`. | [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md) |
 
 The PAT-ADR-0016 window counts from the merge of PAT-125, so it is already running
-when 1.1.0 is distributed.
+when 1.1.0 is effectively distributed.
 
 The PAT-134 page starts its window "at the delivery of the version that carries the
-change"; 1.1.0 is the first version that carries it. **The maintainer decided on
-2026-10-10 that this window starts at the publication of 1.1.0**, meaning the moment a
-host can receive the version through an official update, which is the merge of the
-release pull request (phase 2 below). The coordinator records the exact date and
+change"; 1.1.0 is the first version that carries it. **The PAT-134 window starts at the
+merge of the release pull request (effective distribution, phase 2 below), per the
+maintainer's decision of 2026-10-10 that it starts at the publication of 1.1.0.** The
+decision's word is "publication". Reading it as that merge, rather than as the tag, is
+the coordinator's reading, made because the merge is the derived moment from which a
+host can receive the version; that reading is submitted to the maintainer with this
+note before the merge. The coordinator records the exact date and
 commit on PAT-135 and PAT-134 after the merge. The rule of the page is not changed.
 
 The signals of the first window are downstream of
@@ -312,9 +335,10 @@ model or the cache.
 
 ## Outside 1.1.0
 
-By decision of the maintainer (2026-10-10), 1.1.0 is published now and the postponed
-children of Epic PAT-87 slip to a later version: **PAT-88, PAT-89, PAT-90, PAT-91,
-PAT-17 and PAT-18**. None of their scope is in this package. Also outside: any local
+The maintainer's decision of 2026-10-10, as the PAT-135 issue records it, is to
+publish 1.1.0 now ("publier maintenant") and to let the postponed children of Epic
+PAT-87 slip to a later version: **PAT-88, PAT-89, PAT-90, PAT-91, PAT-17 and
+PAT-18**. None of their scope is in this package. Also outside: any local
 model promotion, a cockpit, a new tracker, a general data migration and any App Store
 submission.
 
@@ -348,11 +372,17 @@ run against 1.1.0 is claimed; that is a check of phase 4.
    This is derived from those facts and has **not been observed**. Consequence: the
    breaking changes above can reach a host from the merge, and anything that must be
    agreed before hosts can receive 1.1.0 has to be agreed before the merge.
+   The same derivation reaches further back. Every change this page lists has been on
+   `main` since its own merge, the breaking ones included (PAT-125, PAT-131, PAT-134),
+   while both manifests on `main` still said `1.0.0`. Whether a manager refreshes a
+   package whose version does not change is **unknown**. A host that ran an official
+   update between those merges and this release may therefore already carry them
+   under the `1.0.0` label; this too is derived and has not been observed.
 3. **The tag is the named reference, not the delivery.** `foundry-v1.1.0` is placed on
    the exact merged commit, after the maintainer's explicit agreement on the content
-   of this note. An unpushed tag or a branch is not a published release.
-4. **After the merge and an official update:** update through each host's official
-   manager, without editing any cache; reload or start a new session; read back the
+   of this note. An unpushed tag or a branch is not that reference.
+4. **Verified installed, after the merge and an official update:** update through
+   each host's official manager, without editing any cache; reload or start a new session; read back the
    host binary and version actually used, the manager listing, the loaded plugin root,
    the source revision it resolved and both manifest versions at that root, then the
    installed CLI `doctor`, binding and route reads. The result is recorded on the
@@ -422,9 +452,9 @@ metadata and documentation only.
 | Both Foundry manifest versions (`1.0.0` → `1.1.0`) | Updated; stated here and in migration-1.1.0.md. No other manifest key changed by PAT-135 |
 | Dated Foundry changelog | `1.1.0 — 2026-10-10` section opened over the existing entries, which are not rewritten; empty `Unreleased` above it |
 | Release note and migration guide | New: this page and migration-1.1.0.md |
-| Root and Foundry README | Updated: pointers to these two pages, with the "prepared, not yet published" status |
+| Root and Foundry README | Updated: pointers to these two pages, with the status "release candidate, effectively distributed from the merge (derived, not observed), not tagged, not verified installed" |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed by PAT-135 and its version does not move; its 1.0.0 compatibility statements remain true as written |
-| `docs/qualification/pat-134-subagent-cache-1h.md` | Updated: one pointer sentence under its window bullet, to the maintainer's decision on the start of the window; its rule is unchanged |
+| `docs/qualification/pat-134-subagent-cache-1h.md` | Updated: a pointer under its window bullet, to the start of the window stated above (the maintainer's decision and the coordinator's reading of it); its rule is unchanged |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes; R7 already describes the Haiku 5.5 and cache state this release packages |
 | `tests/fixtures/release-history.json` | Not necessary before the tag: the `1.1.0` freeze is computed from the tagged tree, through its own issue (phase 5) |
 

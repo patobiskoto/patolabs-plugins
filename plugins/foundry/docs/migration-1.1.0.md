@@ -1,9 +1,14 @@
 # Foundry 1.1.0 — upgrade and rollback, 2026-10-10
 
-**Candidate guide; publication and official installed-version checks pending.** The
-catalogues name no ref, so an official update is expected to deliver 1.1.0 from the
-merge of the release pull request, before its tag exists (not observed; see the phases
-of the release note). Do the checks below before any update made after that merge.
+**Candidate guide; the tag and the official installed-version checks are pending.**
+The catalogues name no ref, so an official update is expected to deliver 1.1.0 from
+the merge of the release pull request, before its tag exists: 1.1.0 is effectively
+distributed from that merge (derived, not observed; see the phases of the release
+note, which also define "tagged" and "verified installed"). The changes themselves
+have been on `main` since their own merges, and whether a manager refreshes a package
+whose version does not change is unknown: a host updated before this release may
+already carry them under the `1.0.0` label (derived, not observed). Do the checks
+below before any update.
 Both Foundry manifests must report `1.1.0`; Ship-iOS remains independently `0.3.0`. The
 catalogues have no version key. See [release-1.1.0.md](release-1.1.0.md) for what the
 version contains, its breaking changes and the pre-merge versus post-installation
@@ -137,10 +142,11 @@ The field is carried by the shipped agent profiles, so there is no project key o
 Foundry setting that removes it, and editing an installed profile in a plugin cache is
 not a supported procedure. Its removal is a product rollback: an ordinary Foundry pull
 request of four steps (empty `CLAUDE_CACHE_TTL_1H_PINS`, regenerate the profiles,
-update three tests, update the sentences that assert the field), published as a later
+update three tests, update the sentences that assert the field), delivered by a later
 version. Every step, file and test is listed in
 [the PAT-134 page](qualification/pat-134-subagent-cache-1h.md), section "Règle
-d'observation et de retour arrière", with its dry run on a copy of the repository.
+d'observation et de retour arrière (écrite avant l'adoption)", with its dry run on a
+copy of the repository.
 
 That page also reports the provider's documented precedence, in which a user's own
 host cache settings override the profile field. Foundry does not set, test or
@@ -148,7 +154,7 @@ recommend them; their effect was not observed.
 
 ### Return to 1.0.0
 
-**To be confirmed after publication.** No manager command that installs a named tag of
+**To be confirmed once 1.1.0 is tagged.** No manager command that installs a named tag of
 this marketplace is established in this repository. What is established: the tag
 `foundry-v1.0.0` exists in the public source; the Claude Code manager refused a commit
 SHA as a ref when PAT-93 tried it; whether either manager accepts a tag was not

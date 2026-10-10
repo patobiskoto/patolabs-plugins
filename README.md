@@ -31,15 +31,16 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
-**Prepared, not yet published or verified installed:** Foundry **1.1.0** (both host
+**Release candidate, not tagged, not verified installed:** Foundry **1.1.0** (both host
 manifests declare it; Ship-iOS stays at **0.3.0**). Its
 [release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
 (Claude Code 2.1.293 minimum for the default `economy` tier, among others) and its
 [upgrade and rollback guide](plugins/foundry/docs/migration-1.1.0.md) gives the exact
 remedies. The catalogues name no ref: once the release pull request is merged, an
 official update is expected to deliver manifests saying 1.1.0 even before the tag
-`foundry-v1.1.0` exists (derived from the catalogue, not observed). The tag is the
-named reference; the last tagged version is 1.0.0.
+`foundry-v1.1.0` exists. 1.1.0 is therefore effectively distributed from that merge
+(derived from the catalogue, not observed). The tag is the named reference; the last
+tagged version is 1.0.0. "Verified installed" needs the readbacks of the guide.
 
 ## Public scope
 
