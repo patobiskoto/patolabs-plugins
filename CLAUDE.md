@@ -215,4 +215,70 @@ document.
 `foundry:maigret`'s "project conventions" quality criterion is this document. A finding
 that cites a convention breach must point at a rule here (`AGENTS.md#R<n>` /
 `CLAUDE.md#R<n>`) or at an accepted ADR by ID — never an unwritten preference. A diff
-that does not touch any rule above passes this criterion without further comment.
+that does not touch any rule of this contract passes this criterion without further comment.
+
+## R9 — Fewer review rounds: author checklist, grouped deferral, minimal corrections (PAT-136)
+
+This rule applies to the implementer, to every correction commit, and to the
+coordinator when it writes files itself. It changes nothing about the reviewer's minimum
+tier (FOUNDRY-ADR-0006), the first full review, or the full review after any blocking
+round. Baseline, observation window and return triggers are in
+`plugins/foundry/docs/review-rounds.md`.
+
+**(a) Checklist before handing work back.** The author checks each point on every
+sentence of documentation it adds or changes, and reports for each sentence that falls
+under points 1 to 5 its source (constant, `file:line`, or page):
+
+1. A sentence about what a tool launches, loads, calls or writes cites its constant,
+   file or page; otherwise it points to that page without summarising it.
+2. A cause is stated as `observed`, `deduced` or `unknown`.
+3. A rule, threshold or quantity is copied from the code or the source report, then
+   searched for across the rest of the repository to correct statements it made false.
+4. A comparison names the compared sets and checks that they are equal.
+5. A documented procedure has been run once, on a copy.
+6. No proper name or user name appears in any file, tests included.
+
+**(b) Non-blocking remarks: grouped deferral.** After a review round that is fully
+validated, non-blocking remarks are not corrected in the PR. They go into one follow-up
+issue per batch (per Epic or per series of issues), not one per PR. That issue is
+created through `foundry:intake` before the merge and cited in the PR description. Three
+cases are still corrected before the merge and then fully re-reviewed, as before:
+
+- a remark the reviewer marks "fix before merge";
+- a remark on a page frozen after publication (release note, migration guide, a
+  CHANGELOG section of a published version);
+- a missing or generic documentation status under R5 and FOUNDRY-ADR-0018, which is never
+  a deferrable remark.
+
+Inside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016) the coordinator does not
+create the follow-up issue on its own authority: the maintainer creates or approves it.
+Without that, the remarks are corrected before the merge and fully re-reviewed, which is
+the practice before this rule. This is an operating choice of this contract, not an ADR
+decision.
+
+Outside an Epic campaign, this rule gives in advance the confirmation that
+`foundry:intake` requires before a write ("3. Apply (human-confirmed)"), for exactly two
+writes: creating the batch follow-up issue, and adding deferred non-blocking remarks to
+it (maintainer decision of 2026-10-10). The coordinator performs them without asking and
+reports the follow-up issue ID and the number of deferred remarks in the PR description.
+Nothing else is pre-authorized: the follow-up issue is not started without the
+maintainer, and every other intake write keeps its confirmation.
+
+The Foundry skills apply this grouped deferral and this standing authorization in every
+repository where the plugin is installed, by the maintainer's decision of 2026-10-10;
+this contract is where the rule is recorded.
+
+**(c) Correction commits.** A correction commit changes as few sentences as possible, and
+every new sentence is re-checked against the code before the work is handed back.
+
+**What only the reviewer can judge.** No mechanical check covers: that a sentence cites
+the right source and is true; that a procedure was really run; that a correction commit
+changed "as few sentences as possible"; that a remark was rightly classed as deferrable.
+`plugins/foundry/tests/test_skills.py` and `plugins/foundry/tests/test_process_contract.py`
+prove only that these rules are written in the skills and in this contract, not that they
+are followed (FOUNDRY-ADR-0018: a mechanical
+check never proves that documentation is true). Likewise, neither the "fix before merge"
+mark nor the existence of the follow-up issue is seen by any gate: the review proof stays
+`quality=mergeable`, so the merge command does not refuse a diff because a marked remark
+was left uncorrected or because the follow-up issue does not exist. The checklist is an obligation of the
+author judged by the reviewer, not a gate.

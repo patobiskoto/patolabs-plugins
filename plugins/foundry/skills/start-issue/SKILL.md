@@ -66,6 +66,15 @@ Inputs:
 Issue payload, cited ADR IDs, repository paths needed to start.
 Constraints:
 Accepted ADRs, AGENTS.md/CLAUDE.md, preserve unrelated work, no tracker/PR mutation.
+Check this six-point checklist on every documentation sentence you add or change (AGENTS.md#R9
+in a repository that carries it): (1) a sentence about what a tool launches, loads, calls
+or writes cites its constant, file or page, or points to that page without summarising;
+(2) a cause is stated as observed, deduced or unknown; (3) a rule, threshold or quantity
+is copied from the code or source, then searched for across the repository to correct
+statements it made false; (4) a comparison names the compared sets and checks they are
+equal; (5) a documented procedure has been run once, on a copy; (6) no proper name or
+user name in any file, tests included. In your report give, for each such sentence under
+points 1 to 5, its source (constant, file:line, or page).
 Done when:
 Requested changes and proportional tests are green; report files and test results.
 ```
