@@ -182,12 +182,16 @@ deploy, and STOP for explicit validation. Exception: pure refactor (justify in t
 ### Grouped deferral of non-blocking remarks (rule R9 (b))
 This is the behaviour of the Foundry skills in every repository where the plugin is
 installed (maintainer decision of 2026-10-10); it is recorded as rule R9 in the Foundry
-monorepo's `AGENTS.md` / `CLAUDE.md`, and this skill's text is what applies it.
+monorepo's `AGENTS.md` / `CLAUDE.md` and decided by its PAT-ADR-0018, and this skill's
+text is what applies it.
 After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
-non-blocking remarks are not corrected in the PR. Put them in one follow-up issue per
-batch (per Epic or per series of issues), not one per PR. Create it through
-`foundry:intake` before the merge and cite it in the PR description. Three cases are
-still corrected before the merge and then fully re-reviewed:
+non-blocking remarks are not corrected in the PR. The remarks deferred from the issues
+of an Epic go to a companion Epic, named `Nits` followed by the identifier of the origin
+Epic (`Nits <ORIGIN-EPIC-ID>`). Give the two Epics no tracker link: no parent, no
+dependency, no relation. What relates them is that name and a mention in text, nothing
+else. Inside the companion Epic, put the remarks in a follow-up issue, one per batch or
+per theme, never one per PR, and cite that issue in the PR description before the merge.
+Three cases are still corrected before the merge and then fully re-reviewed:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -195,19 +199,44 @@ still corrected before the merge and then fully re-reviewed:
 - a missing or generic documentation status under FOUNDRY-ADR-0018 (rule R5 where the
   repository's contract carries it).
 
-Inside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016) the coordinator does not
-create the follow-up issue on its own authority: the maintainer creates or approves it.
-Without that, correct the remarks before the merge and re-review in full, as before. This
-is an operating choice of rule R9, not an ADR decision. Whether a remark is rightly
-classed as deferrable is judged by the reviewer.
+There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
+correct its non-blocking remarks before the merge and re-review in full. Whether a remark
+is rightly classed as deferrable is judged by the reviewer.
 
-Outside an Epic campaign, creating the follow-up issue and adding the deferred remarks to
-it are authorized in advance by this skill's rule, in every repository where the plugin
-is installed (maintainer decision of 2026-10-10), as an
-exception to the confirmation `foundry:intake` requires before a write: perform them
-without asking and report the follow-up issue ID and the number of deferred remarks in the
-PR description. Nothing else is pre-authorized: the follow-up issue is not started
-without the maintainer, and every other intake write keeps its confirmation.
+Three writes are authorized in advance by this skill's rule, without human confirmation,
+inside and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every
+repository where the plugin is installed, as an exception to the confirmation
+`foundry:intake` requires before a write:
+
+1. create the companion Epic, the first time: `edit create-issue` (command in
+   `foundry:intake`, section 3) with the title `Nits <ORIGIN-EPIC-ID>`, the field
+   `"Type": "Epic"` and no `parent`;
+2. create a follow-up issue in it: `edit create-issue` with `parent` set to the
+   companion Epic;
+3. add deferred remarks to such an issue: `edit comment` (command in `foundry:open-pr`).
+
+Perform them without asking and report them in the PR description: the companion Epic
+when this PR created it, the follow-up issue ID and the number of deferred remarks.
+Nothing else is pre-authorized: the companion Epic and its issues are neither
+prioritized nor started without the maintainer (a human verdict under FOUNDRY-ADR-0014),
+and every other intake write keeps its confirmation.
+
+The rule names no tracker. Its writes are operations of the portable contract
+`docs/tracker-contract.md`, whose table "Core journey" marks both rows below `supported`
+in each of its three provider columns:
+
+- row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`) carries
+  writes 1 and 3;
+- row "Epics/enfants/dépendances: child creation, relations" (`create_issue(parent=…)`,
+  `link(depends-on|blocks|relates)`) carries write 2.
+
+If the tracker refuses one of the three writes (for example a project that has no `Epic`
+type), make no substitute write: correct the remarks of that round before the merge,
+re-review in full, and report the refusal in the PR description. An issue that has no
+origin Epic is not covered by PAT-ADR-0018: what is done with its non-blocking remarks
+stays with the maintainer. Inside an Epic campaign the authorization has no effect yet:
+the campaign coordinator has no issue-creation primitive (`docs/review-rounds.md`,
+"What is not mechanical and what is not coded yet").
 
 The PR description carries one line per review round, kept current through
 `foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):

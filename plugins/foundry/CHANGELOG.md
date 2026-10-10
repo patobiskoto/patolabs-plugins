@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- PAT-139 (PAT-ADR-0018): BEHAVIOUR CHANGE for every repository that uses the plugin.
+  Rule R9 (b) of `AGENTS.md` / `CLAUDE.md` and the `merge-pr`, `intake` and `open-pr`
+  skills now send the non-blocking review remarks deferred from the issues of an Epic to
+  a companion Epic named `Nits <ORIGIN-EPIC-ID>`, which has no tracker link with the
+  origin Epic (no parent, no dependency, no relation), instead of a follow-up issue under
+  the origin Epic. Foundry now makes three tracker writes without asking, inside and
+  outside an Epic campaign: creating the companion Epic the first time, creating a
+  follow-up issue in it (per batch or per theme, never one per PR), and adding deferred
+  remarks to such an issue; the coordinator reports them in the PR description. Nothing
+  else is pre-authorized: the companion Epic and its issues are neither prioritized nor
+  started without the maintainer. The special case "inside an Epic campaign the
+  maintainer creates or approves the follow-up issue" is removed. No second-level
+  deferral: non-blocking remarks on a PR of a companion Epic are corrected before the
+  merge and fully re-reviewed. If the tracker refuses one of the three writes, no
+  substitute write is made and the remarks are corrected before the merge. An issue
+  without an origin Epic is not covered and stays with the maintainer. Not mechanical:
+  no gate checks the companion Epic. Not coded yet: the campaign coordinator has no
+  issue-creation primitive, so inside a campaign the authorization has no effect yet
+  ([review rounds](docs/review-rounds.md)). Six tracker conformance cases added, two per provider on its fake
+  transport: the three writes, and a project where the `Epic` type is unavailable. Text and tests only; no change under `tooling/`.
 - PAT-136: new process rule R9 in `AGENTS.md` / `CLAUDE.md` (author checklist for
   documentation sentences, grouped deferral of non-blocking review remarks to one
   follow-up issue per batch, minimal correction commits), written into the
@@ -12,7 +32,8 @@
   that uses the plugin (maintainer decision of 2026-10-10): after a fully validated
   review round, non-blocking remarks are deferred to a batch follow-up issue, and outside
   an Epic campaign the two intake writes for it (follow-up issue and its remarks) are made
-  without asking. Text and
+  without asking (where the remarks go and which writes are made without asking are
+  replaced by the PAT-139 entry above). Text and
   tests only; no change under `tooling/`.
 
 ## 1.1.0 — 2026-10-10

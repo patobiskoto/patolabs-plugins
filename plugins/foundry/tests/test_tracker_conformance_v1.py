@@ -24,9 +24,17 @@ import pytest
 
 from foundry import config, registry, write
 from foundry.models import Adr, Issue, Link, Project
+from foundry.trackers.base import TrackerCapabilityUnavailableError
 from foundry.trackers.ghprojects import GitHubProjectsTracker
-from foundry.trackers.linear import LinearTracker
+from foundry.trackers.ghprojects import _Binding as GitHubBinding
+from foundry.trackers.ghprojects import _CreateCandidate as GitHubCreateCandidate
+from foundry.trackers.ghprojects import _FieldBinding as GitHubFieldBinding
+from foundry.trackers.linear import LinearBindingError, LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker
+
+from test_linear_tracker import LinearWire
+from test_linear_tracker import PROJECT as LINEAR_PROJECT
+from test_linear_tracker import connection as linear_connection
 
 
 pytestmark = pytest.mark.tracker_conformance
@@ -537,3 +545,427 @@ def test_ghprojects_reparent_conformance_uses_reciprocal_readback(
             "issue.link_write",
         )
     ]
+
+
+# --- PAT-139 / PAT-ADR-0018: the three writes of the companion Epic ------------------
+# AGENTS.md#R9 (b) authorizes three tracker writes in advance: create the companion
+# Epic, create a follow-up issue under it, add deferred remarks to that issue. Each test
+# below performs exactly these three writes through the portable ``Tracker`` operations
+# (``create_issue`` with ``Type: Epic`` and no parent, ``create_issue(parent=...)``,
+# ``add_comment``) on one provider's fake transport, and checks that the origin Epic is
+# never written and never linked. They prove that the adapters carry the writes on a
+# fake transport; they prove nothing about a real provider project (for example whether
+# a YouTrack project's Type field has an ``Epic`` value).
+_COMPANION_FIELDS = {"Type": "Epic", "State": "backlog"}
+_FOLLOW_UP_BODY = "- [ ] deferred remarks corrected"
+_DEFERRED_REMARK = "deferred non-blocking remark"
+
+
+class _YouTrackCompanionWire:
+    """Stateful REST double: issues, the subtask command and comments."""
+
+    def __init__(self, *, epic_type_exists: bool = True):
+        self.epic_type_exists = epic_type_exists
+        self.posts: list[tuple[str, object]] = []
+        self.rows = {"T-1": self._row("T-1", "origin Epic", "", [
+            {"name": "Type", "value": {"name": "Epic"}},
+            {"name": "State", "value": {"name": "in-progress"}},
+        ])}
+
+    @staticmethod
+    def _row(identifier, summary, description, custom_fields):
+        return {
+            "idReadable": identifier, "summary": summary, "description": description,
+            "created": 1, "updated": 1, "project": {"id": "0-1", "shortName": "T"},
+            "customFields": custom_fields, "links": [], "comments": [],
+        }
+
+    def __call__(self, method, path, body=None, fields=None, top=None):
+        if method == "GET" and path.startswith("/issues/"):
+            return copy.deepcopy(self.rows[path.split("/")[2]])
+        self.posts.append((path, copy.deepcopy(body)))
+        if method == "POST" and path == "/issues":
+            custom = [
+                {"name": field["name"], "value": field["value"]}
+                for field in body["customFields"]
+            ]
+            if not self.epic_type_exists and any(
+                field == {"name": "Type", "value": {"name": "Epic"}} for field in custom
+            ):
+                raise RuntimeError("synthetic provider refusal: unknown Type value")
+            identifier = f"T-{len(self.rows) + 1}"
+            self.rows[identifier] = self._row(
+                identifier, body["summary"], body["description"], custom,
+            )
+            return {"idReadable": identifier}
+        if method == "POST" and path == "/commands":
+            role, _, parent = body["query"].rpartition(" ")
+            assert role == "subtask of"
+            link_type = {
+                "name": "Subtask", "sourceToTarget": "parent for",
+                "targetToSource": "subtask of",
+            }
+            for issue in body["issues"]:
+                child = issue["idReadable"]
+                self.rows[child]["links"].append({
+                    "direction": "INWARD", "linkType": link_type,
+                    "issues": [{"idReadable": parent}],
+                })
+                self.rows[parent]["links"].append({
+                    "direction": "OUTWARD", "linkType": link_type,
+                    "issues": [{"idReadable": child}],
+                })
+            return {}
+        if method == "POST" and path.endswith("/comments"):
+            self.rows[path.split("/")[2]]["comments"].append(
+                {"text": body["text"], "created": 2},
+            )
+            return {"id": "comment-1"}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+
+def _youtrack_companion_tracker(monkeypatch, wire):
+    tracker = object.__new__(YouTrackTracker)
+    tracker._req = wire
+    monkeypatch.setattr(registry, "load", lambda: {"youtrack": {}})
+    return tracker
+
+
+def test_youtrack_companion_epic_child_issue_and_comment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    wire = _YouTrackCompanionWire()
+    tracker = _youtrack_companion_tracker(monkeypatch, wire)
+    project = Project(key="T", id="0-1")
+    origin_before = copy.deepcopy(wire.rows["T-1"])
+
+    companion = tracker.create_issue(project, "Nits T-1", "", fields=_COMPANION_FIELDS)
+    follow_up = tracker.create_issue(
+        project, "Deferred remarks, batch 1", _FOLLOW_UP_BODY, parent=companion.id,
+    )
+    tracker.add_comment(follow_up.id, _DEFERRED_REMARK, project=project)
+
+    assert (companion.id, companion.type, companion.links) == ("T-2", "Epic", [])
+    assert tracker.get_issue(companion.id).links == [
+        Link("parent-of", "outward", follow_up.id),
+    ]
+    final = tracker.get_issue(follow_up.id)
+    assert final.links == [Link("subtask-of", "inward", companion.id)]
+    assert [comment["text"] for comment in final.comments] == [_DEFERRED_REMARK]
+    assert wire.rows["T-1"] == origin_before
+    assert [path for path, _body in wire.posts] == [
+        "/issues", "/issues", "/commands", "/issues/T-3/comments",
+    ]
+    assert wire.posts[0][1]["customFields"] == [
+        {"name": "Type", "$type": "SingleEnumIssueCustomField",
+         "value": {"name": "Epic"}},
+        {"name": "State", "$type": "StateIssueCustomField",
+         "value": {"name": "backlog"}},
+    ]
+
+
+def test_youtrack_companion_epic_refusal_leaves_no_later_write(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # The YouTrack adapter does not check that the project's Type field has an ``Epic``
+    # value before it posts. The refusal below is SIMULATED by the double: what a real
+    # project answers is not verified. The test shows only that the adapter then makes
+    # no further write, which is what the fallback of R9 (b) relies on.
+    wire = _YouTrackCompanionWire(epic_type_exists=False)
+    tracker = _youtrack_companion_tracker(monkeypatch, wire)
+    origin_before = copy.deepcopy(wire.rows["T-1"])
+
+    with pytest.raises(RuntimeError, match="synthetic provider refusal"):
+        tracker.create_issue(
+            Project(key="T", id="0-1"), "Nits T-1", "", fields=_COMPANION_FIELDS,
+        )
+
+    assert [path for path, _body in wire.posts] == ["/issues"]
+    assert wire.rows == {"T-1": origin_before}
+
+
+class _LinearCompanionWire(LinearWire):
+    """The existing GraphQL double, taught the ``Epic`` type label."""
+
+    _TYPE_LABEL = {"id": "label-epic", "name": "Epic display"}
+
+    def _apply(self, issue, values):
+        values = dict(values)
+        label_ids = values.pop("labelIds", None)
+        super()._apply(issue, values)
+        if label_ids is not None:
+            assert label_ids == [self._TYPE_LABEL["id"]]
+            issue["labels"] = linear_connection([dict(self._TYPE_LABEL)])
+
+    def mutations(self) -> list[str]:
+        return [
+            name
+            for document, _variables in self.calls
+            for name in ("IssueCreate", "IssueUpdate", "IssueRelationCreate",
+                         "CommentCreate")
+            if f"FoundryLinear{name}" in document
+        ]
+
+
+def _linear_companion_tracker(type_label_ids: dict[str, str]):
+    wire = _LinearCompanionWire()
+    project = Project(
+        key=LINEAR_PROJECT.key,
+        id=LINEAR_PROJECT.id,
+        extra={**LINEAR_PROJECT.extra, "type_label_ids": type_label_ids},
+    )
+    tracker = LinearTracker(token="synthetic-token-never-sent", transport=wire)
+    tracker._activate(project)
+    return tracker, wire, project
+
+
+def test_linear_companion_epic_child_issue_and_comment():
+    tracker, wire, project = _linear_companion_tracker(
+        {"Epic": "label-epic", "Feature": "label-feature"},
+    )
+    origin_before = copy.deepcopy(wire.issues["LIN-1"])
+
+    companion = tracker.create_issue(project, "Nits LIN-1", "", fields=_COMPANION_FIELDS)
+    follow_up = tracker.create_issue(
+        project, "Deferred remarks, batch 1", _FOLLOW_UP_BODY, parent=companion.id,
+    )
+    tracker.add_comment(follow_up.id, _DEFERRED_REMARK, project=project)
+
+    assert (companion.id, companion.type, companion.links) == ("LIN-3", "Epic", [])
+    assert tracker.get_issue(companion.id).links == [
+        Link("parent-of", "outward", follow_up.id),
+    ]
+    assert tracker.get_issue(follow_up.id).links == [
+        Link("subtask-of", "inward", companion.id),
+    ]
+    assert [
+        comment["body"] for comment in wire.issues[follow_up.id]["comments"]["nodes"]
+    ] == [_DEFERRED_REMARK]
+    assert wire.issues["LIN-1"] == origin_before
+    assert wire.mutations() == ["IssueCreate", "IssueCreate", "CommentCreate"]
+
+
+def test_linear_companion_epic_without_type_mapping_refuses_before_any_write():
+    # A Linear binding whose ``type_label_ids`` has no ``Epic`` entry: the adapter
+    # refuses in ``_desired_update`` before the create mutation.
+    tracker, wire, project = _linear_companion_tracker({"Feature": "label-feature"})
+    issues_before = copy.deepcopy(wire.issues)
+
+    with pytest.raises(LinearBindingError, match="type_unmapped"):
+        tracker.create_issue(project, "Nits LIN-1", "", fields=_COMPANION_FIELDS)
+
+    assert wire.mutations() == []
+    assert wire.issues == issues_before
+
+
+_GH_BINDING = GitHubBinding(
+    owner="acme", number=7, project_id="PVT-1", repo="acme/widgets", key="GH",
+)
+_GH_PROJECT = Project(key="GH", id="PVT-1")
+_GH_API = f"https://api.github.com/repos/{_GH_BINDING.repo}"
+
+
+class _GitHubCompanionProvider:
+    """Stateful double of the adapter's provider seams (REST, Project item, fields).
+
+    Same seams as ``_install_create_harness`` in ``test_ghprojects_tracker.py``, with
+    several issues instead of one. ``_write_catalog``, the create-intent journal, the
+    create/resume sequence and the parent pairing checks stay the adapter's own code.
+    """
+
+    def __init__(self, *, type_options: tuple[str, ...]):
+        self.type_options = type_options
+        self.writes: list[tuple[str, str]] = []
+        self.comments: dict[int, list[dict]] = {}
+        self.issues = {1: {
+            "title": "origin Epic", "body": "", "item": "item-1", "type": "Epic",
+            "state": "in-progress", "parent": None,
+        }}
+
+    def install(self, monkeypatch, tracker):
+        for name in (
+            "_authoritative_binding", "verify_project_identity", "_field_catalog",
+            "_create_candidates", "_rest_write", "_partial_project_issue",
+            "_add_project_item", "_set_project_field", "_hydrate_issue",
+            "_create_parent_snapshot", "_native_issue", "_item_coordinate", "_rows",
+        ):
+            monkeypatch.setattr(tracker, name, getattr(self, name))
+
+    def _issue(self, number: int) -> Issue:
+        row = self.issues[number]
+        links = [
+            Link("parent-of", "outward", f"GH-{child}")
+            for child, other in sorted(self.issues.items())
+            if other["parent"] == number
+        ]
+        if row["parent"] is not None:
+            links.append(Link("subtask-of", "inward", f"GH-{row['parent']}"))
+        return Issue(
+            id=f"GH-{number}", title=row["title"], body=row["body"],
+            type=row["type"], state=row["state"], links=links,
+        )
+
+    @staticmethod
+    def _authoritative_binding(_project):
+        return _GH_BINDING
+
+    @staticmethod
+    def verify_project_identity(_project):
+        return True
+
+    def _field_catalog(self, _binding):
+        return {
+            "type": GitHubFieldBinding(
+                "type", "Foundry type", "SINGLE_SELECT",
+                {option: f"type-{option}" for option in self.type_options},
+            ),
+            "state": GitHubFieldBinding(
+                "state", "Foundry normalized state", "SINGLE_SELECT",
+                {"backlog": "state-backlog"},
+            ),
+        }
+
+    def _create_candidates(self, _binding, title, body):
+        return [
+            GitHubCreateCandidate(f"GH-{number}", number, 1000 + number, f"node-{number}")
+            for number, row in sorted(self.issues.items())
+            if (row["title"], row["body"]) == (title, body)
+        ]
+
+    def _rest_write(self, method, path, payload, operation):
+        self.writes.append((method, path))
+        prefix = f"repos/{_GH_BINDING.repo}/issues"
+        if path == prefix:
+            number = len(self.issues) + 1
+            self.issues[number] = {
+                "title": payload["title"], "body": payload["body"], "item": None,
+                "type": None, "state": None, "parent": None,
+            }
+            return {
+                "id": 1000 + number, "number": number, "node_id": f"node-{number}",
+                "title": payload["title"], "body": payload["body"], "labels": [],
+                "repository_url": _GH_API, "url": f"{_GH_API}/issues/{number}",
+                "html_url": f"https://github.com/{_GH_BINDING.repo}/issues/{number}",
+            }
+        number = int(path.removeprefix(f"{prefix}/").split("/")[0])
+        if path.endswith("/sub_issues"):
+            assert payload["replace_parent"] is False
+            self.issues[payload["sub_issue_id"] - 1000]["parent"] = number
+            return {}
+        if path.endswith("/comments"):
+            rows = self.comments.setdefault(number, [])
+            rows.append({"id": len(rows) + 1, "body": payload["body"]})
+            return {**rows[-1], "issue_url": f"{_GH_API}/issues/{number}"}
+        raise AssertionError((method, path, payload, operation))
+
+    def _partial_project_issue(self, _binding, candidate):
+        row = self.issues[candidate.number]
+        if row["item"] is None:
+            return None
+        return row["item"], Issue(
+            id=candidate.issue_id, title=row["title"], body=row["body"],
+            type=row["type"], state=row["state"],
+        )
+
+    def _add_project_item(self, _binding, content_id):
+        number = int(content_id.removeprefix("node-"))
+        self.writes.append(("GRAPHQL", f"addProjectV2ItemById:{number}"))
+        self.issues[number]["item"] = f"item-{number}"
+        return f"item-{number}"
+
+    def _set_project_field(self, item_id, _project_id, field, value):
+        number = int(item_id.removeprefix("item-"))
+        self.writes.append(("GRAPHQL", f"field:{number}:{field.id}={value}"))
+        self.issues[number][field.id] = value
+
+    def _hydrate_issue(self, issue, _binding):
+        return self._issue(int(issue.id.removeprefix("GH-")))
+
+    def _create_parent_snapshot(self, issue_id, _binding):
+        number = int(issue_id.removeprefix("GH-"))
+        return number, self._issue(number)
+
+    def _native_issue(self, issue_id, _binding, _operation):
+        number = int(issue_id.removeprefix("GH-"))
+        return number, 1000 + number
+
+    def _item_coordinate(self, issue_id, _binding):
+        number = int(issue_id.removeprefix("GH-"))
+        return self.issues[number]["item"], f"node-{number}"
+
+    def _rows(self, path, _operation):
+        number = int(path.split("/issues/")[1].split("/")[0])
+        return copy.deepcopy(self.comments.get(number, []))
+
+
+def test_ghprojects_companion_epic_child_issue_and_comment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    provider = _GitHubCompanionProvider(type_options=("Task", "Epic"))
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    provider.install(monkeypatch, tracker)
+    origin_before = copy.deepcopy(provider.issues[1])
+
+    companion = tracker.create_issue(
+        _GH_PROJECT, "Nits GH-1", "", fields=_COMPANION_FIELDS,
+    )
+    follow_up = tracker.create_issue(
+        _GH_PROJECT, "Deferred remarks, batch 1", _FOLLOW_UP_BODY, parent=companion.id,
+    )
+    tracker.add_comment(follow_up.id, _DEFERRED_REMARK, project=_GH_PROJECT)
+
+    assert (companion.id, companion.type, companion.links) == ("GH-2", "Epic", [])
+    assert (follow_up.id, follow_up.type) == ("GH-3", "Task")
+    assert follow_up.links == [Link("subtask-of", "inward", "GH-2")]
+    assert provider._issue(2).links == [Link("parent-of", "outward", "GH-3")]
+    assert provider.comments == {3: [{"id": 1, "body": _DEFERRED_REMARK}]}
+    assert provider.issues[1] == origin_before
+    prefix = f"repos/{_GH_BINDING.repo}/issues"
+    assert provider.writes == [
+        ("POST", prefix),
+        ("GRAPHQL", "addProjectV2ItemById:2"),
+        ("GRAPHQL", "field:2:type=Epic"),
+        ("GRAPHQL", "field:2:state=backlog"),
+        ("POST", prefix),
+        ("GRAPHQL", "addProjectV2ItemById:3"),
+        ("GRAPHQL", "field:3:type=Task"),
+        ("POST", f"{prefix}/2/sub_issues"),
+        ("POST", f"{prefix}/3/comments"),
+    ]
+
+
+def test_ghprojects_companion_epic_without_type_option_refuses_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    # A Project whose "Foundry type" field has no ``Epic`` option: the adapter's own
+    # ``_write_catalog`` refuses before the REST issue is created.
+    provider = _GitHubCompanionProvider(type_options=("Task",))
+    tracker = GitHubProjectsTracker(state_dir=tmp_path)
+    provider.install(monkeypatch, tracker)
+    issues_before = copy.deepcopy(provider.issues)
+
+    with pytest.raises(TrackerCapabilityUnavailableError, match="field_option:type:Epic"):
+        tracker.create_issue(_GH_PROJECT, "Nits GH-1", "", fields=_COMPANION_FIELDS)
+
+    assert provider.writes == []
+    assert provider.issues == issues_before
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_companion_epic_writes_have_one_conformance_case_per_v1_provider():
+    manifest = _load(MANIFEST_PATH)
+    contract = _load(CONTRACT_PATH)
+    providers = {
+        name for name, provider in contract["providers"].items()
+        if provider.get("v1_core") is True
+    }
+    cases = {case["id"]: case for case in manifest["cases"]}
+
+    assert providers == {"youtrack", "linear", "ghprojects"}
+    for provider in providers:
+        writes = cases[f"{provider}-companion-epic-writes"]
+        assert writes["providers"] == [provider]
+        assert writes["operations"] == [
+            "frame-intake-groom-create", "epics-children-creation", "mid-flight-comment",
+        ]
+        assert cases[f"{provider}-companion-epic-refusal"]["providers"] == [provider]

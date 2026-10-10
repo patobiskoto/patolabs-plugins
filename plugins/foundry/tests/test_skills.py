@@ -140,36 +140,77 @@ def test_merge_pr_applies_r9_to_every_correction_commit_including_the_coordinato
     assert "including one written by the coordinator itself" in text
 
 
+def _merge_pr_deferral_section() -> str:
+    raw = _skill_text("merge-pr")
+    return _flat(raw[raw.index("### Grouped deferral"):raw.index("### 4. Merge")])
+
+
 def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
-    text = _flat(_skill_text("merge-pr"))
-    assert "one follow-up issue per batch" in text
-    assert "not one per PR" in text
-    assert "through `foundry:intake` before the merge" in text
-    assert "cite it in the PR description" in text
+    text = _merge_pr_deferral_section()
     assert 'marks "fix before merge"' in text
     assert "a page frozen after publication" in text
     assert "missing or generic documentation status" in text
-    # campaign: the coordinator does not create the follow-up on its own authority
-    assert "does not create the follow-up issue on its own authority" in text
-    assert "re-review in full" in text
-    # standing authorization outside an Epic campaign: two writes, nothing else
-    assert "authorized in advance by this skill's rule" in text
-    assert "every repository where the plugin is installed" in text
     assert "recorded as rule R9 in the Foundry monorepo" in text
-    assert "without asking and report the follow-up issue ID" in text
-    assert "every other intake write keeps its confirmation" in text
+    assert "cite that issue in the PR description before the merge" in text
     # the rule is read after the review and before the merge command
     flat_raw = _skill_text("merge-pr")
     assert (flat_raw.index("### Grouped deferral") < flat_raw.index("### 4. Merge")
             < flat_raw.index("### Correction commits"))
 
 
-def test_intake_points_to_the_standing_authorization_of_the_two_writes():
+# PAT-139 / PAT-ADR-0018. Presence only, like the PAT-136 tests above.
+def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_writes():
+    text = _merge_pr_deferral_section()
+    assert "PAT-ADR-0018" in text
+    assert "named `Nits` followed by the identifier of the origin Epic" in text
+    assert "no tracker link: no parent, no dependency, no relation" in text
+    assert "one per batch or per theme, never one per PR" in text
+    # same scope as R9 and intake: inside and outside a campaign, every repository
+    assert ("Three writes are authorized in advance by this skill's rule, without human "
+            "confirmation, inside and outside an Epic campaign (FOUNDRY-ADR-0013, "
+            "FOUNDRY-ADR-0016), in every repository where the plugin is installed") in text
+    for write in ("1. create the companion Epic, the first time:",
+                  "2. create a follow-up issue in it:",
+                  "3. add deferred remarks to such an issue:"):
+        assert write in text
+    assert "Perform them without asking and report them in the PR description" in text
+    assert "neither prioritized nor started without the maintainer" in text
+    assert "every other intake write keeps its confirmation" in text
+    # no second-level deferral
+    assert ("when the PR belongs to an issue of a companion Epic, correct its non-blocking "
+            "remarks before the merge and re-review in full") in text
+    # the campaign special case of PAT-136 is gone
+    assert "creates or approves" not in text
+    assert "on its own authority" not in text
+    assert "make no substitute write" in text
+    assert "An issue that has no origin Epic is not covered by PAT-ADR-0018" in text
+
+
+def test_merge_pr_deferral_names_no_tracker_and_cites_the_portable_contract_rows():
+    text = _merge_pr_deferral_section()
+    for name in ("YouTrack", "Linear", "GitHub", "ghprojects", "DevHub"):
+        assert name not in text
+    assert "`docs/tracker-contract.md`" in text
+    assert 'row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`)' in text
+    assert ('row "Epics/enfants/dépendances: child creation, relations" '
+            "(`create_issue(parent=…)`, `link(depends-on|blocks|relates)`)") in text
+    # the commands the three writes point to exist in the skills they name
+    assert "edit create-issue" in _skill_text("intake")
+    assert "edit comment" in _skill_text("open-pr")
+
+
+def test_intake_points_to_the_standing_authorization_of_the_three_writes():
     text = _flat(_skill_text("intake"))
-    assert "authorizes in advance, in every repository where the plugin is installed, outside an Epic campaign" in text
+    assert ("authorizes in advance, inside and outside an Epic campaign, in every "
+            "repository where the plugin is installed") in text
     assert "`foundry:merge-pr`" in text
     assert "repository that carries it" not in text
-    assert "creating the batch follow-up issue" in text
+    assert "except for the three writes" in text
+    assert "creating the companion Epic of an origin Epic" in text
+    assert "with no tracker link to it" in text
+    assert "creating a follow-up issue in that companion Epic" in text
+    assert "adding deferred non-blocking remarks to such an issue" in text
+    assert "Every other write keeps its confirmation" in text
 
 
 def test_merge_pr_writes_the_per_round_pr_description_line_format():
@@ -181,6 +222,7 @@ def test_merge_pr_writes_the_per_round_pr_description_line_format():
 def test_open_pr_cites_the_follow_up_issue_in_the_description():
     text = _flat(_skill_text("open-pr"))
     assert "cites the follow-up issue" in text
+    assert "with the companion Epic when this PR's deferral created it" in text
 
 
 def test_fix_before_merge_mark_is_output_only_and_leaves_the_verdict_unchanged():

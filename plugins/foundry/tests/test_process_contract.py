@@ -91,14 +91,154 @@ def test_process_contract_states_r9_checklist_deferral_and_minimal_corrections()
                   "3. A rule, threshold or quantity", "4. A comparison names",
                   "5. A documented procedure", "6. No proper name"):
         assert point in text
-    assert "one follow-up issue per batch" in flat
-    assert "through `foundry:intake` before the merge" in flat
     assert 'marks "fix before merge"' in flat
+    assert "a remark on a page frozen after publication" in flat
+    assert "a missing or generic documentation status under R5" in flat
     assert "(c) Correction commits" in text
     assert "What only the reviewer can judge" in text
-    assert "gives in advance the confirmation that `foundry:intake` requires" in flat
-    assert "exactly two writes" in flat
     assert "in every repository where the plugin is installed, by the maintainer's decision of 2026-10-10" in flat
     assert "every other intake write keeps its confirmation" in flat
     assert "is seen by any gate" in flat
     assert (REPOSITORY_ROOT / "CLAUDE.md").read_bytes() == (REPOSITORY_ROOT / "AGENTS.md").read_bytes()
+
+
+_TOOLING = REPOSITORY_ROOT / "plugins" / "foundry" / "tooling" / "foundry"
+# (file, text that must exist in it): a citation is a file plus a symbol, never a line.
+_R9_CODE_CITATIONS = (
+    ("campaign_runtime.py", "_MUTATING_STEPS = frozenset("),
+    ("campaign_coordinator.py", "class CampaignPipeline(Protocol):"),
+    ("epic_preview.py", "def preview_epic("),
+    ("epic_preview.py", 'getattr(tracker, "epic_subgraph_supported", False)'),
+    ("trackers/base.py", "epic_subgraph_supported: bool = False"),
+    ("trackers/devhub.py", "epic_subgraph_supported = True"),
+)
+_PORTABILITY_CODE_CITATIONS = (
+    ("trackers/youtrack.py", "def _cf_write("),
+    ("trackers/linear.py", 'LinearBindingError("type_unmapped")'),
+    ("trackers/ghprojects.py", "def _write_catalog("),
+    ("trackers/ghprojects.py", 'f"field_option:{semantic}:{value}"'),
+)
+
+
+def _tooling_text(relative_path):
+    return (_TOOLING / relative_path).read_text(encoding="utf-8")
+
+
+def _assert_campaign_facts(flat):
+    """What the cited symbols contain, read from the code rather than from a line."""
+    runtime = _tooling_text("campaign_runtime.py")
+    declaration = next(line for line in runtime.splitlines()
+                       if line.startswith("_MUTATING_STEPS = frozenset("))
+    steps = ("start", "open-pr", "merge", "close-epic", "sync-parent-acceptance")
+    assert sorted(declaration.split("{")[1].split("}")[0].replace('"', "").split(", ")) == sorted(steps)
+    for step in steps:
+        assert f"`{step}`" in flat
+    for module in sorted(_TOOLING.glob("campaign_*.py")):
+        source = module.read_text(encoding="utf-8")
+        assert "create_issue" not in source and "create-issue" not in source, module.name
+    adapters = [path.name for path in sorted((_TOOLING / "trackers").glob("*.py"))
+                if "epic_subgraph_supported = True" in path.read_text(encoding="utf-8")]
+    assert adapters == ["devhub.py"]
+
+
+def _r9_deferral_rule() -> str:
+    """Rule R9 (b) alone: from its heading to the heading of (c)."""
+    text = _repo_text("AGENTS.md")
+    return " ".join(text[text.index("**(b) "):text.index("**(c) ")].split())
+
+
+# PAT-139 / PAT-ADR-0018. Presence only: these tests prove that the rule is written,
+# not that anyone follows it.
+def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_three_standing_writes():
+    rule = _r9_deferral_rule()
+    assert "(PAT-ADR-0018)" in rule
+    assert "named `Nits` followed by the identifier of the origin Epic" in rule
+    assert "no tracker link between them: no parent, no dependency, no relation" in rule
+    assert "one per batch or per theme, never one per PR" in rule
+    assert ("Three writes are authorized in advance, without human confirmation, inside "
+            "and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every "
+            "repository where the plugin is installed") in rule
+    for write in ("1. create the companion Epic, the first time;",
+                  "2. create a follow-up issue in it;",
+                  "3. add deferred remarks to such an issue."):
+        assert write in rule
+    assert "The coordinator reports these writes in the PR description" in rule
+    assert "neither prioritized nor started without the maintainer" in rule
+    # no second-level deferral
+    assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
+            "companion Epic are corrected before the merge and then fully re-reviewed") in rule
+    # the case the decision does not cover is named, not invented
+    assert "An issue that has no origin Epic is not covered" in rule
+    assert "the coordinator makes no substitute write" in rule
+
+
+def test_r9_no_longer_states_the_campaign_special_case_anywhere_in_the_repository():
+    gone = ("maintainer creates or approves", "on its own authority", "exactly two writes",
+            "one follow-up issue per batch", "batch follow-up issue",
+            "outside an Epic campaign, creating")
+    pages = [REPOSITORY_ROOT / "AGENTS.md", REPOSITORY_ROOT / "CLAUDE.md"]
+    plugin = REPOSITORY_ROOT / "plugins" / "foundry"
+    for folder in ("skills", "agents", "docs"):
+        pages.extend(sorted((plugin / folder).rglob("*.md")))
+    assert len(pages) > 20
+    for page in pages:
+        flat = " ".join(page.read_text(encoding="utf-8").split())
+        for phrase in gone:
+            assert phrase not in flat, (page.name, phrase)
+
+
+def test_r9_deferral_names_no_tracker_and_cites_supported_contract_rows():
+    rule = _r9_deferral_rule()
+    for name in ("YouTrack", "Linear", "GitHub", "ghprojects", "DevHub"):
+        assert name not in rule
+    assert "`plugins/foundry/docs/tracker-contract.md`" in rule
+    contract = _repo_text("plugins/foundry/docs/tracker-contract.md")
+    header = next(line for line in contract.splitlines() if line.startswith("| Core journey |"))
+    assert [cell.strip() for cell in header.strip("|").split("|")][2:] == [
+        "YouTrack", "Linear", "ghprojects"]
+    for journey, operations in (
+        ("Frame/intake/groom: create, comment", "`create_issue`, `add_comment`"),
+        ("Epics/enfants/dépendances: child creation, relations",
+         "`create_issue(parent=…)`, `link(depends-on|blocks|relates)`"),
+    ):
+        # the rule cites the row and its operations as the contract writes them
+        assert f'row "{journey}" ({operations})' in rule
+        row = next(line for line in contract.splitlines() if line.startswith(f"| {journey} |"))
+        # the contract escapes the pipes of the operation list inside its table cell
+        cells = [cell.strip() for cell in row.strip("|").replace("\\|", "|").split(" | ")]
+        assert cells[1] == operations
+        assert len(cells) == 5 and all(cell.startswith("supported") for cell in cells[2:])
+
+
+def test_r9_states_what_is_not_mechanical_and_what_is_not_coded_yet():
+    text = _repo_text("AGENTS.md")
+    flat = " ".join(text[text.index("**What only the reviewer can judge.**"):].split())
+    assert ("no gate checks that the companion Epic of (b) exists, that it has no tracker "
+            "link with the origin Epic") in flat
+    assert "**What is not coded yet.**" in flat
+    assert "The campaign coordinator has no issue-creation primitive" in flat
+    assert "inside an Epic campaign the authorization of (b) has no effect yet" in flat
+    # every file cited there still holds the cited symbol (no line number is pinned)
+    for path, symbol in _R9_CODE_CITATIONS:
+        assert f"`plugins/foundry/tooling/foundry/{path}`" in flat
+        assert symbol in _tooling_text(path), (path, symbol)
+    _assert_campaign_facts(flat)
+
+
+def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_writes():
+    page = " ".join(_repo_text("plugins/foundry/docs/review-rounds.md").split())
+    assert "## What is not mechanical and what is not coded yet (PAT-139)" in page
+    assert "No gate checks that the companion Epic exists, that it has no tracker link" in page
+    assert "The campaign coordinator has no issue-creation primitive" in page
+    assert "only the DevHub adapter sets it to `True`" in page
+    assert "inside an Epic campaign the authorization has no effect yet" in page
+    assert "## Portability of the three writes (PAT-139)" in page
+    for provider in ("| YouTrack |", "| Linear |", "| `ghprojects` |"):
+        assert provider in page
+    assert "the provider's answer is not verified" in page
+    for path, symbol in _R9_CODE_CITATIONS + _PORTABILITY_CODE_CITATIONS:
+        assert f"`tooling/foundry/{path}`" in page
+        assert symbol in _tooling_text(path), (path, symbol)
+    for cited in ("`_cf_write`", "`type_unmapped`", "`_write_catalog`", "`field_option:type:Epic`"):
+        assert cited in page
+    _assert_campaign_facts(page)
