@@ -126,6 +126,8 @@ supplémentaire qui n'a pas ce biais.
 - **Fenêtre.** Elle commence à la livraison de la version qui porte le changement et se ferme à la première des deux échéances : **les 10
   premières issues livrées** (fusionnées) après cette version, ou **30 jours**. Le mainteneur peut la prolonger par une décision écrite ; sans
   décision, elle n'est pas prolongée.
+  Début retenu (décision du mainteneur, 2026-10-10, sans changement de cette règle) : la publication de la 1.1.0, voir
+  [`release-1.1.0.md`](../release-1.1.0.md), « Observation windows this version carries ».
 - **Sessions rejouées, choisies sans regarder le résultat.** À la fermeture de la fenêtre, avant tout calcul : les 5 conversations principales
   les plus récentes (date de modification du fichier) parmi les répertoires de projet de l'hôte qui correspondent à ce dépôt et à ses arbres de
   travail, qui ont au moins un journal de sous-agent et au moins une requête dans la fenêtre. Elles sont figées par `--until` à l'instant de la

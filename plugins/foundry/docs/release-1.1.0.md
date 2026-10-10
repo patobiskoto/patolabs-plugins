@@ -4,7 +4,10 @@
 and Codex) declare `1.1.0`. Ship-iOS retains its independent `0.3.0` version (see
 [Ship-iOS](#ship-ios)). The versionless marketplace catalogues continue to point at
 `./plugins/foundry` and `./plugins/ship-ios`. No tag exists for this version at the time
-of writing, and nothing here is a claim that an installed host loads it.
+of writing, and nothing here is a claim that an installed host loads it. The catalogues
+name no ref, so a host that updates is expected to receive this version from the merge
+of the release pull request, before any tag: see
+[Release phases and evidence](#release-phases-and-evidence).
 
 1.1.0 packages what was merged on `main` after the tag `foundry-v1.0.0`: 37 commits,
 PAT-93 to PAT-134, listed [at the end of this page](#merged-issues-in-this-release).
@@ -49,14 +52,22 @@ AGENTS.md R7.
 
 A project mapping that names only the model inherits the tier's new default effort
 `medium`, which Haiku 4.5 does not accept. Resolution fails with `Haiku 4.5 : effort
-rejeté, non applicable (reçu : 'medium', source : default)` and names the fix. A direct
-request for `haiku-4.5` or for the `haiku` alias on that tier fails the same way.
+rejeté, non applicable (reçu : 'medium', source : default)` and names the fix. The same
+holds for a mapping to the short alias, `{"model": "haiku"}`, and for a direct request
+for `haiku-4.5` or `haiku` on a tier whose effort is not null.
+
+The other side of the same change: an `economy` override that names only a non-Haiku
+model (Sonnet, Opus, Fable or another) used to fail on an inherited null effort and now
+resolves, inheriting `medium`. Nothing warns that the effort was not chosen by the
+project.
 
 - **Remedy:** write the whole entry in `.foundry/model-routing.json`:
 
   ```json
   {"mappings": {"claude": {"economy": {"model": "haiku-4.5", "effort": null}}}}
   ```
+
+  For a non-Haiku model-only override, write the intended `effort` next to the model.
 
 ### 3. An effort-only `economy` override now applies to Haiku 5.5
 
@@ -72,7 +83,9 @@ réservé à Haiku 4.5`).
 With `FOUNDRY_CLAUDE_AVAILABLE_MODELS` set and lacking `haiku-5.5`, the `economy`
 target is outside the list and the scout is refused (`RoutingUnavailableError`:
 `Aucun modèle disponible pour le rôle 'scout' sur claude. Niveaux inférieurs essayés :
-economy.`), even on a conforming host. A listed Haiku 4.5 is never substituted. The
+economy.`), even on a conforming host. Every non-gate role whose downward fallback
+reaches `economy` ends the same way, not the scout only. A listed Haiku 4.5 is never
+substituted. The
 example value the 1.0.0 manifest documented, `haiku-4.5,sonnet-5.5,opus-5.5`, is such a
 list.
 
@@ -92,6 +105,9 @@ rejected the profile, every Sonnet 5.5 subagent launch would fail on that host; 
 - 1.0.0 already declared (without enforcing it) a Claude Code minimum of 2.1.284 for
   its retained profile set, which is above 2.1.248. The field was observed honoured
   once, on 2.1.294, for one of the ten profiles.
+- On a pinned route, `claude_invocation_binding()` now also refuses, before any
+  launch, a Sonnet 5.5 profile that does not carry exactly this field, and any other
+  profile that carries it.
 - **Remedy:** update Claude Code. There is no per-project key that removes the field;
   removing it is the product rollback described, step by step, in
   [the PAT-134 page](qualification/pat-134-subagent-cache-1h.md).
@@ -105,7 +121,9 @@ Epic closure audit is present on the issue, when the receipt chain is invalid, o
 the chain holds only advisory `cockpit-evidence` receipts; and it can no longer be
 combined with another field in the same command. A lifecycle write (start, review,
 done) on a natively cancelled issue is now refused first, before any receipt is
-appended. YouTrack, GitHub Projects and DevHub keep their behaviour.
+appended. A read changes too: a natively cancelled issue whose receipt chain is valid
+and non-terminal now reads `dropped` / `aligned` instead of a strict-read conflict.
+YouTrack, GitHub Projects and DevHub keep their behaviour.
 
 - **Remedy:** abandon an issue with `edit transition <ID> dropped <expected-state>`,
   naming the native state it is in (`backlog`, `ready`, `blocked`, `in-progress` or
@@ -113,13 +131,49 @@ appended. YouTrack, GitHub Projects and DevHub keep their behaviour.
   refusal, not a bug to work around: see [the tracker contract](tracker-contract.md)
   and [the Linear page](linear-tracker.md).
 
-### Other stricter behaviours on Linear
+### 7. Cost risk of Haiku 5.5, known and not monitored
+
+PAT-ADR-0016 names this risk; the figures below are the ADR's, read from the provider's
+price page on 2026-10-08, and nothing here is measured. The list price of Haiku 5.5 is
+0.10 / 0.50 USD per million tokens up to 100,000 prompt tokens and 0.50 / 2.50 beyond,
+against 1 / 5 for Haiku 4.5. Beyond 100,000 prompt tokens the list price is therefore
+multiplied by five. It stays below that of Haiku 4.5 per token, but the 1M context
+admits prompts Haiku 4.5 could not receive, and the effort `medium` adds reasoning
+tokens: **the cost per task can go up.**
+
+- **Not monitored:** Foundry telemetry exposes neither tokens nor cost at the host
+  boundary, and the shipped price
+  grid `pricing-v1.json` has no row for `haiku-5.5`. The cost can only be read offline
+  in the host's native session logs. An unknown cost stays unknown, never zero.
+- **Observation rule:** the PAT-ADR-0016 window
+  ([below](#observation-windows-this-version-carries)) reads mechanical delivery
+  signals only. None of them is a cost signal, so the window cannot detect this risk.
+- **Remedy:** the Haiku 4.5 mapping of item 2, per project. The maintainer may also
+  restore the product default at any time without justification.
+
+### Other stricter or changed behaviours on Linear
 
 - A new ADR body is refused before any write when its list or blank-line Markdown is
-  outside the renderings observed on Linear (PAT-94, PAT-101, PAT-103, PAT-106). How to
-  write a body that passes: [linear-adr-body-guide.md](linear-adr-body-guide.md).
-- A rate-limit failure now raises the typed `LinearQuotaExhaustedError`, without retry
-  (PAT-98, PAT-105).
+  outside the renderings observed on Linear (PAT-94, PAT-101, PAT-103, PAT-106). **Any
+  table is refused** (`unsupported table`): the rewrite Linear applies to a table is
+  not modelled, so use a list or a fenced block. How to write a body that passes:
+  [linear-adr-body-guide.md](linear-adr-body-guide.md).
+- **A status change, an issue link, a supersession or an `import_adr` relation is
+  refused on a migrated historical ADR whose body is not modelled** (a list shape
+  outside the whitelist, a table, or another of the refused shapes): its unchanged
+  body is checked as a new body. The refusal comes before any write, where an orphan
+  Document used to be left. Such an ADR can change status, links or supersession only
+  after a body edit. Whether a real stored ADR is in that case is not known by the
+  adapter.
+- A pure read is now retried at most 3 times on a network failure or HTTP
+  500/502/503/504 (waits of 1, 2 and 4 s; with the attempt timeout, about 67 s per
+  call in the worst case). A rate-limit failure raises the typed
+  `LinearQuotaExhaustedError`, without retry (PAT-98, PAT-105).
+- `close-epic` refusals and interruptions print different text: every non-positive
+  node with its cause, and the real closure state (PAT-95, PAT-100, PAT-102). `query
+  issue` `acceptance_coordinates` of a node under override now also carries `pr_url`,
+  `head_sha`, `base_sha` and `review_digest` (PAT-95). A script that parses these
+  outputs must be checked.
 
 ## What 1.1.0 contains since 1.0.0
 
@@ -169,7 +223,8 @@ Exact contracts and limits: [tracker-contract.md](tracker-contract.md) and
 
 ### Offline measurement tools
 
-These read existing session logs and ledgers. They call no model and no provider.
+The two tools of this section read existing session logs and ledgers. They call no
+model and no provider.
 
 - `python3 -m foundry.cost_breakdown` (PAT-129): where premium tokens went in the
   PAT-19 v4 and v5 comparisons, unweighted and weighted by a dated list-price grid:
@@ -179,11 +234,24 @@ These read existing session logs and ledgers. They call no model and no provider
   a simulated other cache lifetime, always as a prudent and a favourable bound:
   [pat-19-cache-ttl-replay-v1.md](qualification/pat-19-cache-ttl-replay-v1.md),
   [pat-133-cache-ttl-interactive-v1.md](qualification/pat-133-cache-ttl-interactive-v1.md).
-- `python3 -m foundry.claude_profile_trial` (PAT-125, PAT-134): the bounded native
-  trial tool, run by hand by the coordinator, never by the tests.
 
 Their figures are simulations at list price on a small number of sessions. They are a
 weight, never a bill, and say nothing about a subscription quota.
+
+### Native trial tool: not offline
+
+`python3 -m foundry.claude_profile_trial` (PAT-125; `--cache-ttl-trial` added by
+PAT-134) **launches a real native Claude Code session**: one `claude -p` parent that
+starts real model subagents (one scout in the default mode, two subagents in the cache
+mode), killed at twenty minutes. It is never offline. It runs on the host's
+authenticated account and therefore consumes that subscription; no API key is passed
+to it. It is run by hand, by the coordinator, under the maintainer's authorisations
+recorded in [pat-125-haiku-55-promotion.md](qualification/pat-125-haiku-55-promotion.md)
+and [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md); the
+tests never launch it and use fakes only.
+It refuses an existing work directory or result file, so a path cannot be replayed.
+`--dry-run` prints the command and launches nothing; it creates nothing under the work
+directory. Installing or upgrading 1.1.0 does not run it.
 
 ### Local-first qualification (PAT-19): concluded, no local role qualified
 
@@ -192,7 +260,10 @@ The package now ships the comparison launcher and its corpus tooling
 PAT-112, PAT-120, PAT-121, PAT-123, PAT-124, PAT-126, PAT-128) and the frozen protocols
 v1 to v5 with their recorded results (PAT-109, PAT-110, PAT-114 to PAT-117, PAT-122,
 PAT-127). These are qualification instruments, not a product feature: 1.1.0 activates
-no local model, profile or default. The decision by use, recorded by PAT-130, is to
+no local model, profile or default. **The launcher is not an offline tool:** its
+campaign modes load local models and launch real cloud sessions (the recorded runs
+did both), and it is run by hand by an operator. Its tests use fake arms only, and
+nothing in Foundry starts it. The decision by use, recorded by PAT-130, is to
 keep the cloud for autonomous local implementation and for local read-only exploration
 (gain not demonstrated), and to abandon the one-call local compression track on this
 corpus without measuring it:
@@ -222,13 +293,19 @@ corpus without measuring it:
 | Change | Rule | Where it is written |
 | --- | --- | --- |
 | Haiku 5.5 / `medium` on `economy` (PAT-ADR-0016) | Window: the first 10 issues delivered by Foundry on the Claude host after the merge of PAT-125 (2026-10-09), or 30 days, whichever comes first. Reference: the last 10 issues delivered before that merge. Immediate trigger: on a conforming host, a `haiku-5.5` profile unavailable or divergent, an executed model other than `claude-haiku-5-5`, or a transmitted effort other than `medium`. Regression trigger: the number of issues with a blocking first-pass review, an escalation or a red CI on the delivered SHA exceeds the reference by at least two. The maintainer may roll back at any time without justification. | PAT-ADR-0016; [pat-125-haiku-55-promotion.md](qualification/pat-125-haiku-55-promotion.md) |
-| 1-hour cache on the Sonnet 5.5 profiles (PAT-134) | Window: from the delivery of the version that carries the change to the first 10 issues delivered after it, or 30 days, whichever comes first; not extended without a written decision. At closure the 5 most recent main conversations are replayed and `rollback_decision` (`cache_ttl_replay.py`) returns `keep`, `roll_back` or `unknown`. It keeps 1 hour only if the smaller bound of `usd.entry_reads_not_expired.delta_usd_exact` is strictly positive; it returns `roll_back` when no Sonnet 5.5 lineage is observed at 1 hour; fewer than 3 contributing sessions is `unknown`. | [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md) |
+| 1-hour cache on the Sonnet 5.5 profiles (PAT-134) | Window: from the publication of 1.1.0 (maintainer's decision of 2026-10-10, below) to the first 10 issues delivered after it, or 30 days, whichever comes first; not extended without a written decision. At closure the 5 most recent main conversations are replayed and `rollback_decision` (`cache_ttl_replay.py`) returns `keep`, `roll_back` or `unknown`. It keeps 1 hour only if the smaller bound of `usd.entry_reads_not_expired.delta_usd_exact` is strictly positive; it returns `roll_back` when no Sonnet 5.5 lineage is observed at 1 hour; fewer than 3 contributing sessions is `unknown`. | [pat-134-subagent-cache-1h.md](qualification/pat-134-subagent-cache-1h.md) |
 
 The PAT-ADR-0016 window counts from the merge of PAT-125, so it is already running
-when 1.1.0 is published. The PAT-134 page starts its window "at the delivery of the
-version that carries the change"; 1.1.0 is the first version that carries it. The
-instant actually retained as its start is recorded on the ticket by the coordinator,
-not decided by this page. The signals of the first window are downstream of
+when 1.1.0 is distributed.
+
+The PAT-134 page starts its window "at the delivery of the version that carries the
+change"; 1.1.0 is the first version that carries it. **The maintainer decided on
+2026-10-10 that this window starts at the publication of 1.1.0**, meaning the moment a
+host can receive the version through an official update, which is the merge of the
+release pull request (phase 2 below). The coordinator records the exact date and
+commit on PAT-135 and PAT-134 after the merge. The rule of the page is not changed.
+
+The signals of the first window are downstream of
 exploration and not causally attributable to it; the second rule has two named biases
 towards `keep` and no margin. Both justify a rollback, not a conclusion about the
 model or the cache.
@@ -251,7 +328,7 @@ changed, so its version does not move. `tooling/foundry/query.py`, which declare
 tag; the Linear adapter it reads through did change (PAT-131: a started-then-dropped
 issue reads as unfinished in a release scope, a never-started one as unavailable). The
 installed Foundry 1.1.0 and Ship-iOS 0.3.0 pair has not been read back, and no bridge
-run against 1.1.0 is claimed; that is a post-publication check.
+run against 1.1.0 is claimed; that is a check of phase 4.
 
 ## Release phases and evidence
 
@@ -262,19 +339,29 @@ run against 1.1.0 is claimed; that is a post-publication check.
    check-runs plus legacy statuses (AGENTS.md R4). PR and merge only through
    `foundry:open-pr` and `foundry:merge-pr` (R1). This page does not supply the review
    or the CI result.
-2. **After the gated merge:** the tag `foundry-v1.1.0` is placed on the exact merged
-   commit, after the maintainer's explicit agreement on the content of this note. An
-   unpushed tag or a branch is not a published release.
-3. **After publication:** update through each host's official manager, without editing
-   any cache; reload or start a new session; read back the host binary and version
-   actually used, the manager listing, the loaded plugin root and both manifest
-   versions at that root, then the installed CLI `doctor`, binding and route reads.
-   The result is recorded on the ticket, each host separately, with any unavailable
-   observation kept as unavailable.
-4. **Freeze:** once published, this page, the migration guide and the `1.1.0`
-   changelog section become frozen release evidence; their digests are added to
-   `tests/fixtures/release-history.json` after publication, as PAT-93 did for 1.0.0.
-   The test that requires the entry is excluded from CI (`historical_fixture`).
+2. **The gated merge is the effective distribution moment.** The marketplace
+   catalogues carry no version and no ref, the documented `marketplace add` command
+   names none, and the public repository exposes only `main` and the tag
+   `foundry-v1.0.0` ([pat-62-final-report.md](qualification/pat-62-final-report.md)).
+   A host that runs an official update after the merge of the release pull request is
+   therefore expected to receive manifests saying `1.1.0`, **before any tag exists**.
+   This is derived from those facts and has **not been observed**. Consequence: the
+   breaking changes above can reach a host from the merge, and anything that must be
+   agreed before hosts can receive 1.1.0 has to be agreed before the merge.
+3. **The tag is the named reference, not the delivery.** `foundry-v1.1.0` is placed on
+   the exact merged commit, after the maintainer's explicit agreement on the content
+   of this note. An unpushed tag or a branch is not a published release.
+4. **After the merge and an official update:** update through each host's official
+   manager, without editing any cache; reload or start a new session; read back the
+   host binary and version actually used, the manager listing, the loaded plugin root,
+   the source revision it resolved and both manifest versions at that root, then the
+   installed CLI `doctor`, binding and route reads. The result is recorded on the
+   ticket, each host separately, with any unavailable observation kept as unavailable.
+5. **Freeze:** once tagged, this page, the migration guide and the `1.1.0` changelog
+   section become frozen release evidence. Their digests are added to
+   `tests/fixtures/release-history.json` **computed from the tagged tree**, through
+   an issue of its own, as PAT-93 did for 1.0.0. The test that requires the entry is
+   excluded from CI (`historical_fixture`).
 
 Nothing is declared "installed" by this diff. A pre-merge source test cannot pass a
 post-installation criterion.
@@ -337,8 +424,9 @@ metadata and documentation only.
 | Release note and migration guide | New: this page and migration-1.1.0.md |
 | Root and Foundry README | Updated: pointers to these two pages, with the "prepared, not yet published" status |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed by PAT-135 and its version does not move; its 1.0.0 compatibility statements remain true as written |
+| `docs/qualification/pat-134-subagent-cache-1h.md` | Updated: one pointer sentence under its window bullet, to the maintainer's decision on the start of the window; its rule is unchanged |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes; R7 already describes the Haiku 5.5 and cache state this release packages |
-| `tests/fixtures/release-history.json` | Not necessary before publication: the `1.1.0` freeze is added after publication (phase 4) |
+| `tests/fixtures/release-history.json` | Not necessary before the tag: the `1.1.0` freeze is computed from the tagged tree, through its own issue (phase 5) |
 
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or
 skill is changed by PAT-135. The mechanical documentation-status gate is not claimed

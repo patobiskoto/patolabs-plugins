@@ -1,7 +1,9 @@
 # Foundry 1.1.0 — upgrade and rollback, 2026-10-10
 
-**Candidate guide; publication and official installed-version checks pending.** Use the
-procedures below after the merged 1.1.0 source is published through the release gates.
+**Candidate guide; publication and official installed-version checks pending.** The
+catalogues name no ref, so an official update is expected to deliver 1.1.0 from the
+merge of the release pull request, before its tag exists (not observed; see the phases
+of the release note). Do the checks below before any update made after that merge.
 Both Foundry manifests must report `1.1.0`; Ship-iOS remains independently `0.3.0`. The
 catalogues have no version key. See [release-1.1.0.md](release-1.1.0.md) for what the
 version contains, its breaking changes and the pre-merge versus post-installation
@@ -11,20 +13,27 @@ evidence. A first installation and a first repository are unchanged: follow
 ## Before upgrading from 1.0.0
 
 Three checks avoid the refusals described in the release note. None of them edits a
-cache.
+cache. They do not cover the cost risk of Haiku 5.5 (item 7 of the release note),
+which Foundry does not monitor.
 
 1. **Claude Code version.** The default `economy` tier needs Claude Code 2.1.293 or
    later. Read the version of the host actually used (`claude --version`; a binary on
    `PATH` is not proof of the desktop executor). Below 2.1.293, update Claude Code
    first, or prepare the Haiku 4.5 mapping of the
-   [rollback section](#return-to-haiku-45-for-one-project).
+   [rollback section](#return-to-haiku-45-for-one-project). A host that stays below
+   2.1.293 with that mapping still loads the Sonnet 5.5 profiles and their cache
+   field: below 2.1.248 the behaviour is unknown and unguarded (item 5 of the release
+   note), and the mapping does nothing about it. Only a host update removes that
+   unknown.
 2. **Project routing policy.** If `.foundry/model-routing.json` has an entry under
    `mappings.claude.economy`, read it against items 2 and 3 of the release note: a
-   model-only `haiku-4.5` entry is refused, and an effort-only entry now applies to
+   model-only `haiku-4.5` or `haiku` entry is refused, a model-only entry naming
+   another model now inherits `medium`, and an effort-only entry now applies to
    Haiku 5.5.
 3. **Availability list.** If `FOUNDRY_CLAUDE_AVAILABLE_MODELS` is set (or the plugin
    option of the same name), add `haiku-5.5` to it. Without it the `economy` tier is
-   unavailable and nothing is substituted.
+   unavailable for the scout and for every non-gate role that falls back to it, and
+   nothing is substituted.
 
 Retain a private snapshot of the non-secret configuration, the registry, the repository
 marker and the routing policy (including its absence) before replacing the package, as
@@ -35,7 +44,7 @@ replacement does not migrate or rewrite it.
 ## Official upgrade
 
 These are the sequences of [migration-1.0.0.md](migration-1.0.0.md), unchanged. A public
-1.0.0 → 1.1.0 upgrade has not been run: it cannot be before publication, and its
+1.0.0 → 1.1.0 upgrade has not been run: it cannot be before the merge, and its
 outcome on each host is recorded on the ticket afterwards.
 
 Claude Code:
@@ -94,7 +103,7 @@ After reload or a new task, retain for each host:
 - The host binary, path and version actually invoked.
 - The official manager listing, the marketplace revision, the loaded skill and hook
   root and both manifest versions at that resolved root. They must identify Foundry
-  `1.1.0` from the published source ref. A manager listing or a source checkout alone
+  `1.1.0` and the source revision it was resolved from. A manager listing or a source checkout alone
   is insufficient when a running session still loaded an old cache; if the loaded ref
   is unavailable, report it unavailable and leave the check open.
 - The installed CLI readbacks above, never this repository's source CLI in their place.
