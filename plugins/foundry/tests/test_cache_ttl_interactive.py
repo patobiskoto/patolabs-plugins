@@ -508,6 +508,11 @@ def _sessions(tmp_path, per_session):
     return ttl.analyse_interactive(mains, subagent_1h_to_5m=True)
 
 
+def _decide(replay):
+    """The rule for the Sonnet 5.5 model, named explicitly: these tests hold whatever ``ROLLBACK_MODEL`` currently is."""
+    return ttl.rollback_decision(replay, SONNET)
+
+
 def _three_sessions(tmp_path, records, count=3):
     return _sessions(tmp_path, [[records]] * count)
 
@@ -538,7 +543,7 @@ def test_the_rollback_rule_reads_the_quantity_without_first_request_repricing(tm
     for bound in ttl.BOUNDS:
         assert float(kept["delta_usd_exact"][bound]) <= usd["bounds"][bound]["delta_usd"] + 1e-6
         assert kept["delta_usd"][bound] == pytest.approx(float(kept["delta_usd_exact"][bound]), abs=1e-6)
-    verdict = ttl.rollback_decision(out)
+    verdict = _decide(out)
     assert verdict["decision"] == decision and verdict["contributing_sessions"] == 3
     if verdict["decision"] == "keep":
         assert usd["result"] == "net_loss"  # keep implies net_loss, not the converse
@@ -552,11 +557,11 @@ def test_the_first_request_repricing_alone_flips_the_sign(tmp_path):
 
 def test_the_floor_counts_contributing_sessions_not_designated_ones(tmp_path):
     two_of_three = _sessions(tmp_path / "a", [[_one_hour_sub(400)], [_one_hour_sub(400)], [_sub(500)]])
-    assert ttl.rollback_decision(two_of_three) == {
+    assert _decide(two_of_three) == {
         "decision": "unknown", "reason": "fewer_contributing_sessions_than_the_minimum", "contributing_sessions": 2}
     one_session_many_logs = _sessions(tmp_path / "b", [[_one_hour_sub(400)] * 3, [_sub(500)], [_sub(500)]])
-    assert ttl.rollback_decision(one_session_many_logs)["decision"] == "unknown"
-    assert ttl.rollback_decision(_three_sessions(tmp_path / "c", _one_hour_sub(400), count=2))["reason"] == \
+    assert _decide(one_session_many_logs)["decision"] == "unknown"
+    assert _decide(_three_sessions(tmp_path / "c", _one_hour_sub(400), count=2))["reason"] == \
         "fewer_designated_sessions_than_the_minimum"
 
 
@@ -564,35 +569,49 @@ def test_an_unpriced_lineage_observed_at_1h_makes_the_decision_unknown(tmp_path)
     day_before_the_grid = dt.datetime(2026, 9, 20, tzinfo=dt.timezone.utc)
     unpriced = [_rec(f"u{n}", 100 * n, w=1000, one_hour=True, base=day_before_the_grid) for n in range(2)]
     out = _sessions(tmp_path, [[_one_hour_sub(400)], [_one_hour_sub(400)], [_one_hour_sub(400), unpriced]])
-    assert ttl.rollback_decision(out) == {"decision": "unknown", "reason": "a_lineage_observed_at_1h_is_not_priced"}
+    assert _decide(out) == {"decision": "unknown", "reason": "a_lineage_observed_at_1h_is_not_priced"}
 
 
 def test_an_unmodified_profile_observed_at_1h_makes_the_decision_unknown(tmp_path):
     other = [_rec("o0", 0, w=1000, one_hour=True, model=OPUS), _rec("o1", 100, r=1000, w=10, one_hour=True, model=OPUS)]
     out = _sessions(tmp_path, [[_one_hour_sub(400)], [_one_hour_sub(400)], [_one_hour_sub(400), other]])
-    assert ttl.rollback_decision(out) == {"decision": "unknown", "reason": "a_lineage_of_another_model_is_observed_at_1h"}
+    assert _decide(out) == {"decision": "unknown", "reason": "a_lineage_of_another_model_is_observed_at_1h"}
 
 
 def test_the_rollback_rule_is_unknown_without_the_option_and_rolls_back_when_the_field_has_no_effect(tmp_path):
     plain = ttl.analyse_interactive([_session(tmp_path / "b", [_rec("m0", 0, w=10, one_hour=True)])])
-    assert ttl.rollback_decision(plain) == {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
-    assert ttl.rollback_decision(_three_sessions(tmp_path / "c", _sub(500))) == {
+    assert _decide(plain) == {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
+    assert _decide(_three_sessions(tmp_path / "c", _sub(500))) == {
         "decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
-    assert ttl.ROLLBACK_MODEL == "claude-sonnet-5-5"
+
+
+def test_the_assumed_asymmetry_no_sonnet_subagent_at_all_rolls_back_while_two_contributing_sessions_are_unknown(tmp_path):
+    """Stated in the PAT-134 page as assumed: sessions that ran no subagent of the model give ``roll_back`` too."""
+    no_subagent_of_the_model = _sessions(tmp_path / "a", [[]] * 3)
+    assert _decide(no_subagent_of_the_model) == {"decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
+    two = _sessions(tmp_path / "b", [[_one_hour_sub(400)], [_one_hour_sub(400)], []])
+    assert _decide(two)["decision"] == "unknown"
+
+
+def test_no_model_carrying_the_field_makes_the_decision_unknown_and_the_default_model_is_the_declared_one(tmp_path):
+    out = _three_sessions(tmp_path, _one_hour_sub(400))
+    assert ttl.rollback_decision(out, None) == {"decision": "unknown", "reason": "no_model_carries_the_field"}
+    assert ttl.rollback_decision(out) == ttl.rollback_decision(out, ttl.ROLLBACK_MODEL)  # None once rolled back
+    assert ttl.ROLLBACK_MODEL in (SONNET, None)
 
 
 def test_the_decision_uses_the_unrounded_quantity_and_the_smaller_bound():
-    lineages = [{"lineage": f"session-0{n}/subagent-01", "kind": "subagent_1h", "model": ttl.ROLLBACK_MODEL,
+    lineages = [{"lineage": f"session-0{n}/subagent-01", "kind": "subagent_1h", "model": SONNET,
                  "usd": {"real_usd": 1.0}} for n in range(1, 4)]
 
     def replay(prudent, favourable):
         return {"subagent_1h_to_5m": {}, "sessions": [{}] * 3, "lineages": lineages, "by_kind_and_model": {
-            f"subagent_1h/{ttl.ROLLBACK_MODEL}": {"usd": {"entry_reads_not_expired": {
+            f"subagent_1h/{SONNET}": {"usd": {"entry_reads_not_expired": {
                 "delta_usd": {"prudent": 0.0, "favourable": 0.0},
                 "delta_usd_exact": {"prudent": prudent, "favourable": favourable}}}}}}
-    assert ttl.rollback_decision(replay("0.0000001", "0.0000002"))["decision"] == "keep"  # 0 < delta < 5e-7: rounds to 0.0
-    assert ttl.rollback_decision(replay("0.5", "0")) ["decision"] == "roll_back"
-    assert ttl.rollback_decision(replay("-0.0000001", "0.5"))["decision"] == "roll_back"  # the smaller bound decides
+    assert _decide(replay("0.0000001", "0.0000002"))["decision"] == "keep"  # 0 < delta < 5e-7: rounds to 0.0
+    assert _decide(replay("0.5", "0")) ["decision"] == "roll_back"
+    assert _decide(replay("-0.0000001", "0.5"))["decision"] == "roll_back"  # the smaller bound decides
 
 
 # --- committed evidence

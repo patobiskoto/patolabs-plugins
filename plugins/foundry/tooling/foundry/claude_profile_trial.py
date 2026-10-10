@@ -44,7 +44,9 @@ of the whole file, ``log_sha256``, to identify it without keeping it). Subagents
 attributed to a profile by their model alias, never by content. ``conforming`` needs everything observed and exact; anything
 not observed is ``unknown``, never conforming. Whether the host drew usage credits (documented to make it ignore ``1h``) is
 not observable here and is recorded as ``unknown``. No test launches it. The coordinator runs it by hand, once, against a commit whose profiles carry the field (the tool records the
-requested value it read, and a profile without it makes the verdict ``not_conforming``).
+requested value it read, and a profile without it makes the verdict ``not_conforming``). Once ``CLAUDE_CACHE_TTL_1H_PINS`` is
+empty (the documented rollback) no pin carries the field: the mode refuses (exit code 2) before resolving or creating anything,
+and the PAT-125 mode of this module is unaffected.
 """
 from __future__ import annotations
 
@@ -80,10 +82,12 @@ TIMEOUT_SECONDS = 20 * 60
 # 5m|1h}`` in a subagent profile, Claude Code 2.1.248 or later.
 CACHE_TTL_TRIAL_SCHEMA = "foundry.pat134-cache-ttl-trial.v1"
 CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION = (2, 1, 248)
+# The modified subject is the pin that carries the field (single definition); the control is an unmodified pin. ``None``
+# once CLAUDE_CACHE_TTL_1H_PINS is emptied (the rollback): the module still imports (the PAT-125 mode lives here) and
+# ``--cache-ttl-trial`` refuses, having nothing to try.
 CACHE_TTL_POLICY = {"version": 1, "mappings": {"claude": {
-    # the modified subject is the pin that carries the field (single definition); the control is an unmodified pin
     "economy": {"model": CLAUDE_CACHE_TTL_1H_PINS[0], "effort": "low"},
-    "balanced": {"model": "opus-5.5", "effort": "medium"}}}}
+    "balanced": {"model": "opus-5.5", "effort": "medium"}}}} if CLAUDE_CACHE_TTL_1H_PINS else None
 # name -> (logical role, capability, expected cacheTtl requested by the profile, cache class expected in the log)
 CACHE_TTL_SUBJECTS = {"modified": ("scout", "readonly", "1h", "write_1h"), "control": ("implementer", "worker", None, "write_5m")}
 CACHE_TTL_LOGICAL = {"scout": "foundry:lupin", "implementer": "foundry:eiffel"}
@@ -198,7 +202,8 @@ def profile_cache_ttl(plugin_root: Path, profile: str) -> str | None:
 @contextlib.contextmanager
 def _policy_root(policy: dict[str, Any]):
     """A temporary directory holding the fixture's project policy, removed afterwards. Everything that can refuse the run
-    is resolved against it BEFORE the work directory is created, so a dry run or a refusal leaves nothing at ``work``
+    is resolved against it BEFORE the work directory is created, so a dry run or a refusal leaves nothing under ``work``
+    (this system temporary directory exists briefly and is removed)
     (PAT-134: a dry run used to create it, and the next real run on that path was then refused)."""
     with tempfile.TemporaryDirectory() as temporary:
         (Path(temporary) / ".foundry").mkdir()
@@ -334,7 +339,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
     binding = claude_invocation_binding(route, CAPABILITY, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused here
     if (route.model, route.effort, binding["transmitted_model"]) != (MODEL, EFFORT, WIRE_MODEL):
         raise TrialError("this checkout does not resolve the fixture to haiku-5.5 / medium")
-    if not args.dry_run:  # nothing is created on disk before every refusal above has been passed
+    if not args.dry_run:  # nothing is created under the work directory before every refusal above has been passed
         _create_fixture(work, POLICY)
         token_file.write_text(token + "\n", encoding="utf-8")
     command = argv(args.claude, parent_prompt(token_file, neutral), session_id, args.parent_model)
@@ -476,7 +481,7 @@ def cache_ttl_verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[s
     failed, open_points = [], []
     for name, states in facts["conformity"].items():
         for key, state in states.items():
-            if state in ("divergent", "below_minimum"):
+            if state == "divergent":  # the host version is recorded, never a failure (documented minimum, not imposed)
                 failed.append(f"{name}.{key}")
             elif state == "unknown":
                 open_points.append(f"{name}.{key}")
@@ -493,6 +498,8 @@ def cache_ttl_verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[s
 
 
 def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt.date | None = None) -> int:
+    if CACHE_TTL_POLICY is None:  # refused before anything is resolved or created
+        raise TrialError("no pin carries experimental.cacheTtl (CLAUDE_CACHE_TTL_1H_PINS is empty): nothing to try")
     work, out = Path(args.work_dir).expanduser().resolve(), Path(args.out).expanduser().resolve()
     if work.exists() or out.exists():
         raise TrialError("the work directory and the result file must not exist: the trial is never replayed")
@@ -513,7 +520,7 @@ def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch,
                               "requested_expected": requested_expected, "expected_class": expected_class}
     if subjects["modified"]["wire"] not in CLAUDE_CACHE_TTL_1H_MODELS:
         raise TrialError("the modified subject is not a pin that carries the field (CLAUDE_CACHE_TTL_1H_PINS)")
-    if not args.dry_run:  # nothing is created on disk before every refusal above has been passed
+    if not args.dry_run:  # nothing is created under the work directory before every refusal above has been passed
         _create_fixture(work, CACHE_TTL_POLICY)
         for file in files:
             file.write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
@@ -561,7 +568,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--claude", default="claude", help="host binary")
     parser.add_argument("--parent-model", default="sonnet", help="model of the parent session (not under trial)")
     parser.add_argument("--projects-dir", default="~/.claude/projects", help="host session logs")
-    parser.add_argument("--dry-run", action="store_true", help="prepare the fixture and print the command; launch nothing")
+    parser.add_argument("--dry-run", action="store_true", help="print the command; create nothing under the work directory, launch nothing")
     parser.add_argument("--neutral-fixture", action="store_true",
                         help="separate fixture: a public fixture marker instead of a value named token, and a "
                              "parent told to wait for the agent's answer")

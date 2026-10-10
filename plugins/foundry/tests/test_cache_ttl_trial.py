@@ -4,23 +4,40 @@ Offline only: no host, no model, no network. The trial itself is never run here 
 Every value below is a generic placeholder: no name, no home path, no raw session identifier."""
 import getpass
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from foundry import claude_profile_trial as trial
+from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_MODELS, CLAUDE_CACHE_TTL_1H_PINS
 
 SONNET, OPUS = "claude-sonnet-5-5", "claude-opus-5-5"
 MODIFIED, CONTROL = "routed-readonly-low-sonnet-5.5", "routed-worker-medium-opus-5.5"
 ROOT = Path(__file__).resolve().parents[1]
 _REAL_INSIDE_REPOSITORY = trial._inside_repository
+# Once CLAUDE_CACHE_TTL_1H_PINS is emptied (the documented rollback) the mode refuses, so the tests that run it are
+# skipped; these do not run it and hold in both states.
+_HOLD_WITHOUT_A_CARRYING_PIN = {
+    "test_the_prompt_runs_the_two_roles_one_after_the_other_with_the_same_read_only_task",
+    "test_profile_cache_ttl_reads_only_the_experimental_map_of_the_frontmatter",
+    "test_the_shipped_checkout_requests_1h_for_the_modified_profile_and_nothing_for_the_control",
+    "test_the_committed_native_trial_result_is_clean_and_consistent_with_its_own_verdict_rule",
+    "test_the_modified_subject_and_the_decision_derive_from_the_single_pin_declaration",
+    "test_the_documented_rollback_leaves_both_modules_importable_and_the_mode_refusing",
+}
 
 
 @pytest.fixture(autouse=True)
-def _isolated(tmp_path, monkeypatch):
+def _isolated(tmp_path, monkeypatch, request):
     """Valid even when pytest's tmp_path lies under a git repository; the shipped profiles are not read here."""
+    if not CLAUDE_CACHE_TTL_1H_PINS and request.node.originalname not in _HOLD_WITHOUT_A_CARRYING_PIN:
+        pytest.skip("no pin carries experimental.cacheTtl (rolled back): --cache-ttl-trial refuses")
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     monkeypatch.setattr(trial, "_inside_repository", lambda work: _REAL_INSIDE_REPOSITORY(work, ceiling=tmp_path))
     monkeypatch.setattr(trial, "profile_cache_ttl", lambda root, profile: "1h" if profile == MODIFIED else None)
@@ -260,7 +277,7 @@ def test_an_ambiguous_request_makes_the_cache_class_unknown_not_conforming(tmp_p
     assert body["observed"]["by_subject"]["modified"]["requests_ambiguous_counters"] == 1
 
 
-@pytest.mark.parametrize("fail_in", ["binding", "modified_not_a_carrying_pin"])
+@pytest.mark.parametrize("fail_in", ["binding", "modified_not_a_carrying_pin", "no_pin_carries_the_field"])
 def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, monkeypatch, fail_in):
     from foundry.routing import RoutingConfigError
     if fail_in == "binding":
@@ -268,8 +285,11 @@ def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, mon
             raise RoutingConfigError("divergent")
         monkeypatch.setattr(trial, "claude_invocation_binding", refuse)
         expected = RoutingConfigError
-    else:
+    elif fail_in == "modified_not_a_carrying_pin":
         monkeypatch.setattr(trial, "CLAUDE_CACHE_TTL_1H_MODELS", ())
+        expected = trial.TrialError
+    else:
+        monkeypatch.setattr(trial, "CACHE_TTL_POLICY", None)
         expected = trial.TrialError
     with pytest.raises(expected):
         trial.run_cache_ttl(_args(tmp_path), launch=lambda *a, **k: pytest.fail("launched"))
@@ -277,7 +297,76 @@ def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, mon
 
 
 def test_the_modified_subject_and_the_decision_derive_from_the_single_pin_declaration():
+    """Holds before and after the rollback: one pin (Sonnet 5.5) or none, and both derivations follow it."""
     from foundry import cache_ttl_replay
-    from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_MODELS, CLAUDE_CACHE_TTL_1H_PINS
-    assert trial.CACHE_TTL_POLICY["mappings"]["claude"]["economy"]["model"] == CLAUDE_CACHE_TTL_1H_PINS[0]
-    assert cache_ttl_replay.ROLLBACK_MODEL == CLAUDE_CACHE_TTL_1H_MODELS[0] == SONNET
+    assert (CLAUDE_CACHE_TTL_1H_PINS, CLAUDE_CACHE_TTL_1H_MODELS) in ((("sonnet-5.5",), (SONNET,)), ((), ()))
+    if CLAUDE_CACHE_TTL_1H_PINS:
+        assert trial.CACHE_TTL_POLICY["mappings"]["claude"]["economy"]["model"] == CLAUDE_CACHE_TTL_1H_PINS[0]
+        assert cache_ttl_replay.ROLLBACK_MODEL == CLAUDE_CACHE_TTL_1H_MODELS[0] == SONNET
+    else:
+        assert trial.CACHE_TTL_POLICY is None and cache_ttl_replay.ROLLBACK_MODEL is None
+
+
+_AFTER_ROLLBACK = r"""
+import contextlib, io, json, sys
+from pathlib import Path
+from types import SimpleNamespace
+from foundry import cache_ttl_replay as replay, claude_profile_trial as trial, routing_facades as facades
+
+base = Path(sys.argv[1])
+trial._inside_repository = lambda work: False  # the temporary directory of the test may lie under a repository
+out = {"pins": list(facades.CLAUDE_CACHE_TTL_1H_PINS), "models": list(facades.CLAUDE_CACHE_TTL_1H_MODELS),
+       "rollback_model": replay.ROLLBACK_MODEL, "policy": trial.CACHE_TTL_POLICY,
+       "decision": replay.rollback_decision({"subagent_1h_to_5m": {}, "sessions": [{}] * 3, "lineages": []}),
+       "decision_explicit": replay.rollback_decision({"subagent_1h_to_5m": {}, "sessions": [{}] * 3, "lineages": []},
+                                                     "claude-sonnet-5-5")}
+with contextlib.redirect_stderr(io.StringIO()) as err:
+    out["trial_exit"] = trial.main(["--cache-ttl-trial", "--dry-run", "--work-dir", str(base / "w134"),
+                                    "--out", str(base / "r134.json")])
+out["trial_stderr"] = err.getvalue()
+with contextlib.redirect_stdout(io.StringIO()) as printed:  # the PAT-125 mode of the same module still prepares its run
+    out["pat125_exit"] = trial.run(SimpleNamespace(
+        work_dir=str(base / "w125"), out=str(base / "r125.json"), claude="claude", parent_model="sonnet",
+        projects_dir=str(base / "projects"), dry_run=True), launch=None)
+out["pat125_dry_run"] = json.loads(printed.getvalue())["dry_run"]
+out["created"] = sorted(p.name for p in base.iterdir())
+print(json.dumps(out))
+"""
+
+
+def test_the_documented_rollback_leaves_both_modules_importable_and_the_mode_refusing(tmp_path):
+    """Steps 1 and 2 of the written rollback, performed on a COPY of the tooling and the profiles, then both modules
+    imported in a fresh interpreter: the tuple is empty when they are imported, not patched afterwards."""
+    plugin = tmp_path / "plugin"
+    shutil.copytree(ROOT / "tooling", plugin / "tooling", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(ROOT / "agents", plugin / "agents")
+    facades = plugin / "tooling" / "foundry" / "routing_facades.py"
+    source, replaced = re.subn(r"(?m)^CLAUDE_CACHE_TTL_1H_PINS = \(.*\)$", "CLAUDE_CACHE_TTL_1H_PINS = ()",
+                               facades.read_text(encoding="utf-8"))
+    assert replaced == 1
+    facades.write_text(source, encoding="utf-8")  # step 1
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "PYTHONPATH": str(plugin / "tooling"),
+           "PYTHONDONTWRITEBYTECODE": "1"}
+    subprocess.run([sys.executable, str(plugin / "tooling" / "generate_claude_profiles.py")], env=env, check=True)  # step 2
+    assert not any("experimental" in path.read_text(encoding="utf-8") for path in (plugin / "agents").glob("*.md"))
+    changed = sorted(path.name for path in (plugin / "agents").glob("*.md")
+                     if path.read_bytes() != (ROOT / "agents" / path.name).read_bytes())
+    assert changed == ([] if not CLAUDE_CACHE_TTL_1H_PINS else sorted(
+        f"routed-{capability}-{effort}-sonnet-5.5.md" for capability in ("readonly", "worker")
+        for effort in ("low", "medium", "high", "xhigh", "max")))
+    base = tmp_path / "base"
+    base.mkdir()
+    for module in ("cache_ttl_replay", "claude_profile_trial"):  # ``python3 -m`` of both tools still starts
+        done = subprocess.run([sys.executable, "-m", f"foundry.{module}", "--help"], env=env, capture_output=True, text=True)
+        assert done.returncode == 0 and "usage:" in done.stdout, done.stderr
+    done = subprocess.run([sys.executable, "-c", _AFTER_ROLLBACK, str(base)], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["pins"] == out["models"] == [] and out["rollback_model"] is None and out["policy"] is None
+    assert out["decision"] == {"decision": "unknown", "reason": "no_model_carries_the_field"}
+    assert out["decision_explicit"] == {"decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
+    assert out["trial_exit"] == 2 and out["trial_stderr"].startswith("refused: no pin carries experimental.cacheTtl")
+    assert out["pat125_exit"] == 0 and out["pat125_dry_run"] is True
+    assert out["created"] == []  # neither the refusal nor the dry run created anything under the directory given

@@ -761,10 +761,12 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
 # ------------------------------------------------------------------------ PAT-134 observation rule
 
 ROLLBACK_MIN_SESSIONS = 3
-ROLLBACK_MODEL = CLAUDE_CACHE_TTL_1H_MODELS[0]  # derived from CLAUDE_CACHE_TTL_1H_PINS (written for its single pin)
+# Derived from CLAUDE_CACHE_TTL_1H_PINS (written for its single pin). ``None`` once that tuple is emptied (the rollback): the
+# module must still import, because the PAT-132 / PAT-133 replay and the PAT-125 trial mode import it.
+ROLLBACK_MODEL = CLAUDE_CACHE_TTL_1H_MODELS[0] if CLAUDE_CACHE_TTL_1H_MODELS else None
 
 
-def rollback_decision(replay: Mapping[str, Any], model: str = ROLLBACK_MODEL) -> dict[str, Any]:
+def rollback_decision(replay: Mapping[str, Any], model: str | None = ROLLBACK_MODEL) -> dict[str, Any]:
     """PAT-134 rule, read from the output of ``analyse_interactive(..., subagent_1h_to_5m=True)``.
 
     QUANTITY. The observed setting is 1 hour and the replay simulates 5 minutes, so a delta is simulated 5-minute cost minus
@@ -774,18 +776,41 @@ def rollback_decision(replay: Mapping[str, Any], model: str = ROLLBACK_MODEL) ->
     counted expired under both bounds), although a prefix written by a sibling subagent less than 5 minutes earlier would
     also have been read at 5 minutes. That overestimates the cost of 5 minutes on both bounds. The decision reads instead
     ``usd.entry_reads_not_expired.delta_usd_exact`` (decimal strings, unrounded): the same simulation with those entry reads
-    counted as not expired, the reading most severe for keeping the 1 hour (an addition to the output, not a new replay
-    rule). Of its two bounds the smaller is read (the ``favourable`` reading simulates fewer expirations; the minimum is
-    taken so the decision does not depend on that ordering). Since that quantity is never above ``delta_usd``, ``keep``
-    implies ``usd.result == net_loss`` and not the converse.
+    counted as not expired, a reading MORE SEVERE THAN ``delta_usd`` for keeping the 1 hour (never above it), not the most
+    severe one in absolute terms (an addition to the output, not a new replay rule). Of its two bounds the SMALLER is read:
+    in practice the ``favourable`` one, which simulates fewer expirations, so a smaller 5-minute cost and a smaller delta;
+    ``prudent`` simulates more expirations and is the bound most favourable to keeping the 1 hour. The threshold is therefore
+    NOT on the prudent bound; the minimum is taken so the decision does not depend on that ordering. Since that quantity is
+    never above ``delta_usd``, ``keep`` implies ``usd.result == net_loss`` and not the converse.
+
+    LIMITS OF THE DECISION: two biases towards ``keep`` remain, under BOTH bounds. (a) On an expiry inside a lineage (gap
+    over 300 s) the WHOLE read is repriced as a 5-minute write, although the part shared with a sibling subagent of the same
+    profile (tools and system prompt) that was active less than 5 minutes earlier would have stayed readable at 5 minutes:
+    the simulated 5-minute cost is over-estimated. (b) The ``favourable`` gap is not a rigorous lower bound of the real gap
+    (the instant a request is sent is not observable), so an expiry can be counted that did not happen. The threshold has
+    no margin (strictly positive), so either bias can turn a marginal ``roll_back`` into ``keep``: a ``keep`` on a delta
+    close to zero is not established by this rule.
 
     DECISION. ``keep`` only if that minimum is strictly positive (unrounded: a delta that rounds to 0.0 in ``delta_usd``
     still counts); ``roll_back`` if it is zero or negative, or if no lineage of ``model`` was observed at 1 hour (the field has
-    no observable effect). ``unknown`` if the replay was not made with the option; if fewer than ``ROLLBACK_MIN_SESSIONS``
+    no observable effect; ASSUMED ASYMMETRY: this holds even when the sessions ran no subagent of ``model`` at all, whereas one
+    or two contributing sessions give ``unknown``). ``unknown`` if no model carries the field (``model`` is ``None``: the
+    default once ``CLAUDE_CACHE_TTL_1H_PINS`` is empty, nothing is left to decide); if the replay was not made with the
+    option; if fewer than ``ROLLBACK_MIN_SESSIONS``
     designated sessions were replayed, or fewer contribute a priced lineage of ``model`` observed at 1 hour; if any such
     lineage is not priced; or if a lineage of ANOTHER model (an unmodified profile) is observed at 1 hour, because an
     outside setting then changed the measure. Only subagent lineages whose writes were ALL in the 1-hour class are decision
-    inputs. The subscription quota is not an input."""
+    inputs. The subscription quota is not an input.
+
+    OUTPUT. ``decision`` (``keep``, ``roll_back``, ``unknown``) and ``reason``, one of ``no_model_carries_the_field``,
+    ``replay_not_made_with_subagent_1h_to_5m``, ``fewer_designated_sessions_than_the_minimum``,
+    ``a_lineage_of_another_model_is_observed_at_1h``, ``no_lineage_of_the_model_observed_at_1h``,
+    ``a_lineage_observed_at_1h_is_not_priced``, ``fewer_contributing_sessions_than_the_minimum`` (with
+    ``contributing_sessions``) and ``least_favourable_entry_reads_not_expired_delta`` (with ``contributing_sessions`` and
+    ``delta_usd_entry_reads_not_expired``, the minimum read, an exact decimal string). No CLI: it is called from Python on
+    the parsed JSON of a replay output (the call is written in the PAT-134 page)."""
+    if model is None:
+        return {"decision": "unknown", "reason": "no_model_carries_the_field"}
     if "subagent_1h_to_5m" not in replay:
         return {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
     if len(replay.get("sessions", ())) < ROLLBACK_MIN_SESSIONS:
