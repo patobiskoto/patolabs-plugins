@@ -31,6 +31,13 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
+**Prepared, not yet published or verified installed:** Foundry **1.1.0** (both host
+manifests declare it; Ship-iOS stays at **0.3.0**). Its
+[release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
+(Claude Code 2.1.293 minimum for the default `economy` tier, among others) and its
+[upgrade and rollback guide](plugins/foundry/docs/migration-1.1.0.md) gives the exact
+remedies. Until its tag exists, the published version is 1.0.0.
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the

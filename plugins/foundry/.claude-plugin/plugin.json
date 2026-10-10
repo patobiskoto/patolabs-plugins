@@ -1,7 +1,7 @@
 {
   "name": "foundry",
   "description": "Idea to merge with YouTrack, Linear, or qualified private personal GitHub Projects and the GitHub code-host. Bounded grooming writes and audited non-atomic Epic closure; no provider CAS or concurrency exclusion claimed. Linear uses an append-only lifecycle projection with targeted native state synchronization and witness-bound project Documents; native AC checkbox replacement remains unavailable. DevHubTracker remains optional outside the V1 qualification matrix. Delegated identities: Lupin, Eiffel, Maigret, and Vauban.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": { "name": "pato" },
   "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/foundry",
   "repository": "https://github.com/patobiskoto/patolabs-plugins",
