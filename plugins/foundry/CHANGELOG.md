@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- PAT-136: new process rule R9 in `AGENTS.md` / `CLAUDE.md` (author checklist for
+  documentation sentences, grouped deferral of non-blocking review remarks to one
+  follow-up issue per batch, minimal correction commits), written into the
+  `start-issue`, `resume-issue`, `merge-pr`, `review-pr` and `open-pr` skills and the
+  `maigret` output format (optional "fix before merge" mark on a nit; verdict line and
+  JSON object unchanged). Baseline, observation window and return triggers:
+  [review rounds](docs/review-rounds.md). Text and tests only; no change under `tooling/`.
+
 ## 1.1.0 — 2026-10-10
 
 Prepared release candidate. This preparation (PAT-135) changes only version metadata

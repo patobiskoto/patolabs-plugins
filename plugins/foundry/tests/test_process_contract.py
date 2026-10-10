@@ -81,3 +81,18 @@ def test_maigret_project_conventions_criterion_now_resolves_to_real_files():
     assert "AGENTS.md" in maigret and "CLAUDE.md" in maigret
     assert (REPOSITORY_ROOT / "AGENTS.md").exists()
     assert (REPOSITORY_ROOT / "CLAUDE.md").exists()
+
+
+def test_process_contract_states_r9_checklist_deferral_and_minimal_corrections():
+    text = _repo_text("AGENTS.md")
+    flat = " ".join(text.split())
+    assert "## R9 " in text
+    for point in ("1. A sentence about what a tool launches", "2. A cause is stated",
+                  "3. A rule, threshold or quantity", "4. A comparison names",
+                  "5. A documented procedure", "6. No proper name"):
+        assert point in text
+    assert "one follow-up issue per batch" in flat
+    assert "through `foundry:intake` before the merge" in flat
+    assert 'marks "fix before merge"' in flat
+    assert "(c) Correction commits" in text
+    assert "What only the reviewer can judge" in text

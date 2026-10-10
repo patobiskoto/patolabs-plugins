@@ -57,7 +57,8 @@ the PR is 🔴 blocking. If you were given no AC, say so explicitly and move to 
 First the stage-1 table (AC → covered/not covered/contradicted → evidence), then stage-2
 findings grouped by severity:
 - 🔴 **Blocking** — must fix before merge (with file:line and why).
-- 🟡 **Nit** — worth fixing, non-blocking.
+- 🟡 **Nit** — worth fixing, non-blocking. Add the mark "fix before merge" only to a nit
+  that must be corrected before merge although it does not block; the verdict line is unchanged.
 - ✅ **OK** — what's genuinely solid.
 
 Be concrete: cite `file:line`. Never modify the repo. End with one verdict per stage:

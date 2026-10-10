@@ -106,3 +106,63 @@ def test_merge_pr_normal_review_materializes_proof_before_terminal_completion():
     assert "A pass is all AC `pass`" in text and "with `quality=mergeable`" in text
     assert "do not fabricate a proof or mark the claim completed" in text
     assert "routing complete-review" not in text
+
+
+def _skill_text(name: str) -> str:
+    return open(os.path.join(_SKILLS_DIR, name, "SKILL.md")).read()
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+# PAT-136 / AGENTS.md#R9. These tests prove only that the rule text is written in the
+# skills; they do not prove that anyone follows it (that stays a reviewer judgment).
+@pytest.mark.parametrize("name", ["start-issue", "resume-issue"])
+def test_implementer_packet_requires_r9_and_the_source_of_each_doc_sentence(name):
+    text = _flat(_skill_text(name))
+    assert "AGENTS.md#R9" in text
+    assert "six-point checklist" in text
+    assert "points 1 to 5" in text
+    assert "(constant, file:line, or page)" in text
+
+
+def test_merge_pr_applies_r9_to_every_correction_commit_including_the_coordinator():
+    text = _flat(_skill_text("merge-pr"))
+    assert "(a) checklist and (c) minimal-change rule apply to every correction commit" in text
+    assert "including one written by the coordinator itself" in text
+
+
+def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
+    text = _flat(_skill_text("merge-pr"))
+    assert "one follow-up issue per batch" in text
+    assert "not one per PR" in text
+    assert "through `foundry:intake` before the merge" in text
+    assert "cite it in the PR description" in text
+    assert 'marks "fix before merge"' in text
+    assert "a page frozen after publication" in text
+    assert "missing or generic documentation status" in text
+    # campaign: the coordinator does not create the follow-up on its own authority
+    assert "does not create the follow-up issue on its own authority" in text
+    assert "re-review in full" in text
+
+
+def test_merge_pr_writes_the_per_round_pr_description_line_format():
+    text = _skill_text("merge-pr")
+    assert ("round <N>; <validated|blocked>; follows <first|blocking|remarks>; "
+            "<K> remarks deferred, follow-up <ISSUE-ID|none>") in text
+
+
+def test_open_pr_cites_the_follow_up_issue_in_the_description():
+    text = _flat(_skill_text("open-pr"))
+    assert "cites the follow-up issue" in text
+
+
+def test_fix_before_merge_mark_is_output_only_and_leaves_the_verdict_unchanged():
+    review_pr = _flat(_skill_text("review-pr"))
+    maigret = _flat(open(os.path.join(_SKILLS_DIR, "..", "agents", "maigret.md")).read())
+    assert '"fix before merge"' in review_pr and '"fix before merge"' in maigret
+    verdict = "`AC: PASS|BLOCK` · `QUALITY: OK to merge|BLOCK`"
+    assert "End with exactly: `AC: PASS|BLOCK · QUALITY: OK to merge|BLOCK`." in review_pr
+    assert verdict in maigret
+    assert "exactly `outcomes` and `quality`" in review_pr

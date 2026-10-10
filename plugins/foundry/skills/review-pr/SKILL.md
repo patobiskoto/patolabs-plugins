@@ -155,6 +155,8 @@ Start with an AC table, then findings ordered by severity:
 
 - blocking — must fix before merge;
 - nit — worthwhile but non-blocking;
+  a nit may carry the optional mark "fix before merge" in this human-readable output;
+  it changes neither the verdict line nor the JSON object below;
 - OK — only genuinely verified strengths.
 
 End with exactly: `AC: PASS|BLOCK · QUALITY: OK to merge|BLOCK`.

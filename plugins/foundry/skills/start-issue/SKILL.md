@@ -66,6 +66,9 @@ Inputs:
 Issue payload, cited ADR IDs, repository paths needed to start.
 Constraints:
 Accepted ADRs, AGENTS.md/CLAUDE.md, preserve unrelated work, no tracker/PR mutation.
+AGENTS.md#R9 applies: check its six-point checklist on every documentation sentence you
+add or change, and in your report give, for each such sentence under points 1 to 5, its
+source (constant, file:line, or page).
 Done when:
 Requested changes and proportional tests are green; report files and test results.
 ```
