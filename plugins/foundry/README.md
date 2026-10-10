@@ -28,6 +28,16 @@ the tag, so their "candidate" wording is superseded by the
 [setup and migration guide](docs/migration-1.0.0.md) covers a first repository, 0.9.0
 upgrades, legacy YouTrack binding, loaded-version verification and bounded rollback.
 
+**1.1.0 prepared on 2026-10-10: effectively distributed from the merge of its release
+pull request (derived, not observed), not tagged, not verified installed.** The
+[release notes](docs/release-1.1.0.md) open with the breaking changes and risks (Claude
+Code 2.1.293 minimum for the default `economy` tier, refused `economy` mappings, the
+availability list, the unguarded cache field of the Sonnet 5.5 profiles, the guarded
+`State dropped` write on Linear), list what was merged since 1.0.0 and claim no gain.
+The [upgrade and rollback guide](docs/migration-1.1.0.md) gives the official update
+sequence on both hosts and the rollbacks, each as far as it is established (returning to
+1.0.0 through an official manager has no established command yet).
+
 ## Why
 
 The skills this replaces were *too binary*: they sorted and counted, they didn't reason —
@@ -98,7 +108,9 @@ environment variables. Linear's exact capability and binding contract is documen
 
 The current dual-host upgrade, trusted configuration, override diagnosis, verification,
 and rollback constraints are in
-[`docs/migration-1.0.0.md`](docs/migration-1.0.0.md). The former
+[`docs/migration-1.0.0.md`](docs/migration-1.0.0.md); the upgrade from 1.0.0 to the
+prepared 1.1.0 and its rollbacks are in
+[`docs/migration-1.1.0.md`](docs/migration-1.1.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
