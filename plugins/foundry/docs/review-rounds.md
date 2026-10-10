@@ -1,8 +1,9 @@
-# Review rounds: baseline, observation window and return triggers (PAT-136)
+# Review rounds: baseline, observation window and return triggers (PAT-136, PAT-139)
 
-The rule itself is `AGENTS.md#R9` (identical in `CLAUDE.md`); this page only records how
-its effect is measured. It describes no tool behaviour: nothing here is computed by
-Foundry, and the counting below is done by hand.
+The rule itself is `AGENTS.md#R9` (identical in `CLAUDE.md`); this page records how
+its effect is measured. Nothing in that measurement is computed by Foundry: the counting
+below is done by hand. Its last two sections (PAT-139) cite the code that bounds rule
+(b): what no tool checks, what is not coded yet, and what each tracker provider carries.
 
 ## Baseline
 
@@ -19,7 +20,9 @@ source.
 - Review rounds per issue, split into: first round, rounds after a blocking round, rounds
   after remarks.
 - Plus the rounds of the follow-up issues, counted separately and added to the total, so
-  that the deferral does not hide its cost.
+  that the deferral does not hide its cost. Since PAT-139 these follow-up issues are the
+  issues of the companion Epic (`AGENTS.md#R9` (b)); their own non-blocking remarks are
+  corrected before the merge, so they open no further follow-up issue.
 - Counted by hand from the per-round lines of the PR descriptions (format in
   `plugins/foundry/skills/merge-pr/SKILL.md`). Foundry's review generation number is not
   used: it was observed to be 4 for 3 reviews on PAT-125 and on PAT-132.
@@ -59,3 +62,111 @@ decides, in either of these cases:
   `skills/review-pr/SKILL.md`, Output section; `tooling/foundry/evidence_plane.py:233`),
   so the merge command does not refuse a diff because a marked remark was left
   uncorrected or because the follow-up issue does not exist.
+
+## What is not mechanical and what is not coded yet (PAT-139)
+
+Rule (b) of `AGENTS.md#R9` sends the deferred remarks of an Epic to a companion Epic and
+authorizes three tracker writes in advance (PAT-ADR-0018). This section lists what the
+tools do not check and do not do.
+
+Not mechanical:
+
+- No gate checks that the companion Epic exists, that it has no tracker link with the
+  origin Epic (no parent, no dependency, no relation), or that a remark was rightly
+  classed as deferrable. This is judged in review.
+- No gate checks that a PR of a companion Epic deferred nothing (no second-level
+  deferral).
+- Nothing checks that only one companion Epic carries a given name. The name and a
+  mention in text are the only relation between the two Epics, and no file under
+  `tooling/` or `hooks/` contains the word `Nits`.
+
+Not coded yet:
+
+- An Epic campaign does not receive the reviewer's prose. Its review step
+  (`_review_observation` in `tooling/foundry/campaign_runtime.py`) reads only the
+  structured proof stored by `AcceptanceProofStore` (`tooling/foundry/routing.py`), and
+  the `record-review-proof` command of that file accepts exactly the keys `outcomes` and
+  `quality`. So the non-blocking remarks of a validated review are neither seen nor
+  recorded by a campaign today, and none of the steps that follow the review step (`ci`,
+  `human-gate` in `_GATE_STEPS`, then `merge`) reads or corrects them.
+- The campaign coordinator has no issue-creation primitive. The mutating steps of its
+  runner are `start`, `open-pr`, `merge`, `close-epic` and `sync-parent-acceptance`
+  (`_MUTATING_STEPS`, `tooling/foundry/campaign_runtime.py`), and the
+  `CampaignPipeline` protocol (`tooling/foundry/campaign_coordinator.py`) declares
+  no method that creates an issue.
+- The campaign preview exists for one provider only. `preview_epic`
+  (`tooling/foundry/epic_preview.py`) refuses a tracker whose adapter does not set
+  `epic_subgraph_supported`; the attribute defaults to `False`
+  (`tooling/foundry/trackers/base.py`) and only the DevHub adapter sets it to `True`
+  (`tooling/foundry/trackers/devhub.py`).
+- So inside an Epic campaign the authorization has no effect yet. Three things are
+  missing: a channel that carries the remarks to the campaign, the code that creates the
+  companion Epic and its issues, and campaigns usable on the repository's tracker. They
+  are left to a later issue under the same Epic, PAT-141.
+
+## Portability of the three writes (PAT-139)
+
+The three writes are `create_issue` with the field `Type: Epic` and no parent,
+`create_issue(parent=…)` and `add_comment`. [`tracker-contract.md`](tracker-contract.md),
+table "Core journey", marks the rows "Frame/intake/groom: create, comment" and
+"Epics/enfants/dépendances: child creation, relations" `supported` for YouTrack, Linear
+and `ghprojects`.
+
+`tests/test_tracker_conformance_v1.py` runs them once per provider, on a fake transport,
+never on a real tracker: it creates an Epic without parent next to an existing origin
+Epic, creates a child issue under it, adds a comment to that child, and checks that the
+origin Epic was neither written nor linked. No provider needed a fallback for these
+three writes on its fake transport. A second test per provider covers a project where
+the `Epic` type is not available:
+
+| Provider | Where the `Epic` type comes from | When it is missing |
+|---|---|---|
+| YouTrack | a value of the project's `Type` field, sent by name (`_cf_write`, `tooling/foundry/trackers/youtrack.py`) | the adapter does not check before it posts; the provider's answer is not verified. The test simulates a refusal and shows that no later write follows |
+| Linear | the `Epic` entry of the binding's `type_label_ids` | the adapter refuses with `type_unmapped` before the create mutation (`tooling/foundry/trackers/linear.py`) |
+| `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `invalid_field_options:type` when it reads the Project, before any write (`_field_map`, `tooling/foundry/trackers/ghprojects.py`), because it requires the options of that field to be exactly the declared set; a read of that Project is refused the same way |
+
+What the coordinator does then is in `AGENTS.md#R9` (b): this is a durable refusal, so
+no substitute write, the remarks are corrected before the merge and fully re-reviewed,
+and the refusal is reported in the PR description.
+
+A transient failure is the other case of `AGENTS.md#R9` (b): the coordinator waits and
+retries the write before the merge. When the failure leaves the effect of the write
+unknown (a network failure), it first reads the tracker to see whether the write
+happened, and retries only if it did not. That reading is what prevents a second issue
+or a second comment: no adapter retries a write by itself in the code read here, and a
+retry after an unknown outcome does this, per provider (files under
+`tooling/foundry/trackers/`):
+
+| Provider | Retry of `create_issue` | Retry of `add_comment` |
+|---|---|---|
+| YouTrack | a plain second create: `create_issue` (`youtrack.py`) posts to `/issues` and takes the identifier the provider returns, with no client key. When the issue was created and only the parent link failed, a second call creates a second issue | a plain second comment: `add_comment` (`youtrack.py`) posts with no identifier and no readback |
+| Linear | a plain second create: `create_issue` (`linear.py`) sends a fresh `uuid.uuid4()` identifier at each call | a plain second comment: `add_comment` (`linear.py`) sends no client identifier; its readback checks the comment it has just created, not an earlier one |
+| `ghprojects` | on the same data directory, `create_issue` (`ghprojects.py`) keeps a pending intent written before its only issue POST. If the issue then exists once, the second call resumes it and creates no duplicate. If no matching issue exists, `_observe_create_candidate` refuses every later call with `create_effect_unknown`, whatever made the POST fail. No code in the file removes a create intent: no recovery path was found. From another data directory, or once the intent is gone, an existing matching issue is refused with `unowned_create_candidate`, and with no matching issue the call is a plain create | a plain second comment: `add_comment` (`ghprojects.py`) posts once, reads back the comment it created and never looks for an earlier one |
+
+[`tracker-contract.md`](tracker-contract.md) states the same for issue creation ("a
+replay with zero candidates remains unknown and refuses") and for comments ("Free-text
+comments remain outside S5"). So on `ghprojects` a failed creation that had no effect
+cannot be retried with the same title, body, fields and parent: the adapter refuses,
+and `AGENTS.md#R9` (b) then treats the case as a durable refusal. What the reading
+cannot settle: a write whose effect becomes visible only after the reading, and a
+second writer that makes the same write between the reading and the retry.
+
+What each adapter gives the coordinator to recognise a transient failure:
+
+| Provider | Quota exhausted | Network failure |
+|---|---|---|
+| YouTrack | no quota-specific error in `tooling/foundry/trackers/youtrack.py`: an HTTP failure is raised as `_YouTrackHTTPError` with its status; reset time not verified | not verified |
+| Linear | `LinearQuotaExhaustedError` (`tooling/foundry/trackers/linear.py`), with the reset time in `reset_at` and `reset_at_ms`; never retried by the adapter ([`linear-tracker.md`](linear-tracker.md), "Transport errors, read retries and quota") | `transport_error`; a write is never retried by the adapter (same section) |
+| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`); reset time not verified | reason `transport_failed`; `_rest_write` never retries |
+
+Limits, as stated by PAT-ADR-0018 at its date and not lifted by these tests:
+
+- The rule has been exercised on a real tracker with Linear only.
+- Not verified: that an `Epic` value exists in the `Type` field of every YouTrack
+  project.
+- `ghprojects` is qualified on one profile only, a private personal Project
+  ([`tracker-contract.md`](tracker-contract.md), "Core journey").
+- A comment can be duplicated when a write is replayed after an ambiguous answer:
+  [`tracker-contract.md`](tracker-contract.md) keeps free-text comments outside its
+  replay guarantee ("Free-text comments remain outside S5").
+- Not verified: whether adding a comment to an issue changes its version.

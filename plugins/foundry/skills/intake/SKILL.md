@@ -51,9 +51,11 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit body <ID> /path/to/body-read.md /path/to/amended-body.md
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr create "<title>" < /path/to/body.md
 ```
-Confirm before writing, except for the two writes that the grouped-deferral rule of
-`foundry:merge-pr` authorizes in advance, in every repository where the plugin is
-installed, outside an Epic campaign: creating the batch follow-up issue and adding
-deferred non-blocking remarks to it. Prefer refining a duplicate over
+Confirm before writing, except for the three writes that the grouped-deferral rule of
+`foundry:merge-pr` authorizes in advance, inside and outside an Epic campaign, in every
+repository where the plugin is installed: creating the companion Epic of an origin Epic
+(`Nits <ORIGIN-EPIC-ID>`, with no tracker link to it), creating a follow-up issue in that
+companion Epic, and adding deferred non-blocking remarks to such an issue. Every other
+write keeps its confirmation. Prefer refining a duplicate over
 creating a near-copy. For the ADR body, Write it to a scratch file and `<`-redirect it
 (commands must start with python3 to match allowed-tools — no `echo … |` pipes).

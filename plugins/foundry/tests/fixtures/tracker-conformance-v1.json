@@ -941,6 +941,90 @@
       "operations": [
         "epic-closure"
       ]
+    },
+    {
+      "id": "youtrack-companion-epic-writes",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_companion_epic_child_issue_and_comment",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "epics-children-creation",
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "youtrack-companion-epic-refusal",
+      "test": "test_tracker_conformance_v1.py::test_youtrack_companion_epic_refusal_leaves_no_later_write",
+      "providers": [
+        "youtrack"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "linear-companion-epic-writes",
+      "test": "test_tracker_conformance_v1.py::test_linear_companion_epic_child_issue_and_comment",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "epics-children-creation",
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "linear-companion-epic-refusal",
+      "test": "test_tracker_conformance_v1.py::test_linear_companion_epic_without_type_mapping_refuses_before_any_write",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "ghprojects-companion-epic-writes",
+      "test": "test_tracker_conformance_v1.py::test_ghprojects_companion_epic_child_issue_and_comment",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "epics-children-creation",
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "ghprojects-companion-epic-refusal",
+      "test": "test_tracker_conformance_v1.py::test_ghprojects_companion_epic_without_type_option_is_refused_at_project_read",
+      "providers": [
+        "ghprojects"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
     }
   ]
 }
