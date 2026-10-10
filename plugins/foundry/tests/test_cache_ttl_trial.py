@@ -205,3 +205,9 @@ def test_a_committed_result_would_carry_no_personal_trace(tmp_path):
     text = json.dumps(body)
     assert str(tmp_path) not in text and "slug" not in text and not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", text)
     assert "/Users/" not in text and "/home/" not in text
+
+
+def test_the_shipped_checkout_requests_1h_for_the_modified_profile_and_nothing_for_the_control(monkeypatch):
+    monkeypatch.undo()  # the real reader on the shipped profiles
+    assert trial.profile_cache_ttl(ROOT, MODIFIED) == "1h"
+    assert trial.profile_cache_ttl(ROOT, CONTROL) is None

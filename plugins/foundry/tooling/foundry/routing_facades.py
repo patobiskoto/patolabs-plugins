@@ -80,6 +80,12 @@ _CLAUDE_MODEL_DECLARATION = (
 # PAT-ADR-0016: minimum Claude Code host version of a declared pin. Below it the
 # binding fails closed; no other model, pin or alias is ever substituted.
 CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
+# PAT-134: the declared pins whose shipped profile carries the subagent prompt-cache lifetime
+# ``experimental: {cacheTtl: 1h}`` (nested map, not a top-level key; Claude Code 2.1.248 or later, per the Anthropic
+# documentation read on 2026-10-09). The deterministic profile check expects exactly this block for these pins and no
+# ``experimental`` block for any other pin or template. Removing a canonical name here is the rollback.
+CLAUDE_CACHE_TTL_1H_PINS = ("sonnet-5.5",)
+_CLAUDE_CACHE_TTL_1H_BLOCK = "\nexperimental:\n  cacheTtl: 1h"
 _CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
 _CLAUDE_BINARY_VERSION = re.compile(r"(\d+\.\d+\.\d+) \(Claude Code\)\Z")
 _TRANSCRIPT_TAIL_BYTES = 1 << 20
@@ -911,9 +917,14 @@ def claude_pin_profile_text(
     except OSError as exc:
         raise RoutingConfigError(f"template de profil Claude absent : {generic_name}.") from exc
     expected_name = f"name: {generic_name}\n"
-    if template.count(expected_name) != 1 or "\nmodel:" in template:
+    if template.count(expected_name) != 1 or "\nmodel:" in template or "\nexperimental:" in template:
         raise RoutingConfigError(f"template de profil Claude invalide : {generic_name}.")
     text = template.replace(expected_name, f"name: {name}\nmodel: {invocation_model}\n", 1)
+    if canonical in CLAUDE_CACHE_TTL_1H_PINS:
+        head, closing, body = text.partition("\n---\n")  # the frontmatter's closing fence (the opening has no newline)
+        if not closing:
+            raise RoutingConfigError(f"template de profil Claude invalide : {generic_name}.")
+        text = head + _CLAUDE_CACHE_TTL_1H_BLOCK + closing + body
     return name, text
 
 

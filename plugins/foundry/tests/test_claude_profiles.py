@@ -115,6 +115,74 @@ def test_absent_or_divergent_preloaded_pin_refused(tmp_path, corrupt):
         claude_invocation_binding(route, "readonly", plugin_root=tmp_path)
 
 
+# --- PAT-134: the subagent prompt-cache lifetime, a nested ``experimental`` map on the Sonnet 5.5 pins only
+
+def _frontmatter(text):
+    return text.split("\n---\n", 1)[0]
+
+
+def test_exactly_the_ten_sonnet_55_pins_carry_experimental_cache_ttl_1h_as_a_nested_map():
+    carrying = {name for name in GENERATED if "experimental" in GENERATED[name]}
+    assert carrying == {f"routed-{cap}-{effort}-sonnet-5.5" for cap in ("readonly", "worker")
+                        for effort in ("low", "medium", "high", "xhigh", "max")}
+    assert len(carrying) == 10
+    for name in carrying:
+        front = _frontmatter((ROOT / "agents" / f"{name}.md").read_text())
+        assert front.endswith("\nexperimental:\n  cacheTtl: 1h") and front.count("experimental") == 1
+        assert not re.search(r"(?m)^cacheTtl:", front)  # never a top-level key
+    for path in (ROOT / "agents").glob("*.md"):
+        if path.stem not in carrying:
+            assert "experimental" not in path.read_text() and "cacheTtl" not in path.read_text(), path.name
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda text: text.replace("experimental:\n  cacheTtl: 1h\n", ""),                          # field missing
+    lambda text: text.replace("cacheTtl: 1h", "cacheTtl: 5m"),                                  # another value
+    lambda text: text.replace("  cacheTtl: 1h\n", "  cacheTtl: 1h\n  other: x\n"),             # another key
+    lambda text: text.replace("experimental:\n  cacheTtl: 1h\n", "cacheTtl: 1h\n"),            # top level
+])
+def test_a_divergent_sonnet_55_profile_is_refused_before_launch(tmp_path, mutate):
+    shutil.copytree(ROOT / "agents", tmp_path / "agents")
+    path = tmp_path / "agents" / "routed-readonly-low-sonnet-5.5.md"
+    path.write_text(mutate(path.read_text()))
+    config(tmp_path, "sonnet-5.5", "low")
+    route = RoutingPolicy.load(tmp_path).resolve("scout", "claude")
+    with pytest.raises(RoutingConfigError, match="divergent"):
+        claude_invocation_binding(route, "readonly", plugin_root=tmp_path)
+
+
+@pytest.mark.parametrize("model,effort", [("opus-5.5", "high"), ("haiku-5.5", "medium"), ("sonnet-5", "low"),
+                                          ("fable-5.1", "low"), ("opus-5", "medium")])
+def test_the_field_on_any_other_pin_is_refused_before_launch(tmp_path, model, effort):
+    shutil.copytree(ROOT / "agents", tmp_path / "agents")
+    config(tmp_path, model, effort)
+    route = RoutingPolicy.load(tmp_path).resolve("scout", "claude")
+    binding = claude_invocation_binding(route, "readonly", plugin_root=tmp_path)  # unmodified: accepted
+    path = tmp_path / "agents" / f"{binding['profile']}.md"
+    assert "experimental" not in path.read_text()
+    path.write_text(path.read_text().replace("\n---\n", "\nexperimental:\n  cacheTtl: 1h\n---\n", 1))
+    with pytest.raises(RoutingConfigError, match="divergent"):
+        claude_invocation_binding(route, "readonly", plugin_root=tmp_path)
+
+
+def test_a_generic_template_carrying_the_field_is_an_invalid_template(tmp_path):
+    shutil.copytree(ROOT / "agents", tmp_path / "agents")
+    template = tmp_path / "agents" / "routed-readonly-low.md"
+    template.write_text(template.read_text().replace("\n---\n", "\nexperimental:\n  cacheTtl: 1h\n---\n", 1))
+    config(tmp_path, "sonnet-5.5", "low")
+    route = RoutingPolicy.load(tmp_path).resolve("scout", "claude")
+    with pytest.raises(RoutingConfigError, match="template de profil Claude invalide"):
+        claude_invocation_binding(route, "readonly", plugin_root=tmp_path)
+
+
+def test_the_shipped_sonnet_55_profile_binds_and_the_wire_model_is_unchanged(tmp_path):
+    config(tmp_path, "sonnet-5.5", "low")
+    route = RoutingPolicy.load(tmp_path).resolve("scout", "claude")
+    binding = claude_invocation_binding(route, "readonly", plugin_root=ROOT)
+    assert binding["profile"] == "routed-readonly-low-sonnet-5.5" and binding["agent_model"] is None
+    assert binding["transmitted_model"] == "claude-sonnet-5-5" and binding["effort_parameters"]["transmitted"] == "low"
+
+
 def test_posttool_completion_remains_correlated_for_suffixed_profiles(tmp_path):
     config(tmp_path, "opus-5.5", "high")
     (tmp_path / "state").mkdir()

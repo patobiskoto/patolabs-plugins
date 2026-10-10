@@ -1313,9 +1313,16 @@ setting and adds no configuration key.
   [the PAT-134 page](qualification/pat-134-subagent-cache-1h.md). No gain is announced; the effect on the
   subscription quota is unknown.
 
+The ten Sonnet 5.5 versioned profiles (`routed-{readonly,worker}-{low,medium,high,xhigh,max}-sonnet-5.5`)
+carry `experimental: {cacheTtl: 1h}` as a nested map; no other profile does. The profile generator
+(`claude_pin_profile_text`, the pins listed in `CLAUDE_CACHE_TTL_1H_PINS`) renders exactly that block and
+`claude_invocation_binding()` refuses a divergent preloaded profile (field missing, on another pin, another
+value, another key) before any launch. This is the last, separable commit of the PAT-134 branch: it is
+kept only if the native trial observes the 1-hour class on the modified profile.
+
 Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
 (and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`
-group and the profile field `experimental.cacheTtl`.
+group, the constant `CLAUDE_CACHE_TTL_1H_PINS` and the profile field `experimental.cacheTtl`.
 
 
 ### Reproducible source profile generation
