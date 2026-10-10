@@ -36,7 +36,8 @@ manifests declare it; Ship-iOS stays at **0.3.0**). Its
 [release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
 (Claude Code 2.1.293 minimum for the default `economy` tier, among others) and its
 [upgrade and rollback guide](plugins/foundry/docs/migration-1.1.0.md) gives the
-remedies, each as far as it is established. The catalogues name no ref: once the release pull request is merged, an
+update sequence and the rollbacks, each as far as it is established. The catalogues
+name no ref: once the release pull request is merged, an
 official update is expected to deliver manifests saying 1.1.0 even before the tag
 `foundry-v1.1.0` exists. 1.1.0 is therefore effectively distributed from that merge
 (derived from the catalogue, not observed). The tag is the named reference; the last

@@ -29,7 +29,7 @@ Upgrade and rollback instructions are in [migration-1.1.0.md](migration-1.1.0.md
 
 ## Breaking changes and risks
 
-Read this section before upgrading. Each item gives what happens and its exact remedy.
+Read this section before upgrading. Each item gives what happens and its remedy, as far as one is established.
 
 ### 1. Claude Code 2.1.293 minimum for the default `economy` tier
 
@@ -262,8 +262,8 @@ what basis each recorded run was made; for PAT-134 that basis is the maintainer'
 earlier agreement to a bench, as read by the coordinator, not an authorisation of that
 trial by name. The tests never launch it and use fakes only.
 It refuses an existing work directory or result file, so a path cannot be replayed.
-`--dry-run` prints the command and launches nothing; it creates nothing under the work
-directory. That is the current behaviour, since PAT-134: the sentence of the PAT-125
+`--dry-run` prints the command and launches no `claude` session (it reads the commit
+and status of the checkout with `git`); it creates nothing under the work directory. That is the current behaviour, since PAT-134: the sentence of the PAT-125
 page linked above that says `--dry-run` prepares the fixture in the given directory
 predates PAT-134 and is not corrected by this release. Installing or upgrading 1.1.0
 does not run the tool.
@@ -285,13 +285,15 @@ in `tooling/foundry/local_first_runner.py`, where the two exploration modes are 
 identifiers `screen_exploration` and `compare_exploration`; the command line spells
 them with a hyphen), and a `compare` run limited to the paths `A,B` needs no local
 model. A real run that has a local arm drives a model that must already be loaded (the
-machine preflight refuses when the expected model is not); `--dry-run` accepts fake
-drivers only and launches no command. A separate verb, `native-sandbox-trial`
+machine preflight refuses when the expected model is not); `--dry-run` accepts only
+drivers marked `fake` and uses canned machine facts for its preflight; it is not a
+no-op: it still executes those fake drivers, and it does not apply the sandbox unless
+`--sandbox`. A separate verb, `native-sandbox-trial`
 (PAT-124), launches up to two real cloud executions (it has a `--no-reviewer` option).
 Among the recorded campaigns, as the CHANGELOG records them: `pat-19-screen-1`,
 `pat-19-xscreen-1` and `pat-19-x3screen-1` ran without cloud; the v3 comparison
 `pat-19-x3compare-1` made 51 cloud executions; the v4 and v5 comparisons launched real
-cloud sessions (30 and 74, as counted by the PAT-132 replay). This list is not
+cloud sessions (30 and 74 in their ledgers, all replayed by PAT-132). This list is not
 exhaustive: pilots and bounded trials are recorded in the CHANGELOG as well. Loading is done outside the launcher,
 by the operator: by hand, or by the operator scripts shipped for protocols v3, v4 and
 v5 (`docs/qualification/pat-19-v3-operator.sh`, `-v4-`, `-v5-`), which unload, run the
