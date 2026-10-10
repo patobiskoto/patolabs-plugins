@@ -4,6 +4,8 @@ model: claude-sonnet-5-5
 description: Internal Foundry implementation profile. Invoke a logical role instead.
 tools: Read, Grep, Glob, Bash, Write, Edit
 effort: xhigh
+experimental:
+  cacheTtl: 1h
 ---
 
 This is an internal execution profile. Proceed only when the task starts with

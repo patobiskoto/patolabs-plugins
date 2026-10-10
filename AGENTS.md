@@ -184,6 +184,17 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   the hook refuses such an identifier first because no preloaded pinned profile exists
   for it. `routing show`/`resolve` and `doctor` bind nothing and observe no host
   version.
+- The ten Sonnet 5.5 versioned profiles (`CLAUDE_CACHE_TTL_1H_PINS`, `routing_facades.py`, PAT-134) carry the
+  subagent prompt-cache lifetime as a nested map, `experimental: {cacheTtl: 1h}`, and no other profile does. Per the
+  Anthropic documentation read on 2026-10-09 (not re-verified), the field needs Claude Code 2.1.248 or later and `1h`
+  is ignored while the subscription draws usage credits; behaviour on an older host and under credits is not
+  observed here, and no guard is added. Named risk: a host older than 2.1.248 might reject a profile carrying the
+  field, which would break every Sonnet 5.5 subagent launch there (Sonnet 5.5 has no host minimum); unknown.
+  `claude_pin_profile_text()` renders exactly this block for these pins and
+  `claude_invocation_binding()` refuses any divergent pinned profile (field missing, on another pin, another value or
+  key; a short-alias route reads no profile file). Rollback: empty `CLAUDE_CACHE_TTL_1H_PINS`, regenerate the profiles and update the tests and sentences that assert the
+  field (every step in the page below; both tools still import with the tuple empty). It changes no model, effort or routing; the effect on the subscription quota is unknown. The observation
+  window and the rollback are in `plugins/foundry/docs/qualification/pat-134-subagent-cache-1h.md`.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the
   unresolved canonical model. Resolution fails closed — it never guesses, silently

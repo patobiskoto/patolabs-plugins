@@ -392,8 +392,11 @@ def test_trial_is_never_replayed_and_a_dry_run_launches_nothing(tmp_path, capsys
     printed = json.loads(capsys.readouterr().out)
     assert printed["dry_run"] is True and printed["command"][0] == "claude" and not launched
     assert not (tmp_path / "result.json").exists()
+    assert not (tmp_path / "work").exists()  # PAT-134: a dry run creates nothing, so a real run may use the same path
     args.dry_run = False
-    with pytest.raises(trial.TrialError, match="never replayed"):  # the dry run used that directory
+    assert trial.run(args, launch=_fake_host(tmp_path)) == 0
+    (tmp_path / "result.json").unlink()
+    with pytest.raises(trial.TrialError, match="never replayed"):  # the real run used that directory
         trial.run(args, launch=_fake_host(tmp_path))
     args.work_dir = str(tmp_path / "second")
     assert trial.run(args, launch=_fake_host(tmp_path)) == 0
@@ -653,3 +656,13 @@ def test_a_single_record_larger_than_the_tail_leaves_the_version_unknown(tmp_pat
     path.write_text(json.dumps({"version": "2.1.294"}) + "\n"
                     + json.dumps({"type": "user", "version": "2.1.294", "pad": "x" * (1 << 20)}))
     assert claude_host_version(path) is None
+
+
+def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, monkeypatch):
+    """PAT-134: the work directory is created only after every refusal, so a refused run does not burn the path."""
+    def refuse(*args, **kwargs):
+        raise RoutingConfigError("divergent")
+    monkeypatch.setattr(trial, "claude_invocation_binding", refuse)
+    with pytest.raises(RoutingConfigError):
+        trial.run(_args(tmp_path), launch=lambda *a, **k: pytest.fail("launched"))
+    assert list(tmp_path.iterdir()) == []

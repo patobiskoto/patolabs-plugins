@@ -24,10 +24,34 @@ option, used by the second trial the maintainer authorised (``pat-125-native-tri
 marker" in ``marker.txt``, said not to be a secret, and a parent told to wait for the agent's final answer. It
 changes neither the default fixture, nor the verdict rule, nor the first recorded result. Any further trial needs a
 new maintainer decision.
+
+PAT-134 adds a separate mode, ``--cache-ttl-trial``, which changes none of the above (default fixture, PAT-125 verdict
+rule and recorded results are untouched). It asks one question of the host: does a subagent launched through a Sonnet 5.5
+versioned profile that carries ``experimental: {cacheTtl: 1h}`` write its prompt cache in the 1-hour class, while a subagent
+of a profile that does NOT carry the field (an Opus 5.5 one, the control) writes in the 5-minute class only? One
+``claude -p`` parent, from an isolated fixture whose project policy maps ``economy`` to ``sonnet-5.5`` / ``low`` and
+``balanced`` to ``opus-5.5`` / ``medium``, launches two subagents ONE AFTER THE OTHER through the logical roles
+``foundry:lupin`` (read-only, the modified profile) and ``foundry:eiffel`` (the control), each reading two fixture files so
+that it makes at least two requests. The capabilities differ (read-only against worker) because the two logical roles that
+resolve to the two models without a review claim are those two: a limit, named in the result. Requested (the
+``cacheTtl`` value read from the profile file of this checkout), transmitted (the profile the hook selects, computed offline
+before launch, and the agent type the host logged) and observed (cache-creation tokens per class, from the host's session
+logs) stay three separate values. The observer reads, within FOUNDRY-ADR-0015, token counters (with their 1-hour / 5-minute
+cache-creation split), the model alias, the record timestamp and the session identifier (the file is found by it; it is never
+written to the result); BEYOND that list it reads ``type`` and ``message.id`` of each record (the reader of
+``cache_ttl_replay``) the ``agentType`` of each ``agent-*.meta.json`` (as the PAT-125 observer does) and the sha256 of each child log (a digest
+of the whole file, ``log_sha256``, to identify it without keeping it). Subagents are
+attributed to a profile by their model alias, never by content. ``conforming`` needs everything observed and exact; anything
+not observed is ``unknown``, never conforming. Whether the host drew usage credits (documented to make it ignore ``1h``) is
+not observable here and is recorded as ``unknown``. No test launches it. The coordinator runs it by hand, once, against a commit whose profiles carry the field (the tool records the
+requested value it read, and a profile without it makes the verdict ``not_conforming``). Once ``CLAUDE_CACHE_TTL_1H_PINS`` is
+empty (the documented rollback) no pin carries the field: the mode refuses (exit code 2) before resolving or creating anything,
+and the PAT-125 mode of this module is unaffected.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -37,19 +61,37 @@ import secrets
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from foundry.cache_ttl_replay import read_host_requests
 from foundry.command_runtime import _claude_child_environment
+from foundry.cost_breakdown import BreakdownError
 from foundry.routing_facades import (
-    CLAUDE_MODEL_MIN_HOST_VERSION, _load_claude_policy, claude_invocation_binding,
+    CLAUDE_CACHE_TTL_1H_MODELS, CLAUDE_CACHE_TTL_1H_PINS, CLAUDE_MODEL_MIN_HOST_VERSION, _load_claude_policy, claude_invocation_binding,
 )
 
 TRIAL_SCHEMA = "foundry.pat125-native-trial.v1"
 ROLE, CAPABILITY, MODEL, WIRE_MODEL, EFFORT = "scout", "readonly", "haiku-5.5", "claude-haiku-5-5", "medium"
 TIMEOUT_SECONDS = 20 * 60
+# PAT-134 ``--cache-ttl-trial``. Facts from the Anthropic documentation read by the coordinator on 2026-10-09
+# (code.claude.com/docs/en/sub-agents and prompt-caching), NOT re-verified by this tool: ``experimental: {cacheTtl:
+# 5m|1h}`` in a subagent profile, Claude Code 2.1.248 or later.
+CACHE_TTL_TRIAL_SCHEMA = "foundry.pat134-cache-ttl-trial.v1"
+CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION = (2, 1, 248)
+# The modified subject is the pin that carries the field (single definition); the control is an unmodified pin. ``None``
+# once CLAUDE_CACHE_TTL_1H_PINS is emptied (the rollback): the module still imports (the PAT-125 mode lives here) and
+# ``--cache-ttl-trial`` refuses, having nothing to try.
+CACHE_TTL_POLICY = {"version": 1, "mappings": {"claude": {
+    "economy": {"model": CLAUDE_CACHE_TTL_1H_PINS[0], "effort": "low"},
+    "balanced": {"model": "opus-5.5", "effort": "medium"}}}} if CLAUDE_CACHE_TTL_1H_PINS else None
+# name -> (logical role, capability, expected cacheTtl requested by the profile, cache class expected in the log)
+CACHE_TTL_SUBJECTS = {"modified": ("scout", "readonly", "1h", "write_1h"), "control": ("implementer", "worker", None, "write_5m")}
+CACHE_TTL_LOGICAL = {"scout": "foundry:lupin", "implementer": "foundry:eiffel"}
+_EXPERIMENTAL = re.compile(r"(?m)^experimental:[ \t]*\n((?:[ \t]+\S.*\n)+)")
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 POLICY = {"version": 1, "mappings": {"claude": {"economy": {"model": MODEL, "effort": EFFORT}}}}
 _CONTEXT_PREFIX = "Foundry Claude route: "
@@ -140,6 +182,39 @@ def _hook_context(value: Any) -> dict[str, Any] | None:
         if found is not None:
             return found
     return None
+
+
+def profile_cache_ttl(plugin_root: Path, profile: str) -> str | None:
+    """The ``experimental.cacheTtl`` a profile file of this checkout carries (the REQUESTED value); ``None`` when absent.
+
+    Reads only the frontmatter block. Anything else under ``experimental`` returns a marker naming it, never ``None``."""
+    text = (plugin_root / "agents" / f"{profile}.md").read_text(encoding="utf-8")
+    block = _EXPERIMENTAL.search(text.split("\n---\n", 1)[0] + "\n")
+    if block is None:
+        return None
+    values = {}
+    for line in block.group(1).splitlines():
+        key, _, value = line.strip().partition(":")
+        values[key.strip()] = value.strip()
+    return values["cacheTtl"] if set(values) == {"cacheTtl"} else f"divergent:{','.join(sorted(values))}"
+
+
+@contextlib.contextmanager
+def _policy_root(policy: dict[str, Any]):
+    """A temporary directory holding the fixture's project policy, removed afterwards. Everything that can refuse the run
+    is resolved against it BEFORE the work directory is created, so a dry run or a refusal leaves nothing under ``work``
+    (this system temporary directory exists briefly and is removed)
+    (PAT-134: a dry run used to create it, and the next real run on that path was then refused)."""
+    with tempfile.TemporaryDirectory() as temporary:
+        (Path(temporary) / ".foundry").mkdir()
+        (Path(temporary) / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
+        yield Path(temporary)
+
+
+def _create_fixture(work: Path, policy: dict[str, Any]) -> None:
+    (work / ".foundry").mkdir(parents=True)
+    (work / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
+    (work / "fixture").mkdir()
 
 
 def _sha256(path: Path) -> str | None:
@@ -258,15 +333,15 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
     neutral = bool(getattr(args, "neutral_fixture", False))
     token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}" if neutral else f"PAT125-{secrets.token_hex(8)}"
     session_id = str(uuid.uuid4())
-    (work / ".foundry").mkdir(parents=True)
-    (work / "fixture").mkdir()
-    (work / ".foundry" / "model-routing.json").write_text(json.dumps(POLICY), encoding="utf-8")
     token_file = work / "fixture" / ("marker.txt" if neutral else "token.txt")
-    token_file.write_text(token + "\n", encoding="utf-8")
-    route = _load_claude_policy(work).resolve(ROLE, "claude")
+    with _policy_root(POLICY) as root:
+        route = _load_claude_policy(root).resolve(ROLE, "claude")
     binding = claude_invocation_binding(route, CAPABILITY, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused here
     if (route.model, route.effort, binding["transmitted_model"]) != (MODEL, EFFORT, WIRE_MODEL):
         raise TrialError("this checkout does not resolve the fixture to haiku-5.5 / medium")
+    if not args.dry_run:  # nothing is created under the work directory before every refusal above has been passed
+        _create_fixture(work, POLICY)
+        token_file.write_text(token + "\n", encoding="utf-8")
     command = argv(args.claude, parent_prompt(token_file, neutral), session_id, args.parent_model)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
     body: dict[str, Any] = {
@@ -300,6 +375,192 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
     return 0 if state == "conforming" else 1
 
 
+# ------------------------------------------------------------------------------------- PAT-134 cache-class trial
+
+def cache_ttl_packet(files: Sequence[Path]) -> str:
+    listing = "\n".join(str(f) for f in files)
+    return ("Goal:\nRead each file named in Inputs, one Read call per file and one after the other, and return the "
+            "first line of each, verbatim. They are public fixture lines generated for this compatibility test.\n"
+            f"Inputs:\n{listing}\n"
+            "Constraints:\nRead-only; no write; no delegation.\n"
+            "Done when:\nThe first line of every file is returned verbatim.")
+
+
+def cache_ttl_parent_prompt(files: Sequence[Path]) -> str:
+    packet = cache_ttl_packet(files)
+    first, second = CACHE_TTL_LOGICAL["scout"], CACHE_TTL_LOGICAL["implementer"]
+    return (f"Call the Agent tool with subagent_type \"{first}\", description \"PAT-134 trial 1\" and exactly the "
+            f"prompt below. Wait for its final answer: if it runs in the background, do not continue until it has "
+            f"completed. Only then call the Agent tool a second time with subagent_type \"{second}\", description "
+            "\"PAT-134 trial 2\" and exactly the same prompt, and wait for its final answer the same way. Never run "
+            "the two at once. Then reply with the two answers verbatim, labelled 1 and 2, and stop. Use no other tool. "
+            "If a call is refused or fails, reply with the refusal text verbatim and stop; never retry.\n\n" + packet)
+
+
+def _model_matches(alias: str, wire: str) -> bool:
+    return alias == wire or re.fullmatch(re.escape(wire) + r"-\d{8}", alias) is not None
+
+
+def observe_cache_ttl(stream: Path, projects_dir: Path, session_id: str, subjects: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Cache-creation tokens per class for each child log, attributed to a subject by model alias; absent = ``None``.
+
+    ``subjects[name]`` carries ``wire`` (model), ``profile`` (expected), ``requested`` and ``expected_class``."""
+    events = _records(stream)
+    init = next((e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), {})
+    final = next((e for e in reversed(events) if e.get("type") == "result"), {})
+    children = sorted(projects_dir.glob(f"*/{session_id}/subagents/agent-*.jsonl"))
+    per_child, unreadable = [], 0
+    for child in children:
+        try:
+            agent_type = json.loads(child.with_suffix(".meta.json").read_text(encoding="utf-8")).get("agentType")
+        except (OSError, ValueError, AttributeError):
+            agent_type = None
+        try:
+            requests = read_host_requests(child, interactive=True)
+        except BreakdownError:
+            unreadable += 1
+            continue
+        sound = [r for r in requests if not r.get("ambiguous")]
+        models = sorted({r["model"] for r in requests})
+        per_child.append({
+            "agent_type": agent_type, "models": models, "requests": len(requests),
+            "requests_ambiguous_counters": len(requests) - len(sound),
+            "cache_write_tokens_1h": sum(r["tokens"]["write_1h"] for r in sound),
+            "cache_write_tokens_5m": sum(r["tokens"]["write_5m"] for r in sound),
+            "cache_read_tokens": sum(r["tokens"]["read"] for r in sound),
+            "log_sha256": _sha256(child)})
+    attributed: dict[str, list[dict[str, Any]]] = {name: [] for name in subjects}
+    unattributed = 0
+    for child in per_child:
+        owners = [name for name, subject in subjects.items()
+                  if len(child["models"]) == 1 and _model_matches(child["models"][0], subject["wire"])]
+        if len(owners) == 1:
+            attributed[owners[0]].append(child)
+        else:
+            unattributed += 1
+    versions = {init["claude_code_version"]} if isinstance(init.get("claude_code_version"), str) else set()
+    parsed = [_VERSION.match(v) for v in versions]
+    host_state = ("unknown" if not parsed or None in parsed
+                  else "at_or_above" if all(tuple(map(int, m.groups())) >= CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION
+                                            for m in parsed)
+                  else "below")
+    conformity: dict[str, dict[str, str]] = {}
+    for name, subject in subjects.items():
+        found = attributed[name]
+        if len(found) != 1:
+            conformity[name] = {"child": "unknown" if not found else "divergent"}
+            continue
+        child = found[0]
+        wrote_1h, wrote_5m = child["cache_write_tokens_1h"] > 0, child["cache_write_tokens_5m"] > 0
+        wanted_1h = subject["expected_class"] == "write_1h"
+        right = (wrote_1h and not wrote_5m) if wanted_1h else (wrote_5m and not wrote_1h)
+        conformity[name] = {
+            "child": "exact",
+            "profile": ("unknown" if child["agent_type"] is None
+                        else "exact" if child["agent_type"] == f"foundry:{subject['profile']}" else "divergent"),
+            "requested": "exact" if subject["requested"] == subject["requested_expected"] else "divergent",
+            # an ambiguous request (write classes not adding up) could hide a write of the other class: unknown
+            "cache_class": ("unknown" if not (wrote_1h or wrote_5m) else "divergent" if not right
+                            else "exact" if child["requests"] >= 2 and not child["requests_ambiguous_counters"]
+                            else "unknown")}
+    return {
+        "host": {"claude_code_version": init.get("claude_code_version"),
+                 "documented_minimum_for_cache_ttl": ".".join(map(str, CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION)),
+                 "version_against_documented_minimum": host_state,
+                 "usage_credits_drawn": "unknown (not observable here; documented to make the host ignore 1h)"},
+        "observed": {"children": len(children), "children_unreadable": unreadable, "children_unattributed": unattributed,
+                     "by_subject": {name: (attributed[name][0] if len(attributed[name]) == 1
+                                           else {"children_found": len(attributed[name])}) for name in subjects}},
+        "parent_result": {"is_error": final.get("is_error"), "subtype": final.get("subtype")},
+        "conformity": conformity}
+
+
+def cache_ttl_verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[str]]:
+    """``conforming`` only if the modified subagent wrote 1-hour cache and no 5-minute cache AND the control wrote
+    5-minute cache and no 1-hour cache, with everything else exact; anything not observed is ``unknown``."""
+    failed, open_points = [], []
+    for name, states in facts["conformity"].items():
+        for key, state in states.items():
+            if state == "divergent":  # the host version is recorded, never a failure (documented minimum, not imposed)
+                failed.append(f"{name}.{key}")
+            elif state == "unknown":
+                open_points.append(f"{name}.{key}")
+    observed = facts["observed"]
+    if process["timed_out"] or process["exit_code"] != 0:
+        failed.append("process")
+    if observed["children"] != 2 or observed["children_unreadable"] or observed["children_unattributed"]:
+        (failed if observed["children"] > 2 or observed["children_unattributed"] else open_points).append("children")
+    if facts["host"]["version_against_documented_minimum"] == "unknown":
+        open_points.append("host_version")
+    if failed:
+        return "not_conforming", failed + open_points
+    return ("unknown" if open_points else "conforming"), open_points
+
+
+def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt.date | None = None) -> int:
+    if CACHE_TTL_POLICY is None:  # refused before anything is resolved or created
+        raise TrialError("no pin carries experimental.cacheTtl (CLAUDE_CACHE_TTL_1H_PINS is empty): nothing to try")
+    work, out = Path(args.work_dir).expanduser().resolve(), Path(args.out).expanduser().resolve()
+    if work.exists() or out.exists():
+        raise TrialError("the work directory and the result file must not exist: the trial is never replayed")
+    if _inside_repository(work):
+        raise TrialError("the work directory must be outside any git repository: the fixture carries its own policy")
+    session_id = str(uuid.uuid4())
+    files = [work / "fixture" / name for name in ("first.txt", "second.txt")]
+    subjects: dict[str, dict[str, Any]] = {}
+    with _policy_root(CACHE_TTL_POLICY) as root:
+        policy = _load_claude_policy(root)
+        for name, (role, capability, requested_expected, expected_class) in CACHE_TTL_SUBJECTS.items():
+            route = policy.resolve(role, "claude")
+            binding = claude_invocation_binding(route, capability, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused
+            subjects[name] = {"role": role, "logical": CACHE_TTL_LOGICAL[role], "capability": capability,
+                              "route": route, "binding": binding, "wire": binding["transmitted_model"],
+                              "profile": binding["profile"],
+                              "requested": profile_cache_ttl(PLUGIN_ROOT, binding["profile"]),
+                              "requested_expected": requested_expected, "expected_class": expected_class}
+    if subjects["modified"]["wire"] not in CLAUDE_CACHE_TTL_1H_MODELS:
+        raise TrialError("the modified subject is not a pin that carries the field (CLAUDE_CACHE_TTL_1H_PINS)")
+    if not args.dry_run:  # nothing is created under the work directory before every refusal above has been passed
+        _create_fixture(work, CACHE_TTL_POLICY)
+        for file in files:
+            file.write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
+    command = argv(args.claude, cache_ttl_parent_prompt(files), session_id, args.parent_model)
+    environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
+    body: dict[str, Any] = {
+        "schema": CACHE_TTL_TRIAL_SCHEMA,
+        "kind": "bounded native trial of the subagent cache lifetime (PAT-134); not a benchmark, a cost measure or a "
+                "statement about the subscription quota (unknown)",
+        "date": (today or dt.date.today()).isoformat(),
+        "bounds": {"executions": 1, "parents": 1, "children_expected": 2, "timeout_seconds": TIMEOUT_SECONDS,
+                   "concurrency": 1, "replays": 0, "environment_names": sorted(environment)},
+        "limits": ["the control is a worker profile (Opus 5.5) and the modified one a read-only profile (Sonnet 5.5): "
+                   "the two roles that resolve to the two models without a review claim",
+                   "two subagents of one parent run: not a sample",
+                   "usage credits drawn during the run are not observable here"],
+        "source": _head(),
+        "argv": [part if part != session_id else "<session id>" for part in
+                 (command[0], "-p", "<parent prompt>", *command[3:-1], "<plugins/foundry of this checkout>")],
+        "subjects": {name: {
+            "role": s["role"], "logical_agent": s["logical"],
+            "requested": {"tier": s["route"].selected_tier, "model": s["route"].model, "effort": s["route"].effort,
+                          "profile_field_experimental_cacheTtl": s["requested"],
+                          "expected_by_the_trial": s["requested_expected"]},
+            "transmitted": {"profile": s["profile"], "model": s["wire"],
+                            "basis": "computed offline from this checkout before launch; the agent type the host "
+                                     "logged is under observed"}} for name, s in subjects.items()},
+    }
+    if args.dry_run:
+        print(json.dumps({**body, "dry_run": True, "command": command, "cwd": str(work)}, indent=2, ensure_ascii=False))
+        return 0
+    process = launch(command, cwd=work, env=environment, stdout=work / "stream.ndjson", stderr=work / "stderr.txt")
+    facts = observe_cache_ttl(work / "stream.ndjson", Path(args.projects_dir).expanduser(), session_id, subjects)
+    state, open_points = cache_ttl_verdict(process, facts)
+    body.update({"process": process, **facts, "verdict": state, "not_established": open_points})
+    out.write_text(json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"{state}: {out}")
+    return 0 if state == "conforming" else 1
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m foundry.claude_profile_trial", description=__doc__.split("\n")[0])
     parser.add_argument("--work-dir", required=True, help="new directory outside any git repository (raw stream kept there)")
@@ -307,12 +568,19 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--claude", default="claude", help="host binary")
     parser.add_argument("--parent-model", default="sonnet", help="model of the parent session (not under trial)")
     parser.add_argument("--projects-dir", default="~/.claude/projects", help="host session logs")
-    parser.add_argument("--dry-run", action="store_true", help="prepare the fixture and print the command; launch nothing")
+    parser.add_argument("--dry-run", action="store_true", help="print the command; create nothing under the work directory, launch nothing")
     parser.add_argument("--neutral-fixture", action="store_true",
                         help="separate fixture: a public fixture marker instead of a value named token, and a "
                              "parent told to wait for the agent's answer")
+    parser.add_argument("--cache-ttl-trial", action="store_true",
+                        help="PAT-134, separate mode: two subagents (Sonnet 5.5 profile carrying experimental.cacheTtl, "
+                             "Opus 5.5 control) from one parent; records the cache class each wrote; default fixture, "
+                             "PAT-125 rule and results untouched")
     try:
-        return run(parser.parse_args(arguments))
+        parsed = parser.parse_args(arguments)
+        if parsed.cache_ttl_trial and parsed.neutral_fixture:
+            parser.error("--cache-ttl-trial and --neutral-fixture are separate modes")
+        return (run_cache_ttl if parsed.cache_ttl_trial else run)(parsed)
     except TrialError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2

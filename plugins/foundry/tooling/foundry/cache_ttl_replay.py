@@ -147,6 +147,17 @@ sides; an unavailable lineage is on neither. NOT modelled: several cache breakpo
 the host does differently under another duration (the documented ``1h`` ignore while usage credits are drawn is unobservable
 here), the subscription quota (unknown, concluded on nothing). ``--until`` ignores every record after the instant, so a log
 still being written can be replayed reproducibly.
+
+PAT-134 EXTENSION (``--subagent-1h-to-5m``, with ``--host-session``, default off, so every existing input gives the same
+output). Once the subagent profiles carry a 1-hour cache lifetime, a subagent lineage is OBSERVED at 1 hour; its real effect
+is then measured by replaying it towards 5 minutes, direction A, with the rule already written for the main conversation
+(above): no new rule, the same function. A subagent lineage qualifies when every cache write of its non-ambiguous requests is
+in the 1-hour class and there is at least one (``observed_one_hour_only``); a lineage with any 5-minute write, or none, stays
+in direction B. Qualifying lineages form their own group ``subagent_1h`` (never merged with the 5-minute ``subagent`` group,
+whose direction differs); their first request that reads cache uses ``entry_expiry`` against the earlier MAIN lineages, as a
+main lineage does (the writer of such an entry is not observable: a limit). The lineage is chosen by the observed counters
+only, never by the agent type or the profile (outside FOUNDRY-ADR-0015), so a subagent that ran at 1 hour for another
+reason is replayed too. Output gains ``subagent_1h_to_5m`` (the rule and the number of lineages replayed) only with the flag.
 """
 from __future__ import annotations
 
@@ -159,6 +170,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_MODELS
 from foundry.cost_breakdown import GRID_PATH, BreakdownError, _count, _read_jsonl, _share, _usd, load_grid, price_for
 
 TTL_SECONDS = 300
@@ -460,7 +472,12 @@ def _grouped(rows: Sequence[Mapping[str, Any]], key: str) -> dict[str, Any]:
 
 LONG_TTL_SECONDS = 3600
 KINDS = ("main", "subagent")
-DIRECTION = {"main": "1h_to_5m", "subagent": "5m_to_1h"}
+# PAT-134 (``--subagent-1h-to-5m``): a subagent lineage whose cache writes were ALL observed at 1 hour is replayed in
+# direction A, as its own group, so it never mixes with the 5-minute subagent lineages of direction B.
+SUBAGENT_1H = "subagent_1h"
+ALL_KINDS = (*KINDS, SUBAGENT_1H)
+DIRECTION_A = ("main", SUBAGENT_1H)
+DIRECTION = {"main": "1h_to_5m", "subagent": "5m_to_1h", SUBAGENT_1H: "1h_to_5m"}
 PROVENANCE = {"token_counters": "host_reported", "model_alias": "host_reported", "timestamps": "host_reported",
               "usd_real_and_simulated": "pricing_derived", "lineage_without_usable_price": "unavailable",
               "client_observed": "none (this reader observes nothing by itself)"}
@@ -528,7 +545,7 @@ def lineage_rows(requests: Sequence[Mapping[str, Any]], grid: Mapping[str, Any],
         if rates is not None:
             row["real"] = request_costs(t, rates, False)[0]
         for b in BOUNDS:
-            if kind == "main":
+            if kind in DIRECTION_A:
                 expired = entry_expired[b] if gap[b][i] is None else gap[b][i] > TTL_SECONDS
                 row["expired"][b] = expired
                 if rates is not None:
@@ -538,6 +555,11 @@ def lineage_rows(requests: Sequence[Mapping[str, Any]], grid: Mapping[str, Any],
                 row["recovered"][b] = rho
                 if rates is not None:
                     row["sim"][b] = request_cost_long(t, rates, rho)
+        if kind == SUBAGENT_1H and rates is not None:
+            # PAT-134 decision input, NOT a replay rule: the same simulated cost with the entry read of a FIRST request
+            # (the one the rule cannot place: its writer is not observable) counted as not expired, under each bound.
+            row["sim_entry_kept"] = {b: request_costs(t, rates, False if j is None else row["expired"][b])[1]
+                                     for b in BOUNDS}
         if kind == "subagent" and rates is not None:
             row["sim_no_recovery"] = request_cost_long(t, rates, 0)
             # upper envelope of what prefix sharing between logs could change: every cold-start write a 1-hour read
@@ -577,7 +599,7 @@ def summarise(rows: Sequence[Mapping[str, Any]], kind: str) -> dict[str, Any]:
             "cache_read_tokens_on_requests_after_over_ttl": sum(r["tokens"]["read"] for r in over),
             "cache_write_tokens_on_requests_after_over_ttl": sum(r["tokens"]["write"] for r in over),
             "max_gap_seconds": max((r["gap"][b] for r in known), default=None), "distribution_seconds": hist}
-        if kind == "main":
+        if kind in DIRECTION_A:
             out["tokens_by_bound"][b] = {
                 "requests_found_expired": sum(1 for r in known if r["expired"][b]),
                 "first_requests_found_expired": sum(1 for r in rows if r["gap"][b] is None and r["expired"][b]),
@@ -611,6 +633,12 @@ def summarise(rows: Sequence[Mapping[str, Any]], kind: str) -> dict[str, Any]:
             usd["bounds"][b]["wrong_share_of_recognised_rewrites_that_cancels_the_delta"] = (
                 _share(-deltas[b], gain) if deltas[b] < 0 < gain else None)
     usd["result"] = _verdict(deltas["prudent"], deltas["favourable"])
+    if kind == SUBAGENT_1H:
+        kept = {b: sum((r["sim_entry_kept"][b] for r in priced), Decimal(0)) - real for b in BOUNDS}
+        usd["entry_reads_not_expired"] = {
+            "delta_usd": {b: _usd(kept[b]) for b in BOUNDS},
+            "delta_usd_exact": {b: str(kept[b]) for b in BOUNDS},  # exact decimal strings: the decision reads these
+            "first_requests_priced": sum(1 for r in priced if r["first"])}
     out["usd"] = usd
     return out
 
@@ -629,7 +657,14 @@ def _lineage_view(name: str, kind: str, alias: str, rows: Sequence[Mapping[str, 
                                        for b, e in usd["bounds"].items()}}}
 
 
-def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt.datetime | None = None) -> dict[str, Any]:
+def observed_one_hour_only(requests: Sequence[Mapping[str, Any]]) -> bool:
+    """PAT-134: every cache write the lineage made (ambiguous requests aside) was in the 1-hour class, and there was one."""
+    sound = [r["tokens"] for r in requests if not r.get("ambiguous")]
+    return sum(t["write_1h"] for t in sound) > 0 and sum(t["write_5m"] for t in sound) == 0
+
+
+def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt.datetime | None = None,
+                        subagent_1h_to_5m: bool = False) -> dict[str, Any]:
     price_grid = load_grid(grid)
     loaded: list[dict[str, Any]] = []  # one per designated session: lineages as (kind, alias, requests), refusals
     for main in mains:
@@ -658,24 +693,27 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
     loaded.sort(key=lambda it: (it["first"] is None, it["first"] or dt.datetime.max.replace(tzinfo=dt.timezone.utc)))
     all_main = [lin for it in loaded for k, _, lin in it["lineages"] if k == "main"]
     sessions, views, unavailable, usable = [], [], [], []
+    replayed_1h_to_5m = 0
     for number, item in enumerate(loaded, 1):
         sname = f"session-{number:02d}"
         rank = dict.fromkeys(KINDS, 0)
         ordered = sorted(item["lineages"], key=lambda t: (t[0] != "main", t[2][0]["first"], t[2][-1]["last"],
                                                          sum(q["tokens"]["output"] for q in t[2])))
-        session_rows: dict[str, list[dict[str, Any]]] = {k: [] for k in KINDS}
+        session_rows: dict[str, list[dict[str, Any]]] = {k: [] for k in ALL_KINDS}
         for kind, alias, requests in ordered:
             rank[kind] += 1
             name = f"{sname}/{kind}-{rank[kind]:02d}"
+            group = SUBAGENT_1H if subagent_1h_to_5m and kind == "subagent" and observed_one_hour_only(requests) else kind
+            replayed_1h_to_5m += group == SUBAGENT_1H
             expired = entry_expiry(requests[0], [lin for lin in all_main if lin[0]["first"] < requests[0]["first"]]) \
-                if kind == "main" else {b: True for b in BOUNDS}
-            rows, why = lineage_rows(requests, price_grid, kind, expired)
-            views.append(_lineage_view(name, kind, alias, rows, why))
+                if group in DIRECTION_A else {b: True for b in BOUNDS}
+            rows, why = lineage_rows(requests, price_grid, group, expired)
+            views.append(_lineage_view(name, group, alias, rows, why))
             if why is not None:
-                unavailable.append({"lineage": name, "kind": kind, "model": alias, "reason": why, "requests": len(rows),
+                unavailable.append({"lineage": name, "kind": group, "model": alias, "reason": why, "requests": len(rows),
                                     "provenance": PROVENANCE["lineage_without_usable_price"]})
-            session_rows[kind].extend(rows)
-            usable.append((kind, alias, rows))
+            session_rows[group].extend(rows)
+            usable.append((group, alias, rows))
         for refusal in item["refused"]:
             rank[refusal["kind"]] += 1
             unavailable.append({"lineage": f"{sname}/{refusal['kind']}-unreadable-{rank[refusal['kind']]:02d}",
@@ -689,7 +727,7 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
             "main_alias_lineages": sum(1 for k, _, _ in item["lineages"] if k == "main"),
             "main_returns_to_an_earlier_alias": item["returns"],
             "subagent_logs_found": item["subagent_logs"],
-            "by_kind": {k: summarise(session_rows[k], k) for k in KINDS if session_rows[k]}})
+            "by_kind": {k: summarise(session_rows[k], k) for k in ALL_KINDS if session_rows[k]}})
     return {
         "schema": "foundry.cache-ttl-replay.interactive.v1", "ttl_seconds": TTL_SECONDS, "long_ttl_seconds": LONG_TTL_SECONDS,
         "until": None if until is None else until.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -709,10 +747,90 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
         "sessions_designated": len(mains), "distinct_first_days_utc": sorted({s["first_day_utc"] for s in sessions if s["first_day_utc"]}),
         "sessions": sessions,
         "by_kind": {k: summarise([r for kk, _, rows in usable if kk == k for r in rows], k)
-                    for k in KINDS if any(kk == k for kk, _, _ in usable)},
+                    for k in ALL_KINDS if any(kk == k for kk, _, _ in usable)},
         "by_kind_and_model": {f"{k}/{a}": summarise([r for kk, aa, rows in usable if (kk, aa) == (k, a) for r in rows], k)
                               for k, a in sorted({(kk, aa) for kk, aa, _ in usable})},
-        "lineages": views, "lineages_unavailable_in_usd_or_unreadable": unavailable}
+        "lineages": views, "lineages_unavailable_in_usd_or_unreadable": unavailable,
+        **({"subagent_1h_to_5m": {
+            "rule": "a subagent lineage whose cache writes were all observed at 1 hour is replayed towards 5 minutes with "
+                    "the rule of the main conversation (direction A, no new rule), as the group subagent_1h; the other "
+                    "subagent lineages stay in direction B",
+            "lineages_replayed": replayed_1h_to_5m}} if subagent_1h_to_5m else {})}
+
+
+# ------------------------------------------------------------------------ PAT-134 observation rule
+
+ROLLBACK_MIN_SESSIONS = 3
+# Derived from CLAUDE_CACHE_TTL_1H_PINS (written for its single pin). ``None`` once that tuple is emptied (the rollback): the
+# module must still import, because the PAT-132 / PAT-133 replay and the PAT-125 trial mode import it.
+ROLLBACK_MODEL = CLAUDE_CACHE_TTL_1H_MODELS[0] if CLAUDE_CACHE_TTL_1H_MODELS else None
+
+
+def rollback_decision(replay: Mapping[str, Any], model: str | None = ROLLBACK_MODEL) -> dict[str, Any]:
+    """PAT-134 rule, read from the output of ``analyse_interactive(..., subagent_1h_to_5m=True)``.
+
+    QUANTITY. The observed setting is 1 hour and the replay simulates 5 minutes, so a delta is simulated 5-minute cost minus
+    real 1-hour cost: POSITIVE means the 1 hour was cheaper. The decision does NOT read ``usd.bounds.*.delta_usd`` or
+    ``usd.result``: they reprice, as expired, the cache read of the FIRST request of each lineage (the replay cannot place the
+    writer of that entry; with a main conversation of another model no earlier lineage of the alias exists, so the entry is
+    counted expired under both bounds), although a prefix written by a sibling subagent less than 5 minutes earlier would
+    also have been read at 5 minutes. That overestimates the cost of 5 minutes on both bounds. The decision reads instead
+    ``usd.entry_reads_not_expired.delta_usd_exact`` (decimal strings, unrounded): the same simulation with those entry reads
+    counted as not expired, a reading MORE SEVERE THAN ``delta_usd`` for keeping the 1 hour (never above it), not the most
+    severe one in absolute terms (an addition to the output, not a new replay rule). Of its two bounds the SMALLER is read:
+    in practice the ``favourable`` one, which simulates fewer expirations, so a smaller 5-minute cost and a smaller delta;
+    ``prudent`` simulates more expirations and is the bound most favourable to keeping the 1 hour. The threshold is therefore
+    NOT on the prudent bound; the minimum is taken so the decision does not depend on that ordering. Since that quantity is
+    never above ``delta_usd``, ``keep`` implies ``usd.result == net_loss`` and not the converse.
+
+    LIMITS OF THE DECISION: two biases towards ``keep`` remain, under BOTH bounds. (a) On an expiry inside a lineage (gap
+    over 300 s) the WHOLE read is repriced as a 5-minute write, although the part shared with a sibling subagent of the same
+    profile (tools and system prompt) that was active less than 5 minutes earlier would have stayed readable at 5 minutes:
+    the simulated 5-minute cost is over-estimated. (b) The ``favourable`` gap is not a rigorous lower bound of the real gap
+    (the instant a request is sent is not observable), so an expiry can be counted that did not happen. The threshold has
+    no margin (strictly positive), so either bias can turn a marginal ``roll_back`` into ``keep``: a ``keep`` on a delta
+    close to zero is not established by this rule.
+
+    DECISION. ``keep`` only if that minimum is strictly positive (unrounded: a delta that rounds to 0.0 in ``delta_usd``
+    still counts); ``roll_back`` if it is zero or negative, or if no lineage of ``model`` was observed at 1 hour (the field has
+    no observable effect; ASSUMED ASYMMETRY: this holds even when the sessions ran no subagent of ``model`` at all, whereas one
+    or two contributing sessions give ``unknown``). ``unknown`` if no model carries the field (``model`` is ``None``: the
+    default once ``CLAUDE_CACHE_TTL_1H_PINS`` is empty, nothing is left to decide); if the replay was not made with the
+    option; if fewer than ``ROLLBACK_MIN_SESSIONS``
+    designated sessions were replayed, or fewer contribute a priced lineage of ``model`` observed at 1 hour; if any such
+    lineage is not priced; or if a lineage of ANOTHER model (an unmodified profile) is observed at 1 hour, because an
+    outside setting then changed the measure. Only subagent lineages whose writes were ALL in the 1-hour class are decision
+    inputs. The subscription quota is not an input.
+
+    OUTPUT. ``decision`` (``keep``, ``roll_back``, ``unknown``) and ``reason``, one of ``no_model_carries_the_field``,
+    ``replay_not_made_with_subagent_1h_to_5m``, ``fewer_designated_sessions_than_the_minimum``,
+    ``a_lineage_of_another_model_is_observed_at_1h``, ``no_lineage_of_the_model_observed_at_1h``,
+    ``a_lineage_observed_at_1h_is_not_priced``, ``fewer_contributing_sessions_than_the_minimum`` (with
+    ``contributing_sessions``) and ``least_favourable_entry_reads_not_expired_delta`` (with ``contributing_sessions`` and
+    ``delta_usd_entry_reads_not_expired``, the minimum read, an exact decimal string). No CLI: it is called from Python on
+    the parsed JSON of a replay output (the call is written in the PAT-134 page)."""
+    if model is None:
+        return {"decision": "unknown", "reason": "no_model_carries_the_field"}
+    if "subagent_1h_to_5m" not in replay:
+        return {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
+    if len(replay.get("sessions", ())) < ROLLBACK_MIN_SESSIONS:
+        return {"decision": "unknown", "reason": "fewer_designated_sessions_than_the_minimum"}
+    one_hour = [v for v in replay.get("lineages", ()) if v.get("kind") == SUBAGENT_1H]
+    if any(v.get("model") != model for v in one_hour):
+        return {"decision": "unknown", "reason": "a_lineage_of_another_model_is_observed_at_1h"}
+    if not one_hour:
+        return {"decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
+    if any(v.get("usd") == "unavailable" for v in one_hour):
+        return {"decision": "unknown", "reason": "a_lineage_observed_at_1h_is_not_priced"}
+    contributing = {v["lineage"].split("/", 1)[0] for v in one_hour}
+    if len(contributing) < ROLLBACK_MIN_SESSIONS:
+        return {"decision": "unknown", "reason": "fewer_contributing_sessions_than_the_minimum",
+                "contributing_sessions": len(contributing)}
+    group = replay["by_kind_and_model"][f"{SUBAGENT_1H}/{model}"]
+    exact = group["usd"]["entry_reads_not_expired"]["delta_usd_exact"]
+    delta = min(Decimal(exact[b]) for b in BOUNDS)
+    return {"decision": "keep" if delta > 0 else "roll_back", "reason": "least_favourable_entry_reads_not_expired_delta",
+            "delta_usd_entry_reads_not_expired": str(delta), "contributing_sessions": len(contributing)}
 
 
 # --------------------------------------------------------------------------------------------------- CLI
@@ -797,6 +915,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                              "are the *.jsonl under <dir>/<session>/subagents/; repeatable; replaces --ledger")
     parser.add_argument("--until", default=None, metavar="ISO_INSTANT",
                         help="with --host-session: ignore every record after this instant (e.g. 2026-10-09T22:13:00Z)")
+    parser.add_argument("--subagent-1h-to-5m", action="store_true",
+                        help="PAT-134, with --host-session: replay the subagent lineages whose cache writes were all "
+                             "observed at 1 hour towards 5 minutes with the rule of the main conversation (direction A), "
+                             "as the group subagent_1h; default off (outputs unchanged)")
     parser.add_argument("--grid", default=str(GRID_PATH))
     parser.add_argument("--out", default=None, help="write the aggregates here (never overwrites)")
     args = parser.parse_args(argv)
@@ -810,10 +932,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
         if args.until:
             parser.error("--until needs --host-session")
+        if args.subagent_1h_to_5m:
+            parser.error("--subagent-1h-to-5m needs --host-session")
     try:
         if args.host_session:
             until = _instant(args.until) if args.until else None
-            doc = analyse_interactive([Path(p) for p in args.host_session], Path(args.grid), until)
+            doc = analyse_interactive([Path(p) for p in args.host_session], Path(args.grid), until,
+                                         args.subagent_1h_to_5m)
         else:
             doc = analyse([Path(p) for p in args.ledger], Path(args.session_logs_dir), Path(args.grid))
         text = json.dumps(doc, indent=2, sort_keys=True) + "\n"

@@ -1284,6 +1284,76 @@ contract carries the current-state summary. `claude_invocation_binding()` gains 
 optional `host_version` argument: internal, no caller-facing surface beyond the above.
 
 
+### PAT-134 subagent prompt-cache lifetime: trial, replay and observation rule
+
+PAT-134 moves the prompt cache of the Sonnet 5.5 versioned subagent profiles to the
+1-hour class, adopted under observation (FOUNDRY-ADR-0019 by analogy) and without a bench.
+Per Anthropic's documentation as read by the coordinator on 2026-10-09 (not re-verified by the
+tooling), a subagent profile may carry `experimental: {cacheTtl: 5m|1h}` (inside the
+`experimental` map, not at the top level; Claude Code 2.1.248 or later; `1h` is ignored while the
+subscription draws usage credits; precedence, highest first: `FORCE_PROMPT_CACHING_5M`, the
+bucket's environment variable, the bucket's setting, the profile's `cacheTtl`,
+`ENABLE_PROMPT_CACHING_1H`, the default). This changes no routing, model, effort or user
+setting and adds no configuration key.
+
+- Trial tool: `python3 -m foundry.claude_profile_trial --cache-ttl-trial` (new option; the default
+  fixture, the PAT-125 verdict rule and its recorded results are unchanged). One `claude -p` parent
+  launches a Sonnet 5.5 read-only subagent and an Opus 5.5 worker control, one after the other, from an
+  isolated fixture; requested (the profile's `cacheTtl`), transmitted (profile selected, agent type
+  logged) and observed (cache-creation tokens per class from the host's session logs) stay separate.
+  `conforming` only if the Sonnet subagent wrote in the 1-hour class and not the 5-minute class and the
+  control in the 5-minute class only; anything not observed is `unknown`. Run by hand by the
+  coordinator, never by the tests.
+- Replay: `python3 -m foundry.cache_ttl_replay --host-session ... --subagent-1h-to-5m` (new option,
+  default off) replays a subagent lineage whose cache writes were all observed at 1 hour towards
+  5 minutes with the main-conversation rule (direction A, no new rule) as the group `subagent_1h`.
+- Observation window, replayed sessions, rollback threshold (on the smaller of the two bounds, in practice
+  `favourable`; not on the `prudent` bound), the limits of that decision, exact rollback, and
+  the documented / observed / unknown behaviour on a host older than 2.1.248 and under usage
+  credits (no guard invented) are written before adoption in
+  [the PAT-134 page](qualification/pat-134-subagent-cache-1h.md). No gain is announced; the effect on the
+  subscription quota is unknown.
+
+The ten Sonnet 5.5 versioned profiles (`routed-{readonly,worker}-{low,medium,high,xhigh,max}-sonnet-5.5`)
+carry `experimental: {cacheTtl: 1h}` as a nested map; no other profile does. The profile generator
+(`claude_pin_profile_text`, the pins listed in `CLAUDE_CACHE_TTL_1H_PINS`) renders exactly that block and
+`claude_invocation_binding()` refuses a divergent preloaded profile (field missing, on another pin, another
+value, another key) before any launch. The native trial of 2026-10-10 (one run, host 2.1.294, recorded as
+written in [`pat-134-native-trial.json`](qualification/pat-134-native-trial.json), verdict `conforming`)
+observed one Sonnet 5.5 read-only subagent writing 4,768 cache tokens in the 1-hour class and none in the
+5-minute class, and the Opus 5.5 control 5,301 in the 5-minute class only. One run of two subagents does not
+show the field is honoured on the other nine profiles, under usage credits or on another host version, and
+says nothing about cost or quota (unknown). `--dry-run` of both trial modes now creates nothing under the work directory.
+The rollback rule (`cache_ttl_replay.rollback_decision`) reads the unrounded
+`usd.entry_reads_not_expired.delta_usd_exact` of the replay (simulated 5-minute cost minus real 1-hour cost, with
+the entry read of each lineage's first request counted as not expired, a reading more severe than `delta_usd`
+for keeping 1 hour, not the most severe in absolute terms) and keeps 1 hour only if its smaller bound is strictly
+positive. The smaller bound is in practice `favourable` (fewer simulated expirations); `prudent` simulates more
+expirations, gives the larger delta and is the bound most favourable to keeping 1 hour. Limits of the decision,
+two biases towards `keep` under both bounds: an expiry inside a lineage reprices the whole read as a 5-minute
+write although the part shared with a sibling subagent of the same profile active within 5 minutes (tools and
+system prompt) would have stayed readable, and the `favourable` gap is not a rigorous lower bound of the real gap
+(the send instant is not observable). The threshold has no margin, so either can flip a marginal case: a `keep`
+on a delta close to zero is not established. `unknown` when no model carries the field, too few sessions
+contribute, a lineage is unpriced or an unmodified profile shows up at 1 hour; `roll_back` also when no Sonnet 5.5
+lineage is observed at 1 hour, even if the sessions ran no Sonnet 5.5 subagent at all (assumed asymmetry). The
+function has no CLI: the Python call, the returned keys and the `reason` codes are listed in the page. Not
+observed and not guarded:
+a host older than 2.1.248 might reject a profile carrying an unknown field, which would break every Sonnet 5.5
+launch there (Sonnet 5.5 has no host minimum); unknown. The refusal of a divergent profile applies to pinned
+routes; a short-alias route reads no profile file. The single rollback is emptying
+`CLAUDE_CACHE_TTL_1H_PINS`, regenerating the profiles and updating the tests and sentences that assert the field;
+every step, file and test is listed in the page (dry-run on a copy of the repository, CI commands included). With
+the tuple empty both tools still import and run: `--cache-ttl-trial` refuses (exit 2, nothing created under the
+work directory), `ROLLBACK_MODEL` and `CACHE_TTL_POLICY` are `None`, and `rollback_decision` returns `unknown`
+(`no_model_carries_the_field`).
+
+Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
+(and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`
+group, the constants `CLAUDE_CACHE_TTL_1H_PINS` and `CLAUDE_CACHE_TTL_1H_MODELS`, `rollback_decision` (call,
+keys and `reason` codes in the page) and the profile field `experimental.cacheTtl`.
+
+
 ### Reproducible source profile generation
 
 Run `python3 plugins/foundry/tooling/generate_claude_profiles.py` from the repository

@@ -80,6 +80,20 @@ _CLAUDE_MODEL_DECLARATION = (
 # PAT-ADR-0016: minimum Claude Code host version of a declared pin. Below it the
 # binding fails closed; no other model, pin or alias is ever substituted.
 CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
+# PAT-134: the declared pins whose shipped profile carries the subagent prompt-cache lifetime
+# ``experimental: {cacheTtl: 1h}`` (nested map, not a top-level key; Claude Code 2.1.248 or later, per the Anthropic
+# documentation read on 2026-10-09). The deterministic profile check expects exactly this block for these pins and no
+# ``experimental`` block for any other pin or template. SINGLE ROLLBACK PROCEDURE, written in full (every file and test
+# to change) in ``docs/qualification/pat-134-subagent-cache-1h.md``: empty this tuple, run
+# ``tooling/generate_claude_profiles.py`` (it removes the block from the ten files), then update the tests and the
+# sentences listed there. With the tuple empty the rendering below renders no block; ``claude_profile_trial`` and
+# ``cache_ttl_replay`` derive their model from it and still import (``--cache-ttl-trial`` then refuses and
+# ``rollback_decision`` returns ``unknown``): ``tests/test_cache_ttl_trial.py`` performs these two steps on a copy.
+CLAUDE_CACHE_TTL_1H_PINS = ("sonnet-5.5",)
+_CLAUDE_CACHE_TTL_1H_BLOCK = "\nexperimental:\n  cacheTtl: 1h"
+# Full model identifiers of those pins, derived from the single declaration above and the model declaration.
+CLAUDE_CACHE_TTL_1H_MODELS = tuple(wire for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION
+                                   if canonical in CLAUDE_CACHE_TTL_1H_PINS)
 _CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
 _CLAUDE_BINARY_VERSION = re.compile(r"(\d+\.\d+\.\d+) \(Claude Code\)\Z")
 _TRANSCRIPT_TAIL_BYTES = 1 << 20
@@ -911,9 +925,14 @@ def claude_pin_profile_text(
     except OSError as exc:
         raise RoutingConfigError(f"template de profil Claude absent : {generic_name}.") from exc
     expected_name = f"name: {generic_name}\n"
-    if template.count(expected_name) != 1 or "\nmodel:" in template:
+    if template.count(expected_name) != 1 or "\nmodel:" in template or "\nexperimental:" in template:
         raise RoutingConfigError(f"template de profil Claude invalide : {generic_name}.")
     text = template.replace(expected_name, f"name: {name}\nmodel: {invocation_model}\n", 1)
+    if canonical in CLAUDE_CACHE_TTL_1H_PINS:
+        head, closing, body = text.partition("\n---\n")  # the frontmatter's closing fence (the opening has no newline)
+        if not closing:
+            raise RoutingConfigError(f"template de profil Claude invalide : {generic_name}.")
+        text = head + _CLAUDE_CACHE_TTL_1H_BLOCK + closing + body
     return name, text
 
 
