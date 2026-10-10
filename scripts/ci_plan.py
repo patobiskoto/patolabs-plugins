@@ -76,7 +76,9 @@ def changed_paths_from_git(base: str, head: str) -> list[str] | None:
         return None
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "-z", f"{base}...{head}"],
+            # --no-renames: a moved file is listed by its source AND its destination, so a
+            # file moved from outside plugins/ship-ios/ into it is not seen as inside only.
+            ["git", "diff", "--name-only", "--no-renames", "-z", f"{base}...{head}"],
             check=True,
             capture_output=True,
             text=True,

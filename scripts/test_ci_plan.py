@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -87,7 +89,8 @@ class PlanRule(unittest.TestCase):
 class ChangedPathsFromGit(unittest.TestCase):
     def git(self, cwd, *args):
         subprocess.run(
-            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *args],
             cwd=cwd, check=True, capture_output=True,
         )
 
@@ -107,7 +110,6 @@ class ChangedPathsFromGit(unittest.TestCase):
             (root / "b.txt").write_text("b")
             self.git(root, "add", ".")
             self.git(root, "commit", "-q", "-m", "main moved")
-            import os
             previous = os.getcwd()
             os.chdir(root)
             try:
@@ -120,13 +122,72 @@ class ChangedPathsFromGit(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def changed_between(self, setup):
+        """Commit ``setup``'s base state on main, branch ``pr``, apply ``change``, diff."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.git(root, "init", "-q", "-b", "main")
+            change = setup(root)
+            self.git(root, "add", "-A")
+            self.git(root, "commit", "-q", "-m", "base")
+            self.git(root, "checkout", "-q", "-b", "pr")
+            change(root)
+            self.git(root, "add", "-A")
+            self.git(root, "commit", "-q", "-m", "pr")
+            previous = os.getcwd()
+            os.chdir(root)
+            try:
+                return ci_plan.changed_paths_from_git("main", "pr")
+            finally:
+                os.chdir(previous)
+
+    def test_move_into_ship_ios_lists_the_source_so_foundry_still_runs(self):
+        body = "".join(f"line {i}\n" for i in range(50))  # identical content: rename candidate
+
+        def setup(root):
+            (root / "plugins" / "foundry").mkdir(parents=True)
+            (root / "plugins" / "ship-ios").mkdir(parents=True)
+            (root / "plugins" / "foundry" / "mod.py").write_text(body)
+            (root / "plugins" / "ship-ios" / "keep.md").write_text("k")
+
+            def change(root):
+                (root / "plugins" / "foundry" / "mod.py").rename(
+                    root / "plugins" / "ship-ios" / "mod.py")
+            return change
+
+        paths = self.changed_between(setup)
+        self.assertEqual(
+            sorted(paths), ["plugins/foundry/mod.py", "plugins/ship-ios/mod.py"])
+        self.assertTrue(ci_plan.plan("pull_request", paths).foundry)
+
+    def test_deletion_outside_and_edited_move_into_ship_ios_are_listed(self):
+        body = "".join(f"line {i}\n" for i in range(50))
+
+        def setup(root):
+            (root / "plugins" / "foundry").mkdir(parents=True)
+            (root / "plugins" / "ship-ios").mkdir(parents=True)
+            (root / "plugins" / "foundry" / "gone.py").write_text(body)
+            (root / "plugins" / "foundry" / "other.py").write_text("unrelated\n")
+
+            def change(root):
+                # deleted outside, and a similar file (edited move) appears inside
+                (root / "plugins" / "foundry" / "gone.py").unlink()
+                (root / "plugins" / "ship-ios" / "copy.py").write_text(body + "x\n")
+                (root / "plugins" / "foundry" / "other.py").unlink()
+            return change
+
+        paths = self.changed_between(setup)
+        self.assertEqual(
+            sorted(paths),
+            ["plugins/foundry/gone.py", "plugins/foundry/other.py", "plugins/ship-ios/copy.py"])
+        self.assertTrue(ci_plan.plan("pull_request", paths).foundry)
+
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 GUARD = "github.event.pull_request.head.repo.fork == false"
 
 
 def job_text(name: str) -> str:
-    import re
     tail = WORKFLOW.read_text(encoding="utf-8").split(f"\n  {name}:\n", 1)[1]
     return re.split(r"\n  [A-Za-z][A-Za-z0-9-]*:\n", tail, maxsplit=1)[0]
 
