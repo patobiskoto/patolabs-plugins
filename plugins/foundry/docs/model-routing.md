@@ -1284,6 +1284,40 @@ contract carries the current-state summary. `claude_invocation_binding()` gains 
 optional `host_version` argument: internal, no caller-facing surface beyond the above.
 
 
+### PAT-134 subagent prompt-cache lifetime: trial, replay and observation rule
+
+PAT-134 prepares moving the prompt cache of the Sonnet 5.5 versioned subagent profiles to the
+1-hour class, adopted under observation (FOUNDRY-ADR-0019 by analogy) and without a bench.
+Per Anthropic's documentation as read by the coordinator on 2026-10-09 (not re-verified by the
+tooling), a subagent profile may carry `experimental: {cacheTtl: 5m|1h}` (inside the
+`experimental` map, not at the top level; Claude Code 2.1.248 or later; `1h` is ignored while the
+subscription draws usage credits; precedence, highest first: `FORCE_PROMPT_CACHING_5M`, the
+bucket's environment variable, the bucket's setting, the profile's `cacheTtl`,
+`ENABLE_PROMPT_CACHING_1H`, the default). This changes no routing, model, effort or user
+setting and adds no configuration key.
+
+- Trial tool: `python3 -m foundry.claude_profile_trial --cache-ttl-trial` (new option; the default
+  fixture, the PAT-125 verdict rule and its recorded results are unchanged). One `claude -p` parent
+  launches a Sonnet 5.5 read-only subagent and an Opus 5.5 worker control, one after the other, from an
+  isolated fixture; requested (the profile's `cacheTtl`), transmitted (profile selected, agent type
+  logged) and observed (cache-creation tokens per class from the host's session logs) stay separate.
+  `conforming` only if the Sonnet subagent wrote in the 1-hour class and not the 5-minute class and the
+  control in the 5-minute class only; anything not observed is `unknown`. Run by hand by the
+  coordinator, never by the tests.
+- Replay: `python3 -m foundry.cache_ttl_replay --host-session ... --subagent-1h-to-5m` (new option,
+  default off) replays a subagent lineage whose cache writes were all observed at 1 hour towards
+  5 minutes with the main-conversation rule (direction A, no new rule) as the group `subagent_1h`.
+- Observation window, replayed sessions, rollback threshold (on the prudent bound), exact rollback, and
+  the documented / observed / unknown behaviour on a host older than 2.1.248 and under usage
+  credits (no guard invented) are written before adoption in
+  [the PAT-134 page](qualification/pat-134-subagent-cache-1h.md). No gain is announced; the effect on the
+  subscription quota is unknown.
+
+Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
+(and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`
+group and the profile field `experimental.cacheTtl`.
+
+
 ### Reproducible source profile generation
 
 Run `python3 plugins/foundry/tooling/generate_claude_profiles.py` from the repository
