@@ -61,6 +61,92 @@ model or a token total that differs from the ledger's is LISTED and excluded fro
 Sessions are named by campaign, role and rank, never by raw id.
 
 Exit codes of ``main``: 0; 2 when an input is refused or unreadable.
+
+PAT-133 EXTENSION: INTERACTIVE host sessions, both directions (``--host-session``). The rules below were written BEFORE
+any figure of the rules was computed on an interactive session, with ONE limit: the coordinator's earlier exploratory,
+unpublished observation on one of the replayed sessions (gaps, tokens written right after them) was known, and it bears
+on the very quantities direction B depends on, so the rule is not blind to it. A later correction would be declared in the results document in a dated
+section, the earlier figures kept. The PAT-132 mode above, its rule and its outputs are unchanged.
+
+Input: the main conversation log ``<dir>/<session>.jsonl`` designated explicitly, no campaign ledger; its subagent logs are
+the ``*.jsonl`` files under ``<dir>/<session>/subagents/`` (nested ones included), found by that position only. Fields
+read, ADR-0015 list: token counters, model alias (``message.model``), record timestamp; session identity is the file itself
+and is never emitted (sessions are named by rank). Fields read BEYOND the ADR list, named: ``type`` (to pick the assistant
+records, and the timestamp of the record that precedes the first of them) and ``message.id`` (in-memory de-duplication of
+streaming records). Nothing else is read: no prompt, response, path, file name, command, tool name, agent type or excerpt.
+Provenance vocabulary (ADR-0015 / ADR-0008): counters, alias and timestamps are ``host_reported``; every USD figure, real or
+simulated, is ``pricing_derived`` (grid ``pricing-breakdown-v1.json``, a weight under a subscription, never a bill); a lineage
+that cannot be priced (alias without a usable price, e.g. Haiku 5.5 whose price depends on a prompt length the logs do not
+carry; unreadable log) is ``unavailable``, keeps its alias when it is known, and leaves BOTH sides of every comparison;
+``client_observed`` is empty here (this reader observes nothing by itself).
+
+LINEAGE. A lineage is the requests of ONE log file with ONE model alias, in log order (a cache is per model; the entry of a
+main conversation that switches model and comes back is the same lineage, the time away counts in its gap). A subagent log is
+one lineage per alias it contains (normally one). A model switch therefore opens a new lineage; a compaction is NOT detected
+(the rule only looks at counters and gaps: it appears as a request that writes a large prefix, priced as any other write).
+A lineage's first request has no predecessor in it. The kinds are ``main`` and ``subagent`` (the file's position). The
+LOGICAL ROLE (implementer, reviewer, ...) is NOT derivable within ADR-0015 (the agent type is not an allowed field and the
+counters, alias, timestamps and position do not carry it): figures are given by kind and by model alias, never by role.
+
+READER REPAIRS for interactive logs (declared in the results document, made after a first run refused real logs; none
+changes a rule above): lines are split on ``\\n`` only (``str.splitlines`` also splits on U+2028 and others, valid inside a
+JSON string); records of one message id may differ in ``output_tokens`` only (it grows while the response streams: the
+largest is kept); a later record of an id whose input, cache read and cache write counters are all zero is a zeroed copy
+and is ignored (a first zeroed record is replaced by the real one); a request whose two cache-write classes do not add up
+to its total is ``ambiguous``: it stays in the sequence (gaps), is never a recovery reference, and its tokens are on
+neither side of any figure (counted in ``requests_ambiguous_counters_on_neither_side``); any other difference between
+records of one id refuses that file (``duplicate_differs``, listed). A last line that cannot be parsed is ignored with
+``--until`` only (a record being written is later than the instant by construction).
+
+PRICE. A lineage is priced only when EVERY request has a usable price on its own day in the dated grid: otherwise it is
+``unavailable`` in USD (``no_price_for_alias_on_day``, e.g. a day before the grid begins or an alias the grid does not
+name; ``price_depends_on_prompt_length`` for Haiku 5.5), keeps its alias, and is on neither side of any USD comparison.
+Its TOKEN and GAP figures (counters and timestamps only, no price needed) stay in the token view. Nothing is estimated.
+
+GAPS. Those of PAT-132, per lineage: ``gaps(lineage, "prudent")`` is the upper reading ``U_i``, ``gaps(lineage, "favourable")``
+the lower reading ``L_i`` (``L_i <= U_i``; the lower one is not a rigorous lower bound, see above); the reference request ``j``
+of request ``i`` is the last earlier one of the lineage that read or wrote cache. First request of the file: the record that
+precedes it is the reference under ``U`` as in PAT-132; the first request of another alias lineage uses its own first record.
+
+DIRECTION A, ``main``: observed cache write duration (whatever the logs say, usually 1 hour) -> simulated 5 minutes. EXACTLY the
+PAT-132 in-session rule on each main lineage: request ``i`` finds the cache expired when its gap (reading ``U`` = prudent,
+``L`` = favourable) exceeds 300 s; what it read is then written again at the 5-minute write price; every write is priced at
+the 5-minute rate; real = the logs' own split. First request of a lineage that reads cache: ``entry_expiry`` with, as earlier
+sessions, the MAIN lineages of the other replayed sessions that start earlier (same alias required; a model switch opens a
+lineage of another alias so it never matches); none -> expired under both readings (the writer of the entry is not observable).
+
+DIRECTION B, ``subagent``: observed 5 minutes -> simulated 1 hour. The expiry really happened in these logs, so what is
+simulated is the re-write it caused. Real cost = the logs' own split. Simulated cost of request ``i`` (``I, O`` input and
+output, ``R, W`` read and written tokens, ``W5`` the part written at 5 minutes, ``rho_i`` the tokens recognised as expiry
+re-writes): ``I*input + (R + rho_i)*cache_read + (W - rho_i)*cache_write_1h + O*output``. Every write is repriced at the
+1-hour rate; ``rho_i`` of them are instead reads, because the entry would have been alive. Recognition from counters and
+gaps only, with the reference request ``j`` (``P = R_j + W_j`` tokens cached after it; ``R_j`` the part ``j`` had itself
+read, i.e. confirmed re-sent verbatim by an observed read):
+  * a gap over 3,600 s expires under both durations: ``rho_i = 0``; a gap up to 300 s is no expiry: ``rho_i = 0``; a
+    lineage's first request (no ``j``): ``rho_i = 0`` (its cold-start writes may be an entry shared with a sibling log: NOT
+    modelled, reported as ``first_request_cache.cache_write_tokens`` and, for priced lineages, with an upper envelope in USD:
+    unknown);
+  BOTH bounds assume a context that only grows (append-only): the prefix cached before the gap is re-sent unchanged. A
+  shortfall after a pause can also come from a compaction, a context edit or an invalidation unrelated to lifetime, in
+  which case a 1-hour cache would have missed too and new content is counted as recoverable. Neither bound is therefore
+  a lower bound of the gain: "prudent" is prudent only relative to "favourable".
+  * prudent bound (smaller gain of the two): the expiry is recognised only when both gap readings put it in the window,
+    i.e. ``L_i > 300`` and ``U_i <= 3600``, and ``rho_i = min(W5, max(0, R_j - R_i))``: only what ``j`` was observed to
+    read counts, what ``j`` wrote itself is not confirmed re-sent by any read before the pause;
+  * favourable bound (larger gain of the two): the expiry is recognised as soon as one reading puts it in the window,
+    i.e. ``U_i > 300`` and ``L_i <= 3600``, and ``rho_i = min(W5, max(0, P - R_i))``: the whole prefix cached before the
+    gap is assumed re-sent verbatim and is the part of the write that the 1-hour setting would have read.
+  The counter shortfall ``P - R_i`` (or ``R_j - R_i``) must be positive: a write after a gap with no shortfall is not an
+  expiry re-write and stays a 1-hour write. UNKNOWABLE from the permitted fields: which part of a write after a gap is new
+  content and which is the old prefix re-sent (the formulas cap it by the prefix size under the growing-context assumption, they do not measure it); whether a
+  prefix is shared with another log; the true start instant of a request. Neither bound is a measurement.
+
+RESULT (both directions): ``simulated - real`` under each bound; ``net_gain`` when both are negative, ``net_loss`` when both are
+positive, otherwise ``undecidable_between_the_bounds`` (PAT-132 ``_verdict``). Like with like: the same requests on both
+sides; an unavailable lineage is on neither. NOT modelled: several cache breakpoints, a cache shared between logs, anything
+the host does differently under another duration (the documented ``1h`` ignore while usage credits are drawn is unobservable
+here), the subscription quota (unknown, concluded on nothing). ``--until`` ignores every record after the instant, so a log
+still being written can be replayed reproducibly.
 """
 from __future__ import annotations
 
@@ -95,24 +181,69 @@ def _instant(value: object) -> dt.datetime:
     return at
 
 
-def read_host_requests(path: Path) -> list[dict[str, Any]]:
+def _is_after(value: object, until: dt.datetime) -> bool:
+    try:
+        return _instant(value) > until
+    except BreakdownError:
+        return False
+
+
+def _has_record(path: Path, until: dt.datetime | None) -> bool:
+    """Whether the log has any record (whatever its type) at or before ``until`` (any record when ``until`` is None)."""
+    try:
+        lines = path.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return False
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if until is None:
+            return True
+        try:
+            if _instant(event.get("timestamp")) <= until:
+                return True
+        except BreakdownError:
+            continue
+    return False
+
+
+def _mid_seen(out: Mapping[str, Any], mid: object) -> bool:
+    return isinstance(mid, str) and mid in out
+
+
+def read_host_requests(path: Path, until: dt.datetime | None = None, interactive: bool = False) -> list[dict[str, Any]]:
     """Requests of a HOST session log, in order: model alias, first and last record instant, token counters.
 
     Reads only ``type``, ``timestamp``, ``message.id``, ``message.model`` and ``message.usage`` counters. Every
-    refusal is a fixed code (``BreakdownError``), never a message carrying a path or a content."""
+    refusal is a fixed code (``BreakdownError``), never a message carrying a path or a content. With ``until``, a
+    record whose timestamp is later is ignored, and so is an unparsable LAST line (a record being written at read time
+    is later than ``until`` by construction; PAT-133: replay a log still being written, reproducibly). With
+    ``interactive`` (PAT-133, interactive logs): streaming records of one message id may differ in ``output_tokens``
+    only (a count that grows while the response streams), the largest is kept, any other difference is refused; and a
+    request whose two cache-write classes do not add up to its total is kept FLAGGED ``ambiguous`` (its counters are
+    not trusted: it stays in the sequence, its tokens are on neither side of any figure) instead of refusing the log."""
     out: dict[str, dict[str, Any]] = {}
     before: dt.datetime | None = None  # timestamp of the last record before the first assistant record
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").split("\n")  # not splitlines(): U+2028 etc. are valid inside a JSON string
     except (OSError, UnicodeDecodeError) as exc:
         raise BreakdownError("log_unreadable") from exc
-    for line in lines:
+    last = max((n for n, line in enumerate(lines) if line.strip()), default=-1)
+    for number, line in enumerate(lines):
         if not line.strip():
             continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
+            if until is not None and number == last:  # a record being written at read time is later than ``until``
+                continue
             raise BreakdownError("log_unreadable") from exc
+        if until is not None and isinstance(event, dict) and _is_after(event.get("timestamp"), until):
+            continue
         message = event.get("message") if isinstance(event, dict) and event.get("type") == "assistant" else None
         if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
             if not out and isinstance(event, dict):  # only the timestamp of a record that precedes the first request
@@ -129,18 +260,31 @@ def read_host_requests(path: Path) -> list[dict[str, Any]]:
                   "write_5m": _count(split.get("ephemeral_5m_input_tokens")), "output": _count(usage.get("output_tokens"))}
         if None in tokens.values():
             raise BreakdownError("counter_absent")
-        if tokens["write_1h"] + tokens["write_5m"] != tokens["write"]:  # type: ignore[operator]
+        placeholder = interactive and not (tokens["input"] or tokens["read"] or tokens["write"])
+        if placeholder and _mid_seen(out, message.get("id")):
+            continue  # a later copy of a request with zeroed counters: the record that carries them is kept
+        ambiguous = tokens["write_1h"] + tokens["write_5m"] != tokens["write"]  # type: ignore[operator]
+        if ambiguous and not interactive:
             raise BreakdownError("cache_write_split_differs")
         mid, model = message.get("id"), message.get("model")
         if not isinstance(mid, str) or not isinstance(model, str):
             raise BreakdownError("request_identity_absent")
         at = _instant(event.get("timestamp"))
         known = out.get(mid)
-        if known is None:
-            out[mid] = {"model": model, "first": at, "last": at, "tokens": tokens}
-        elif known["tokens"] != tokens or known["model"] != model:
+        if interactive and known is not None and not (known["tokens"]["input"] or known["tokens"]["read"]
+                                                      or known["tokens"]["write"]) and not placeholder:
+            known["tokens"], known["model"] = tokens, model  # the first record was the zeroed one
+            known.pop("ambiguous", None)
+            if ambiguous:
+                known["ambiguous"] = True
+            known["first"], known["last"] = min(known["first"], at), max(known["last"], at)
+        elif known is None:
+            out[mid] = {"model": model, "first": at, "last": at, "tokens": tokens, **({"ambiguous": True} if ambiguous else {})}
+        elif known["model"] != model or (known["tokens"] != tokens if not interactive else
+                                         {**known["tokens"], "output": 0} != {**tokens, "output": 0}):
             raise BreakdownError("duplicate_differs")
         else:
+            known["tokens"]["output"] = max(known["tokens"]["output"], tokens["output"])
             known["first"], known["last"] = min(known["first"], at), max(known["last"], at)
     requests = list(out.values())
     if requests:
@@ -312,6 +456,265 @@ def _grouped(rows: Sequence[Mapping[str, Any]], key: str) -> dict[str, Any]:
     return {k: aggregate([r for r in rows if r[key] == k]) for k in sorted({r[key] for r in rows})}
 
 
+# ------------------------------------------------------------------------- interactive sessions (PAT-133)
+
+LONG_TTL_SECONDS = 3600
+KINDS = ("main", "subagent")
+DIRECTION = {"main": "1h_to_5m", "subagent": "5m_to_1h"}
+PROVENANCE = {"token_counters": "host_reported", "model_alias": "host_reported", "timestamps": "host_reported",
+              "usd_real_and_simulated": "pricing_derived", "lineage_without_usable_price": "unavailable",
+              "client_observed": "none (this reader observes nothing by itself)"}
+FIELDS_BEYOND_ADR_0015 = ["type (pick assistant records; timestamp of the record before the first one)",
+                          "message.id (in-memory de-duplication of streaming records)"]
+
+
+def discover_subagent_logs(main: Path) -> list[Path]:
+    """The ``*.jsonl`` files under ``<dir>/<session>/subagents/`` (nested included): found by position only."""
+    root = main.parent / main.stem / "subagents"
+    return sorted(root.rglob("*.jsonl")) if root.is_dir() else []
+
+
+def split_by_alias(requests: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
+    """One lineage per model alias, first appearance first (a cache is per model)."""
+    out: dict[str, list[Mapping[str, Any]]] = {}
+    for request in requests:
+        out.setdefault(request["model"], []).append(request)
+    return list(out.values())
+
+
+def request_cost_long(tokens: Mapping[str, int], rates: Mapping[str, Decimal], recovered: int) -> Decimal:
+    """Simulated 1-hour cost of one request (USD): every write at the 1-hour rate, ``recovered`` of them as reads."""
+    fixed = tokens["input"] * rates["input"] + tokens["output"] * rates["output"]
+    return (fixed + (tokens["read"] + recovered) * rates["cache_read"]
+            + (tokens["write"] - recovered) * rates["cache_write_1h"]) / _MILLION
+
+
+def recovered_reads(requests: Sequence[Mapping[str, Any]], i: int, j: int | None,
+                    low: float | None, high: float | None, bound: str) -> int:
+    """Tokens of request ``i`` written because of an expiry that a 1-hour setting would have read (rule, direction B)."""
+    if j is None or low is None or high is None:
+        return 0
+    here, ref = requests[i]["tokens"], requests[j]["tokens"]
+    if requests[j].get("ambiguous") or requests[i].get("ambiguous"):
+        return 0
+    if bound == "prudent":
+        recognised, cached = low > TTL_SECONDS and high <= LONG_TTL_SECONDS, ref["read"]
+    else:
+        recognised, cached = high > TTL_SECONDS and low <= LONG_TTL_SECONDS, ref["read"] + ref["write"]
+    return min(here["write_5m"], max(0, cached - here["read"])) if recognised else 0
+
+
+def lineage_rows(requests: Sequence[Mapping[str, Any]], grid: Mapping[str, Any], kind: str,
+                 entry_expired: Mapping[str, bool]) -> tuple[list[dict[str, Any]], str | None]:
+    """Per request: gaps, recognised expiries and, when the WHOLE lineage is priced, real cost and simulated cost under
+    each bound (direction by kind). Second value: None when priced, else why not (``no_price_for_alias_on_day`` or
+    ``price_depends_on_prompt_length``): the lineage is then unavailable in USD (never estimated) but its token
+    figures stay."""
+    gap = {b: gaps(requests, b) for b in BOUNDS}
+    entries = [price_for(grid, "claude", q["model"], q["first"].astimezone(dt.timezone.utc).date().isoformat())
+               for q in requests]
+    why = "no_price_for_alias_on_day" if any(e is None for e in entries) else \
+        "price_depends_on_prompt_length" if any("prompt_tokens_threshold" in e for e in entries if e) else None
+    rows = []
+    for i, req in enumerate(requests):
+        t = req["tokens"]
+        j = next((k for k in range(i - 1, -1, -1) if _refreshes(requests[k])), None)
+        if req.get("ambiguous"):  # counters not trusted: in the chain, on neither side of any figure
+            rows.append({"ambiguous": True, "tokens": t, "first": j is None, "gap": {b: gap[b][i] for b in BOUNDS}})
+            continue
+        row: dict[str, Any] = {"tokens": t, "first": j is None, "gap": {b: gap[b][i] for b in BOUNDS}, "real": None,
+                               "sim": dict.fromkeys(BOUNDS), "expired": {}, "recovered": {}}
+        rates = entries[i]["rates"] if why is None and entries[i] else None
+        if rates is not None:
+            row["real"] = request_costs(t, rates, False)[0]
+        for b in BOUNDS:
+            if kind == "main":
+                expired = entry_expired[b] if gap[b][i] is None else gap[b][i] > TTL_SECONDS
+                row["expired"][b] = expired
+                if rates is not None:
+                    row["sim"][b] = request_costs(t, rates, expired)[1]
+            else:
+                rho = recovered_reads(requests, i, j, gap["favourable"][i], gap["prudent"][i], b)
+                row["recovered"][b] = rho
+                if rates is not None:
+                    row["sim"][b] = request_cost_long(t, rates, rho)
+        if kind == "subagent" and rates is not None:
+            row["sim_no_recovery"] = request_cost_long(t, rates, 0)
+            # upper envelope of what prefix sharing between logs could change: every cold-start write a 1-hour read
+            row["cold_start_envelope"] = (t["write"] * (rates["cache_write_1h"] - rates["cache_read"]) / _MILLION
+                                          if j is None else Decimal(0))
+        rows.append(row)
+    return rows, why
+
+
+def _duration(w1h: int, w5m: int) -> str:
+    return "none" if w1h + w5m == 0 else "1h" if w5m == 0 else "5m" if w1h == 0 else "mixed"
+
+
+def summarise(rows: Sequence[Mapping[str, Any]], kind: str) -> dict[str, Any]:
+    """Token and gap figures over ALL rows (no price needed); USD figures (``usd``) over the rows of priced lineages only,
+    the same requests on both sides."""
+    ambiguous = sum(1 for r in rows if r.get("ambiguous"))
+    rows = [r for r in rows if not r.get("ambiguous")]
+    total = {k: sum(r["tokens"][k] for r in rows) for k in ("input", "read", "write_1h", "write_5m", "output")}
+    firsts = [r for r in rows if r["first"]]
+    out: dict[str, Any] = {
+        "requests_ambiguous_counters_on_neither_side": ambiguous, "requests": len(rows), "requests_with_a_predecessor": len(rows) - len(firsts), "tokens": total,
+        "observed_cache_write_duration": _duration(total["write_1h"], total["write_5m"]),
+        "first_request_cache": {"requests": len(firsts), "cache_read_tokens": sum(r["tokens"]["read"] for r in firsts),
+                                "cache_write_tokens": sum(r["tokens"]["write"] for r in firsts)},
+        "gaps": {}, "simulated_direction": DIRECTION[kind], "tokens_by_bound": {}}
+    for b in BOUNDS:
+        known = [r for r in rows if r["gap"][b] is not None]
+        over = [r for r in known if r["gap"][b] > TTL_SECONDS]
+        mid = [r for r in over if r["gap"][b] <= LONG_TTL_SECONDS]
+        hist = dict.fromkeys((name for name, _ in BUCKETS), 0)
+        for r in known:
+            hist[_bucket(r["gap"][b])] += 1
+        out["gaps"][b] = {
+            "over_ttl": len(over), "share_over_ttl": _share(len(over), len(known)), "between_ttl_and_1h": len(mid),
+            "over_1h": len(over) - len(mid),
+            "cache_read_tokens_on_requests_after_over_ttl": sum(r["tokens"]["read"] for r in over),
+            "cache_write_tokens_on_requests_after_over_ttl": sum(r["tokens"]["write"] for r in over),
+            "max_gap_seconds": max((r["gap"][b] for r in known), default=None), "distribution_seconds": hist}
+        if kind == "main":
+            out["tokens_by_bound"][b] = {
+                "requests_found_expired": sum(1 for r in known if r["expired"][b]),
+                "first_requests_found_expired": sum(1 for r in rows if r["gap"][b] is None and r["expired"][b]),
+                "cache_read_tokens_rewritten_at_5m": sum(r["tokens"]["read"] for r in rows if r["expired"][b])}
+        else:
+            out["tokens_by_bound"][b] = {
+                "requests_with_recognised_expiry_rewrite": sum(1 for r in rows if r["recovered"][b]),
+                "recovered_read_tokens": sum(r["recovered"][b] for r in rows)}
+    priced = [r for r in rows if r["real"] is not None]
+    if not priced:
+        out["usd"] = "unavailable"
+        return out
+    real = sum((r["real"] for r in priced), Decimal(0))
+    usd: dict[str, Any] = {"requests": len(priced), "real_usd": _usd(real), "bounds": {}}
+    deltas = {}
+    for b in BOUNDS:
+        sim = sum((r["sim"][b] for r in priced), Decimal(0))
+        deltas[b] = sim - real
+        usd["bounds"][b] = {"simulated_usd": _usd(sim), "delta_usd": _usd(sim - real),
+                            "delta_share_of_real": _share(sim - real, real)}
+    if kind == "subagent":
+        base = sum((r["sim_no_recovery"] for r in priced), Decimal(0)) - real
+        usd["delta_usd_if_no_recognised_rewrite_is_real"] = _usd(base)
+        usd["cold_start_write_tokens_not_modelled"] = sum(r["tokens"]["write"] for r in priced if r["first"])
+        usd["cold_start_envelope_usd_not_modelled"] = _usd(sum((r["cold_start_envelope"] for r in priced), Decimal(0)))
+        for b in BOUNDS:
+            gain = base - deltas[b]  # what the recognised re-writes are worth
+            usd["bounds"][b]["recognised_share_of_5m_writes"] = _share(
+                sum(r["recovered"][b] for r in priced), sum(r["tokens"]["write_5m"] for r in priced))
+            # share of the recognised re-writes that may be wrong before the delta stops being negative
+            usd["bounds"][b]["wrong_share_of_recognised_rewrites_that_cancels_the_delta"] = (
+                _share(-deltas[b], gain) if deltas[b] < 0 < gain else None)
+    usd["result"] = _verdict(deltas["prudent"], deltas["favourable"])
+    out["usd"] = usd
+    return out
+
+
+def _lineage_view(name: str, kind: str, alias: str, rows: Sequence[Mapping[str, Any]], why: str | None) -> dict[str, Any]:
+    full = summarise(rows, kind)
+    view = {"lineage": name, "kind": kind, "model": alias, "requests": full["requests"], "tokens": full["tokens"],
+            "tokens_by_bound": full["tokens_by_bound"],
+            "observed_cache_write_duration": full["observed_cache_write_duration"],
+            "gaps_over_ttl": {b: full["gaps"][b]["over_ttl"] for b in BOUNDS}}
+    if why is not None:
+        return {**view, "usd": "unavailable", "usd_reason": why, "usd_provenance": PROVENANCE["lineage_without_usable_price"]}
+    usd = full["usd"]
+    return {**view, "usd": {"real_usd": usd["real_usd"], "result": usd["result"],
+                            "bounds": {b: {"simulated_usd": e["simulated_usd"], "delta_usd": e["delta_usd"]}
+                                       for b, e in usd["bounds"].items()}}}
+
+
+def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt.datetime | None = None) -> dict[str, Any]:
+    price_grid = load_grid(grid)
+    loaded: list[dict[str, Any]] = []  # one per designated session: lineages as (kind, alias, requests), refusals
+    for main in mains:
+        item: dict[str, Any] = {"lineages": [], "refused": [], "subagent_logs": 0, "returns": 0}
+        for kind, path in (("main", main), *(("subagent", p) for p in discover_subagent_logs(main))):
+            try:
+                requests = read_host_requests(path, until, interactive=True)
+                if not requests and kind == "subagent":
+                    if not _has_record(path, until):  # created after the instant: not part of the frozen replay
+                        continue
+                    raise BreakdownError("no_request")
+            except BreakdownError as exc:
+                item["refused"].append({"kind": kind, "reason": str(exc)})
+                item["subagent_logs"] += kind == "subagent"
+                continue
+            item["subagent_logs"] += kind == "subagent"
+            if kind == "main":  # returns to an alias already used earlier, after another alias
+                seen: set[str] = set()
+                for k, q in enumerate(requests):
+                    item["returns"] += bool(k and q["model"] != requests[k - 1]["model"] and q["model"] in seen)
+                    seen.add(q["model"])
+            item["lineages"].extend((kind, lin[0]["model"], lin) for lin in split_by_alias(requests))
+        firsts = [lin[0]["first"] for kind, _, lin in item["lineages"] if kind == "main"]
+        item["first"] = min(firsts) if firsts else None
+        loaded.append(item)
+    loaded.sort(key=lambda it: (it["first"] is None, it["first"] or dt.datetime.max.replace(tzinfo=dt.timezone.utc)))
+    all_main = [lin for it in loaded for k, _, lin in it["lineages"] if k == "main"]
+    sessions, views, unavailable, usable = [], [], [], []
+    for number, item in enumerate(loaded, 1):
+        sname = f"session-{number:02d}"
+        rank = dict.fromkeys(KINDS, 0)
+        ordered = sorted(item["lineages"], key=lambda t: (t[0] != "main", t[2][0]["first"], t[2][-1]["last"],
+                                                         sum(q["tokens"]["output"] for q in t[2])))
+        session_rows: dict[str, list[dict[str, Any]]] = {k: [] for k in KINDS}
+        for kind, alias, requests in ordered:
+            rank[kind] += 1
+            name = f"{sname}/{kind}-{rank[kind]:02d}"
+            expired = entry_expiry(requests[0], [lin for lin in all_main if lin[0]["first"] < requests[0]["first"]]) \
+                if kind == "main" else {b: True for b in BOUNDS}
+            rows, why = lineage_rows(requests, price_grid, kind, expired)
+            views.append(_lineage_view(name, kind, alias, rows, why))
+            if why is not None:
+                unavailable.append({"lineage": name, "kind": kind, "model": alias, "reason": why, "requests": len(rows),
+                                    "provenance": PROVENANCE["lineage_without_usable_price"]})
+            session_rows[kind].extend(rows)
+            usable.append((kind, alias, rows))
+        for refusal in item["refused"]:
+            rank[refusal["kind"]] += 1
+            unavailable.append({"lineage": f"{sname}/{refusal['kind']}-unreadable-{rank[refusal['kind']]:02d}",
+                                "kind": refusal["kind"], "model": "unavailable", "reason": refusal["reason"],
+                                "provenance": PROVENANCE["lineage_without_usable_price"]})
+        sessions.append({
+            "session": sname, "first_day_utc": None if item["first"] is None else item["first"].astimezone(dt.timezone.utc).date().isoformat(),
+            "days_utc_with_requests": sorted({q["first"].astimezone(dt.timezone.utc).date().isoformat()
+                                              for _, _, lin in item["lineages"] for q in lin}),
+            "main_model_aliases": sorted({alias for kind, alias, _ in item["lineages"] if kind == "main"}),
+            "main_alias_lineages": sum(1 for k, _, _ in item["lineages"] if k == "main"),
+            "main_returns_to_an_earlier_alias": item["returns"],
+            "subagent_logs_found": item["subagent_logs"],
+            "by_kind": {k: summarise(session_rows[k], k) for k in KINDS if session_rows[k]}})
+    return {
+        "schema": "foundry.cache-ttl-replay.interactive.v1", "ttl_seconds": TTL_SECONDS, "long_ttl_seconds": LONG_TTL_SECONDS,
+        "until": None if until is None else until.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "reading": "outside the frozen rule; API list prices are weights under a subscription, never a bill; "
+                   "nothing here concerns the subscription quota (effect unknown); no generalisation beyond the sessions "
+                   "replayed",
+        "rule": "see the module docstring (PAT-133 EXTENSION): direction A main 1h -> 5m (PAT-132 in-session rule per "
+                "alias lineage), direction B subagent 5m -> 1h (expiry re-write recognised from counters and gaps; prudent "
+                "= certain expiry and only the prefix part the reference request had read; favourable = possible expiry "
+                "and the whole prefix cached before the gap); gaps over 3600 s expire under both",
+        "logical_role": "not derivable within FOUNDRY-ADR-0015 (agent type is not an allowed field): figures are by kind "
+                        "(main / subagent) and by model alias",
+        "provenance": PROVENANCE, "fields_read_beyond_adr_0015": FIELDS_BEYOND_ADR_0015,
+        "price_grid": {"entries": [{"model": e["model"], "source": e["source"], "captured_at": e["captured_at"],
+                                    "effective_from": e["effective_from"], "effective_to": e["effective_to"]}
+                                   for e in price_grid["entries"]]},
+        "sessions_designated": len(mains), "distinct_first_days_utc": sorted({s["first_day_utc"] for s in sessions if s["first_day_utc"]}),
+        "sessions": sessions,
+        "by_kind": {k: summarise([r for kk, _, rows in usable if kk == k for r in rows], k)
+                    for k in KINDS if any(kk == k for kk, _, _ in usable)},
+        "by_kind_and_model": {f"{k}/{a}": summarise([r for kk, aa, rows in usable if (kk, aa) == (k, a) for r in rows], k)
+                              for k, a in sorted({(kk, aa) for kk, aa, _ in usable})},
+        "lineages": views, "lineages_unavailable_in_usd_or_unreadable": unavailable}
+
+
 # --------------------------------------------------------------------------------------------------- CLI
 
 def analyse(ledgers: Sequence[Path], logs_dir: Path, grid: Path = GRID_PATH) -> dict[str, Any]:
@@ -385,14 +788,34 @@ def analyse(ledgers: Sequence[Path], logs_dir: Path, grid: Path = GRID_PATH) -> 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m foundry.cache_ttl_replay", description=__doc__.splitlines()[0])
-    parser.add_argument("--ledger", action="append", required=True, metavar="LEDGER",
-                        help="ledger-<campaign>.jsonl of a finished campaign; repeatable")
-    parser.add_argument("--session-logs-dir", required=True, help="host session logs (<dir>/*/<session>.jsonl), off repo")
+    parser.add_argument("--ledger", action="append", metavar="LEDGER",
+                        help="ledger-<campaign>.jsonl of a finished campaign; repeatable (required without --host-session)")
+    parser.add_argument("--session-logs-dir", help="host session logs (<dir>/*/<session>.jsonl), off repo "
+                                                   "(required with --ledger)")
+    parser.add_argument("--host-session", action="append", metavar="MAIN_LOG",
+                        help="PAT-133: main log <dir>/<session>.jsonl of an interactive host session; its subagent logs "
+                             "are the *.jsonl under <dir>/<session>/subagents/; repeatable; replaces --ledger")
+    parser.add_argument("--until", default=None, metavar="ISO_INSTANT",
+                        help="with --host-session: ignore every record after this instant (e.g. 2026-10-09T22:13:00Z)")
     parser.add_argument("--grid", default=str(GRID_PATH))
     parser.add_argument("--out", default=None, help="write the aggregates here (never overwrites)")
     args = parser.parse_args(argv)
+    if args.host_session:
+        if args.ledger or args.session_logs_dir:
+            parser.error("--host-session replaces --ledger and --session-logs-dir")
+    else:
+        missing = [flag for flag, value in (("--ledger", args.ledger), ("--session-logs-dir", args.session_logs_dir))
+                   if not value]
+        if missing:  # the message argparse gave when both were declared required
+            parser.error(f"the following arguments are required: {', '.join(missing)}")
+        if args.until:
+            parser.error("--until needs --host-session")
     try:
-        doc = analyse([Path(p) for p in args.ledger], Path(args.session_logs_dir), Path(args.grid))
+        if args.host_session:
+            until = _instant(args.until) if args.until else None
+            doc = analyse_interactive([Path(p) for p in args.host_session], Path(args.grid), until)
+        else:
+            doc = analyse([Path(p) for p in args.ledger], Path(args.session_logs_dir), Path(args.grid))
         text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
         if args.out:
             with Path(args.out).open("x", encoding="utf-8") as handle:
