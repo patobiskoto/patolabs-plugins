@@ -414,6 +414,80 @@ def test_replay_makes_no_network_call_modifies_no_log_and_is_idempotent(tmp_path
     assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*.jsonl")} == before
 
 
+# --- PAT-134: a subagent lineage observed at 1 hour, replayed towards 5 minutes (direction A)
+
+def _one_hour_sub(gap):
+    """A subagent log whose writes are all 1-hour: s0 writes 1 M; s1 at +100 reads it; s2 ``gap`` s later reads it."""
+    return [_rec("s0", 0, w=1_000_000, one_hour=True), _rec("s1", 100, r=1_000_000, w=1000, one_hour=True),
+            _rec("s2", 100 + gap, r=1_001_000, w=10, one_hour=True)]
+
+
+def _replayed(tmp_path, records, flag=True):
+    main = _session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)])
+    return ttl.analyse_interactive([main], subagent_1h_to_5m=flag)
+
+
+def test_the_flag_is_off_by_default_and_changes_nothing_for_existing_inputs(tmp_path):
+    for records in (_one_hour_sub(500), _sub(500)):
+        main = _session(tmp_path / str(len(records)), [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)])
+        default = ttl.analyse_interactive([main])
+        assert default == ttl.analyse_interactive([main], subagent_1h_to_5m=False)
+        assert "subagent_1h_to_5m" not in default and "subagent_1h" not in default["by_kind"]
+    five_minutes = _replayed(tmp_path / "five", _sub(500))  # a 5-minute subagent stays in direction B with the flag
+    assert set(five_minutes["by_kind"]) == {"main", "subagent"} and five_minutes["subagent_1h_to_5m"]["lineages_replayed"] == 0
+    assert _kind(five_minutes, "subagent")["simulated_direction"] == "5m_to_1h"
+
+
+@pytest.mark.parametrize("gap,expired", [(300, 0), (301, 1)])
+def test_a_one_hour_subagent_lineage_gets_the_main_conversation_rule_with_a_strict_ttl(tmp_path, gap, expired):
+    out = _replayed(tmp_path, _one_hour_sub(gap))
+    view = _kind(out, "subagent_1h")
+    assert view["simulated_direction"] == "1h_to_5m" and view["observed_cache_write_duration"] == "1h"
+    assert out["subagent_1h_to_5m"]["lineages_replayed"] == 1
+    assert view["tokens_by_bound"]["favourable"]["requests_found_expired"] == expired
+    assert view["gaps"]["favourable"]["over_ttl"] == expired
+    assert out["lineages"][-1]["kind"] == "subagent_1h" and out["lineages"][-1]["lineage"].endswith("/subagent-01")
+
+
+def test_the_subagent_1h_replay_is_the_same_function_as_the_main_one(tmp_path):
+    """Same requests, same costs and same expiry counts whether the log is read as a main or as a subagent lineage."""
+    sub = _kind(_replayed(tmp_path / "a", _one_hour_sub(400)), "subagent_1h")
+    main = _kind(ttl.analyse_interactive([_session(tmp_path / "b", _one_hour_sub(400))]), "main")
+    for key in ("tokens", "usd", "gaps", "tokens_by_bound", "requests"):
+        assert sub[key] == main[key], key
+
+
+def test_a_one_hour_subagent_is_priced_documented_way_and_split_from_five_minute_ones(tmp_path):
+    main = _session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)],
+                    [("agent-a", _one_hour_sub(400)), ("agent-b", _sub(500))])
+    out = ttl.analyse_interactive([main], subagent_1h_to_5m=True)
+    assert set(out["by_kind"]) == {"main", "subagent", "subagent_1h"}
+    assert _kind(out, "subagent")["simulated_direction"] == "5m_to_1h"
+    assert _kind(out, "subagent_1h")["usd"]["result"] == "net_loss"  # 1 h written, then everything re-written at 5 min
+    assert out["subagent_1h_to_5m"]["lineages_replayed"] == 1
+    assert set(out["by_kind_and_model"]) == {f"main/{SONNET}", f"subagent/{SONNET}", f"subagent_1h/{SONNET}"}
+
+
+def test_a_mixed_or_cacheless_subagent_lineage_is_not_replayed_towards_5_minutes(tmp_path):
+    mixed = [_rec("s0", 0, w=1000, one_hour=True), _rec("s1", 100, r=1000, w=10)]
+    none = [_rec("s0", 0, i=5, o=5)]
+    assert not ttl.observed_one_hour_only([]) and not ttl.observed_one_hour_only(
+        ttl.read_host_requests(_session(tmp_path / "m", mixed), interactive=True))
+    assert _replayed(tmp_path / "x", none)["subagent_1h_to_5m"]["lineages_replayed"] == 0
+    assert _replayed(tmp_path / "y", mixed)["subagent_1h_to_5m"]["lineages_replayed"] == 0
+
+
+def test_cli_accepts_the_flag_only_with_host_session_and_writes_the_group(tmp_path, capsys):
+    main = _session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", _one_hour_sub(400))])
+    with pytest.raises(SystemExit) as exit_:
+        ttl.main(["--ledger", "ledger-x.jsonl", "--session-logs-dir", "x", "--subagent-1h-to-5m"])
+    assert exit_.value.code == 2 and "--subagent-1h-to-5m needs --host-session" in capsys.readouterr().err
+    target = tmp_path / "out.json"
+    assert ttl.main(["--host-session", str(main), "--subagent-1h-to-5m", "--out", str(target)]) == 0
+    assert "subagent_1h" in json.loads(target.read_text())["by_kind"]
+    assert not any(re.search(pattern, target.read_text(), re.M) for pattern in _personal_patterns())
+
+
 # --- committed evidence
 
 def test_committed_interactive_aggregates_are_clean_and_consistent():

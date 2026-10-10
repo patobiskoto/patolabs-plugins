@@ -147,6 +147,17 @@ sides; an unavailable lineage is on neither. NOT modelled: several cache breakpo
 the host does differently under another duration (the documented ``1h`` ignore while usage credits are drawn is unobservable
 here), the subscription quota (unknown, concluded on nothing). ``--until`` ignores every record after the instant, so a log
 still being written can be replayed reproducibly.
+
+PAT-134 EXTENSION (``--subagent-1h-to-5m``, with ``--host-session``, default off, so every existing input gives the same
+output). Once the subagent profiles carry a 1-hour cache lifetime, a subagent lineage is OBSERVED at 1 hour; its real effect
+is then measured by replaying it towards 5 minutes, direction A, with the rule already written for the main conversation
+(above): no new rule, the same function. A subagent lineage qualifies when every cache write of its non-ambiguous requests is
+in the 1-hour class and there is at least one (``observed_one_hour_only``); a lineage with any 5-minute write, or none, stays
+in direction B. Qualifying lineages form their own group ``subagent_1h`` (never merged with the 5-minute ``subagent`` group,
+whose direction differs); their first request that reads cache uses ``entry_expiry`` against the earlier MAIN lineages, as a
+main lineage does (the writer of such an entry is not observable: a limit). The lineage is chosen by the observed counters
+only, never by the agent type or the profile (outside FOUNDRY-ADR-0015), so a subagent that ran at 1 hour for another
+reason is replayed too. Output gains ``subagent_1h_to_5m`` (the rule and the number of lineages replayed) only with the flag.
 """
 from __future__ import annotations
 
@@ -460,7 +471,12 @@ def _grouped(rows: Sequence[Mapping[str, Any]], key: str) -> dict[str, Any]:
 
 LONG_TTL_SECONDS = 3600
 KINDS = ("main", "subagent")
-DIRECTION = {"main": "1h_to_5m", "subagent": "5m_to_1h"}
+# PAT-134 (``--subagent-1h-to-5m``): a subagent lineage whose cache writes were ALL observed at 1 hour is replayed in
+# direction A, as its own group, so it never mixes with the 5-minute subagent lineages of direction B.
+SUBAGENT_1H = "subagent_1h"
+ALL_KINDS = (*KINDS, SUBAGENT_1H)
+DIRECTION_A = ("main", SUBAGENT_1H)
+DIRECTION = {"main": "1h_to_5m", "subagent": "5m_to_1h", SUBAGENT_1H: "1h_to_5m"}
 PROVENANCE = {"token_counters": "host_reported", "model_alias": "host_reported", "timestamps": "host_reported",
               "usd_real_and_simulated": "pricing_derived", "lineage_without_usable_price": "unavailable",
               "client_observed": "none (this reader observes nothing by itself)"}
@@ -528,7 +544,7 @@ def lineage_rows(requests: Sequence[Mapping[str, Any]], grid: Mapping[str, Any],
         if rates is not None:
             row["real"] = request_costs(t, rates, False)[0]
         for b in BOUNDS:
-            if kind == "main":
+            if kind in DIRECTION_A:
                 expired = entry_expired[b] if gap[b][i] is None else gap[b][i] > TTL_SECONDS
                 row["expired"][b] = expired
                 if rates is not None:
@@ -577,7 +593,7 @@ def summarise(rows: Sequence[Mapping[str, Any]], kind: str) -> dict[str, Any]:
             "cache_read_tokens_on_requests_after_over_ttl": sum(r["tokens"]["read"] for r in over),
             "cache_write_tokens_on_requests_after_over_ttl": sum(r["tokens"]["write"] for r in over),
             "max_gap_seconds": max((r["gap"][b] for r in known), default=None), "distribution_seconds": hist}
-        if kind == "main":
+        if kind in DIRECTION_A:
             out["tokens_by_bound"][b] = {
                 "requests_found_expired": sum(1 for r in known if r["expired"][b]),
                 "first_requests_found_expired": sum(1 for r in rows if r["gap"][b] is None and r["expired"][b]),
@@ -629,7 +645,14 @@ def _lineage_view(name: str, kind: str, alias: str, rows: Sequence[Mapping[str, 
                                        for b, e in usd["bounds"].items()}}}
 
 
-def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt.datetime | None = None) -> dict[str, Any]:
+def observed_one_hour_only(requests: Sequence[Mapping[str, Any]]) -> bool:
+    """PAT-134: every cache write the lineage made (ambiguous requests aside) was in the 1-hour class, and there was one."""
+    sound = [r["tokens"] for r in requests if not r.get("ambiguous")]
+    return sum(t["write_1h"] for t in sound) > 0 and sum(t["write_5m"] for t in sound) == 0
+
+
+def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt.datetime | None = None,
+                        subagent_1h_to_5m: bool = False) -> dict[str, Any]:
     price_grid = load_grid(grid)
     loaded: list[dict[str, Any]] = []  # one per designated session: lineages as (kind, alias, requests), refusals
     for main in mains:
@@ -658,24 +681,27 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
     loaded.sort(key=lambda it: (it["first"] is None, it["first"] or dt.datetime.max.replace(tzinfo=dt.timezone.utc)))
     all_main = [lin for it in loaded for k, _, lin in it["lineages"] if k == "main"]
     sessions, views, unavailable, usable = [], [], [], []
+    replayed_1h_to_5m = 0
     for number, item in enumerate(loaded, 1):
         sname = f"session-{number:02d}"
         rank = dict.fromkeys(KINDS, 0)
         ordered = sorted(item["lineages"], key=lambda t: (t[0] != "main", t[2][0]["first"], t[2][-1]["last"],
                                                          sum(q["tokens"]["output"] for q in t[2])))
-        session_rows: dict[str, list[dict[str, Any]]] = {k: [] for k in KINDS}
+        session_rows: dict[str, list[dict[str, Any]]] = {k: [] for k in ALL_KINDS}
         for kind, alias, requests in ordered:
             rank[kind] += 1
             name = f"{sname}/{kind}-{rank[kind]:02d}"
+            group = SUBAGENT_1H if subagent_1h_to_5m and kind == "subagent" and observed_one_hour_only(requests) else kind
+            replayed_1h_to_5m += group == SUBAGENT_1H
             expired = entry_expiry(requests[0], [lin for lin in all_main if lin[0]["first"] < requests[0]["first"]]) \
-                if kind == "main" else {b: True for b in BOUNDS}
-            rows, why = lineage_rows(requests, price_grid, kind, expired)
-            views.append(_lineage_view(name, kind, alias, rows, why))
+                if group in DIRECTION_A else {b: True for b in BOUNDS}
+            rows, why = lineage_rows(requests, price_grid, group, expired)
+            views.append(_lineage_view(name, group, alias, rows, why))
             if why is not None:
-                unavailable.append({"lineage": name, "kind": kind, "model": alias, "reason": why, "requests": len(rows),
+                unavailable.append({"lineage": name, "kind": group, "model": alias, "reason": why, "requests": len(rows),
                                     "provenance": PROVENANCE["lineage_without_usable_price"]})
-            session_rows[kind].extend(rows)
-            usable.append((kind, alias, rows))
+            session_rows[group].extend(rows)
+            usable.append((group, alias, rows))
         for refusal in item["refused"]:
             rank[refusal["kind"]] += 1
             unavailable.append({"lineage": f"{sname}/{refusal['kind']}-unreadable-{rank[refusal['kind']]:02d}",
@@ -689,7 +715,7 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
             "main_alias_lineages": sum(1 for k, _, _ in item["lineages"] if k == "main"),
             "main_returns_to_an_earlier_alias": item["returns"],
             "subagent_logs_found": item["subagent_logs"],
-            "by_kind": {k: summarise(session_rows[k], k) for k in KINDS if session_rows[k]}})
+            "by_kind": {k: summarise(session_rows[k], k) for k in ALL_KINDS if session_rows[k]}})
     return {
         "schema": "foundry.cache-ttl-replay.interactive.v1", "ttl_seconds": TTL_SECONDS, "long_ttl_seconds": LONG_TTL_SECONDS,
         "until": None if until is None else until.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -709,10 +735,15 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
         "sessions_designated": len(mains), "distinct_first_days_utc": sorted({s["first_day_utc"] for s in sessions if s["first_day_utc"]}),
         "sessions": sessions,
         "by_kind": {k: summarise([r for kk, _, rows in usable if kk == k for r in rows], k)
-                    for k in KINDS if any(kk == k for kk, _, _ in usable)},
+                    for k in ALL_KINDS if any(kk == k for kk, _, _ in usable)},
         "by_kind_and_model": {f"{k}/{a}": summarise([r for kk, aa, rows in usable if (kk, aa) == (k, a) for r in rows], k)
                               for k, a in sorted({(kk, aa) for kk, aa, _ in usable})},
-        "lineages": views, "lineages_unavailable_in_usd_or_unreadable": unavailable}
+        "lineages": views, "lineages_unavailable_in_usd_or_unreadable": unavailable,
+        **({"subagent_1h_to_5m": {
+            "rule": "a subagent lineage whose cache writes were all observed at 1 hour is replayed towards 5 minutes with "
+                    "the rule of the main conversation (direction A, no new rule), as the group subagent_1h; the other "
+                    "subagent lineages stay in direction B",
+            "lineages_replayed": replayed_1h_to_5m}} if subagent_1h_to_5m else {})}
 
 
 # --------------------------------------------------------------------------------------------------- CLI
@@ -797,6 +828,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                              "are the *.jsonl under <dir>/<session>/subagents/; repeatable; replaces --ledger")
     parser.add_argument("--until", default=None, metavar="ISO_INSTANT",
                         help="with --host-session: ignore every record after this instant (e.g. 2026-10-09T22:13:00Z)")
+    parser.add_argument("--subagent-1h-to-5m", action="store_true",
+                        help="PAT-134, with --host-session: replay the subagent lineages whose cache writes were all "
+                             "observed at 1 hour towards 5 minutes with the rule of the main conversation (direction A), "
+                             "as the group subagent_1h; default off (outputs unchanged)")
     parser.add_argument("--grid", default=str(GRID_PATH))
     parser.add_argument("--out", default=None, help="write the aggregates here (never overwrites)")
     args = parser.parse_args(argv)
@@ -810,10 +845,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
         if args.until:
             parser.error("--until needs --host-session")
+        if args.subagent_1h_to_5m:
+            parser.error("--subagent-1h-to-5m needs --host-session")
     try:
         if args.host_session:
             until = _instant(args.until) if args.until else None
-            doc = analyse_interactive([Path(p) for p in args.host_session], Path(args.grid), until)
+            doc = analyse_interactive([Path(p) for p in args.host_session], Path(args.grid), until,
+                                         args.subagent_1h_to_5m)
         else:
             doc = analyse([Path(p) for p in args.ledger], Path(args.session_logs_dir), Path(args.grid))
         text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
