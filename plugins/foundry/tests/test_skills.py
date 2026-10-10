@@ -182,8 +182,24 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_write
     # the campaign special case of PAT-136 is gone
     assert "creates or approves" not in text
     assert "on its own authority" not in text
-    assert "make no substitute write" in text
-    assert "An issue that has no origin Epic is not covered by PAT-ADR-0018" in text
+    # maintainer decisions of 2026-10-10: origin Epic, issue without Epic, two failures
+    assert ("The origin Epic of an issue is its direct parent Epic: an issue under a "
+            "sub-Epic uses that sub-Epic") in text
+    assert ("An issue that has no origin Epic gets no deferral: correct its non-blocking "
+            "remarks before the merge and re-review in full") in text
+    assert "stays with the maintainer" not in text
+    assert ("durable refusal (the project cannot carry the write, for example it has no "
+            "`Epic` type): make no substitute write") in text
+    assert ("transient failure (request quota exhausted, network failure): wait and retry "
+            "the write before the merge; the merge waits for it") in text
+    assert "Do not correct the remarks instead and do not merge first" in text
+    # inside a campaign: three missing pieces, left to a later issue
+    for piece in ("a channel that carries the remarks to the campaign",
+                  "the code that creates the companion Epic and its issues",
+                  "campaigns usable on the repository's tracker"):
+        assert piece in text
+    # the later issue: a placeholder until it is created, then its identifier
+    assert re.search(r"left to a later issue(?: under the same Epic)?, PAT-(?:TBD|\d+)", text)
 
 
 def test_merge_pr_deferral_names_no_tracker_and_cites_the_portable_contract_rows():

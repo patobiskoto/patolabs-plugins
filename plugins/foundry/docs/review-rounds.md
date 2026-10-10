@@ -82,6 +82,13 @@ Not mechanical:
 
 Not coded yet:
 
+- An Epic campaign does not receive the reviewer's prose. Its review step
+  (`_review_observation` in `tooling/foundry/campaign_runtime.py`) reads only the
+  structured proof stored by `AcceptanceProofStore` (`tooling/foundry/routing.py`), and
+  the `record-review-proof` command of that file accepts exactly the keys `outcomes` and
+  `quality`. So the non-blocking remarks of a validated review are neither seen nor
+  recorded by a campaign today, and none of the steps that follow the review step (`ci`,
+  `human-gate` in `_GATE_STEPS`, then `merge`) reads or corrects them.
 - The campaign coordinator has no issue-creation primitive. The mutating steps of its
   runner are `start`, `open-pr`, `merge`, `close-epic` and `sync-parent-acceptance`
   (`_MUTATING_STEPS`, `tooling/foundry/campaign_runtime.py`), and the
@@ -92,9 +99,10 @@ Not coded yet:
   `epic_subgraph_supported`; the attribute defaults to `False`
   (`tooling/foundry/trackers/base.py`) and only the DevHub adapter sets it to `True`
   (`tooling/foundry/trackers/devhub.py`).
-- So inside an Epic campaign the authorization has no effect yet. PAT-ADR-0018 leaves
-  the code to a later issue, to be opened when campaigns are usable on the repository's
-  tracker.
+- So inside an Epic campaign the authorization has no effect yet. Three things are
+  missing: a channel that carries the remarks to the campaign, the code that creates the
+  companion Epic and its issues, and campaigns usable on the repository's tracker. They
+  are left to a later issue under the same Epic, PAT-141.
 
 ## Portability of the three writes (PAT-139)
 
@@ -117,9 +125,22 @@ the `Epic` type is not available:
 | Linear | the `Epic` entry of the binding's `type_label_ids` | the adapter refuses with `type_unmapped` before the create mutation (`tooling/foundry/trackers/linear.py`) |
 | `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `field_option:type:Epic` before the issue is created (`_write_catalog`, `tooling/foundry/trackers/ghprojects.py`) |
 
-What the coordinator does then is in `AGENTS.md#R9` (b): no substitute write, the remarks
-are corrected before the merge and fully re-reviewed, and the refusal is reported in the
-PR description.
+What the coordinator does then is in `AGENTS.md#R9` (b): this is a durable refusal, so
+no substitute write, the remarks are corrected before the merge and fully re-reviewed,
+and the refusal is reported in the PR description.
+
+A transient failure is the other case of `AGENTS.md#R9` (b): the coordinator waits and
+retries the write before the merge. No adapter retries a write by itself in the code
+read here; what each one gives the coordinator to recognise the case:
+
+| Provider | Quota exhausted | Network failure |
+|---|---|---|
+| YouTrack | no quota-specific error in `tooling/foundry/trackers/youtrack.py`: an HTTP failure is raised as `_YouTrackHTTPError` with its status; reset time not verified | not verified |
+| Linear | `LinearQuotaExhaustedError` (`tooling/foundry/trackers/linear.py`), with the reset time in `reset_at` and `reset_at_ms`; never retried by the adapter ([`linear-tracker.md`](linear-tracker.md), "Transport errors, read retries and quota") | `transport_error`; a write is never retried by the adapter (same section) |
+| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`); reset time not verified | reason `transport_failed`; `_rest_write` never retries |
+
+Not verified: whether a write that failed on the network had an effect. Retrying it can
+then create a second issue or a second comment.
 
 Limits, as stated by PAT-ADR-0018 at its date and not lifted by these tests:
 

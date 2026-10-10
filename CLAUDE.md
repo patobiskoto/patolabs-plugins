@@ -241,7 +241,9 @@ under points 1 to 5 its source (constant, `file:line`, or page):
 **(b) Non-blocking remarks: grouped deferral to a companion Epic (PAT-ADR-0018).** After
 a review round that is fully validated, non-blocking remarks are not corrected in the PR.
 The remarks deferred from the issues of an Epic go to a companion Epic, named `Nits`
-followed by the identifier of the origin Epic (`Nits <ORIGIN-EPIC-ID>`). The two Epics
+followed by the identifier of the origin Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic
+of an issue is its direct parent Epic: an issue under a sub-Epic uses that sub-Epic. The
+two Epics
 have no tracker link between them: no parent, no dependency, no relation. What relates
 them is that name and a mention in text, nothing else. Inside the companion Epic the
 remarks are held by follow-up issues, one per batch or per theme, never one per PR. The
@@ -282,14 +284,24 @@ below `supported` in each of its three provider columns:
 - row "Epics/enfants/dépendances: child creation, relations" (`create_issue(parent=…)`,
   `link(depends-on|blocks|relates)`) carries write 2.
 
-If the tracker refuses one of the three writes (for example a project that has no `Epic`
-type), the coordinator makes no substitute write: the remarks of that round are corrected
-before the merge and then fully re-reviewed, and the refusal is reported in the PR
-description. This fallback is an operating choice of this contract, not a decision of
-PAT-ADR-0018.
+When one of the three writes does not go through, two cases are told apart:
 
-PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic is not covered by
-it: what is done with its non-blocking remarks stays with the maintainer.
+- durable refusal (the project cannot carry the write, for example it has no `Epic`
+  type): the coordinator makes no substitute write: the remarks of that round are
+  corrected before the merge and then fully re-reviewed, and the refusal is reported in
+  the PR description;
+- transient failure (request quota exhausted, network failure): the coordinator waits
+  and retries the write before the merge, and the merge waits for it. It does not correct
+  the remarks instead and does not merge first. When the failure leaves the effect of the
+  write unknown (a network failure), it first reads the tracker to see whether the write
+  happened, and retries only if it did not, so that a retry creates no duplicate.
+
+Both are operating choices of this contract (maintainer decision of 2026-10-10), not
+decisions of PAT-ADR-0018.
+
+PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
+its non-blocking remarks are corrected before the merge and then fully re-reviewed
+(maintainer decision of 2026-10-10).
 
 The Foundry skills apply this grouped deferral and this standing authorization in every
 repository where the plugin is installed, by the maintainer's decision of 2026-10-10;
@@ -313,7 +325,14 @@ companion Epic of (b) exists, that it has no tracker link with the origin Epic, 
 a PR of a companion Epic deferred nothing: this is judged in review.
 
 **What is not coded yet.** The three writes of (b) are made by the coordinator that
-applies the skills. The campaign coordinator has no issue-creation primitive: the
+applies the skills. An Epic campaign does not receive the reviewer's prose: its review
+step (`_review_observation` in `plugins/foundry/tooling/foundry/campaign_runtime.py`)
+reads only the structured proof stored by `AcceptanceProofStore`
+(`plugins/foundry/tooling/foundry/routing.py`), and the `record-review-proof` command of
+that file accepts exactly the keys `outcomes` and `quality`. So the non-blocking remarks
+of a validated review are neither seen nor recorded by a campaign today, and none of the
+steps that follow the review step (`ci`, `human-gate` in `_GATE_STEPS`, then `merge`)
+reads or corrects them. The campaign coordinator has no issue-creation primitive: the
 mutating steps of its runner are `start`, `open-pr`, `merge`, `close-epic` and
 `sync-parent-acceptance` (`_MUTATING_STEPS`,
 `plugins/foundry/tooling/foundry/campaign_runtime.py`), and the `CampaignPipeline`
@@ -323,5 +342,7 @@ method that creates an issue. The campaign preview exists for one provider only:
 whose adapter does not set `epic_subgraph_supported`, which defaults to `False`
 (`plugins/foundry/tooling/foundry/trackers/base.py`) and is set to `True` only by
 the DevHub adapter (`plugins/foundry/tooling/foundry/trackers/devhub.py`). So inside
-an Epic campaign the authorization of (b) has no effect yet; the code that would make
-the campaign coordinator perform these writes is left to a later issue (PAT-ADR-0018).
+an Epic campaign the authorization of (b) has no effect yet. Three things are missing: a
+channel that carries the remarks to the campaign, the code that creates the companion
+Epic and its issues, and campaigns usable on the repository's tracker. They are left to
+a later issue under the same Epic, PAT-141.

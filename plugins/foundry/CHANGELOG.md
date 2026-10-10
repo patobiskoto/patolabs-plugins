@@ -15,11 +15,15 @@
   started without the maintainer. The special case "inside an Epic campaign the
   maintainer creates or approves the follow-up issue" is removed. No second-level
   deferral: non-blocking remarks on a PR of a companion Epic are corrected before the
-  merge and fully re-reviewed. If the tracker refuses one of the three writes, no
-  substitute write is made and the remarks are corrected before the merge. An issue
-  without an origin Epic is not covered and stays with the maintainer. Not mechanical:
-  no gate checks the companion Epic. Not coded yet: the campaign coordinator has no
-  issue-creation primitive, so inside a campaign the authorization has no effect yet
+  merge and fully re-reviewed. The origin Epic of an issue is its direct parent Epic. If the
+  tracker durably refuses one of the three writes, no substitute write is made and the
+  remarks are corrected before the merge; on a transient failure (quota, network) the
+  write is retried and the merge waits for it. An issue without an origin Epic gets no
+  deferral: its remarks are corrected before the merge and fully re-reviewed. Not mechanical:
+  no gate checks the companion Epic. Not coded yet: inside a campaign the authorization has no effect yet,
+  because three things are missing (a channel that carries the remarks to the campaign,
+  the code that creates the companion Epic and its issues, campaigns usable on the
+  repository's tracker); left to a later issue, PAT-141
   ([review rounds](docs/review-rounds.md)). Six tracker conformance cases added, two per provider on its fake
   transport: the three writes, and a project where the `Epic` type is unavailable. Text and tests only; no change under `tooling/`.
 - PAT-136: new process rule R9 in `AGENTS.md` / `CLAUDE.md` (author checklist for

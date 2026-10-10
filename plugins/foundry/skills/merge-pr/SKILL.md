@@ -187,7 +187,8 @@ text is what applies it.
 After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
 non-blocking remarks are not corrected in the PR. The remarks deferred from the issues
 of an Epic go to a companion Epic, named `Nits` followed by the identifier of the origin
-Epic (`Nits <ORIGIN-EPIC-ID>`). Give the two Epics no tracker link: no parent, no
+Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic of an issue is its direct parent Epic:
+an issue under a sub-Epic uses that sub-Epic. Give the two Epics no tracker link: no parent, no
 dependency, no relation. What relates them is that name and a mention in text, nothing
 else. Inside the companion Epic, put the remarks in a follow-up issue, one per batch or
 per theme, never one per PR, and cite that issue in the PR description before the merge.
@@ -230,13 +231,23 @@ in each of its three provider columns:
 - row "Epics/enfants/dépendances: child creation, relations" (`create_issue(parent=…)`,
   `link(depends-on|blocks|relates)`) carries write 2.
 
-If the tracker refuses one of the three writes (for example a project that has no `Epic`
-type), make no substitute write: correct the remarks of that round before the merge,
-re-review in full, and report the refusal in the PR description. An issue that has no
-origin Epic is not covered by PAT-ADR-0018: what is done with its non-blocking remarks
-stays with the maintainer. Inside an Epic campaign the authorization has no effect yet:
-the campaign coordinator has no issue-creation primitive (`docs/review-rounds.md`,
-"What is not mechanical and what is not coded yet").
+When one of the three writes does not go through, tell two cases apart:
+
+- durable refusal (the project cannot carry the write, for example it has no `Epic`
+  type): make no substitute write: correct the remarks of that round before the merge,
+  re-review in full, and report the refusal in the PR description;
+- transient failure (request quota exhausted, network failure): wait and retry the write
+  before the merge; the merge waits for it. Do not correct the remarks instead and do not
+  merge first. When the failure leaves the effect of the write unknown (a network
+  failure), first read the tracker to see whether the write happened, and retry only if
+  it did not, so that a retry creates no duplicate.
+
+An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
+before the merge and re-review in full. Inside an Epic campaign the authorization has no
+effect yet. Three things are missing: a channel that carries the remarks to the campaign,
+the code that creates the companion Epic and its issues, and campaigns usable on the
+repository's tracker (`docs/review-rounds.md`, "What is not mechanical and what is not
+coded yet"); they are left to a later issue, PAT-141.
 
 The PR description carries one line per review round, kept current through
 `foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):
