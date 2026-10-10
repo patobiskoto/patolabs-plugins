@@ -536,14 +536,21 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
 `scripts/test_ci_plan.py`), not by workflow expressions:
 
 - `ship-ios` and `catalogue` always run.
-- `foundry` runs on every push to `main`, on every pull request that changes at least one
-  file outside `plugins/ship-ios/`, and on any doubt (unknown event, diff unavailable or
-  empty). It is skipped only when every changed file is under `plugins/ship-ios/`; the
-  required check `foundry` then ends as `skipped`, which the merge gate accepts next to a
-  real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
+- `foundry` is skipped only when the `plan` job outputs `run_foundry=false`, which
+  `scripts/ci_plan.py` does only when every changed file is under `plugins/ship-ios/` on a
+  pull request. In every other case it runs: a push to `main`, a pull request that changes
+  a file outside `plugins/ship-ios/`, a release change, any doubt in the script (unknown
+  event, diff unavailable or empty), and a `plan` job that fails (empty output). The
+  workflow condition uses `!cancelled()` and `!= 'false'` for that last case, because a job
+  whose `needs` failed is otherwise skipped. A cancelled run does not run `foundry`. On a
+  fork pull request `plan` and `foundry` match no executable job (fork guard). When
+  skipped, the required check `foundry` ends as `skipped`, which the merge gate accepts
+  next to a real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
   `tooling/foundry/write.py`, tests
   `test_ci_gate_neutral_and_skipped_pass_alongside_a_success` and
-  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`).
+  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`). Not verified: the
+  GitHub behaviour of a failed `plan` is read from the documented semantics of status
+  check functions, not shown by a run; only a CI run shows it.
 - Release rule: a change is a release change, and runs everything even inside
   `plugins/ship-ios/`, when it touches a plugin manifest
   (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) or a marketplace catalogue

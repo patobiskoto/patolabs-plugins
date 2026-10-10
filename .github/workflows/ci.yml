@@ -39,11 +39,16 @@ jobs:
     # PAT-142: a PR that changes only plugins/ship-ios/ skips this whole job, so the
     # required `foundry` check ends as `skipped` (never as a success with no test run).
     # Push to main and release PRs always run it (see scripts/ci_plan.py).
+    # Fail safe: the job is skipped ONLY when `plan` explicitly output `false`. A job
+    # whose `needs` failed is skipped by default, so `!cancelled()` (a status check
+    # function) keeps this job running after a failed `plan`, whose output is then empty.
+    # On a fork PR `plan` is skipped and the fork guard below is false: no executable job.
     needs: plan
     if: >-
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.fork == false) &&
-      needs.plan.outputs.run_foundry == 'true'
+      needs.plan.outputs.run_foundry != 'false'
     runs-on: ubuntu-24.04
     defaults:
       run:

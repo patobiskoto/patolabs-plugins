@@ -5,9 +5,10 @@
 - PAT-142: CI speed, no change under `tooling/`. The `foundry` job runs the public suite
   in parallel (`pytest -n auto`, `pytest-xdist` installed in the job); a new `plan` job
   runs `scripts/ci_plan.py`, which skips the whole `foundry` job (check `skipped`) when a
-  pull request changes only `plugins/ship-ios/`, and runs everything on a push to `main`,
-  on a release change (a plugin manifest or marketplace catalogue is touched) and on any
-  doubt. `ship-ios` moves from `macos-14` to `ubuntu-24.04` (`ruby` installed if the image
+  pull request changes only `plugins/ship-ios/` (only when `plan` says `false`), and runs
+  everything on a push to `main`, on a release change (a plugin manifest or marketplace
+  catalogue is touched), on any doubt, and when `plan` itself fails (`!cancelled()` and
+  `!= 'false'` in the condition). `ship-ios` moves from `macos-14` to `ubuntu-24.04` (`ruby` installed if the image
   lacks it). `ship-ios` and `catalogue` still always run. The expected runner of
   `ship-ios` in `tests/test_youtrack_smoke.py` follows. Not verified here: CI durations,
   runner core count, Ruby on the image. Documented in the Foundry README.

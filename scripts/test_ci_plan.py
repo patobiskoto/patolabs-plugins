@@ -140,7 +140,13 @@ class WorkflowWiring(unittest.TestCase):
 
     def test_only_foundry_is_conditional_on_the_plan(self):
         self.assertIn("needs: plan", job_text("foundry"))
-        self.assertIn("needs.plan.outputs.run_foundry == 'true'", job_text("foundry"))
+        condition = job_text("foundry").split("if: >-", 1)[1].split("runs-on:", 1)[0]
+        # Fail safe: skipped only on an explicit `false`, and a status function so a
+        # failed `plan` (empty output) does not skip the job.
+        self.assertIn("needs.plan.outputs.run_foundry != 'false'", condition)
+        self.assertNotIn("== 'true'", condition)
+        self.assertIn("!cancelled()", condition)
+        self.assertIn(GUARD, condition)
         for name in ("ship-ios", "catalogue"):
             self.assertNotIn("needs", job_text(name), name)
             self.assertNotIn("run_foundry", job_text(name), name)
