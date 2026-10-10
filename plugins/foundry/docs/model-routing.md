@@ -1286,7 +1286,7 @@ optional `host_version` argument: internal, no caller-facing surface beyond the 
 
 ### PAT-134 subagent prompt-cache lifetime: trial, replay and observation rule
 
-PAT-134 prepares moving the prompt cache of the Sonnet 5.5 versioned subagent profiles to the
+PAT-134 moves the prompt cache of the Sonnet 5.5 versioned subagent profiles to the
 1-hour class, adopted under observation (FOUNDRY-ADR-0019 by analogy) and without a bench.
 Per Anthropic's documentation as read by the coordinator on 2026-10-09 (not re-verified by the
 tooling), a subagent profile may carry `experimental: {cacheTtl: 5m|1h}` (inside the
@@ -1323,9 +1323,15 @@ observed one Sonnet 5.5 read-only subagent writing 4,768 cache tokens in the 1-h
 5-minute class, and the Opus 5.5 control 5,301 in the 5-minute class only. One run of two subagents does not
 show the field is honoured on the other nine profiles, under usage credits or on another host version, and
 says nothing about cost or quota (unknown). `--dry-run` of both trial modes now creates nothing on disk.
-The rollback rule reads `delta_usd` = simulated 5-minute cost minus real 1-hour cost of the
-`favourable` bound of the replay (the least favourable to keeping 1 hour): keep only if strictly
-positive (`cache_ttl_replay.rollback_decision`).
+The rollback rule (`cache_ttl_replay.rollback_decision`) reads the unrounded
+`usd.entry_reads_not_expired.delta_usd_exact` of the replay (simulated 5-minute cost minus real 1-hour cost, with
+the entry read of each lineage's first request counted as not expired, the reading most severe for keeping
+1 hour) and keeps 1 hour only if its smaller bound is strictly positive; `unknown` when too few sessions
+contribute, a lineage is unpriced or an unmodified profile shows up at 1 hour. Not observed and not guarded:
+a host older than 2.1.248 might reject a profile carrying an unknown field, which would break every Sonnet 5.5
+launch there (Sonnet 5.5 has no host minimum); unknown. The refusal of a divergent profile applies to pinned
+routes; a short-alias route reads no profile file. The single rollback is emptying
+`CLAUDE_CACHE_TTL_1H_PINS` and regenerating the profiles.
 
 Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
 (and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`

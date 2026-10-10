@@ -250,3 +250,34 @@ def test_the_committed_native_trial_result_is_clean_and_consistent_with_its_own_
     assert body["subjects"]["modified"]["requested"]["profile_field_experimental_cacheTtl"] == "1h"
     assert body["subjects"]["control"]["requested"]["profile_field_experimental_cacheTtl"] is None
     assert body["host"]["usage_credits_drawn"].startswith("unknown")
+
+
+def test_an_ambiguous_request_makes_the_cache_class_unknown_not_conforming(tmp_path):
+    hidden = _usage(write_1h=900)
+    hidden["cache_creation_input_tokens"] = 1400  # the classes add up to 900: a 5-minute write could hide in the gap
+    code, body = _run(tmp_path, modified=(hidden, _usage(read=900, write_1h=50)))
+    assert code == 1 and body["verdict"] == "unknown" and "modified.cache_class" in body["not_established"]
+    assert body["observed"]["by_subject"]["modified"]["requests_ambiguous_counters"] == 1
+
+
+@pytest.mark.parametrize("fail_in", ["binding", "modified_not_a_carrying_pin"])
+def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, monkeypatch, fail_in):
+    from foundry.routing import RoutingConfigError
+    if fail_in == "binding":
+        def refuse(*args, **kwargs):
+            raise RoutingConfigError("divergent")
+        monkeypatch.setattr(trial, "claude_invocation_binding", refuse)
+        expected = RoutingConfigError
+    else:
+        monkeypatch.setattr(trial, "CLAUDE_CACHE_TTL_1H_MODELS", ())
+        expected = trial.TrialError
+    with pytest.raises(expected):
+        trial.run_cache_ttl(_args(tmp_path), launch=lambda *a, **k: pytest.fail("launched"))
+    assert list(tmp_path.iterdir()) == []  # the path is not burnt
+
+
+def test_the_modified_subject_and_the_decision_derive_from_the_single_pin_declaration():
+    from foundry import cache_ttl_replay
+    from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_MODELS, CLAUDE_CACHE_TTL_1H_PINS
+    assert trial.CACHE_TTL_POLICY["mappings"]["claude"]["economy"]["model"] == CLAUDE_CACHE_TTL_1H_PINS[0]
+    assert cache_ttl_replay.ROLLBACK_MODEL == CLAUDE_CACHE_TTL_1H_MODELS[0] == SONNET

@@ -656,3 +656,13 @@ def test_a_single_record_larger_than_the_tail_leaves_the_version_unknown(tmp_pat
     path.write_text(json.dumps({"version": "2.1.294"}) + "\n"
                     + json.dumps({"type": "user", "version": "2.1.294", "pad": "x" * (1 << 20)}))
     assert claude_host_version(path) is None
+
+
+def test_a_refusal_after_policy_resolution_creates_nothing_on_disk(tmp_path, monkeypatch):
+    """PAT-134: the work directory is created only after every refusal, so a refused run does not burn the path."""
+    def refuse(*args, **kwargs):
+        raise RoutingConfigError("divergent")
+    monkeypatch.setattr(trial, "claude_invocation_binding", refuse)
+    with pytest.raises(RoutingConfigError):
+        trial.run(_args(tmp_path), launch=lambda *a, **k: pytest.fail("launched"))
+    assert list(tmp_path.iterdir()) == []

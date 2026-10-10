@@ -170,6 +170,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_MODELS
 from foundry.cost_breakdown import GRID_PATH, BreakdownError, _count, _read_jsonl, _share, _usd, load_grid, price_for
 
 TTL_SECONDS = 300
@@ -554,6 +555,11 @@ def lineage_rows(requests: Sequence[Mapping[str, Any]], grid: Mapping[str, Any],
                 row["recovered"][b] = rho
                 if rates is not None:
                     row["sim"][b] = request_cost_long(t, rates, rho)
+        if kind == SUBAGENT_1H and rates is not None:
+            # PAT-134 decision input, NOT a replay rule: the same simulated cost with the entry read of a FIRST request
+            # (the one the rule cannot place: its writer is not observable) counted as not expired, under each bound.
+            row["sim_entry_kept"] = {b: request_costs(t, rates, False if j is None else row["expired"][b])[1]
+                                     for b in BOUNDS}
         if kind == "subagent" and rates is not None:
             row["sim_no_recovery"] = request_cost_long(t, rates, 0)
             # upper envelope of what prefix sharing between logs could change: every cold-start write a 1-hour read
@@ -627,6 +633,12 @@ def summarise(rows: Sequence[Mapping[str, Any]], kind: str) -> dict[str, Any]:
             usd["bounds"][b]["wrong_share_of_recognised_rewrites_that_cancels_the_delta"] = (
                 _share(-deltas[b], gain) if deltas[b] < 0 < gain else None)
     usd["result"] = _verdict(deltas["prudent"], deltas["favourable"])
+    if kind == SUBAGENT_1H:
+        kept = {b: sum((r["sim_entry_kept"][b] for r in priced), Decimal(0)) - real for b in BOUNDS}
+        usd["entry_reads_not_expired"] = {
+            "delta_usd": {b: _usd(kept[b]) for b in BOUNDS},
+            "delta_usd_exact": {b: str(kept[b]) for b in BOUNDS},  # exact decimal strings: the decision reads these
+            "first_requests_priced": sum(1 for r in priced if r["first"])}
     out["usd"] = usd
     return out
 
@@ -749,32 +761,51 @@ def analyse_interactive(mains: Sequence[Path], grid: Path = GRID_PATH, until: dt
 # ------------------------------------------------------------------------ PAT-134 observation rule
 
 ROLLBACK_MIN_SESSIONS = 3
-ROLLBACK_MODEL = "claude-sonnet-5-5"
+ROLLBACK_MODEL = CLAUDE_CACHE_TTL_1H_MODELS[0]  # derived from CLAUDE_CACHE_TTL_1H_PINS (written for its single pin)
 
 
 def rollback_decision(replay: Mapping[str, Any], model: str = ROLLBACK_MODEL) -> dict[str, Any]:
     """PAT-134 rule, read from the output of ``analyse_interactive(..., subagent_1h_to_5m=True)``.
 
-    The observed setting is 1 hour and the replay simulates 5 minutes, so ``delta_usd`` = simulated 5-minute cost minus
-    real 1-hour cost: POSITIVE means the 1 hour was cheaper. The bound least favourable to keeping the 1 hour is the one
-    with the smaller ``delta_usd``, the ``favourable`` reading (fewest simulated expirations). ``keep`` only when that
-    bound is strictly positive; ``roll_back`` when it is zero or negative, or when no lineage of the model was observed at
-    1 hour at all (the field has no observable effect); ``unknown`` when the replay was not made with the option, covers
-    fewer than ``ROLLBACK_MIN_SESSIONS`` sessions, or the lineages of the model cannot be priced. No other input is read;
-    the subscription quota is not one."""
+    QUANTITY. The observed setting is 1 hour and the replay simulates 5 minutes, so a delta is simulated 5-minute cost minus
+    real 1-hour cost: POSITIVE means the 1 hour was cheaper. The decision does NOT read ``usd.bounds.*.delta_usd`` or
+    ``usd.result``: they reprice, as expired, the cache read of the FIRST request of each lineage (the replay cannot place the
+    writer of that entry; with a main conversation of another model no earlier lineage of the alias exists, so the entry is
+    counted expired under both bounds), although a prefix written by a sibling subagent less than 5 minutes earlier would
+    also have been read at 5 minutes. That overestimates the cost of 5 minutes on both bounds. The decision reads instead
+    ``usd.entry_reads_not_expired.delta_usd_exact`` (decimal strings, unrounded): the same simulation with those entry reads
+    counted as not expired, the reading most severe for keeping the 1 hour (an addition to the output, not a new replay
+    rule). Of its two bounds the smaller is read (the ``favourable`` reading simulates fewer expirations; the minimum is
+    taken so the decision does not depend on that ordering). Since that quantity is never above ``delta_usd``, ``keep``
+    implies ``usd.result == net_loss`` and not the converse.
+
+    DECISION. ``keep`` only if that minimum is strictly positive (unrounded: a delta that rounds to 0.0 in ``delta_usd``
+    still counts); ``roll_back`` if it is zero or negative, or if no lineage of ``model`` was observed at 1 hour (the field has
+    no observable effect). ``unknown`` if the replay was not made with the option; if fewer than ``ROLLBACK_MIN_SESSIONS``
+    designated sessions were replayed, or fewer contribute a priced lineage of ``model`` observed at 1 hour; if any such
+    lineage is not priced; or if a lineage of ANOTHER model (an unmodified profile) is observed at 1 hour, because an
+    outside setting then changed the measure. Only subagent lineages whose writes were ALL in the 1-hour class are decision
+    inputs. The subscription quota is not an input."""
     if "subagent_1h_to_5m" not in replay:
         return {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
     if len(replay.get("sessions", ())) < ROLLBACK_MIN_SESSIONS:
-        return {"decision": "unknown", "reason": "fewer_than_3_sessions"}
-    group = replay.get("by_kind_and_model", {}).get(f"{SUBAGENT_1H}/{model}")
-    if group is None:
+        return {"decision": "unknown", "reason": "fewer_designated_sessions_than_the_minimum"}
+    one_hour = [v for v in replay.get("lineages", ()) if v.get("kind") == SUBAGENT_1H]
+    if any(v.get("model") != model for v in one_hour):
+        return {"decision": "unknown", "reason": "a_lineage_of_another_model_is_observed_at_1h"}
+    if not one_hour:
         return {"decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
-    usd = group.get("usd")
-    if not isinstance(usd, Mapping):
-        return {"decision": "unknown", "reason": "lineages_not_priced"}
-    delta = usd["bounds"]["favourable"]["delta_usd"]
-    return {"decision": "keep" if delta > 0 else "roll_back", "reason": "delta_usd_of_the_favourable_bound",
-            "delta_usd_favourable": delta, "result": usd["result"]}
+    if any(v.get("usd") == "unavailable" for v in one_hour):
+        return {"decision": "unknown", "reason": "a_lineage_observed_at_1h_is_not_priced"}
+    contributing = {v["lineage"].split("/", 1)[0] for v in one_hour}
+    if len(contributing) < ROLLBACK_MIN_SESSIONS:
+        return {"decision": "unknown", "reason": "fewer_contributing_sessions_than_the_minimum",
+                "contributing_sessions": len(contributing)}
+    group = replay["by_kind_and_model"][f"{SUBAGENT_1H}/{model}"]
+    exact = group["usd"]["entry_reads_not_expired"]["delta_usd_exact"]
+    delta = min(Decimal(exact[b]) for b in BOUNDS)
+    return {"decision": "keep" if delta > 0 else "roll_back", "reason": "least_favourable_entry_reads_not_expired_delta",
+            "delta_usd_entry_reads_not_expired": str(delta), "contributing_sessions": len(contributing)}
 
 
 # --------------------------------------------------------------------------------------------------- CLI

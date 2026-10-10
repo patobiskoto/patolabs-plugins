@@ -427,11 +427,20 @@ def _replayed(tmp_path, records, flag=True):
     return ttl.analyse_interactive([main], subagent_1h_to_5m=flag)
 
 
+# Digests of the default (flag off) outputs for two fixed inputs, recorded BEFORE the PAT-134 decision input was added to the
+# rows: any change of the default output of an existing input breaks this test.
+RECORDED_DEFAULT_OUTPUT_SHA256 = {
+    "one_hour": "d841a549e43c622d5cfa109b5b25642100ef6c306b70cd00c0f6894da78f314e",
+    "five_minutes": "82985c9a74ee73a826c491be1deb2eb8b193f923abac9ef33be448a3dbfd4e4d"}
+
+
 def test_the_flag_is_off_by_default_and_changes_nothing_for_existing_inputs(tmp_path):
-    for records in (_one_hour_sub(500), _sub(500)):
-        main = _session(tmp_path / str(len(records)), [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)])
+    import hashlib
+    for name, records in (("one_hour", _one_hour_sub(500)), ("five_minutes", _sub(500))):
+        main = _session(tmp_path / name, [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)])
         default = ttl.analyse_interactive([main])
-        assert default == ttl.analyse_interactive([main], subagent_1h_to_5m=False)
+        digest = hashlib.sha256(json.dumps(default, sort_keys=True, default=str).encode()).hexdigest()
+        assert digest == RECORDED_DEFAULT_OUTPUT_SHA256[name]
         assert "subagent_1h_to_5m" not in default and "subagent_1h" not in default["by_kind"]
     five_minutes = _replayed(tmp_path / "five", _sub(500))  # a 5-minute subagent stays in direction B with the flag
     assert set(five_minutes["by_kind"]) == {"main", "subagent"} and five_minutes["subagent_1h_to_5m"]["lineages_replayed"] == 0
@@ -453,6 +462,7 @@ def test_the_subagent_1h_replay_is_the_same_function_as_the_main_one(tmp_path):
     """Same requests, same costs and same expiry counts whether the log is read as a main or as a subagent lineage."""
     sub = _kind(_replayed(tmp_path / "a", _one_hour_sub(400)), "subagent_1h")
     main = _kind(ttl.analyse_interactive([_session(tmp_path / "b", _one_hour_sub(400))]), "main")
+    sub["usd"].pop("entry_reads_not_expired")  # the PAT-134 decision input, an addition of the subagent_1h group
     for key in ("tokens", "usd", "gaps", "tokens_by_bound", "requests"):
         assert sub[key] == main[key], key
 
@@ -490,10 +500,16 @@ def test_cli_accepts_the_flag_only_with_host_session_and_writes_the_group(tmp_pa
 
 # --- PAT-134: the rollback rule, read from a replay output
 
-def _three_sessions(tmp_path, records, count=3):
-    mains = [_session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)], [("agent-x", records)], name=f"s{n}", project=f"p{n}")
-             for n in range(count)]
+def _sessions(tmp_path, per_session):
+    """One session per entry; each entry is a list of subagent logs (record lists)."""
+    mains = [_session(tmp_path, [_rec("m0", 0, w=10, one_hour=True)],
+                      [(f"agent-{k}", records) for k, records in enumerate(logs)], name=f"s{n}", project=f"p{n}")
+             for n, logs in enumerate(per_session)]
     return ttl.analyse_interactive(mains, subagent_1h_to_5m=True)
+
+
+def _three_sessions(tmp_path, records, count=3):
+    return _sessions(tmp_path, [[records]] * count)
 
 
 def _straddling():
@@ -502,30 +518,81 @@ def _straddling():
             _rec("s2", 350, r=1_001_000, w=10, one_hour=True)]
 
 
+def _first_request_reads_a_prefix():
+    """The first request reads a prefix written by a sibling (not observable); nothing else is a 5-minute expiry."""
+    return [_rec("s0", 0, r=1_000_000, w=1000, one_hour=True), _rec("s1", 100, r=1_001_000, w=10, one_hour=True)]
+
+
 @pytest.mark.parametrize("records,decision,result", [
     (_one_hour_sub(400), "keep", "net_loss"),               # 5 minutes would have cost more under both bounds
     (_one_hour_sub(200), "roll_back", "net_gain"),          # no expiry at 5 minutes: the 1-hour write premium is lost
     (_straddling(), "roll_back", "undecidable_between_the_bounds"),
+    (_first_request_reads_a_prefix(), "roll_back", "net_loss"),  # the repricing of the first request ALONE makes it a loss
 ])
-def test_the_rollback_rule_is_keep_only_when_the_least_favourable_bound_says_one_hour_was_cheaper(tmp_path, records, decision, result):
+def test_the_rollback_rule_reads_the_quantity_without_first_request_repricing(tmp_path, records, decision, result):
     out = _three_sessions(tmp_path, records)
     usd = _kind(out, "subagent_1h")["usd"]
-    bounds = usd["bounds"]
-    assert usd["result"] == result and bounds["favourable"]["delta_usd"] <= bounds["prudent"]["delta_usd"]
+    kept = usd["entry_reads_not_expired"]
+    assert usd["result"] == result
+    # never above the replay's own delta, on each bound; exact strings agree with the rounded figures
+    for bound in ttl.BOUNDS:
+        assert float(kept["delta_usd_exact"][bound]) <= usd["bounds"][bound]["delta_usd"] + 1e-6
+        assert kept["delta_usd"][bound] == pytest.approx(float(kept["delta_usd_exact"][bound]), abs=1e-6)
     verdict = ttl.rollback_decision(out)
-    assert verdict["decision"] == decision and verdict["delta_usd_favourable"] == bounds["favourable"]["delta_usd"]
-    # the two formulations are the same decision: favourable delta > 0  <=>  result == net_loss
-    assert (verdict["decision"] == "keep") == (usd["result"] == "net_loss") == (bounds["favourable"]["delta_usd"] > 0)
+    assert verdict["decision"] == decision and verdict["contributing_sessions"] == 3
+    if verdict["decision"] == "keep":
+        assert usd["result"] == "net_loss"  # keep implies net_loss, not the converse
 
 
-def test_the_rollback_rule_is_unknown_without_enough_evidence_and_rolls_back_when_the_field_has_no_effect(tmp_path):
-    assert ttl.rollback_decision(_three_sessions(tmp_path / "a", _one_hour_sub(400), count=2))["reason"] == "fewer_than_3_sessions"
+def test_the_first_request_repricing_alone_flips_the_sign(tmp_path):
+    usd = _kind(_three_sessions(tmp_path, _first_request_reads_a_prefix()), "subagent_1h")["usd"]
+    assert all(usd["bounds"][b]["delta_usd"] > 0 for b in ttl.BOUNDS)  # the replay's own delta says the 1 hour paid
+    assert all(float(usd["entry_reads_not_expired"]["delta_usd_exact"][b]) < 0 for b in ttl.BOUNDS)
+
+
+def test_the_floor_counts_contributing_sessions_not_designated_ones(tmp_path):
+    two_of_three = _sessions(tmp_path / "a", [[_one_hour_sub(400)], [_one_hour_sub(400)], [_sub(500)]])
+    assert ttl.rollback_decision(two_of_three) == {
+        "decision": "unknown", "reason": "fewer_contributing_sessions_than_the_minimum", "contributing_sessions": 2}
+    one_session_many_logs = _sessions(tmp_path / "b", [[_one_hour_sub(400)] * 3, [_sub(500)], [_sub(500)]])
+    assert ttl.rollback_decision(one_session_many_logs)["decision"] == "unknown"
+    assert ttl.rollback_decision(_three_sessions(tmp_path / "c", _one_hour_sub(400), count=2))["reason"] == \
+        "fewer_designated_sessions_than_the_minimum"
+
+
+def test_an_unpriced_lineage_observed_at_1h_makes_the_decision_unknown(tmp_path):
+    day_before_the_grid = dt.datetime(2026, 9, 20, tzinfo=dt.timezone.utc)
+    unpriced = [_rec(f"u{n}", 100 * n, w=1000, one_hour=True, base=day_before_the_grid) for n in range(2)]
+    out = _sessions(tmp_path, [[_one_hour_sub(400)], [_one_hour_sub(400)], [_one_hour_sub(400), unpriced]])
+    assert ttl.rollback_decision(out) == {"decision": "unknown", "reason": "a_lineage_observed_at_1h_is_not_priced"}
+
+
+def test_an_unmodified_profile_observed_at_1h_makes_the_decision_unknown(tmp_path):
+    other = [_rec("o0", 0, w=1000, one_hour=True, model=OPUS), _rec("o1", 100, r=1000, w=10, one_hour=True, model=OPUS)]
+    out = _sessions(tmp_path, [[_one_hour_sub(400)], [_one_hour_sub(400)], [_one_hour_sub(400), other]])
+    assert ttl.rollback_decision(out) == {"decision": "unknown", "reason": "a_lineage_of_another_model_is_observed_at_1h"}
+
+
+def test_the_rollback_rule_is_unknown_without_the_option_and_rolls_back_when_the_field_has_no_effect(tmp_path):
     plain = ttl.analyse_interactive([_session(tmp_path / "b", [_rec("m0", 0, w=10, one_hour=True)])])
     assert ttl.rollback_decision(plain) == {"decision": "unknown", "reason": "replay_not_made_with_subagent_1h_to_5m"}
     assert ttl.rollback_decision(_three_sessions(tmp_path / "c", _sub(500))) == {
         "decision": "roll_back", "reason": "no_lineage_of_the_model_observed_at_1h"}
-    unpriced = [_rec(r["message"]["id"], 0, model="claude-sonnet-5", w=5, one_hour=True) for r in _sub(5)[:1]]
-    assert ttl.rollback_decision(_three_sessions(tmp_path / "d", unpriced), "claude-sonnet-5")["decision"] == "unknown"
+    assert ttl.ROLLBACK_MODEL == "claude-sonnet-5-5"
+
+
+def test_the_decision_uses_the_unrounded_quantity_and_the_smaller_bound():
+    lineages = [{"lineage": f"session-0{n}/subagent-01", "kind": "subagent_1h", "model": ttl.ROLLBACK_MODEL,
+                 "usd": {"real_usd": 1.0}} for n in range(1, 4)]
+
+    def replay(prudent, favourable):
+        return {"subagent_1h_to_5m": {}, "sessions": [{}] * 3, "lineages": lineages, "by_kind_and_model": {
+            f"subagent_1h/{ttl.ROLLBACK_MODEL}": {"usd": {"entry_reads_not_expired": {
+                "delta_usd": {"prudent": 0.0, "favourable": 0.0},
+                "delta_usd_exact": {"prudent": prudent, "favourable": favourable}}}}}}
+    assert ttl.rollback_decision(replay("0.0000001", "0.0000002"))["decision"] == "keep"  # 0 < delta < 5e-7: rounds to 0.0
+    assert ttl.rollback_decision(replay("0.5", "0")) ["decision"] == "roll_back"
+    assert ttl.rollback_decision(replay("-0.0000001", "0.5"))["decision"] == "roll_back"  # the smaller bound decides
 
 
 # --- committed evidence

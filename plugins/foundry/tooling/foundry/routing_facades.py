@@ -83,9 +83,14 @@ CLAUDE_MODEL_MIN_HOST_VERSION = {"haiku-5.5": (2, 1, 293)}
 # PAT-134: the declared pins whose shipped profile carries the subagent prompt-cache lifetime
 # ``experimental: {cacheTtl: 1h}`` (nested map, not a top-level key; Claude Code 2.1.248 or later, per the Anthropic
 # documentation read on 2026-10-09). The deterministic profile check expects exactly this block for these pins and no
-# ``experimental`` block for any other pin or template. Removing a canonical name here is the rollback.
+# ``experimental`` block for any other pin or template. SINGLE ROLLBACK PROCEDURE: empty this tuple, run
+# ``tooling/generate_claude_profiles.py`` (it removes the block from the ten files), and update the tests that assert
+# the field; the rendering below then stays inert. The trial tool and the replay decision derive their model from it.
 CLAUDE_CACHE_TTL_1H_PINS = ("sonnet-5.5",)
 _CLAUDE_CACHE_TTL_1H_BLOCK = "\nexperimental:\n  cacheTtl: 1h"
+# Full model identifiers of those pins, derived from the single declaration above and the model declaration.
+CLAUDE_CACHE_TTL_1H_MODELS = tuple(wire for canonical, wire, _ in _CLAUDE_MODEL_DECLARATION
+                                   if canonical in CLAUDE_CACHE_TTL_1H_PINS)
 _CLAUDE_HOST_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)\Z")
 _CLAUDE_BINARY_VERSION = re.compile(r"(\d+\.\d+\.\d+) \(Claude Code\)\Z")
 _TRANSCRIPT_TAIL_BYTES = 1 << 20

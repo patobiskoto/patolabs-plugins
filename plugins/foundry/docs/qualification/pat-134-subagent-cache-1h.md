@@ -25,10 +25,11 @@ natif consigné dans [`pat-134-native-trial.json`](pat-134-native-trial.json) (v
 - Seuls les **dix profils versionnés Sonnet 5.5** (`routed-{readonly,worker}-{low,medium,high,xhigh,max}-sonnet-5.5`) portent
   `experimental: {cacheTtl: 1h}`. Aucun autre profil ne change (Opus, Haiku, Fable, Sonnet 5 historique, profils génériques) ; ni le routage, ni
   les modèles, ni les efforts, ni les réglages de l'utilisateur ; aucune clé de configuration nouvelle.
-- Le changement est porté par **le dernier commit de la branche**, séparé des outils et de cette page, pour pouvoir être écarté si l'essai
-  natif n'est pas conforme. Le contrôle déterministe des profils préchargés (`claude_pin_profile_text`, comparé octet pour octet par
+- Le changement est porté par un commit séparé des outils et de cette page (écartable tant que l'essai natif n'avait pas été consigné). Le contrôle déterministe des profils préchargés (`claude_pin_profile_text`, comparé octet pour octet par
   `claude_invocation_binding`) attend exactement ce champ pour ces dix profils et rejette tout profil divergent : champ manquant sur un profil
-  Sonnet 5.5, champ sur tout autre profil, autre valeur, autre clé sous `experimental` (`tests/test_claude_profiles.py`).
+  Sonnet 5.5, champ sur tout autre profil, autre valeur, autre clé sous `experimental` (`tests/test_claude_profiles.py`). **Portée exacte** : ce
+  refus ne vaut que lorsque la route rend un profil épinglé (modèle versionné). Sur une route par alias court (`sonnet`, `opus`…), aucun fichier de
+  profil n'est lu (comportement inchangé) ; un modèle de projet traduit vers un alias court suit le même chemin.
 - **Aucun gain n'est annoncé.** La mesure PAT-133 (trois sessions, dollars sur une seule, simulation) est un argument pour essayer, pas une preuve.
   **Effet sur le quota d'abonnement : inconnu.**
 
@@ -53,7 +54,10 @@ politique), **transmis** (le profil que le hook sélectionne, calculé hors lign
 **observé** (tokens d'écriture de cache dans la classe « 1 heure » et dans la classe « 5 minutes », relus dans les journaux de session de l'hôte).
 Le lecteur lit, dans la limite de FOUNDRY-ADR-0015, les compteurs (avec leur partage 1 heure / 5 minutes), l'alias de modèle, l'horodatage et
 l'identifiant de session (qui sert à trouver le fichier et n'est jamais écrit dans le résultat) ; **au-delà de cette liste**, il lit `type` et
-`message.id` de chaque enregistrement (lecteur de `cache_ttl_replay`) et `agentType` des `agent-*.meta.json` (comme l'observateur de PAT-125).
+`message.id` de chaque enregistrement (lecteur de `cache_ttl_replay`), `agentType` des `agent-*.meta.json` (comme l'observateur de PAT-125) et
+l'empreinte sha256 de chaque journal d'enfant (`log_sha256`, un condensat du fichier entier, pour l'identifier sans le conserver).
+Une requête dont les classes d'écriture ne totalisent pas le total (ambiguë) rend la classe de cache de son sujet `unknown` : elle pourrait
+cacher une écriture de l'autre classe.
 Les sous-agents sont attribués à un sujet par leur **alias de modèle**, jamais par leur contenu.
 
 **Verdict.** `conforming` seulement si le sous-agent Sonnet modifié a écrit du cache dans la classe « 1 heure » et aucun dans la classe
@@ -65,8 +69,8 @@ d'usage ne sont pas observables par l'outil : `unknown`.
 
 Bornes : une exécution, un parent, deux enfants, aucune relance (l'outil refuse un répertoire de travail ou un fichier de résultat existant : il
 bloque un rejeu par chemin, pas une nouvelle exécution avec de nouveaux chemins ; l'autorisation reste celle de l'opérateur).
-Le résultat est consigné tel quel. **Si la classe « 1 heure » n'est pas observée, le dernier commit n'est pas retenu, les profils ne sont pas
-modifiés et le ticket le dit.**
+Le résultat est consigné tel quel. **Si la classe « 1 heure » n'est pas observée, le commit qui porte le champ n'est pas retenu, les profils ne sont pas
+modifiés et le ticket le dit.** (L'essai du 2026-10-10 a observé cette classe : voir le résultat.)
 
 ### Résultat de l'essai (2026-10-10, une exécution, consigné tel quel)
 
@@ -104,7 +108,12 @@ par défaut de PAT-125 ; ses résultats enregistrés sont intacts.
 aucune règle nouvelle) et forme son propre groupe `subagent_1h`, jamais fusionné avec les sous-agents « 5 minutes » (sens B). Choix par
 compteurs seuls, pas par type d'agent (hors ADR-0015) : un sous-agent à « 1 heure » pour une autre raison est rejoué aussi. Limite : le
 premier appel d'une lignée qui lit du cache est traité comme celui d'une conversation principale (entrée expirée si aucune lignée principale
-antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas observable.
+antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas observable. **Conséquence** : avec une conversation principale d'un autre
+modèle (le cas typique de Foundry : Opus en principal, Sonnet en sous-agents), aucune lignée principale du même alias n'existe, et cette entrée
+est comptée expirée sous les **deux** bornes ; sa lecture est alors retarifée comme une écriture à 5 minutes, bien qu'un préfixe écrit par un
+sous-agent frère moins de 5 minutes plus tôt aurait aussi été lu à 5 minutes. **Les écarts `usd.bounds.*.delta_usd` et `usd.result` surestiment donc
+le coût du 5 minutes sur les deux bornes.** La règle de rejeu n'est pas modifiée ; la décision de retour arrière (ci-dessous) lit une quantité
+supplémentaire qui n'a pas ce biais.
 
 ## Règle d'observation et de retour arrière (écrite avant l'adoption)
 
@@ -117,32 +126,35 @@ antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas obse
   sélection, nommées par rang, jamais par identifiant, et toutes rejouées ; aucune n'est écartée après coup (seul l'outil écarte, en les listant,
   les journaux illisibles ou sans prix). Moins de 3 sessions : **inconnu** (le changement reste, sans conclusion).
 - **Quantité lue.** Dans la sortie du rejeu, le groupe `subagent_1h` du modèle `claude-sonnet-5-5` (clé `by_kind_and_model`), lignées tarifables
-  seulement, même requêtes des deux côtés : `usd.bounds.<borne>.delta_usd` = coût simulé à 5 minutes moins coût réel à 1 heure, au prix de liste
-  (un poids sous abonnement, jamais une facture).
-- **Seuil, sur la borne la moins favorable au maintien du 1 heure.** Le réglage observé sera « 1 heure » et le rejeu simule « 5 minutes » :
-  `delta_usd` = **coût simulé à 5 minutes moins coût réel à 1 heure**. **`delta_usd` positif veut dire que le 1 heure a coûté moins** (le 5 minutes
-  aurait coûté plus) ; négatif ou nul, que le 1 heure n'a pas coûté moins. Les deux bornes du rejeu diffèrent par le nombre d'expirations
-  simulées à 5 minutes : la lecture `prudent` en simule le plus (écart `delta_usd` le plus grand, la plus favorable au 1 heure), la lecture
-  `favourable` le moins (écart le plus petit). **La borne la moins favorable au maintien du 1 heure est donc la lecture `favourable`**, dont
-  l'écart est le plus petit (le nom `favourable` vient du rejeu de PAT-133, où il désigne le moins d'expirations, non un jugement ici).
-  **Règle : on garde le 1 heure seulement si `delta_usd` de la lecture `favourable` est strictement positif ; le retour à 5 minutes est
-  déclenché quand, sur cette borne, le 1 heure n'est pas moins cher (`delta_usd` ≤ 0).** Équivalence avec `usd.result` : l'écart de la lecture
-  `prudent` est toujours au moins égal à celui de `favourable`, donc `favourable` > 0 équivaut à « les deux écarts > 0 », c'est-à-dire
-  `net_loss` ; `net_gain` et `undecidable_between_the_bounds` donnent tous deux un `favourable` ≤ 0, donc le retour. Cette équivalence est
-  vérifiée par un test sur trois cas (`net_loss`, `net_gain`, `undecidable_between_the_bounds`). La règle est implémentée par
-  `rollback_decision` (`cache_ttl_replay.py`), qui rend `keep`, `roll_back` ou `unknown` (rejeu fait sans l'option, moins de 3 sessions,
-  lignées non tarifables) ; l'écart étant arrondi à six décimales, un écart plus petit que cela vaut 0 et déclenche le retour. Pas de marge
-  de sécurité ajoutée : aucune ne peut être justifiée par trois sessions.
+  seulement, mêmes requêtes des deux côtés, au prix de liste (un poids sous abonnement, jamais une facture). Un écart est **le coût simulé à
+  5 minutes moins le coût réel à 1 heure** : **positif veut dire que le 1 heure a coûté moins** ; négatif ou nul, qu'il n'a pas coûté moins.
+  La décision **ne lit pas** `usd.bounds.*.delta_usd` ni `usd.result` (biais du premier appel, ci-dessus) mais
+  `usd.entry_reads_not_expired.delta_usd_exact`, ajout à la sortie (pas une règle de rejeu) : la même simulation, avec la lecture d'entrée du
+  premier appel de chaque lignée comptée **non expirée**, en chaînes décimales exactes (non arrondies). C'est la lecture la plus sévère pour le
+  maintien du 1 heure : elle n'est jamais supérieure à `delta_usd`.
+- **Seuil.** Des deux bornes de cette quantité, la décision prend la **plus petite** (la lecture `favourable`, qui simule le moins d'expirations,
+  la donne en pratique ; le minimum est pris pour ne pas dépendre de cet ordre). **On garde le 1 heure seulement si ce minimum est strictement
+  positif ; le retour à 5 minutes est déclenché quand, sur cette lecture, le 1 heure n'est pas moins cher (minimum ≤ 0).** Rapport avec
+  `usd.result` : comme la quantité lue ne dépasse jamais `delta_usd`, `keep` implique `net_loss`, **mais `net_loss` n'implique pas `keep`** (le
+  premier appel peut, à lui seul, faire basculer le signe : c'est le cas testé). La quantité est exacte, sans l'arrondi à six décimales de
+  `delta_usd` : un écart positif qui s'arrondirait à 0 compte comme positif. Pas de marge de sécurité ajoutée : aucune ne peut être justifiée
+  par trois sessions. La règle est implémentée par `rollback_decision` (`cache_ttl_replay.py`), qui rend `keep`, `roll_back` ou `unknown`.
+- **Quand la décision est `unknown`** (jamais `keep`) : rejeu fait sans l'option ; moins de 3 sessions **désignées** ; moins de 3 sessions qui
+  **contribuent** au moins une lignée Sonnet 5.5 de sous-agent tarifable observée à 1 heure ; **une** lignée Sonnet 5.5 de sous-agent observée à
+  1 heure non tarifable ; une lignée d'un **autre** modèle (profil non modifié) observée à 1 heure (un réglage extérieur a changé la mesure).
+  Seules comptent les lignées dont **toutes** les écritures sont à 1 heure ; une lignée mixte reste en sens B. Limite : un sous-agent hors Foundry
+  du même modèle à 1 heure par un réglage extérieur ne se distingue pas ici.
 - **Autres lectures.** Si aucune lignée Sonnet 5.5 de sous-agent n'est observée à « 1 heure » dans la fenêtre (`rollback_decision` : `roll_back`), le champ n'a aucun effet
   observable (crédits d'usage, hôte ou précédence : causes **non distinguables** ici) : retour à 5 minutes par simple retrait du champ, sans
-  conclusion sur la cause. Si un sous-agent d'un profil non modifié (Opus, etc.) apparaît à « 1 heure », la mesure est **inconnue** (un réglage
-  extérieur a changé) et la règle ne conclut pas. Le quota d'abonnement n'est **pas** une entrée de la règle : effet inconnu.
-- **Retour arrière exact.** Une PR ordinaire (`foundry:open-pr`) qui retire le bloc `experimental:` / `cacheTtl: 1h` des dix fichiers
-  `plugins/foundry/agents/routed-{readonly,worker}-{low,medium,high,xhigh,max}-sonnet-5.5.md`, retire l'insertion correspondante de
-  `claude_pin_profile_text` (`plugins/foundry/tooling/foundry/routing_facades.py`) pour que le contrôle déterministe attende de nouveau des
-  profils sans champ, retire les tests qui l'affirment et la phrase correspondante de R7 (`AGENTS.md` et `CLAUDE.md`, octet pour octet) et de
-  `docs/model-routing.md`. Aucune clé de configuration, aucun réglage utilisateur, aucun routage, modèle ou effort n'est à défaire. Une session
-  déjà ouverte garde les profils qu'elle a chargés : les profils d'un plugin sont mis en cache par l'hôte jusqu'au rechargement.
+  conclusion sur la cause. Si un sous-agent d'un profil non modifié (Opus, etc.) apparaît à « 1 heure », la mesure est **inconnue** (`rollback_decision` : `unknown`). Le quota d'abonnement n'est **pas** une entrée de la règle : effet inconnu.
+- **Retour arrière exact (une seule procédure).** Une PR ordinaire (`foundry:open-pr`) qui (1) vide `CLAUDE_CACHE_TTL_1H_PINS`
+  (`plugins/foundry/tooling/foundry/routing_facades.py` ; l'insertion de `claude_pin_profile_text` reste, inerte), (2) régénère les profils par
+  `python3 plugins/foundry/tooling/generate_claude_profiles.py`, ce qui retire le bloc `experimental:` / `cacheTtl: 1h` des dix fichiers
+  `plugins/foundry/agents/routed-{readonly,worker}-{low,medium,high,xhigh,max}-sonnet-5.5.md`, (3) met à jour les tests qui affirment le
+  champ (`tests/test_claude_profiles.py`, `tests/test_cache_ttl_trial.py`) et les phrases correspondantes de R7 (`AGENTS.md` et `CLAUDE.md`,
+  octet pour octet) et de `docs/model-routing.md`. L'outil d'essai et la décision dérivent leur modèle de cette constante. Aucune clé de
+  configuration, aucun réglage utilisateur, aucun routage, modèle ou effort n'est à défaire. Une session déjà ouverte garde les profils qu'elle a
+  chargés : les profils d'un plugin sont mis en cache par l'hôte jusqu'au rechargement.
 
 ## Hôte antérieur à 2.1.248 et crédits d'usage : documenté, observé, inconnu
 
@@ -152,8 +164,12 @@ antérieure du même alias ne la couvre) ; qui a écrit l'entrée n'est pas obse
 | Hôte < 2.1.248 | le champ exige 2.1.248 ou plus | rien (l'essai ne peut observer que l'hôte installé) | si l'hôte ignore le champ, le rejette ou l'accepte |
 | Crédits d'usage tirés | `1h` est ignoré | rien : l'état des crédits pendant l'essai est inconnu (non observable par l'essai ni par les journaux permis) | quand l'abonnement tire des crédits ; l'écriture alors observée est « 5 minutes » |
 
-**Aucune garde n'est inventée** : ni refus de lancement sur un hôte plus ancien, ni détection des crédits d'usage. Dans les deux cas le sous-agent
-tourne comme avant (profil sans effet observable), et le rejeu le montre comme une lignée « 5 minutes ».
+**Aucune garde n'est inventée** : ni refus de lancement sur un hôte plus ancien, ni détection des crédits d'usage. Ce qui est **attendu, non
+observé** : sous crédits d'usage, ou sur un hôte qui ignore le champ, le sous-agent tournerait comme avant et le rejeu le montrerait comme une
+lignée « 5 minutes ». **Risque, dit sans détour** : si un hôte antérieur à 2.1.248 **rejetait** un profil portant un champ inconnu, **chaque
+lancement d'un sous-agent Sonnet 5.5 de Foundry échouerait** sur cet hôte, et Sonnet 5.5 n'a aucun minimum d'hôte dans
+`CLAUDE_MODEL_MIN_HOST_VERSION` (seul `haiku-5.5` en a un). Ce comportement est **inconnu** (non documenté pour ce cas, non observé) ; la
+documentation lue ne dit pas qu'il est sûr. Retour arrière : la procédure ci-dessus.
 
 ## Statut documentaire (R5)
 
@@ -165,7 +181,10 @@ tourne comme avant (profil sans effet observable), et le rejeu le montre comme u
   clé `subagent_1h_to_5m` (règle et nombre de lignées rejouées, présente avec l'option seulement) ; constantes `SUBAGENT_1H`, `ALL_KINDS`,
   `DIRECTION_A`, `ROLLBACK_MIN_SESSIONS`, `ROLLBACK_MODEL` et fonctions `observed_one_hour_only`, `rollback_decision` : documentés ici et dans la docstring.
 - **Champ de profil `experimental.cacheTtl`**, règle d'observation et de retour arrière : documentés ici et dans `docs/model-routing.md`.
-- **`--dry-run` des deux modes de `claude_profile_trial`** : ne crée plus rien sur le disque (incident ci-dessus).
+- **`--dry-run` des deux modes de `claude_profile_trial`** : ne crée plus rien sur le disque (incident ci-dessus) ; ni un refus (liaison de profil
+  absente ou divergente) : le répertoire de travail n'est créé qu'après tous les refus.
+- **`usd.entry_reads_not_expired`** (groupe `subagent_1h` seulement : `delta_usd`, `delta_usd_exact`, `first_requests_priced`) et
+  `CLAUDE_CACHE_TTL_1H_MODELS` (`routing_facades.py`) : documentés ici.
 - **Nouveau fichier** : `pat-134-native-trial.json`, résultat de l'essai, versé tel quel.
 - **Fichiers non modifiés** : tous les résultats de PAT-132 et de PAT-133, les résultats enregistrés de PAT-125.
 - Le détecteur de FOUNDRY-123 n'est pas livré : ce statut est affirmé ici et vérifié en revue, non appliqué mécaniquement.

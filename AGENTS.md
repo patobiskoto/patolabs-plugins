@@ -189,8 +189,8 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   Anthropic documentation read on 2026-10-09 (not re-verified), the field needs Claude Code 2.1.248 or later and `1h`
   is ignored while the subscription draws usage credits; behaviour on an older host and under credits is not
   observed here, and no guard is added. `claude_pin_profile_text()` renders exactly this block for these pins and
-  `claude_invocation_binding()` refuses any divergent profile (field missing, on another pin, another value or
-  key). It changes no model, effort or routing; the effect on the subscription quota is unknown. The observation
+  `claude_invocation_binding()` refuses any divergent pinned profile (field missing, on another pin, another value or
+  key; a short-alias route reads no profile file). Rollback: empty `CLAUDE_CACHE_TTL_1H_PINS` and regenerate the profiles. It changes no model, effort or routing; the effect on the subscription quota is unknown. The observation
   window and the rollback are in `plugins/foundry/docs/qualification/pat-134-subagent-cache-1h.md`.
 - **Effect of a model that resolves to neither the built-in table nor the project's
   `claude_models`**: `claude_invocation_model()` raises `RoutingConfigError` naming the

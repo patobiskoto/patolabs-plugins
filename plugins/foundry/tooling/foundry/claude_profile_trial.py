@@ -39,11 +39,12 @@ before launch, and the agent type the host logged) and observed (cache-creation 
 logs) stay three separate values. The observer reads, within FOUNDRY-ADR-0015, token counters (with their 1-hour / 5-minute
 cache-creation split), the model alias, the record timestamp and the session identifier (the file is found by it; it is never
 written to the result); BEYOND that list it reads ``type`` and ``message.id`` of each record (the reader of
-``cache_ttl_replay``) and the ``agentType`` of each ``agent-*.meta.json`` (as the PAT-125 observer does). Subagents are
+``cache_ttl_replay``) the ``agentType`` of each ``agent-*.meta.json`` (as the PAT-125 observer does) and the sha256 of each child log (a digest
+of the whole file, ``log_sha256``, to identify it without keeping it). Subagents are
 attributed to a profile by their model alias, never by content. ``conforming`` needs everything observed and exact; anything
 not observed is ``unknown``, never conforming. Whether the host drew usage credits (documented to make it ignore ``1h``) is
-not observable here and is recorded as ``unknown``. No test launches it. The coordinator runs it by hand, once, against the
-LAST commit of the branch, which is the one that carries the field.
+not observable here and is recorded as ``unknown``. No test launches it. The coordinator runs it by hand, once, against a commit whose profiles carry the field (the tool records the
+requested value it read, and a profile without it makes the verdict ``not_conforming``).
 """
 from __future__ import annotations
 
@@ -68,7 +69,7 @@ from foundry.cache_ttl_replay import read_host_requests
 from foundry.command_runtime import _claude_child_environment
 from foundry.cost_breakdown import BreakdownError
 from foundry.routing_facades import (
-    CLAUDE_MODEL_MIN_HOST_VERSION, _load_claude_policy, claude_invocation_binding,
+    CLAUDE_CACHE_TTL_1H_MODELS, CLAUDE_CACHE_TTL_1H_PINS, CLAUDE_MODEL_MIN_HOST_VERSION, _load_claude_policy, claude_invocation_binding,
 )
 
 TRIAL_SCHEMA = "foundry.pat125-native-trial.v1"
@@ -80,7 +81,9 @@ TIMEOUT_SECONDS = 20 * 60
 CACHE_TTL_TRIAL_SCHEMA = "foundry.pat134-cache-ttl-trial.v1"
 CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION = (2, 1, 248)
 CACHE_TTL_POLICY = {"version": 1, "mappings": {"claude": {
-    "economy": {"model": "sonnet-5.5", "effort": "low"}, "balanced": {"model": "opus-5.5", "effort": "medium"}}}}
+    # the modified subject is the pin that carries the field (single definition); the control is an unmodified pin
+    "economy": {"model": CLAUDE_CACHE_TTL_1H_PINS[0], "effort": "low"},
+    "balanced": {"model": "opus-5.5", "effort": "medium"}}}}
 # name -> (logical role, capability, expected cacheTtl requested by the profile, cache class expected in the log)
 CACHE_TTL_SUBJECTS = {"modified": ("scout", "readonly", "1h", "write_1h"), "control": ("implementer", "worker", None, "write_5m")}
 CACHE_TTL_LOGICAL = {"scout": "foundry:lupin", "implementer": "foundry:eiffel"}
@@ -193,18 +196,20 @@ def profile_cache_ttl(plugin_root: Path, profile: str) -> str | None:
 
 
 @contextlib.contextmanager
-def _policy_root(work: Path, policy: dict[str, Any], dry_run: bool):
-    """Directory holding the fixture's project policy. A dry run builds it in a temporary directory that is removed, so
-    it leaves nothing at ``work`` (PAT-134: a dry run used to create it, and the next real run was then refused)."""
-    if dry_run:
-        with tempfile.TemporaryDirectory() as temporary:
-            (Path(temporary) / ".foundry").mkdir()
-            (Path(temporary) / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
-            yield Path(temporary)
-        return
+def _policy_root(policy: dict[str, Any]):
+    """A temporary directory holding the fixture's project policy, removed afterwards. Everything that can refuse the run
+    is resolved against it BEFORE the work directory is created, so a dry run or a refusal leaves nothing at ``work``
+    (PAT-134: a dry run used to create it, and the next real run on that path was then refused)."""
+    with tempfile.TemporaryDirectory() as temporary:
+        (Path(temporary) / ".foundry").mkdir()
+        (Path(temporary) / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
+        yield Path(temporary)
+
+
+def _create_fixture(work: Path, policy: dict[str, Any]) -> None:
     (work / ".foundry").mkdir(parents=True)
     (work / ".foundry" / "model-routing.json").write_text(json.dumps(policy), encoding="utf-8")
-    yield work
+    (work / "fixture").mkdir()
 
 
 def _sha256(path: Path) -> str | None:
@@ -324,14 +329,14 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch, today: dt
     token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}" if neutral else f"PAT125-{secrets.token_hex(8)}"
     session_id = str(uuid.uuid4())
     token_file = work / "fixture" / ("marker.txt" if neutral else "token.txt")
-    with _policy_root(work, POLICY, args.dry_run) as root:
-        if not args.dry_run:
-            (work / "fixture").mkdir()
-            token_file.write_text(token + "\n", encoding="utf-8")
+    with _policy_root(POLICY) as root:
         route = _load_claude_policy(root).resolve(ROLE, "claude")
     binding = claude_invocation_binding(route, CAPABILITY, plugin_root=PLUGIN_ROOT)  # absent/divergent: refused here
     if (route.model, route.effort, binding["transmitted_model"]) != (MODEL, EFFORT, WIRE_MODEL):
         raise TrialError("this checkout does not resolve the fixture to haiku-5.5 / medium")
+    if not args.dry_run:  # nothing is created on disk before every refusal above has been passed
+        _create_fixture(work, POLICY)
+        token_file.write_text(token + "\n", encoding="utf-8")
     command = argv(args.claude, parent_prompt(token_file, neutral), session_id, args.parent_model)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
     body: dict[str, Any] = {
@@ -449,8 +454,10 @@ def observe_cache_ttl(stream: Path, projects_dir: Path, session_id: str, subject
             "profile": ("unknown" if child["agent_type"] is None
                         else "exact" if child["agent_type"] == f"foundry:{subject['profile']}" else "divergent"),
             "requested": "exact" if subject["requested"] == subject["requested_expected"] else "divergent",
+            # an ambiguous request (write classes not adding up) could hide a write of the other class: unknown
             "cache_class": ("unknown" if not (wrote_1h or wrote_5m) else "divergent" if not right
-                            else "exact" if child["requests"] >= 2 else "unknown")}
+                            else "exact" if child["requests"] >= 2 and not child["requests_ambiguous_counters"]
+                            else "unknown")}
     return {
         "host": {"claude_code_version": init.get("claude_code_version"),
                  "documented_minimum_for_cache_ttl": ".".join(map(str, CACHE_TTL_DOCUMENTED_MIN_HOST_VERSION)),
@@ -494,11 +501,7 @@ def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch,
     session_id = str(uuid.uuid4())
     files = [work / "fixture" / name for name in ("first.txt", "second.txt")]
     subjects: dict[str, dict[str, Any]] = {}
-    with _policy_root(work, CACHE_TTL_POLICY, args.dry_run) as root:
-        if not args.dry_run:
-            (work / "fixture").mkdir()
-            for file in files:
-                file.write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
+    with _policy_root(CACHE_TTL_POLICY) as root:
         policy = _load_claude_policy(root)
         for name, (role, capability, requested_expected, expected_class) in CACHE_TTL_SUBJECTS.items():
             route = policy.resolve(role, "claude")
@@ -508,6 +511,12 @@ def run_cache_ttl(args: Any, *, launch: Callable[..., dict[str, Any]] = _launch,
                               "profile": binding["profile"],
                               "requested": profile_cache_ttl(PLUGIN_ROOT, binding["profile"]),
                               "requested_expected": requested_expected, "expected_class": expected_class}
+    if subjects["modified"]["wire"] not in CLAUDE_CACHE_TTL_1H_MODELS:
+        raise TrialError("the modified subject is not a pin that carries the field (CLAUDE_CACHE_TTL_1H_PINS)")
+    if not args.dry_run:  # nothing is created on disk before every refusal above has been passed
+        _create_fixture(work, CACHE_TTL_POLICY)
+        for file in files:
+            file.write_text(f"public fixture line {secrets.randbelow(10**8):08d}\n", encoding="utf-8")
     command = argv(args.claude, cache_ttl_parent_prompt(files), session_id, args.parent_model)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
     body: dict[str, Any] = {
