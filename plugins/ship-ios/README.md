@@ -56,6 +56,21 @@ Use `/ship-ios:<skill>` in Claude Code and `$ship-ios:<skill>` in Codex.
 - Optional: **Foundry** (`foundry@patolabs`) if you want release notes auto-assembled
   from your tracker milestone. Optional: **XcodeBuildMCP** for build/sim from the agent.
 
+## Running the plugin's own tests
+
+From `plugins/ship-ios`:
+
+```
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
+Requirements: Python 3, `git` (`tests/test_tag_merged.py` creates temporary
+repositories) and `ruby` (`tests/test_submit_contract.py` evaluates
+`templates/Fastfile` with a stub fastlane DSL). No Xcode, simulator, fastlane or
+Apple account is needed. `ruby` is called without a skip guard, so those tests error
+if it is missing. The CI job `ship-ios` runs this command on `ubuntu-24.04`, where
+`ruby` was found at `/usr/bin/ruby` (run 38095058779: 35 tests, success).
+
 ## Build model — A: Xcode Cloud builds, fastlane submits
 
 fastlane **never builds the release binary**. Xcode Cloud archives, signs (cloud-managed
