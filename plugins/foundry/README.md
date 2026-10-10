@@ -561,7 +561,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   documentation, not shown by a run: a failed `plan` makes `foundry` run, and the fork
   pull request behaviour.
 - Cancellation: if a run is cancelled while `plan` runs, `foundry` ends `skipped` (the
-  `!cancelled()` condition is false). `ci_gate` only tolerates `success`, `neutral` and
+  `!cancelled()` condition is false; deduced from the condition, not shown by a run). `ci_gate` only tolerates `success`, `neutral` and
   `skipped` conclusions on completed checks; any other conclusion, `cancelled` included,
   is listed in `failing` and `passed` is false. So a `cancelled` check next to successes
   blocks the merge gate by reading the code; no test in `tests/test_pure.py` feeds a
@@ -569,9 +569,10 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   runs of the sha, so a cancelled run is expected to block until it is re-run; how it
   treats the check runs of a re-run next to those of the cancelled one was not verified.
 - Release rule: a change is a release change, and runs everything even inside
-  `plugins/ship-ios/`, when it touches a plugin manifest
-  (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) or a marketplace catalogue
-  (`.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`). It is
+  `plugins/ship-ios/`, when it touches a
+  `plugin.json` or a `marketplace.json` directly inside a `.claude-plugin`,
+  `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
+  combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0 and
   1.1.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a

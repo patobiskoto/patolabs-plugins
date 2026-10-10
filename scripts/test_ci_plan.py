@@ -55,6 +55,19 @@ class PlanRule(unittest.TestCase):
             ci_plan.plan("pull_request", ["plugins/ship-ios/../foundry/x.py"]).foundry
         )
 
+    def test_leading_space_or_unnormalised_path_runs_foundry(self):
+        for path in (
+            " plugins/ship-ios/x",
+            "x/../plugins/ship-ios/y",
+            "./plugins/ship-ios/y",
+            "plugins/ship-ios/../foundry/z",
+            "plugins//ship-ios/y",
+        ):
+            decision = ci_plan.plan("pull_request", ["plugins/ship-ios/a.md", path])
+            self.assertTrue(decision.foundry, path)
+            decision = ci_plan.plan("pull_request", [path])
+            self.assertTrue(decision.foundry, path)
+
     def test_release_pr_runs_everything_even_inside_ship_ios(self):
         for manifest in (
             "plugins/ship-ios/.claude-plugin/plugin.json",
@@ -73,6 +86,9 @@ class PlanRule(unittest.TestCase):
             "plugins/ship-ios/.claude-plugin/plugin.json",
             ".claude-plugin/marketplace.json",
             ".agents/plugins/marketplace.json",
+            ".codex-plugin/marketplace.json",
+            ".agents/plugins/plugin.json",
+            "plugins/ship-ios/tests/fixtures/.claude-plugin/plugin.json",
         ):
             self.assertTrue(ci_plan.is_manifest(path), path)
         for path in (

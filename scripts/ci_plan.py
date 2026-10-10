@@ -33,7 +33,8 @@ class Plan(NamedTuple):
 
 
 def _normalise(path: str) -> str:
-    return posixpath.normpath(path.strip())
+    # No strip: git hands paths over NUL-separated, so a leading space is part of the name.
+    return posixpath.normpath(path)
 
 
 def is_manifest(path: str) -> bool:
@@ -60,9 +61,11 @@ def plan(event: str, changed_paths: list[str] | None) -> Plan:
         return Plan(True, f"unknown event {event!r}: full suite")
     if changed_paths is None:
         return Plan(True, "diff unavailable: full suite")
-    paths = [_normalise(p) for p in changed_paths if p.strip()]
+    paths = [p for p in changed_paths if p]
     if not paths:
         return Plan(True, "empty change list: full suite")
+    if any(_normalise(p) != p for p in paths):
+        return Plan(True, "path not in normal form: full suite")
     if is_release_change(paths):
         return Plan(True, "release change (plugin manifest or catalogue touched): full suite")
     if all(p.startswith(SHIP_IOS_PREFIX) and ".." not in p.split("/") for p in paths):
