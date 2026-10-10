@@ -279,15 +279,20 @@ no local model, profile or default. **The launcher is not an offline tool, and i
 loads no model itself.** What it launches depends on the mode, and the
 per-mode behaviour is specified in
 [pat-19-launcher-v1.md](qualification/pat-19-launcher-v1.md): `screen` and
-`screen_exploration` run local attempts only and can start no cloud execution;
-`compare` and `compare_exploration` are the only modes that may start one
-(`CLOUD_MODES` in `tooling/foundry/local_first_runner.py`), and a `compare` run limited
-to the paths `A,B` needs no local model. A run that has a local arm drives a model that
-must already be loaded (the machine preflight refuses when the expected model is not).
-A separate verb, `native-sandbox-trial` (PAT-124), launches two real cloud executions.
-Of the recorded campaigns, `pat-19-screen-1` and `pat-19-xscreen-1` are recorded as
-run without cloud, and the v4 and v5 comparisons launched real cloud sessions (30 and
-74, as counted by the PAT-132 replay). Loading is done outside the launcher,
+`screen-exploration` run local attempts only and can start no cloud execution;
+`compare` and `compare-exploration` are the only modes that may start one (`CLOUD_MODES`
+in `tooling/foundry/local_first_runner.py`, where the two exploration modes are the
+identifiers `screen_exploration` and `compare_exploration`; the command line spells
+them with a hyphen), and a `compare` run limited to the paths `A,B` needs no local
+model. A real run that has a local arm drives a model that must already be loaded (the
+machine preflight refuses when the expected model is not); `--dry-run` accepts fake
+drivers only and launches no command. A separate verb, `native-sandbox-trial`
+(PAT-124), launches up to two real cloud executions (it has a `--no-reviewer` option).
+Among the recorded campaigns, as the CHANGELOG records them: `pat-19-screen-1`,
+`pat-19-xscreen-1` and `pat-19-x3screen-1` ran without cloud; the v3 comparison
+`pat-19-x3compare-1` made 51 cloud executions; the v4 and v5 comparisons launched real
+cloud sessions (30 and 74, as counted by the PAT-132 replay). This list is not
+exhaustive: pilots and bounded trials are recorded in the CHANGELOG as well. Loading is done outside the launcher,
 by the operator: by hand, or by the operator scripts shipped for protocols v3, v4 and
 v5 (`docs/qualification/pat-19-v3-operator.sh`, `-v4-`, `-v5-`), which unload, run the
 pinned load command and then start the launcher, once per launch. The launcher is
@@ -307,8 +312,10 @@ corpus without measuring it:
 
 ### Test isolation and 1.0.0 follow-up
 
-- The test suite can no longer read or write the real Foundry state directory
-  (PAT-104). Test infrastructure only.
+- The test suite is isolated from the real Foundry state directory (PAT-104), with the
+  known gaps named in the PAT-128 entry of the CHANGELOG (`os.access`,
+  `os.scandir`/`DirEntry.stat`, a relative path given with `dir_fd`, subprocesses).
+  Test infrastructure only.
 - PAT-93 recorded the publication and public installation of 1.0.0:
   [pat-62-final-report.md](qualification/pat-62-final-report.md).
 
@@ -337,10 +344,10 @@ The PAT-134 page starts its window "at the delivery of the version that carries 
 change"; 1.1.0 is the first version that carries it. **The PAT-134 window starts at the
 merge of the release pull request (effective distribution, phase 2 below), per the
 maintainer's decision of 2026-10-10 that it starts at the publication of 1.1.0.** The
-decision's word is "publication". Reading it as that merge, rather than as the tag, is
+decision's word is "publication". Reading it as that merge, rather than as the tag, was
 the coordinator's reading, made because the merge is the derived moment from which a
-host can receive the version; that reading is submitted to the maintainer with this
-note before the merge. The coordinator records the exact date and
+host can receive the version; the maintainer confirmed that reading on 2026-10-10,
+before the merge. The coordinator records the exact date and
 commit on PAT-135 and PAT-134 after the merge. The rule of the page is not changed.
 
 The signals of the first window are downstream of
@@ -469,7 +476,7 @@ metadata and documentation only.
 | Release note and migration guide | New: this page and migration-1.1.0.md |
 | Root and Foundry README | Updated: pointers to these two pages, with the status "release candidate, effectively distributed from the merge (derived, not observed), not tagged, not verified installed" |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed by PAT-135 and its version does not move; its 1.0.0 compatibility statements remain true as written |
-| `docs/qualification/pat-134-subagent-cache-1h.md` | Updated: a pointer under its window bullet, to the start of the window stated above (the maintainer's decision and the coordinator's reading of it); its rule is unchanged |
+| `docs/qualification/pat-134-subagent-cache-1h.md` | Updated: a pointer under its window bullet, to the start of the window stated above (the maintainer's decision, and the coordinator's reading of it as confirmed by the maintainer); its rule is unchanged |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes; R7 already describes the Haiku 5.5 and cache state this release packages |
 | `tests/fixtures/release-history.json` | Not necessary before the tag: the `1.1.0` freeze is computed from the tagged tree, through its own issue (phase 5) |
 

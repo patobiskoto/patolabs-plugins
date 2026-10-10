@@ -128,7 +128,7 @@ supplémentaire qui n'a pas ce biais.
   décision, elle n'est pas prolongée.
   Début retenu, sans changement de cette règle : la fusion de la pull request de release de la 1.1.0 (distribution effective, dérivée, non
   observée). Le mainteneur a décidé le 2026-10-10 que la fenêtre commence à la publication de la 1.1.0 ; lire « publication » comme cette
-  fusion est la lecture du coordinateur, soumise au mainteneur avant la fusion. Voir [`release-1.1.0.md`](../release-1.1.0.md),
+  fusion était la lecture du coordinateur, que le mainteneur a confirmée le 2026-10-10, avant la fusion. Voir [`release-1.1.0.md`](../release-1.1.0.md),
   « Observation windows this version carries ».
 - **Sessions rejouées, choisies sans regarder le résultat.** À la fermeture de la fenêtre, avant tout calcul : les 5 conversations principales
   les plus récentes (date de modification du fichier) parmi les répertoires de projet de l'hôte qui correspondent à ce dépôt et à ses arbres de
