@@ -240,7 +240,10 @@ When one of the three writes does not go through, tell two cases apart:
   before the merge; the merge waits for it. Do not correct the remarks instead and do not
   merge first. When the failure leaves the effect of the write unknown (a network
   failure), first read the tracker to see whether the write happened, and retry only if
-  it did not, so that a retry creates no duplicate.
+  it did not, so that a retry creates no duplicate. If the adapter itself refuses the
+  retry (it cannot replay the write safely), treat the case as a durable refusal:
+  correct the remarks of that round before the merge, re-review in full, and report the
+  refusal in the PR description.
 
 An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
 before the merge and re-review in full. Inside an Epic campaign the authorization has no

@@ -18,7 +18,9 @@
   merge and fully re-reviewed. The origin Epic of an issue is its direct parent Epic. If the
   tracker durably refuses one of the three writes, no substitute write is made and the
   remarks are corrected before the merge; on a transient failure (quota, network) the
-  write is retried and the merge waits for it. An issue without an origin Epic gets no
+  write is retried and the merge waits for it, after a read of the tracker when its
+  effect is unknown; a retry that the adapter itself refuses is treated as a durable
+  refusal. An issue without an origin Epic gets no
   deferral: its remarks are corrected before the merge and fully re-reviewed. Not mechanical:
   no gate checks the companion Epic. Not coded yet: inside a campaign the authorization has no effect yet,
   because three things are missing (a channel that carries the remarks to the campaign,

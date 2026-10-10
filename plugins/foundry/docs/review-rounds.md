@@ -130,17 +130,34 @@ no substitute write, the remarks are corrected before the merge and fully re-rev
 and the refusal is reported in the PR description.
 
 A transient failure is the other case of `AGENTS.md#R9` (b): the coordinator waits and
-retries the write before the merge. No adapter retries a write by itself in the code
-read here; what each one gives the coordinator to recognise the case:
+retries the write before the merge. When the failure leaves the effect of the write
+unknown (a network failure), it first reads the tracker to see whether the write
+happened, and retries only if it did not. That reading is what prevents a second issue
+or a second comment: no adapter retries a write by itself in the code read here, and a
+retry after an unknown outcome does this, per provider (files under
+`tooling/foundry/trackers/`):
+
+| Provider | Retry of `create_issue` | Retry of `add_comment` |
+|---|---|---|
+| YouTrack | a plain second create: `create_issue` (`youtrack.py`) posts to `/issues` and takes the identifier the provider returns, with no client key. When the issue was created and only the parent link failed, a second call creates a second issue | a plain second comment: `add_comment` (`youtrack.py`) posts with no identifier and no readback |
+| Linear | a plain second create: `create_issue` (`linear.py`) sends a fresh `uuid.uuid4()` identifier at each call | a plain second comment: `add_comment` (`linear.py`) sends no client identifier; its readback checks the comment it has just created, not an earlier one |
+| `ghprojects` | on the same data directory, `create_issue` (`ghprojects.py`) keeps a pending intent written before its only issue POST. If the issue then exists once, the second call resumes it and creates no duplicate. If no matching issue exists, `_observe_create_candidate` refuses every later call with `create_effect_unknown`, whatever made the POST fail. No code in the file removes a create intent: no recovery path was found. From another data directory, or once the intent is gone, an existing matching issue is refused with `unowned_create_candidate`, and with no matching issue the call is a plain create | a plain second comment: `add_comment` (`ghprojects.py`) posts once, reads back the comment it created and never looks for an earlier one |
+
+[`tracker-contract.md`](tracker-contract.md) states the same for issue creation ("a
+replay with zero candidates remains unknown and refuses") and for comments ("Free-text
+comments remain outside S5"). So on `ghprojects` a failed creation that had no effect
+cannot be retried with the same title, body, fields and parent: the adapter refuses,
+and `AGENTS.md#R9` (b) then treats the case as a durable refusal. What the reading
+cannot settle: a write whose effect becomes visible only after the reading, and a
+second writer that makes the same write between the reading and the retry.
+
+What each adapter gives the coordinator to recognise a transient failure:
 
 | Provider | Quota exhausted | Network failure |
 |---|---|---|
 | YouTrack | no quota-specific error in `tooling/foundry/trackers/youtrack.py`: an HTTP failure is raised as `_YouTrackHTTPError` with its status; reset time not verified | not verified |
 | Linear | `LinearQuotaExhaustedError` (`tooling/foundry/trackers/linear.py`), with the reset time in `reset_at` and `reset_at_ms`; never retried by the adapter ([`linear-tracker.md`](linear-tracker.md), "Transport errors, read retries and quota") | `transport_error`; a write is never retried by the adapter (same section) |
 | `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`); reset time not verified | reason `transport_failed`; `_rest_write` never retries |
-
-Not verified: whether a write that failed on the network had an effect. Retrying it can
-then create a second issue or a second comment.
 
 Limits, as stated by PAT-ADR-0018 at its date and not lifted by these tests:
 

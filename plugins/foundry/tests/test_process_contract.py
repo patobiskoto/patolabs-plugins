@@ -136,6 +136,12 @@ _PORTABILITY_CODE_CITATIONS = (
     ("trackers/ghprojects.py", '"rate_limited"'),
     ("trackers/ghprojects.py", '"transport_failed"'),
     ("trackers/ghprojects.py", "def _rest_write("),
+    ("trackers/ghprojects.py", "def _observe_create_candidate("),
+    ("trackers/ghprojects.py", '"issue.create_reconcile", "create_effect_unknown"'),
+    ("trackers/ghprojects.py", '"issue.create_reconcile", "unowned_create_candidate"'),
+    ("trackers/ghprojects.py", 'self._intent_record(fingerprint, "pending")'),
+    ("trackers/linear.py", '"id": str(uuid.uuid4()),'),
+    ("trackers/youtrack.py", 'raw = self._req("POST", "/issues",'),
 )
 
 
@@ -210,6 +216,13 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_three_standing_writ
     assert ("transient failure (request quota exhausted, network failure): the coordinator "
             "waits and retries the write before the merge, and the merge waits for it") in rule
     assert "It does not correct the remarks instead and does not merge first" in rule
+    assert ("it first reads the tracker to see whether the write happened, and retries "
+            "only if it did not") in rule
+    assert ("If the adapter itself refuses the retry (it cannot replay the write safely), "
+            "the case is treated as a durable refusal: the remarks of that round are "
+            "corrected before the merge and then fully re-reviewed, and the refusal is "
+            "reported in the PR description") in rule
+    assert "the refused retry is the coordinator's reading of those two decisions" in rule
     assert "Both are operating choices of this contract" in rule
     assert "not decisions of PAT-ADR-0018" in rule
 
@@ -280,6 +293,17 @@ def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_w
     assert "the provider's answer is not verified" in page
     assert "this is a durable refusal" in page
     assert "the coordinator waits and retries the write before the merge" in page
+    # same maintainer decision as R9 (b): read first, retry only if the write did not happen
+    assert ("it first reads the tracker to see whether the write happened, and retries "
+            "only if it did not") in page
+    assert "That reading is what prevents a second issue or a second comment" in page
+    assert "Retrying it can then create" not in page
+    assert "then treats the case as a durable refusal" in page
+    for cited in ("`create_effect_unknown`", "`unowned_create_candidate`",
+                  "`_observe_create_candidate`", "`uuid.uuid4()`"):
+        assert cited in page
+    assert "a replay with zero candidates remains unknown and refuses" in " ".join(
+        _repo_text("plugins/foundry/docs/tracker-contract.md").split())
     quota = _repo_text("plugins/foundry/docs/linear-tracker.md")
     assert "## Transport errors, read retries and quota" in quota
     assert "**A write is never retried**" in quota

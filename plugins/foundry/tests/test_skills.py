@@ -193,6 +193,11 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_write
     assert ("transient failure (request quota exhausted, network failure): wait and retry "
             "the write before the merge; the merge waits for it") in text
     assert "Do not correct the remarks instead and do not merge first" in text
+    assert ("first read the tracker to see whether the write happened, and retry only if "
+            "it did not") in text
+    assert ("If the adapter itself refuses the retry (it cannot replay the write safely), "
+            "treat the case as a durable refusal: correct the remarks of that round before "
+            "the merge, re-review in full, and report the refusal in the PR description") in text
     # inside a campaign: three missing pieces, left to a later issue
     for piece in ("a channel that carries the remarks to the campaign",
                   "the code that creates the companion Epic and its issues",

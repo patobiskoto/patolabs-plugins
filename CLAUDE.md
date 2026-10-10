@@ -294,10 +294,14 @@ When one of the three writes does not go through, two cases are told apart:
   and retries the write before the merge, and the merge waits for it. It does not correct
   the remarks instead and does not merge first. When the failure leaves the effect of the
   write unknown (a network failure), it first reads the tracker to see whether the write
-  happened, and retries only if it did not, so that a retry creates no duplicate.
+  happened, and retries only if it did not, so that a retry creates no duplicate. If
+  the adapter itself refuses the retry (it cannot replay the write safely), the case is
+  treated as a durable refusal: the remarks of that round are corrected before the merge
+  and then fully re-reviewed, and the refusal is reported in the PR description.
 
-Both are operating choices of this contract (maintainer decision of 2026-10-10), not
-decisions of PAT-ADR-0018.
+Both are operating choices of this contract (maintainer decision of 2026-10-10; the
+refused retry is the coordinator's reading of those two decisions), not decisions of
+PAT-ADR-0018.
 
 PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
 its non-blocking remarks are corrected before the merge and then fully re-reviewed
