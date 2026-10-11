@@ -3,11 +3,11 @@
 This page records how many Linear requests the common read commands cost on the real
 project, where the code reads the same thing several times inside one command, and which
 reductions a follow-up ticket (PAT-168) could consider. It decides nothing. Three kinds
-of statement are kept apart: **measured** (the table, and the trace under it),
+of statement are kept apart: **measured** (the table, and the two traces under it),
 **deduced** (arithmetic on the measured figures) and **read in code** (symbols named
-below, not run under a per-operation trace, except the two traces (`query issue`,
-`query backlog`) described under "Conditions of the measure"). Where nothing supports
-an answer, it says **unknown**.
+below, not run under a per-operation trace, except the two traces (`query issue`, `query
+backlog`) described under "Conditions of the measure"). Where nothing supports an
+answer, it says **unknown**.
 
 Documentation status (R5, `AGENTS.md#R5`): new page, no CLI verb, option, configuration
 key or constant changes. PAT-189 corrected statements of this page in place (dated

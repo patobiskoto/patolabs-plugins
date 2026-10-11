@@ -25,16 +25,17 @@
   Projects "before" measured on a second instance, and one conformance case (`query
   issue` with a disappeared ADR issue). Documentation (R5):
   `docs/linear-request-cost.md` (cost per ADR-issue pair established by the
-  coordinator's per-operation trace of 2026-10-11, transition reads pinned on the fake
-  transport, statements dated "before PAT-168" and "before PAT-190", identity of the
-  measured tooling with the code read, PAT-190 table row), `docs/linear-tracker.md`
-  (error order of `search` with the read scope, nested scope, second `search`,
-  `LinearReadScopeError`), `docs/ghprojects-tracker.md` (exact list of reads of the ADR
-  index of `query issue`), `docs/tracker-conformance.md` (count of 132 tests). The
-  history note that `docs/linear-request-cost.md` carried about the PAT-100 paragraph
-  now lives in the PAT-167 entry. The time of the first measure had been corrected by
-  PAT-168 already. `query milestones`, which still pays the full replay of closed Epics,
-  is out of scope and goes through intake.
+  coordinator's per-operation trace of 2026-10-11, the coordinator's `query backlog`
+  trace recorded as measured, transition reads pinned on the fake transport, statements
+  dated "before PAT-168" and "before PAT-190", identity of the measured tooling with the
+  code read, PAT-190 table row), `docs/linear-tracker.md` (error order of `search` with
+  the read scope, nested scope, second `search`, `LinearReadScopeError`),
+  `docs/ghprojects-tracker.md` (exact list of reads of the ADR index of `query issue`),
+  `docs/tracker-conformance.md` (count of 132 tests). The history note that
+  `docs/linear-request-cost.md` carried about the PAT-100 paragraph now lives in the
+  PAT-167 entry. The time of the first measure had been corrected by PAT-168 already.
+  `query milestones`, which still pays the full replay of closed Epics, is out of scope
+  and goes through intake.
 
 - PAT-169: documentation only, no behaviour of any tool changes; records the first
   observation window of rule R9 and the maintainer's decision. `docs/review-rounds.md`

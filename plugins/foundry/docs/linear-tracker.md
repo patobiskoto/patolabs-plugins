@@ -1269,17 +1269,16 @@ today (PAT-189).
 
 Error order of `search` (behaviour change, every caller; the paragraph describes the
 requests of the listing and of the individual reads it triggers, which is the whole
-story only without the layer: see the sentence "With the read-only layer open" at the
-end of the next paragraph):
-`search` fetches every listing page before normalizing any node. While fetching it
-checks what it checked before on each response (transport, shape of the response, a
-missing or empty `endCursor` when a next page is announced, the page limit) and one
-thing more: a page carrying an issue identifier already carried by an earlier page is
-refused at once (`pagination_stalled`), so a provider that re-serves a page is stopped
-at its second listing request, as before. A repeated `endCursor` is not a failure by
-itself, as before: the listing continues, and stalls only if an issue comes back. A
-duplicate inside one page, and any duplicate the fetch did not catch, is refused by the
-check on the normalized issue, kept unchanged and run in listing order with the
+story only without the layer: see the sentence "With the read-only layer open" near the
+end of the next paragraph): `search` fetches every listing page before normalizing any
+node. While fetching it checks what it checked before on each response (transport, shape
+of the response, a missing or empty `endCursor` when a next page is announced, the page
+limit) and one thing more: a page carrying an issue identifier already carried by an
+earlier page is refused at once (`pagination_stalled`), so a provider that re-serves a
+page is stopped at its second listing request, as before. A repeated `endCursor` is not
+a failure by itself, as before: the listing continues, and stalls only if an issue comes
+back. A duplicate inside one page, and any duplicate the fetch did not catch, is refused
+by the check on the normalized issue, kept unchanged and run in listing order with the
 normalization.
 
 What cannot differ from the previous code: the output of a successful listing; the error
