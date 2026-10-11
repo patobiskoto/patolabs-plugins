@@ -2,6 +2,10 @@
 
 Every command here is a deterministic write. The DECISION to call it belongs to a
 judgment skill AND to the human confirming it — never auto-invoked from reasoning.
+One exception, for `create-issue` and `comment` only: the three writes that the grouped
+deferral rule of the `foundry:merge-pr` skill authorizes in advance (create the
+companion Epic, create an issue in it, add a comment to such an issue) are made without
+a confirmation.
 
 CLI:
   python3 -m foundry.edit create-issue '<json:{title,body,fields,parent}>'
