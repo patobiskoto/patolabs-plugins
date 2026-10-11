@@ -60,11 +60,16 @@ verify unavailable optional capabilities without provider side effects.
 
 ## Current gate state
 
-On the PAT-64 merge baseline, the exact public command selects 108 passing tests. The
-aggregate gate reports no missing supported cell and no core `gap` or `to_qualify`.
-The guard is still adversarially tested: deleting a supported case or marking a covered
-core cell `to_qualify` makes the command fail. A ticket owner or matrix label alone
-never turns an absent core capability into a pass.
+At PAT-189, the exact public command selects 132 passing tests, counted by running
+`pytest -q -m tracker_conformance tests` and reading the summary line (131 before
+PAT-189 added one case). The manifest has 72 cases; the test count is higher because
+parametrized cases count once per parameter and every test of
+`test_tracker_conformance_v1.py`, marked as a whole, is selected too. The figure of 108
+that this page gave for the PAT-64 merge baseline had not followed the later tickets
+that added cases. The aggregate gate reports no missing supported cell and no core `gap`
+or `to_qualify`. The guard is still adversarially tested: deleting a supported case or
+marking a covered core cell `to_qualify` makes the command fail. A ticket owner or
+matrix label alone never turns an absent core capability into a pass.
 
 ## Evidence boundary
 

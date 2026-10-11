@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- PAT-189: settles the non-blocking remarks deferred from the reviews of PAT-167,
+  PAT-168 and PAT-190. Behaviour: opening `LinearTracker.read_scope()` while it is
+  already open is now refused with `LinearReadScopeError` (it used to replace the outer
+  scope silently; no command nests it), and the refusal of a write inside a read scope
+  raises that same class instead of a bare `RuntimeError` (still a `RuntimeError`, and
+  deliberately not a `LinearTrackerError`: nothing was sent and the transport handlers
+  must not apply). The early stop of `search` on a page that repeats an earlier issue
+  now counts every node whose `identifier` key is present, whatever its type, provided
+  it is hashable (a list or an object is not counted and fails afterwards as it did
+  before, outside the early stop: `TypeError` on the normalized issue), where it counted
+  strings only since PAT-168; the code before PAT-168 compared `Issue.id`
+  (`raw["identifier"]`) after normalization, which refuses a node with no `identifier`
+  key and accepts any other value, so a node without the key is still not counted.
+  Checked by running the code at 8367180 on the same pages (7 and None repeated:
+  `pagination_stalled` at the second request; key missing: `normalize` /
+  `invalid_response`; `["x"]`: `TypeError`). No output of any command and no write path
+  changes. Tests: fixed order of the errors of `search`, repeated non-string
+  `identifier`, missing `identifier` key and non-hashable `identifier`, nested scope,
+  second `search` in a scope, the reads of one transition, `query issue` end to end for
+  an adapter that validates ADR links without overriding the port default, the GitHub
+  Projects "before" measured on a second instance, and one conformance case (`query
+  issue` with a disappeared ADR issue). Documentation (R5):
+  `docs/linear-request-cost.md` (cost per ADR-issue pair established by the
+  coordinator's per-operation trace of 2026-10-11, the coordinator's `query backlog`
+  trace recorded as measured, transition reads pinned on the fake transport, statements
+  dated "before PAT-168" and "before PAT-190", identity of the measured tooling with the
+  code read, PAT-190 table row), `docs/linear-tracker.md` (error order of `search` with
+  the read scope, nested scope, second `search`, `LinearReadScopeError`),
+  `docs/ghprojects-tracker.md` (exact list of reads of the ADR index of `query issue`),
+  `docs/tracker-conformance.md` (count of 132 tests). The history note that
+  `docs/linear-request-cost.md` carried about the PAT-100 paragraph now lives in the
+  PAT-167 entry. The time of the first measure had been corrected by PAT-168 already.
+  `query milestones`, which still pays the full replay of closed Epics, is out of scope
+  and goes through intake.
+
 - PAT-169: documentation only, no behaviour of any tool changes; records the first
   observation window of rule R9 and the maintainer's decision. `docs/review-rounds.md`
   gets the count per issue with its PR sources (39 rounds over 10 origin issues, 3.9;
@@ -37,8 +72,13 @@
   returns the plain index; a transport, binding or payload failure while reading a
   cited issue no longer fails `query issue`. The reads its index still makes, and whose
   failure still fails it, are per tracker: on Linear, the listing of ADR documents and
-  nothing else; on GitHub Projects, the repository Issue listing, the Project item
-  listing and, for each ADR, the read of its support Issue and of its comment history.
+  nothing else; on GitHub Projects, the repository Issue listing (one request per page
+  of 100), the Project item listing (one GraphQL request per page) and, for each ADR,
+  its support Issue read twice (once to identify the corpus, once more by the
+  head-commitment check) and its comment history (one request per page of 100); a
+  support recognized in the Project but not in the repository listing (absent from it,
+  or present there without the reserved label and without a head) is read once before
+  the conflict is raised (corrected by PAT-189: this list used to read as exhaustive).
   The port is explicit: `Tracker.list_adrs_without_issue_links` (default: `list_adrs`),
   overridden by the Linear and GitHub Projects adapters, the two whose `list_adrs`
   validates these links. The `note` of the `query issue` payload no longer announces the
@@ -54,6 +94,7 @@
   `docs/linear-request-cost.md`. R5: documented in `docs/linear-tracker.md`,
   `docs/ghprojects-tracker.md` and `docs/linear-request-cost.md`; no CLI option or
   configuration key added.
+
 - PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
   `query backlog` and `query profile`, without changing any output or any write path. A
   read scope, open only during one of those commands and dropped at its end, reads each
@@ -71,9 +112,13 @@
   response, missing cursor, page limit, or an issue of a later page repeating an earlier
   page) now surfaces before a failure met while normalizing a node already fetched. A
   listing that fails while normalizing now requests every page before reporting its
-  error. Inside one command, two snapshots no longer re-read a node they share. ADR
-  writes keep exactly their reads. `docs/linear-tracker.md` states what is shared inside
-  a command and what is not.
+  error. With the read scope open, a listing whose only failure came from an individual
+  read, by the closed-Epic replay, of a node present in the listing (transport, quota)
+  no longer fails, because the listing seeded that read and it is not sent (corrected by
+  PAT-189: `docs/linear-tracker.md` said "with or without the layer", and this entry did
+  not state the exception). Inside one command, two snapshots no longer re-read a node
+  they share. ADR writes keep exactly their reads. `docs/linear-tracker.md` states what
+  is shared inside a command and what is not.
 
 - PAT-167: documentation only, no behaviour of any tool changes. New page
   `docs/linear-request-cost.md` records, as measured on 2026-10-11 on the real project
@@ -81,7 +126,9 @@
   `query adrs`, `query backlog`, `query profile intake`, `close-epic --status` and
   `issue start`, the reads that the code repeats inside one command, and the candidate
   reductions for the follow-up ticket PAT-168, with the sentences that may constrain
-  each. `docs/linear-tracker.md` points to it from "Request counter (PAT-145)". Nothing
+  each. `docs/linear-tracker.md` points to it from "Request counter (PAT-145)", and its
+  PAT-100 paragraph is corrected: `close-epic --status` reads the Epic twice (two
+  requests measured, both `issue.read` by code reading), where it said once. Nothing
   is reduced.
 
 - PAT-164: documentation only, no behaviour of any tool changes. Records, as observed on

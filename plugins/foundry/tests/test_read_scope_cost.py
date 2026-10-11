@@ -19,7 +19,7 @@ import pytest
 
 from foundry import query, write
 from foundry.models import TransitionContext
-from foundry.trackers.linear import LinearTrackerError
+from foundry.trackers.linear import LinearReadScopeError, LinearTrackerError
 
 from test_epic_closure_transports import _linear_graph
 from test_linear_tracker import STATE_IDS
@@ -212,9 +212,9 @@ def test_a_write_cannot_run_inside_a_read_scope(monkeypatch, tmp_path):
     wire.calls.clear()
     with tracker.read_scope():
         tracker.search(project)
-        with pytest.raises(RuntimeError, match="read-only command scope"):
+        with pytest.raises(LinearReadScopeError, match="read-only command scope"):
             tracker.create_adr(project, "Written inside a scope", "body")
-        with pytest.raises(RuntimeError, match="read-only command scope"):
+        with pytest.raises(LinearReadScopeError, match="read-only command scope"):
             tracker.set_state("LIN-1", "review", context=_REVIEW, project=project)
     assert not any(_is_write(document) for document, _v in wire.calls)
     # Outside the scope the same write is sent again.
@@ -383,3 +383,180 @@ def test_a_graph_snapshot_nested_in_a_read_scope_gets_its_own_copies(monkeypatch
         tracker._read_raw("LIN-2")
         tracker._read_raw("LIN-2")
     assert _ops(wire) == {"FoundryLinearIssue": 1}
+
+
+def _serve_raw_pages(tracker, pages):
+    """Serve ``pages`` (complete ``data`` payloads of the listing) in call order."""
+    served = iter(range(len(pages)))
+    original = tracker._transport
+
+    def transport(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearIssues" in document:
+            result = {"data": copy.deepcopy(pages[next(served)])}
+        return result
+
+    tracker._transport = transport
+
+
+def _page(nodes, *, next_cursor=None):
+    return {"issues": {"nodes": nodes, "pageInfo": {
+        "hasNextPage": next_cursor is not None, "endCursor": next_cursor,
+    }}}
+
+
+def test_a_fetch_failure_wins_over_a_normalization_error_of_a_fetched_node(
+    monkeypatch, tmp_path,
+):
+    """PAT-189 (PAT-168 remark 2): documented error order of ``search``, fetch first."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first = _listing_nodes(wire, tracker, project)[0]
+    del first["title"]  # invalid node, on page 1
+    _serve_raw_pages(tracker, [
+        _page([first], next_cursor="c1"),
+        {"issues": {"nodes": "not a list", "pageInfo": {"hasNextPage": False}}},
+    ])
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == ("issue.search", "invalid_response")
+    assert _ops(wire)["FoundryLinearIssues"] == 2
+
+
+def test_a_normalization_failure_asks_for_every_page_first(monkeypatch, tmp_path):
+    """PAT-189 (PAT-168 remark 2): the error of a node comes after the last request."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second, third = _listing_nodes(wire, tracker, project)
+    del first["title"]
+    _serve_raw_pages(tracker, [
+        _page([first], next_cursor="c1"), _page([second], next_cursor="c2"), _page([third]),
+    ])
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == ("normalize", "invalid_response")
+    assert _ops(wire)["FoundryLinearIssues"] == 3
+
+
+@pytest.mark.parametrize("value", [7, None])
+def test_a_repeated_present_identifier_of_any_type_stops_the_listing(
+    monkeypatch, tmp_path, value,
+):
+    """PAT-189 (PAT-168 remark 3): the early stop counts a present ``identifier``.
+
+    Checked against the code at 8367180 (before PAT-168), run on the same pages: a node
+    whose ``identifier`` is present, whatever its type (7, None), normalizes, and a page
+    repeating it stopped at the second request with ``pagination_stalled``.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first = _listing_nodes(wire, tracker, project)[0]
+    first["identifier"] = value
+    _serve_raw_pages(tracker, [
+        _page([first], next_cursor="c1"), _page([first], next_cursor="c2"), _page([first]),
+    ])
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == ("issue.search", "pagination_stalled")
+    assert _ops(wire)["FoundryLinearIssues"] == 2
+
+
+def test_a_non_hashable_identifier_is_not_counted_by_the_early_stop(monkeypatch, tmp_path):
+    """PAT-189: ``identifier = ["x"]`` on nodes of two pages (non-hashable value).
+
+    The early stop skips it, so no ``pagination_stalled`` comes from the fetch and both
+    pages are requested; the failure is then the one the code at 8367180 gave too (run
+    on the same pages, after one request): ``TypeError`` from ``issue.id in seen`` on the
+    normalized issue.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second = _listing_nodes(wire, tracker, project)[:2]
+    first["identifier"] = ["x"]
+    second["identifier"] = ["x"]
+    _serve_raw_pages(tracker, [_page([first], next_cursor="c1"), _page([second])])
+    wire.calls.clear()
+    with pytest.raises(TypeError, match="unhashable type: 'list'"):
+        tracker.search(project)
+    assert _ops(wire)["FoundryLinearIssues"] == 2
+
+
+def test_nodes_without_identifier_on_two_pages_fail_normalization_not_the_early_stop(
+    monkeypatch, tmp_path,
+):
+    """PAT-189: a missing ``identifier`` key is not counted by the early stop.
+
+    Same error as before PAT-168 (checked on the code at 8367180, where it came after
+    one request); since PAT-168 every page is fetched first, hence two requests here.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second = _listing_nodes(wire, tracker, project)[:2]
+    del first["identifier"], second["identifier"]
+    _serve_raw_pages(tracker, [_page([first], next_cursor="c1"), _page([second])])
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == ("normalize", "invalid_response")
+    assert _ops(wire)["FoundryLinearIssues"] == 2  # every page is fetched first (PAT-168)
+
+
+def test_nodes_of_the_first_search_are_kept_by_a_second_search_in_the_scope(
+    monkeypatch, tmp_path,
+):
+    """PAT-189 (PAT-168 remark 6): a changed node is not re-seeded by the second list."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    before = wire.issues["LIN-2"]["title"]
+    with tracker.read_scope():
+        tracker.search(project)
+        wire.issues["LIN-2"]["title"] = "changed between the two listings"
+        second = {i.id: i for i in tracker.search(project)}
+        # The second listing reports the change, but the scope keeps the first node.
+        assert second["LIN-2"].title == "changed between the two listings"
+        assert tracker._read_raw("LIN-2")["title"] == before
+    assert tracker._read_raw("LIN-2")["title"] == "changed between the two listings"
+
+
+def test_a_nested_read_scope_is_refused_and_keeps_the_outer_scope(monkeypatch, tmp_path):
+    """PAT-189 (PAT-168 remark 7)."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    with tracker.read_scope():
+        tracker._read_raw("LIN-2")
+        wire.calls.clear()
+        with pytest.raises(LinearReadScopeError, match="already open"):
+            with tracker.read_scope():
+                pass  # pragma: no cover - never entered
+        # The outer scope survived the refusal: its read is still served from it.
+        tracker._read_raw("LIN-2")
+        assert _ops(wire) == {}
+    assert getattr(tracker._read_scopes, "scope", None) is None
+
+
+def test_issue_reads_of_one_transition(monkeypatch, tmp_path):
+    """PAT-189: the per-transition `issue.read` counts cited by linear-request-cost.md.
+
+    Fake transport, one request per wire call: the binding read of ``write.issue_binding``
+    plus ``set_state``.  Native state already matching: 1 + 5; native state changing
+    (to review): 1 + 7, with one lifecycle comment read, one create and one issueUpdate.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    monkeypatch.setattr(write, "mutation_project", lambda _t: project)
+    wire.calls.clear()
+    write.issue_binding(tracker, "LIN-1")
+    assert _ops(wire) == {"FoundryLinearIssue": 1}
+    wire.calls.clear()
+    tracker.set_state("LIN-1", "in-progress", project=project)
+    assert _ops(wire) == {
+        "FoundryLinearIssue": 5, "FoundryLinearCommentsById": 1,
+        "FoundryLinearCommentCreate": 1,
+    }
+    wire.calls.clear()
+    write.issue_binding(tracker, "LIN-1")
+    tracker.set_state("LIN-1", "review", context=_REVIEW, project=project)
+    assert _ops(wire) == {
+        "FoundryLinearIssue": 8, "FoundryLinearCommentsById": 1,
+        "FoundryLinearCommentCreate": 1, "FoundryLinearIssueUpdate": 1,
+    }

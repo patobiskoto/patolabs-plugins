@@ -215,6 +215,38 @@ def test_port_default_is_list_adrs_and_link_validating_adapters_override_it():
     assert overriding == {LinearTracker, GitHubProjectsTracker}
 
 
+def test_a_link_validating_adapter_without_the_override_fails_query_issue_end_to_end(
+    monkeypatch,
+):
+    """PAT-189 (PAT-190 remark 2): the claim of ``AdrIssueUnavailableError``.
+
+    A tracker whose ``list_adrs`` validates the links and which keeps the port default
+    gets no projection in ``query issue``: the error leaves the command.
+    """
+    class _Issue:
+        id, links = "T-1", ()
+
+        def to_dict(self):
+            return {"id": "T-1"}
+
+    class _NoOverride:
+        name = "fake"
+        list_adrs_without_issue_links = Tracker.list_adrs_without_issue_links
+
+        def observe_issue(self, issue_id):
+            return _Issue()
+
+        def list_adrs(self, project):
+            raise AdrIssueUnavailableError("T-ADR-0002", "T-42")
+
+    tracker = _NoOverride()
+    project = type("P", (), {"key": "T"})()
+    monkeypatch.setattr(query.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(query, "_project", lambda _t: project)
+    with pytest.raises(AdrIssueUnavailableError, match="T-ADR-0002 -> T-42"):
+        query.issue("T-1")
+
+
 # ---- GitHub Projects (fake gh transport of test_ghprojects_tracker) -----------------
 
 
@@ -239,6 +271,11 @@ class _Counting:
 
     def clear(self):
         self.commands.clear()
+
+
+def _mk(path):
+    path.mkdir()
+    return path
 
 
 def _gh_world(monkeypatch, tmp_path, *, adrs=2):
@@ -283,10 +320,12 @@ def _gh_kinds(runner):
 
 
 def test_gh_query_issue_issues_no_link_validation_read(monkeypatch, tmp_path):
-    tracker, provider, runner, created = _gh_world(monkeypatch, tmp_path)
+    tracker, provider, runner, created = _gh_world(monkeypatch, _mk(tmp_path / "after"))
     skipped = json.dumps(query.issue("GHQUAL-50"), sort_keys=True)
     after = _gh_kinds(runner)
-    runner.clear()
+    # PAT-189: "before" is measured on a SECOND, fresh instance (its own provider, runner
+    # and state directory), so no local cache of the first call can lower it.
+    tracker, provider, runner, created = _gh_world(monkeypatch, _mk(tmp_path / "before"))
     monkeypatch.setattr(tracker, "list_adrs_without_issue_links", tracker.list_adrs)
     validated = json.dumps(query.issue("GHQUAL-50"), sort_keys=True)
     before = _gh_kinds(runner)
