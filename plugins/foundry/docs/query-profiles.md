@@ -58,19 +58,22 @@ directory (non-writable, parent that is a file, dangling symlink) fails with a m
 naming it and no tracker request spent. If a page write fails in the middle, the command
 exits with a message naming the directory and the page, keeps the pages already written
 (it deletes nothing), prints no manifest, and the now non-empty directory must not be
-reused: run it again into a new directory. Stdout is a small `foundry.query-profile-pages.v1` manifest (`profile`,
-`page_count`, `snapshot_identity`, `pages`); pages stay bounded and are meant to be read
-one at a time. Nothing survives the command except these files, and no Foundry command
-reads them back. Documentation status (R5): new CLI option, documented here and in the
-`intake` skill; the other profile skills are unchanged. Observed on 2026-10-11 in a Claude Code host session
-(Bash tool, working directory `plugins/foundry`): the launcher called by its relative path
+reused: run it again into a new directory. Stdout is a small
+`foundry.query-profile-pages.v1` manifest (`profile`, `page_count`, `snapshot_identity`,
+`pages`); pages stay bounded and are meant to be read one at a time. Nothing survives the
+command except these files (and the directory created for them, and, when
+`FOUNDRY_REQUEST_COUNT` is a file path, the line appended to that file), and no Foundry
+command reads the pages back. Documentation status (R5): new CLI option, documented here
+and in the `intake` skill; the other profile skills are unchanged. Observed on 2026-10-11
+in a Claude Code host session (Bash tool, working directory `plugins/foundry`): the
+launcher called by its relative path
 (`python3 tooling/foundry_cli.py query profile intake --all-pages "$(mktemp -d)"`) ran
 without a permission prompt, printed the manifest (6 pages) with absolute paths under the
 system temporary directory, and the Read tool read a page file there. That is not the
-`intake` skill's own launcher form (it prefixes the path with a command substitution), which
-was not the one run. Not established:
-the same under Codex, or in a Claude Code session with a stricter permission mode. Not
-measured here: the request saving on a real project.
+`intake` skill's own launcher form (it prefixes the path with a command substitution),
+which was not the one run. Not established: the same under Codex, or in a Claude Code
+session with a stricter permission mode. Not measured here: the request saving on a real
+project.
 
 ## Audit measurements
 

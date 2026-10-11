@@ -423,10 +423,11 @@ def test_request_counter_report_is_on_demand_and_fail_open(tmp_path, monkeypatch
     monkeypatch.setenv(linear.REQUEST_COUNT_ENV, "stderr")
     linear._report_request_count()
     out = capsys.readouterr()
-    assert out.out == "" and out.err.startswith("foundry linear_requests=")
+    expected = "foundry linear_requests=%d\n" % linear.request_count()
+    assert out.out == "" and out.err == expected
     target = tmp_path / "count.txt"
     monkeypatch.setenv(linear.REQUEST_COUNT_ENV, str(target))
     linear._report_request_count()
-    assert target.read_text().startswith("foundry linear_requests=")
+    assert target.read_text() == expected
     monkeypatch.setenv(linear.REQUEST_COUNT_ENV, str(tmp_path / "missing" / "x"))
     linear._report_request_count()  # must not raise
