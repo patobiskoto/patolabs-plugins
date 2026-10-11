@@ -6,8 +6,11 @@ verified explicit rollback and remaining delivery gates are recorded in the
 [PAT-15 qualification report](qualification/pat-15-codex-qualification-v1.md).
 Independent review and exact-SHA CI of the final delivery revision are required
 before merge; this report does not claim that revision is already released.
-Full economic and cross-host qualification remains in PAT-17. See
-[model-migration-2026-10.md](model-migration-2026-10.md).
+The current PAT-17 scope, approved on 11 October 2026, consolidates the existing
+host/role decisions and exercises configuration rollback; it authorizes no new
+paid comparison. The [dated decision and eight rollback results](model-decisions-2026-10-11.md)
+record the configuration/native boundary and the PAT-164 refusal. The
+[historical migration contract](model-migration-2026-10.md) retains its original scope.
 
 The Claude `balanced`, `frontier` and `apex` defaults apply the maintainer's explicit
 PAT-16 promotion approval, under accepted PAT-ADR-0013; the Claude `economy` default

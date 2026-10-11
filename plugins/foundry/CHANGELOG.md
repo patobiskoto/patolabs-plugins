@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- PAT-17: consolidates existing model decisions for four roles on each host in
+  `docs/model-decisions-2026-10-11.md`. Eight configuration rollback exercises pass
+  on disposable policies through CLI resolution and constructed facade plans;
+  native backend acceptance remains unknown. Adds an explicit Claude incumbent
+  mapping and `scripts/check_model_rollback.py --out`, preserves historical reports,
+  and records the observed PAT-164 refusal without changing routing defaults.
+
 - PAT-194: documentation only; settles deferred PAT-193 remarks. Both README files
   record the observed 1.2.0 tag, installed versions and loaded Codex session version,
   with Claude's loaded session version unknown; sources are in
