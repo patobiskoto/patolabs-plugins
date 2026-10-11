@@ -265,7 +265,7 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
                  "guide, a CHANGELOG section of a published version);",
                  "- a missing or generic documentation status under R5 and FOUNDRY-ADR-0018, "
                  "which is never a deferrable remark."):
-        assert case in " ".join(_repo_text("AGENTS.md").split()), case
+        assert case in rule, case
     # the three added cases, each stated further in the rule
     assert ("(the PR of an issue of a companion Epic, an issue with no origin Epic, a "
             "durable refusal of one of the writes)") in rule

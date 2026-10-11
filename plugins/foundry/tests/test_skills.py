@@ -135,7 +135,7 @@ def _implementer_packet(name: str) -> str:
 @pytest.mark.parametrize("name", ["start-issue", "resume-issue"])
 def test_implementer_packet_requires_r9_and_the_source_of_each_doc_sentence(name):
     text = _implementer_packet(name)
-    assert "AGENTS.md#R9" in text and "in a repository that carries it" in text
+    assert "AGENTS.md#R9 in a repository that carries it" in text
     assert "six-point checklist" in text
     assert "points 1 to 5" in text
     assert "(constant, file:line, or page)" in text
