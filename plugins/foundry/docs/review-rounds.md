@@ -12,7 +12,9 @@ Markdown link targets, which are relative to this page.
 
 Pull requests 102 to 111 (10 PRs) had 32 review rounds, i.e. 3.2 rounds per PR. 22 of
 them came after the first round: 11 after a blocking round and 11 after the correction of
-non-blocking remarks.
+non-blocking remarks. These ten PRs are ten distinct issues (PAT-127, PAT-128, PAT-129,
+PAT-125, PAT-130, PAT-131, PAT-132, PAT-133, PAT-134, PAT-135; checked with `gh pr view`
+on 2026-10-11), so 3.2 rounds per PR is also 3.2 rounds per issue.
 
 Source: the coordinator summaries in the PR descriptions and issue comments, and git
 history to locate each faulty sentence. Review reports are not kept, so they are not a
@@ -42,8 +44,9 @@ Previous practice: correct before the merge, then a full re-review. The maintain
 decides, in either of these cases:
 
 - a blocking-level defect is found after the merge in a diff merged under rule (b);
-- when the window closes, the total number of rounds (issues plus follow-up issues) per
-  issue is not below 3.2.
+- when the window closes, the total number of rounds (issues plus follow-up issues)
+  divided by the number of origin issues is not below 3.2, the figure of the baseline
+  (maintainer decision of 2026-10-11).
 
 ## Limits
 
@@ -69,16 +72,27 @@ decides, in either of these cases:
 ## What is not mechanical and what is not coded yet (PAT-139)
 
 Rule (b) of `AGENTS.md#R9` sends the deferred remarks of an Epic to a companion Epic and
-authorizes three tracker writes in advance (PAT-ADR-0018). This section lists what the
+authorizes four tracker writes in advance (PAT-ADR-0018). This section lists what the
 tools do not check and do not do.
 
 Not mechanical:
 
 - No gate checks that the companion Epic exists, that it has no tracker link with the
-  origin Epic (no parent, no dependency, no relation), or that a remark was rightly
-  classed as deferrable. This is judged in review.
+  origin Epic (no parent, no dependency, no relation), or that the coordinator rightly
+  classed a remark as deferrable. The reviewer judges through its "fix before merge"
+  mark; the coordinator then applies the two other cases (a page frozen after
+  publication, a missing or generic documentation status), and nobody re-reads that
+  second step before the merge: an accepted risk (maintainer decision of 2026-10-11).
+  The rest is judged in review.
 - No gate checks that a PR of a companion Epic deferred nothing (no second-level
-  deferral).
+  deferral), that the fourth write was made when needed, that the companion Epic has a
+  single follow-up issue, or that the review after a correction was limited to what
+  changed. The merge gate is not modified: when the criteria of the issue are not all
+  checked in the tracker, and also when they are all checked on a tracker whose adapter
+  sets `delivery_receipt_supported` if the issue has a binding (`write.issue_binding`),
+  it asks for a review proof of the exact diff (`valid_for_merge`, called twice by
+  `merge` in `tooling/foundry/issue.py`), and after
+  such a partial review that proof relies on the previous round for the unchanged parts.
 - Nothing checks that only one companion Epic carries a given name. The name and a
   mention in text are the only relation between the two Epics, and no file under
   `tooling/` or `hooks/` contains the word `Nits`.
@@ -109,8 +123,9 @@ Not coded yet:
 
 ## Portability of the three writes (PAT-139)
 
-The three writes are `create_issue` with the field `Type: Epic` and no parent,
-`create_issue(parent=…)` and `add_comment`. [`tracker-contract.md`](tracker-contract.md),
+The first three writes of `AGENTS.md#R9` (b) are `create_issue` with the field
+`Type: Epic` and no parent, `create_issue(parent=…)` and `add_comment`.
+[`tracker-contract.md`](tracker-contract.md),
 table "Core journey", marks the rows "Frame/intake/groom: create, comment" and
 "Epics/enfants/dépendances: child creation, relations" `supported` for YouTrack, Linear
 and `ghprojects`.
@@ -156,8 +171,10 @@ then `link(..., "subtask-of", parent)` (`link` in
 them, when `fields` carries a `Milestone` and the project has a milestone bundle,
 `_prewrite` has `_ensure_milestone` post that value to the bundle. The tests run it with
 a failure of the second write: the created issue stays, without its parent link, and
-`create_issue` removes nothing. How such a partial write is repaired is not decided on
-this page.
+`create_issue` removes nothing. The fourth write of `AGENTS.md#R9` (b) repairs it: `edit
+link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`, with the same arguments as the call
+in `create_issue` (maintainer decision of 2026-10-11). `tests/test_tracker_conformance_v1.py`
+does not cover this fourth write.
 
 A transient failure is the other case of `AGENTS.md#R9` (b), next to the durable refusal
 of a missing `Epic` type: the coordinator waits and retries the write before the merge.
@@ -169,7 +186,7 @@ per provider (files under `tooling/foundry/trackers/`):
 
 | Provider | Retry of `create_issue` | Retry of `add_comment` |
 |---|---|---|
-| YouTrack | a plain second create: `create_issue` (`youtrack.py`) posts to `/issues` and takes the identifier the provider returns, with no client key. When the issue was created and only the parent link failed, a second call creates a second issue | a plain second comment: `add_comment` (`youtrack.py`) posts with no identifier and no readback |
+| YouTrack | a plain second create: `create_issue` (`youtrack.py`) posts to `/issues` and takes the identifier the provider returns, with no client key. When the issue was created and only the parent link failed, a second call creates a second issue (the fourth write of `AGENTS.md#R9` (b) attaches the existing issue instead) | a plain second comment: `add_comment` (`youtrack.py`) posts with no identifier and no readback |
 | Linear | a plain second create: `create_issue` (`linear.py`) sends a fresh `uuid.uuid4()` identifier at each call | a plain second comment: `add_comment` (`linear.py`) sends no client identifier; its readback checks the comment it has just created, not an earlier one |
 | `ghprojects` | on the same data directory, `create_issue` (`ghprojects.py`) keeps a pending intent written before its only issue POST. If the issue then exists once, the second call resumes it and creates no duplicate. If no matching issue exists, `_observe_create_candidate` raises `create_effect_unknown`: from the first call itself, when the issue POST has failed and the read of the candidates that follows it finds none (the error of the POST is then kept only as the context of the exception raised), and from every later call, whatever made the POST fail. If that read itself fails, the error of the read comes out instead; if it finds exactly one issue, the first call raises `partial_create:issue_response_lost`. No code in the file removes a create intent: no recovery path was found. From another data directory, or once the intent is gone, an existing matching issue is refused with `unowned_create_candidate`, and with no matching issue the call is a plain create | a plain second comment: `add_comment` (`ghprojects.py`) posts once, reads back the comment it created and never looks for an earlier one |
 

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- PAT-144: wording, one docstring and presence tests only, no behaviour of any tool
+  changes; the texts of rule R9 follow the maintainer's decisions of 2026-10-11 and the
+  amended PAT-ADR-0018. A fourth write is pre-authorized: attaching to the companion Epic
+  a follow-up issue whose creation succeeded but whose parent link was not set
+  (`edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`); the conformance tests
+  (`tests/test_tracker_conformance_v1.py`) do not cover it. One follow-up issue per
+  companion Epic, never added to once started or closed (a new one is created). On the PR
+  of an issue of a companion Epic, the review after the correction of non-blocking remarks
+  covers what changed since the previous round; after a blocking round it stays full; the
+  merge gate is not modified and checks none of this. An issue whose direct parent is not
+  an Epic gets no deferral. The scope of (a), (b) and (c) is explained; the classing of a
+  remark as deferrable is stated in its two steps, the second an accepted risk; the
+  return trigger of `docs/review-rounds.md` has one unit (rounds per origin issue), and
+  its baseline is ten PRs of ten distinct issues. The module docstring of
+  `foundry/edit.py` names the exception of the four writes and says it does not cover the
+  writes of `intake`. Earlier entries below keep describing the state at their date.
+  Documentation status (R5): `AGENTS.md` / `CLAUDE.md` R9 (identical),
+  `skills/merge-pr`, `skills/intake`, `docs/review-rounds.md` and the docstring of
+  `foundry/edit.py` updated; no CLI verb, option or constant changed.
+
 - PAT-147: the `intake` skill now asks to remove the `--all-pages` directory once the pages
   are read, including when the intake stops midway; `docs/query-profiles.md` states that
   cleaning it is the caller's job. Skill text, documentation and one test only; the code of

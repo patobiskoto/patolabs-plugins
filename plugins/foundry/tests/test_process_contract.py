@@ -212,29 +212,46 @@ def _r9_deferral_rule() -> str:
 
 # PAT-139 / PAT-ADR-0018. Presence only: these tests prove that the rule is written,
 # not that anyone follows it.
-def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_three_standing_writes():
+def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_four_standing_writes():
     rule = _r9_deferral_rule()
     assert "(PAT-ADR-0018)" in rule
     assert "named `Nits` followed by the identifier of the origin Epic" in rule
     assert "no tracker link between them: no parent, no dependency, no relation" in rule
-    assert "one per batch or per theme, never one per PR" in rule
-    assert ("Three writes are authorized in advance, without human confirmation, inside "
+    assert "a single follow-up issue, which gathers all the deferred remarks of the origin Epic" in rule
+    assert "one per batch or per theme" not in rule
+    assert ("If that issue is already started or closed, a new follow-up issue is created: "
+            "no remark is added to a started or closed issue") in rule
+    assert ("Four writes are authorized in advance, without human confirmation, inside "
             "and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every "
             "repository where the plugin is installed") in rule
     for write in ("1. create the companion Epic, the first time;",
                   "2. create a follow-up issue in it;",
-                  "3. add deferred remarks to such an issue."):
+                  "3. add deferred remarks to such an issue;",
+                  "4. attach to the companion Epic a follow-up issue whose creation succeeded "
+                  "but whose parent link was not set, with `edit link <FOLLOW-UP-ID> "
+                  "subtask-of <COMPANION-EPIC-ID>`"):
         assert write in rule
+    assert "Three writes are authorized" not in rule
     assert "The coordinator reports these writes in the PR description" in rule
     assert "neither prioritized nor started without the maintainer" in rule
     # no second-level deferral
     assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
-            "companion Epic are corrected before the merge and then fully re-reviewed") in rule
+            "companion Epic are corrected before the merge. The review that follows covers "
+            "what changed since the previous round, not the whole diff; after a blocking "
+            "round it stays full") in rule
+    assert ("so after such a partial review that proof relies on the previous round for "
+            "the unchanged parts; the merge gate is not modified") in rule
     # maintainer decisions of 2026-10-10 on the cases PAT-ADR-0018 leaves open
     assert ("The origin Epic of an issue is its direct parent Epic: an issue under a "
             "sub-Epic uses that sub-Epic") in rule
     assert ("An issue that has no origin Epic gets no deferral: its non-blocking remarks "
             "are corrected before the merge and then fully re-reviewed") in rule
+    assert ("That includes an issue whose direct parent is not an Epic: the chain of "
+            "parents is not walked up") in rule
+    assert ("Checklist (a) and correction rule (c) live in a repository's contract file, so "
+            "they apply where a repository carries them; deferral (b) is applied by the "
+            "Foundry skills, which ship with the plugin, so it applies wherever the plugin "
+            "is installed") in rule
     assert "stays with the maintainer" not in rule
     # durable refusal and transient failure are two cases
     assert ("durable refusal (the project cannot carry the write, for example it has no "
@@ -259,6 +276,7 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
     # the three cases kept from before, then the three that the rule adds
     assert ("These three cases are still corrected before the merge and then fully "
             "re-reviewed, as before; the rest of this rule adds three more") in rule
+    assert "except that the re-review of the first is limited as stated below" in rule
     assert "Three cases are still corrected" not in rule
     for case in ('- a remark the reviewer marks "fix before merge";',
                  "- a remark on a page frozen after publication (release note, migration "
@@ -270,7 +288,8 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
     assert ("(the PR of an issue of a companion Epic, an issue with no origin Epic, a "
             "durable refusal of one of the writes)") in rule
     assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
-            "companion Epic are corrected before the merge and then fully re-reviewed") in rule
+            "companion Epic are corrected before the merge. The review that follows covers "
+            "what changed since the previous round") in rule
     assert ("An issue that has no origin Epic gets no deferral: its non-blocking remarks "
             "are corrected before the merge and then fully re-reviewed") in rule
     assert ("durable refusal (the project cannot carry the write, for example it has no "
@@ -339,6 +358,16 @@ def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_w
     assert "only the DevHub adapter sets it to `True`" in page
     assert "inside an Epic campaign the authorization has no effect yet" in page
     assert "## Portability of the three writes (PAT-139)" in page
+    # PAT-144: maintainer decisions of 2026-10-11 (presence only)
+    assert "so 3.2 rounds per PR is also 3.2 rounds per issue" in page
+    assert ("divided by the number of origin issues is not below 3.2, the figure of the "
+            "baseline") in page
+    assert "authorizes four tracker writes in advance" in page
+    assert "How such a partial write is repaired is not decided" not in page
+    assert ("`edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`, with the same "
+            "arguments as the call in `create_issue`") in page
+    assert "does not cover this fourth write" in page
+    assert "an accepted risk (maintainer decision of 2026-10-11)" in page
     for provider in ("| YouTrack |", "| Linear |", "| `ghprojects` |"):
         assert provider in page
     assert "the provider's answer is not verified" in page
@@ -366,3 +395,10 @@ def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_w
                   "`rate_limited`", "`transport_failed`", "`_rest_write`"):
         assert cited in page
     _assert_campaign_facts(page)
+
+
+def test_edit_docstring_names_the_four_preauthorized_writes_and_the_intake_exception():
+    text = " ".join(_tooling_text("edit.py").split())
+    assert "the four writes that the grouped deferral rule" in text
+    assert "attach to the companion Epic with `link` an issue whose parent link was not set" in text
+    assert "The second group does not cover the writes of `foundry:intake`" in text
