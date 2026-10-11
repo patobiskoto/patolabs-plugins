@@ -34,7 +34,7 @@ from foundry.trackers.base import (
 
 
 def _read_scope(tr):
-    """PAT-168: one issue is read at most once per read-only command (dropped on exit).
+    """PAT-168: a reference is read at most once per read-only command (dropped on exit).
 
     Used only around the tracker reads of the read-only commands below; a tracker with
     no such scope reads as before.

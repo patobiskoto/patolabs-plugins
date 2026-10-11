@@ -4435,20 +4435,18 @@ class LinearTracker(Tracker):
 
     @contextlib.contextmanager
     def read_scope(self):
-        """PAT-168: one read-only command reads each issue at most once.
+        """PAT-168: one read-only command reads each issue reference at most once.
 
         Opened only by the read-only ``query`` commands (``query.py``), for the duration
-        of one command. A separate layer under ``graph_snapshot``: that stack still
-        decides first, and keeps its own per-snapshot contract. Only successful issue
+        of one command, never nested (not re-entrant). A separate layer under
+        ``graph_snapshot``: that stack still decides first, and keeps its own
+        per-snapshot contract. Only successful issue
         reads are stored (a failure is read again), the listing of ``search`` seeds it,
         and it is dropped on exit, so nothing survives the command. It is never open
         during a write: ``_graphql`` refuses any document that is not a pure read while
         it is, so the first mutation of a write started inside it is refused and never sent
         (reads issued before it are sent).
         """
-        if getattr(self._read_scopes, "scope", None) is not None:
-            yield  # re-entrant (``candidates`` -> ``backlog``): share the outer scope
-            return
         self._read_scopes.scope = {}
         try:
             yield
@@ -4725,8 +4723,7 @@ class LinearTracker(Tracker):
         binding = self._activate(project)
         nodes: list[dict] = []
         cursor = None
-        seen_cursors: set[str] = set()
-        seen_ids: set[str] = set()
+        earlier: set[str] = set()  # identifiers (``Issue.id``) of the earlier pages
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
@@ -4745,22 +4742,23 @@ class LinearTracker(Tracker):
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("issue.search", None, "invalid_response")
-            # A provider that re-serves a page stops here, not after _MAX_PAGES requests.
-            for raw in connection["nodes"]:
-                node_id = raw.get("id") if isinstance(raw, dict) else None
-                if isinstance(node_id, str):
-                    if node_id in seen_ids:
-                        raise LinearTrackerError(
-                            "issue.search", None, "pagination_stalled"
-                        )
-                    seen_ids.add(node_id)
+            # A provider that re-serves a page stops here, not after _MAX_PAGES
+            # requests. Only against EARLIER pages: a duplicate inside one page is left
+            # to the normalization below, as before.
+            current = {
+                raw["identifier"]
+                for raw in connection["nodes"]
+                if isinstance(raw, dict) and isinstance(raw.get("identifier"), str)
+            }
+            if current & earlier:
+                raise LinearTrackerError("issue.search", None, "pagination_stalled")
+            earlier |= current
             nodes.extend(connection["nodes"])
             if not page["hasNextPage"]:
                 break
             cursor = page.get("endCursor")
-            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
+            if not isinstance(cursor, str) or not cursor:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
-            seen_cursors.add(cursor)
         else:
             raise LinearTrackerError("issue.search", None, "pagination_limit")
         # PAT-168: every page is fetched before the first normalization so that, inside

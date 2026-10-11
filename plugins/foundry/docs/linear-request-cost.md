@@ -173,11 +173,13 @@ call, retries excluded); they are not the real project's. The "Measured" table a
 describes the code before this change.
 
 What changed, in `trackers/linear.py` and `query.py`: `query issue`, `query adrs`,
-`query backlog` and `query profile` open a read scope in which an issue is read at most
-once per command; `search` fetches all pages first (for every caller) and seeds that
-scope with the listing, so the closed-Epic replay is served from it. Nothing else: the
-reciprocal comment is still read per pair, the two identity reads are kept, every write
-path is untouched, outputs are identical.
+`query backlog` and `query profile` open a read scope in which an issue reference is
+read at most once per command (a native id and an identifier are two references, so an
+issue resolved by both, when no listing seeded it, still costs two reads); `search`
+fetches all pages first (for every caller) and seeds that scope with the listing, so the
+closed-Epic replay is served from it. Nothing else: the reciprocal comment is still read
+per pair, the two identity reads are kept, every write path is untouched, outputs are
+identical.
 
 Fixture of the test (an Epic with one closed child and one dependency, two ADRs citing
 the same issue; 3 issues in the listing):

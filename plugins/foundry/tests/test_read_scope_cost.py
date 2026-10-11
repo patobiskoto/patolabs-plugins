@@ -284,22 +284,66 @@ def test_search_stops_at_the_second_request_when_a_page_is_re_served(monkeypatch
     assert _ops(wire) == {"FoundryLinearIssues": 2}
 
 
-def test_search_refuses_an_already_seen_cursor(monkeypatch, tmp_path):
-    tracker, wire, project = _paged(monkeypatch, tmp_path, 1)
-    original = tracker._transport.__call__
+def _serve_listing(tracker, pages, cursors):
+    """Serve ``pages`` (lists of nodes) in call order, whatever ``after`` is."""
+    served = iter(range(len(pages)))
+    original = tracker._transport
 
-    def same_cursor(document, variables):
+    def transport(document, variables):
         result = original(document, variables)
         if "FoundryLinearIssues" in document:
-            result["data"]["issues"]["pageInfo"]["endCursor"] = "1"
+            index = next(served)
+            result = {"data": {"issues": {
+                "nodes": copy.deepcopy(pages[index]),
+                "pageInfo": {"hasNextPage": index + 1 < len(pages),
+                             "endCursor": cursors[index]},
+            }}}
         return result
 
-    tracker._transport = same_cursor
+    tracker._transport = transport
+
+
+def _listing_nodes(wire, tracker, project):
+    document = next(d for d, _v in wire.calls if "FoundryLinearIssues" in d)
+    variables = next(v for d, v in wire.calls if "FoundryLinearIssues" in d)
+    return wire(document, variables)["data"]["issues"]["nodes"]
+
+
+def test_search_continues_on_a_repeated_cursor_with_different_nodes(monkeypatch, tmp_path):
+    """As before PAT-168: only a repeated issue stalls a listing, not a repeated cursor."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=True)
+    expected = [i.to_dict() for i in tracker.search(project)]
+    nodes = _listing_nodes(wire, tracker, project)
+    assert len(nodes) == 3
+    _serve_listing(tracker, [[node] for node in nodes], ["same", "same", "same"])
+    wire.calls.clear()
+    assert [i.to_dict() for i in tracker.search(project)] == expected
+    assert _ops(wire)["FoundryLinearIssues"] == 3
+
+
+def test_one_page_duplicate_does_not_hide_an_earlier_normalization_error(
+    monkeypatch, tmp_path,
+):
+    """One page [A, B, B], A invalid: the error of A is reported, as before PAT-168."""
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second = _listing_nodes(wire, tracker, project)[:2]
+    del first["title"]
+    plain = tracker._transport
+    _serve_listing(tracker, [[first, second, second]], [None])
     wire.calls.clear()
     with pytest.raises(LinearTrackerError) as caught:
         tracker.search(project)
-    assert caught.value.code == "pagination_stalled"
-    assert _ops(wire)["FoundryLinearIssues"] <= 3
+    assert (caught.value.operation, caught.value.code) == ("normalize", "invalid_response")
+    assert _ops(wire)["FoundryLinearIssues"] == 1
+    # Without the invalid node the duplicate of the same page is still refused.
+    tracker._transport = plain
+    _serve_listing(tracker, [[second, second]], [None])
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == (
+        "issue.search", "pagination_stalled",
+    )
 
 
 def test_closed_epic_replay_is_served_from_a_later_listing_page(monkeypatch, tmp_path):

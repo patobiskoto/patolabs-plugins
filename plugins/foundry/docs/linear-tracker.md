@@ -1213,7 +1213,7 @@ backlog` and `query profile` (and `candidates`, which calls `backlog`) additiona
 tracker reads of the command; for `query backlog` and `query profile` it surrounds only
 the `search` call (the rest of those commands is computation); `query adr <ID>` opens
 none. It is a separate layer under the snapshot stack, which still decides first and
-keeps its contract above. Inside it, an issue is read at most once per command: a
+keeps its contract above. Inside it, a reference is read at most once per command: a
 successful `issue.read` is reused by the next read of the same reference (a native id
 and an identifier are two references), and `search` fetches every listing page before
 normalizing, then seeds the layer with the listing's nodes (same fields as a single
@@ -1238,17 +1238,32 @@ seen by the second snapshot (PAT-ADR-0006, PAT-ADR-0014). ADR writes, which also
 the ADR validation, are unchanged and keep exactly their reads.
 
 Error order of `search` (behaviour change, every caller, with or without the layer):
-`search` fetches every listing page before normalizing any node, and refuses at fetch
-time a page that repeats an already-seen cursor or an already-seen native issue id
-(`pagination_stalled`, so a provider that re-serves a page is stopped at its second
-request, as before; the duplicate check on the normalized issue is kept). What can now
-surface in a different order, only when two failures meet in one listing: a failure of a
-later page (transport, invalid response, missing or repeated cursor, page limit, repeated
-page) now wins over a normalization error of an earlier page, which used to surface
-first and spared the later requests; and a repeated page now reports `pagination_stalled`
-even if a node of an earlier page would have failed to normalize. What cannot differ: the
-output of a successful listing, the error of a listing that fails in only one way, and
-the error of a one-page listing.
+`search` fetches every listing page before normalizing any node. While fetching it
+checks what it checked before on each response (transport, shape of the response, a
+missing or empty `endCursor` when a next page is announced, the page limit) and one
+thing more: a page carrying an issue identifier already carried by an earlier page is
+refused at once (`pagination_stalled`), so a provider that re-serves a page is stopped
+at its second listing request, as before. A repeated `endCursor` is not a failure by
+itself, as before: the listing continues, and stalls only if an issue comes back. A
+duplicate inside one page, and any duplicate the fetch did not catch, is refused by the
+check on the normalized issue, kept unchanged and run in listing order with the
+normalization.
+
+What cannot differ from the previous code: the output of a successful listing; the error
+of a listing that fails in only one way; and the output or the error, in every case, of
+a listing whose first response announces no next page (one listing request). What can
+differ, only when two failures meet in one listing whose first response announces a next
+page: a failure met while fetching (transport, invalid response, missing cursor, page
+limit, an issue of a later page repeating an earlier page) now wins over a failure met
+while normalizing a node already fetched (a normalization error, or a duplicate inside
+one page). The previous code reported the normalization failure whenever its node came
+at or before the point of the fetch failure, because each page was normalized before the
+next request, and it then spared the later requests. Number of listing requests, for a
+listing that succeeds or fails in only one way: unchanged, except when the one failure
+is met while normalizing; every page is then requested before the error is reported,
+where the previous code stopped at the page of the failing node. The individual reads a
+normalization issues (the replay of a closed Epic) are now all sent after the last
+listing request, so a listing that fails while fetching sends none of them.
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
