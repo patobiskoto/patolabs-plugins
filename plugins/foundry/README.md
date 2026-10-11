@@ -51,9 +51,17 @@ note nor a migration guide (`release_requirements` in `tests/test_release_contra
 That section opens with a change of behaviour for every repository that uses the plugin:
 after a fully validated review round, the Foundry skills write to the tracker without
 asking, in four bounded cases (rule R9 (b) of `AGENTS.md`).
-Whether 1.1.1 is tagged, and the installed and loaded state per host, are not asserted in
-this file; they are to be read on the tracker issue PAT-149. The 1.1.0 statuses above are
-the last per-host statuses this file records.
+Per host, as recorded on the tracker issue PAT-149 on 2026-10-11: tag `foundry-v1.1.1`
+points at `343be14`, the commit that merged the release pull request (read back on the
+remote). Claude Code 2.1.294: the official manager reported "updated from 1.1.0 to
+1.1.1" and lists 1.1.1; a new non-interactive session started after the update loads
+1.1.1 (its start-up hook cites the 1.1.1 plugin root); a new interactive session was
+not observed. Codex CLI 0.155.1: the official manager lists 1.1.1, installed and
+enabled; a new Codex session is **not** verified (the attempt ran the session-start
+hook and was then refused before any model turn: model not supported with the
+account). Also not verified: the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host,
+`configure show`, `registry selection --require-v1`, and a real Sonnet 5.5 subagent run
+under 1.1.1. The return to 1.1.0 or 1.0.0 through an official manager is not tried.
 
 ## Why
 
@@ -123,8 +131,8 @@ repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
 environment variables. Linear's exact capability and binding contract is documented in
 [`docs/linear-tracker.md`](docs/linear-tracker.md).
 
-The current dual-host upgrade, trusted configuration, override diagnosis, verification,
-and rollback constraints are in
+The dual-host setup of 1.0.0 (upgrade, trusted configuration, override diagnosis,
+verification, and rollback constraints) is in
 [`docs/migration-1.0.0.md`](docs/migration-1.0.0.md); the upgrade from 1.0.0 to
 1.1.0 and its rollbacks are in
 [`docs/migration-1.1.0.md`](docs/migration-1.1.0.md). The former
@@ -603,8 +611,8 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `plugin.json` or a `marketplace.json` directly inside a `.claude-plugin`,
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
-  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0 and
-  1.1.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0
+  and 1.1.1), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
