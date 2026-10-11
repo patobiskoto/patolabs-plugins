@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- PAT-169: documentation only, no behaviour of any tool changes; records the first
+  observation window of rule R9 and the maintainer's decision. `docs/review-rounds.md`
+  gets the count per issue with its PR sources (39 rounds over 10 origin issues, 3.9;
+  4.0 on the 8 issues with lines in the format; PAT-143 is a lower bound), the result
+  "complete", the decision of 2026-10-11 (keep the rule as amended by PAT-144, open a
+  second window from the merge of PAT-144, same 3.2 threshold and triggers; first taken
+  on the figures 4.0 and 3.0, the latter wrongly including PAT-137 and PAT-147, then
+  confirmed by the maintainer the same day on the corrected 3.9 and 3.5), and the
+  definition of the second window with the 7 origin issues already counted. R5: the
+  documented artifact is that page; `AGENTS.md`, `CLAUDE.md` and `skills/merge-pr`
+  state neither the window nor its status, so they are unchanged; no CLI, option, key
+  or constant changes.
+
 - PAT-187: documentation only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from the reviews of PAT-163 and PAT-164.
   `docs/linear-tracker.md` limits "the same divergence" to the 28 issues completed on
