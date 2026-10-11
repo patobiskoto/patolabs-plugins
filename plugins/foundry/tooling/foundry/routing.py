@@ -2250,14 +2250,16 @@ def claimed_review_diff(
     base: str | None = None,
     state_dir: str | os.PathLike | None = None,
     consume: Callable[[bytes], _ReviewDiffConsumer] | None = None,
+    consume_snapshot: Callable[[bytes, str | None], _ReviewDiffConsumer] | None = None,
 ) -> _ReviewDiffConsumer:
     """Consume one verified review diff while its ownership remains active.
 
-    The consumer runs before releasing the ledger lock.  It is intentionally
-    mandatory: returning bytes would free the lock before a CLI or reviewer
-    could emit them, allowing recovery to replace that owner in between.
+    Exactly one consumer runs before releasing the ledger lock. The snapshot
+    variant receives the ledger's immutable HEAD too (not a fresh HEAD lookup).
+    Returning bytes would free the lock before a CLI or reviewer could emit
+    them, allowing recovery to replace that owner in between.
     """
-    if not callable(consume):
+    if callable(consume) == callable(consume_snapshot):
         raise RoutingConfigError(
             "lecture de review : consommateur synchrone de bytes requis ; refus fermé."
         )
@@ -2289,6 +2291,8 @@ def claimed_review_diff(
                 f"le diff a changé depuis le claim : attendu {expected_hash}, actuel "
                 f"{actual_hash}. Réservez le nouveau diff avant de relancer un reviewer."
             )
+        if consume_snapshot is not None:
+            return consume_snapshot(diff, claimed_head)
         return consume(diff)
 
 
@@ -2415,6 +2419,14 @@ def main(
     read_review.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
     read_review.add_argument("--repository", help="repo namespace; defaults to origin URL")
     read_review.add_argument("--root", required=True, help="exact Git worktree root")
+    for verb in ("search-review", "list-review"):
+        query = sub.add_parser(verb, help="query regular blobs of the actively claimed HEAD")
+        query.add_argument("--diff-hash", required=True)
+        query.add_argument("--claim-id", required=True)
+        query.add_argument("--root", required=True)
+        query.add_argument("--base", required=True)
+        if verb == "search-review":
+            query.add_argument("--text", required=True, help="literal single-line text, at most 512 characters")
     codex_plan = sub.add_parser(
         "codex-plan", help="build an explicit fresh-context Codex delegation plan",
     )
@@ -2741,6 +2753,19 @@ def main(
                 diff_hash=args.diff_hash, claim_id=args.claim_id, root=args.root, base=args.base,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if args.command in ("search-review", "list-review"):
+            from foundry.review_queries import query_review
+
+            def emit_query(payload):
+                print(json.dumps(payload, ensure_ascii=True))
+                sys.stdout.flush()
+
+            query_review(
+                args.diff_hash, repository_identity(args.root), claim_id=args.claim_id,
+                root=args.root, base=args.base, text=getattr(args, "text", None),
+                consume=emit_query,
+            )
             return
         if args.command == "read-review":
             repository = args.repository or repository_identity(args.root)

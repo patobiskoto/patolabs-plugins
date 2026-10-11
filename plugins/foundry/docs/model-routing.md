@@ -820,6 +820,9 @@ redacted deduplication path.
 
 The reviewer reads through `routing read-review --diff-hash <hash> --claim-id <id>
 --root <root> --base <base-sha>`.
+Independent claimed-HEAD text/path queries use `routing search-review` and
+`routing list-review`; their limits and host enforcement are in
+[reviewer-queries.md](reviewer-queries.md).
 That command retains the ledger lock from the current active-generation and immutable
 coordinate and immutable-HEAD checks through the current diff hash and byte emission,
 so a recovery cannot deliver bytes to its replaced owner. An empty commit is HEAD drift
@@ -1007,7 +1010,10 @@ current-context fallback or as an independent review.
 
 The portable role mapping is scout→`explorer`, implementer→`worker`,
 reviewer→`reviewer`, architect→`default`. The bounded message adds a role contract and
-forbids nested delegation. `reviewer` uses Codex's host-enforced read-only reviewer role.
+forbids nested delegation. `reviewer` selects Codex's named reviewer role with a
+read-only prompt contract; this selection does not prove native sandbox or tool
+enforcement. See [reviewer-queries.md](reviewer-queries.md) for profile compatibility
+and the distinction between prompt discipline and observed host protection.
 Codex exposes no portable per-call tool restriction for `default`, so the architect's
 read-only constraint is prompt-enforced; the architect never writes the ADR itself and
 the coordinator remains responsible for materialization.
@@ -1399,7 +1405,8 @@ Generic aliases remain version dependent; custom full pins without a shipped pro
 are explicitly unsupported. Built-in declarations cannot be weakened by project data.
 
 Every versioned read-only profile retains `routed-readonly-` and the existing Bash
-guard: only the claimed `routing read-review` verifier is allowed. The post-tool
+guard: only the claimed `routing read-review`, `search-review` and `list-review`
+readers are allowed (see [reviewer-queries.md](reviewer-queries.md)). The post-tool
 observer still consumes its existing correlation once, independent of profile suffix.
 `transmitted_launch` describes selected profile/model/source intent. It is not execution
 metadata. Haiku's omitted frontmatter effort cannot establish observed non-applicability:

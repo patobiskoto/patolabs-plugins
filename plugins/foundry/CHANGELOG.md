@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- PAT-176: the reviewer can independently search literal text and list regular
+  tracked paths at its active claim's immutable HEAD through `routing search-review`
+  and `routing list-review`. The Claude Bash guard allows only these claimed readers
+  and the existing diff verifier. Query limits, evidence scope and the prompt-only
+  Codex compatibility template are documented in `docs/reviewer-queries.md`.
+
 - PAT-194: documentation only; settles deferred PAT-193 remarks. Both README files
   record the observed 1.2.0 tag, installed versions and loaded Codex session version,
   with Claude's loaded session version unknown; sources are in
