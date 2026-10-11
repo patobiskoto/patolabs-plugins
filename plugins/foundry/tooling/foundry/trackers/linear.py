@@ -4443,7 +4443,8 @@ class LinearTracker(Tracker):
         reads are stored (a failure is read again), the listing of ``search`` seeds it,
         and it is dropped on exit, so nothing survives the command. It is never open
         during a write: ``_graphql`` refuses any document that is not a pure read while
-        it is, so a write started inside it fails before it sends anything.
+        it is, so the first mutation of a write started inside it is refused and never sent
+        (reads issued before it are sent).
         """
         if getattr(self._read_scopes, "scope", None) is not None:
             yield  # re-entrant (``candidates`` -> ``backlog``): share the outer scope
@@ -4463,20 +4464,22 @@ class LinearTracker(Tracker):
             return copy.deepcopy(scope[issue_id])
         command = getattr(self._read_scopes, "scope", None)
         if command is not None and issue_id in command:
-            raw = copy.deepcopy(command[issue_id])
             if scope is not None:
-                scope[issue_id] = copy.deepcopy(raw)
-            return raw
+                scope[issue_id] = command[issue_id]
+            return copy.deepcopy(command[issue_id])
         data = self._graphql(_ISSUE_QUERY, {"id": issue_id}, "issue.read")
         raw = data.get("issue")
         if raw is None:
             raise IssueUnavailableError(issue_id)
         if not isinstance(raw, dict):
             raise LinearTrackerError("issue.read", None, "invalid_response")
-        if scope is not None:
-            scope[issue_id] = copy.deepcopy(raw)
-        if command is not None:
-            command[issue_id] = copy.deepcopy(raw)
+        if scope is not None or command is not None:
+            # Stored copies are never handed out or mutated: every caller gets its own.
+            stored = copy.deepcopy(raw)
+            if scope is not None:
+                scope[issue_id] = stored
+            if command is not None:
+                command[issue_id] = stored
         return raw
 
     @staticmethod
@@ -4722,6 +4725,8 @@ class LinearTracker(Tracker):
         binding = self._activate(project)
         nodes: list[dict] = []
         cursor = None
+        seen_cursors: set[str] = set()
+        seen_ids: set[str] = set()
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
@@ -4740,12 +4745,22 @@ class LinearTracker(Tracker):
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("issue.search", None, "invalid_response")
+            # A provider that re-serves a page stops here, not after _MAX_PAGES requests.
+            for raw in connection["nodes"]:
+                node_id = raw.get("id") if isinstance(raw, dict) else None
+                if isinstance(node_id, str):
+                    if node_id in seen_ids:
+                        raise LinearTrackerError(
+                            "issue.search", None, "pagination_stalled"
+                        )
+                    seen_ids.add(node_id)
             nodes.extend(connection["nodes"])
             if not page["hasNextPage"]:
                 break
             cursor = page.get("endCursor")
-            if not isinstance(cursor, str) or not cursor:
+            if not isinstance(cursor, str) or not cursor or cursor in seen_cursors:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
+            seen_cursors.add(cursor)
         else:
             raise LinearTrackerError("issue.search", None, "pagination_limit")
         # PAT-168: every page is fetched before the first normalization so that, inside
@@ -4755,9 +4770,10 @@ class LinearTracker(Tracker):
         if command is not None:
             for raw in nodes:
                 if isinstance(raw, dict):
+                    stored = copy.deepcopy(raw)  # one copy, shared under both keys
                     for key in (raw.get("id"), raw.get("identifier")):
                         if isinstance(key, str) and key and key not in command:
-                            command[key] = copy.deepcopy(raw)
+                            command[key] = stored
         out: list[Issue] = []
         seen = set()
         for raw in nodes:

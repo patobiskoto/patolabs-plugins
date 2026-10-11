@@ -1203,37 +1203,52 @@ Guarantees unchanged for a snapshot: the scope is created empty for each snapsho
 shared with another snapshot (nested ones included), the pre-write S1, the post-write
 verification or the write, and dropped on exit; a failed read is never cached; a refused
 snapshot and its diagnostic form one snapshot. A snapshot keeps nothing across calls, so
-a node added, reopened or modified between two snapshots is still detected exactly as
-before (PAT-ADR-0006, PAT-ADR-0014).
+a node added, reopened or modified between two snapshots that are not inside the same
+read-only command is still detected exactly as before (PAT-ADR-0006, PAT-ADR-0014).
+Two snapshots inside the same read-only command are the exception, see below.
 
 Reads shared inside a read-only command (PAT-168). `query issue`, `query adrs`, `query
 backlog` and `query profile` (and `candidates`, which calls `backlog`) additionally open
-`LinearTracker.read_scope()` for the duration of the command. It is a separate layer
-under the snapshot stack, which still decides first and keeps its contract above. Inside
-it, an issue is read at most once per command: a successful `issue.read` is reused by
-the next read of the same reference (a native id and an identifier are two references),
-and `search` fetches every listing page before normalizing, then seeds the layer with
-the listing's nodes (same fields as a single read) under their native id and identifier,
-so the replay of a closed Epic is served from the listing of the same command. An issue
-the listing does not carry is read individually, and fails exactly as before when it is
-unavailable or outside the binding. Inside `query issue` and `query adrs` this also
-covers the ADR index validation: a cited issue is read once per command, while the
-reciprocal comment is still read once per (ADR, issue) pair and both identity
-coordinates of a reference are still read the first time it is resolved. What is not
-shared: a failed read, anything in a write (`_graphql` refuses every document that is
-not a pure read while the layer is open, so a write started inside it fails before
-sending anything, and no command that writes opens it), and anything between two
-commands: the layer is created empty at the start of the command and dropped when it
-ends, so a node changed between two commands is seen by the second (PAT-ADR-0006,
-PAT-ADR-0014). ADR writes, which also run the ADR validation, are unchanged and keep
-exactly their reads.
+`LinearTracker.read_scope()`. For `query issue` and `query adrs` it stays open for the
+tracker reads of the command; for `query backlog` and `query profile` it surrounds only
+the `search` call (the rest of those commands is computation); `query adr <ID>` opens
+none. It is a separate layer under the snapshot stack, which still decides first and
+keeps its contract above. Inside it, an issue is read at most once per command: a
+successful `issue.read` is reused by the next read of the same reference (a native id
+and an identifier are two references), and `search` fetches every listing page before
+normalizing, then seeds the layer with the listing's nodes (same fields as a single
+read) under their native id and identifier, so the replay of a closed Epic is served
+from the listing of the same command. An issue the listing does not carry is read
+individually, and fails exactly as before when it is unavailable or outside the
+binding. Inside `query issue` and `query adrs` this also covers the ADR index
+validation: a cited issue is read once per command, while the reciprocal comment is
+still read once per (ADR, issue) pair and both identity coordinates of a reference are
+still read the first time it is resolved.
 
-Error order of `search` (behaviour change, every caller): `search` now fetches every
-listing page before normalizing any node, whether or not the read layer is open. A
-failure of a later page (transport, invalid response, missing cursor, page limit) now
-surfaces before a normalization error of an earlier page, which used to surface first
-and spared the request for the next page. Outputs of a successful listing are identical;
-the difference is visible only when both kinds of failure occur in the same listing.
+What is not shared: a failed read; anything in a write (while the layer is open,
+`_graphql` refuses any document that is not a pure read, so the first mutation of a
+write started inside it is refused and never sent, reads issued before it are sent, and
+no command that writes opens the layer); anything between two commands (the layer is
+created empty at the start of the command and dropped when it ends, so a node changed
+between two commands is seen by the second). Limit inside one command: two snapshots of
+the same read-only command (two closed Epics sharing a node in `backlog`, a closed Epic
+that is a child of a closed Epic in `query issue`) are served the node from the command
+layer without a re-read, so a change made to that node while the command runs is not
+seen by the second snapshot (PAT-ADR-0006, PAT-ADR-0014). ADR writes, which also run
+the ADR validation, are unchanged and keep exactly their reads.
+
+Error order of `search` (behaviour change, every caller, with or without the layer):
+`search` fetches every listing page before normalizing any node, and refuses at fetch
+time a page that repeats an already-seen cursor or an already-seen native issue id
+(`pagination_stalled`, so a provider that re-serves a page is stopped at its second
+request, as before; the duplicate check on the normalized issue is kept). What can now
+surface in a different order, only when two failures meet in one listing: a failure of a
+later page (transport, invalid response, missing or repeated cursor, page limit, repeated
+page) now wins over a normalization error of an earlier page, which used to surface
+first and spared the later requests; and a repeated page now reports `pagination_stalled`
+even if a node of an earlier page would have failed to normalize. What cannot differ: the
+output of a successful listing, the error of a listing that fails in only one way, and
+the error of a one-page listing.
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only

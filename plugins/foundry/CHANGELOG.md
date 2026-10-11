@@ -5,14 +5,16 @@
 - PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
   `query backlog` and `query profile`, without changing any output or any write path. A
   read scope, open only during one of those commands and dropped at its end, reads each
-  issue at most once, and `search` seeds it with its listing so a closed Epic's replay
-  is served from that listing. On the test fake: `query backlog` 4 -> 1, `query issue`
-  of a closed Epic 12 -> 7. Behaviour change in a double-failure case: `search` now
-  fetches every listing page before normalizing any node, for every caller, so a failure
-  of a later page surfaces before a normalization error of an earlier page. ADR writes
-  keep exactly their reads. `docs/linear-tracker.md` states what is shared inside a
-  command and what is not; `docs/linear-request-cost.md` gets the expected figures. The
-  real-project after-measure is recorded separately.
+  issue at most once, and `search` seeds it with its listing so a closed Epic's replay is
+  served from that listing. Measured on the real project (outputs byte-identical):
+  `query backlog` and an intake profile page 171 -> 2, closed Epic PAT-51 262 -> 132,
+  plain issue 56 -> 48; `docs/linear-request-cost.md` records them. Behaviour change in a
+  double-failure case: `search` now fetches every listing page before normalizing any
+  node, for every caller, so a failure of a later page (or a repeated page, still stopped
+  at the second request) surfaces before a normalization error of an earlier page.
+  Inside one command, two snapshots no longer re-read a node they share. ADR writes keep
+  exactly their reads. `docs/linear-tracker.md` states what is shared inside a command
+  and what is not.
 
 - PAT-167: documentation only, no behaviour of any tool changes. New page
   `docs/linear-request-cost.md` records, as measured on 2026-10-11 on the real project

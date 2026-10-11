@@ -8,6 +8,8 @@ must not change with it; only the request counts do.
 from __future__ import annotations
 
 import collections
+import contextlib
+import copy
 import hashlib
 import json
 import re
@@ -17,6 +19,7 @@ import pytest
 
 from foundry import query, write
 from foundry.models import TransitionContext
+from foundry.trackers.linear import LinearTrackerError
 
 from test_epic_closure_transports import _linear_graph
 from test_linear_tracker import STATE_IDS
@@ -92,16 +95,6 @@ EXPECTED_TOTALS = {
 }
 
 
-OUTPUT_SHA256 = {
-    "issue-plain": "ad2d8b5a8dc7b9e197e1804e8823a353bfb8e1ddb1c22a689b71a6e681bd1a8d",
-    "issue-open-epic": "e0d3c66806ba43681d96f232dcbd0be8fa7a878b01bdbaefee2ff7791c5a15f9",
-    "issue-closed-epic": "a2ab4bf01a5194a532632f46caaf520860fa47597d8999338e92f687d21825c0",
-    "adrs": "6583df8de057b632d83c0f5067e817643ef411a93ec7802dfcbdc3450b7e0642",
-    "backlog": "5d9a237da75aaeedca30d9fa5451ab86d2d7d7d3004aedb92d99856b538cb1de",
-    "profile": "d3b183ccdd0bcf6c6a5acb2747e788f6087501f449ac1c871e8668caeccc13a7",
-}
-
-
 # Identical on origin/main (checked at PAT-168): the read scope never serves a write.
 EXPECTED_LINK_ISSUE_OPS = {
     "FoundryLinearAdrDocumentById": 4,
@@ -113,30 +106,35 @@ EXPECTED_LINK_ISSUE_OPS = {
 }
 
 
-def _measure(monkeypatch, tmp_path):
-    totals = {}
-    outputs = {}
-    for label, closed, function, args in (
-        ("issue-plain", False, query.issue, ("LIN-2",)),
-        ("issue-open-epic", False, query.issue, ("LIN-1",)),
-        ("issue-closed-epic", True, query.issue, ("LIN-1",)),
-        ("adrs", False, query.adrs, ()),
-        ("backlog", True, query.backlog, ()),
-        ("profile", True, query.profile, ("next-issue",)),
-    ):
-        _tracker, wire, _project = _world(monkeypatch, tmp_path, closed=closed)
-        wire.calls.clear()
-        outputs[label], ops = _run(wire, function, *args)
-        totals[label] = (sum(ops.values()), dict(sorted(ops.items())))
-    return totals, outputs
+_COMMANDS = (
+    ("issue-plain", False, query.issue, ("LIN-2",)),
+    ("issue-open-epic", False, query.issue, ("LIN-1",)),
+    ("issue-closed-epic", True, query.issue, ("LIN-1",)),
+    ("adrs", False, query.adrs, ()),
+    ("backlog", True, query.backlog, ()),
+    ("profile", True, query.profile, ("next-issue",)),
+)
 
 
 def test_request_counts_per_read_command(monkeypatch, tmp_path):
-    totals, outputs = _measure(monkeypatch, tmp_path)
-    assert {k: v[0] for k, v in totals.items()} == EXPECTED_TOTALS
-    # Characterisation: the bytes of each output, recorded before the change.
-    assert {k: hashlib.sha256(v.encode()).hexdigest() for k, v in outputs.items()} \
-        == OUTPUT_SHA256
+    totals = {}
+    for label, closed, function, args in _COMMANDS:
+        _tracker, wire, _project = _world(monkeypatch, tmp_path, closed=closed)
+        wire.calls.clear()
+        _output, ops = _run(wire, function, *args)
+        totals[label] = sum(ops.values())
+    assert totals == EXPECTED_TOTALS
+
+
+def test_outputs_are_identical_with_and_without_the_read_scope(monkeypatch, tmp_path):
+    for label, closed, function, args in _COMMANDS:
+        _tracker, wire, _project = _world(monkeypatch, tmp_path, closed=closed)
+        scoped, scoped_ops = _run(wire, function, *args)
+        with monkeypatch.context() as patch:
+            patch.setattr(query, "_read_scope", lambda _tr: contextlib.nullcontext())
+            plain, plain_ops = _run(wire, function, *args)
+        assert scoped == plain, label
+        assert sum(plain_ops.values()) >= sum(scoped_ops.values()), label
 
 
 def test_list_read_shows_closed_epic_with_reopened_child_as_unknown(monkeypatch, tmp_path):
@@ -245,3 +243,97 @@ def test_adr_write_keeps_its_exact_reads(monkeypatch, tmp_path):
     wire.calls.clear()
     tracker.link_adr_issue(created, "LIN-2", project=project)
     assert dict(sorted(_ops(wire).items())) == EXPECTED_LINK_ISSUE_OPS
+
+
+class _PagedListing:
+    """Transport wrapper serving the listing in pages of ``size`` (cursor = offset)."""
+
+    def __init__(self, wire, size, *, replay_first_page=False):
+        self.wire, self.size, self.replay = wire, size, replay_first_page
+        self.calls = wire.calls
+
+    def __getattr__(self, name):
+        return getattr(self.wire, name)
+
+    def __call__(self, document, variables):
+        if "FoundryLinearIssues" not in document:
+            return self.wire(document, variables)
+        everything = self.wire(document, variables)["data"]["issues"]["nodes"]
+        start = 0 if self.replay or not variables["after"] else int(variables["after"])
+        end = start + self.size
+        return {"data": {"issues": {
+            "nodes": copy.deepcopy(everything[start:end]),
+            "pageInfo": {"hasNextPage": self.replay or end < len(everything),
+                         "endCursor": str(end if not self.replay else start + 1
+                                          + len(self.wire.calls))},
+        }}}
+
+
+def _paged(monkeypatch, tmp_path, size, **kwargs):
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=True)
+    tracker._transport = _PagedListing(wire, size, **kwargs)
+    return tracker, wire, project
+
+
+def test_search_stops_at_the_second_request_when_a_page_is_re_served(monkeypatch, tmp_path):
+    tracker, wire, project = _paged(monkeypatch, tmp_path, 2, replay_first_page=True)
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert caught.value.code == "pagination_stalled"
+    assert _ops(wire) == {"FoundryLinearIssues": 2}
+
+
+def test_search_refuses_an_already_seen_cursor(monkeypatch, tmp_path):
+    tracker, wire, project = _paged(monkeypatch, tmp_path, 1)
+    original = tracker._transport.__call__
+
+    def same_cursor(document, variables):
+        result = original(document, variables)
+        if "FoundryLinearIssues" in document:
+            result["data"]["issues"]["pageInfo"]["endCursor"] = "1"
+        return result
+
+    tracker._transport = same_cursor
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert caught.value.code == "pagination_stalled"
+    assert _ops(wire)["FoundryLinearIssues"] <= 3
+
+
+def test_closed_epic_replay_is_served_from_a_later_listing_page(monkeypatch, tmp_path):
+    tracker, wire, project = _paged(monkeypatch, tmp_path, 1)  # LIN-1 alone on page 1
+    wire.calls.clear()
+    with tracker.read_scope():
+        listed = {i.id: i for i in tracker.search(project)}
+    assert _ops(wire) == {"FoundryLinearIssues": 3}  # LIN-2 and LIN-3 never read alone
+    assert (listed["LIN-1"].state, listed["LIN-1"].projection_status) == ("done", "aligned")
+
+
+def test_a_second_search_in_the_same_scope_lists_again_and_reads_nothing(monkeypatch, tmp_path):
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=True)
+    with tracker.read_scope():
+        first = [i.to_dict() for i in tracker.search(project)]
+        wire.calls.clear()
+        second = [i.to_dict() for i in tracker.search(project)]
+    assert second == first
+    assert _ops(wire) == {"FoundryLinearIssues": 1}
+
+
+def test_a_graph_snapshot_nested_in_a_read_scope_gets_its_own_copies(monkeypatch, tmp_path):
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    with tracker.read_scope():
+        tracker.search(project)
+        wire.calls.clear()
+        with tracker.graph_snapshot():
+            raw = tracker._read_raw("LIN-2")
+            raw["title"] = "mutated by a caller"
+            assert tracker._read_raw("LIN-2")["title"] == wire.issues["LIN-2"]["title"]
+        assert tracker._read_raw("LIN-2")["title"] == wire.issues["LIN-2"]["title"]
+    assert _ops(wire) == {}
+    # Dropped on exit: the next snapshot outside the scope reads again.
+    with tracker.graph_snapshot():
+        tracker._read_raw("LIN-2")
+        tracker._read_raw("LIN-2")
+    assert _ops(wire) == {"FoundryLinearIssue": 1}

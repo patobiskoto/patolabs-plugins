@@ -14,7 +14,8 @@ documented in [`linear-tracker.md`](linear-tracker.md) ("Request counter (PAT-14
 
 ## Conditions of the measure
 
-- Date: 2026-10-11, between 13:50 and 14:05 (Europe/Paris).
+- Date: 2026-10-11, between 13:37 and 13:42 (Europe/Paris; the output files of that
+  measure are timed 13:37:58 to 13:41:16).
 - Tool: the installed Foundry 1.1.1 plugin, with `FOUNDRY_TRACKER=linear` and
   `FOUNDRY_REQUEST_COUNT=stderr`, one process per command, run from a linked worktree
   at `origin/main` commit `87bb8eb`.
@@ -155,13 +156,14 @@ of 150 to 220 above is an earlier, non-reproduced note.
 
 ### The only cache, and its limit
 
-Before PAT-168 (see the section after the table of candidates for what changed),
+Before PAT-168 (see the section "After PAT-168 lot 1" below for what changed),
 `graph_snapshot()` is the only read reuse found: inside one snapshot, `_read_raw`
 reuses a successful `issue.read` of an id. It is private to one snapshot and is not
 opened around `list_adrs`, around `search` as a whole, or between two reads of `query
-issue`. `linear-tracker.md` states: "Nothing is cached across calls, so a node added,
-reopened or modified between two snapshots is still detected exactly as before
-(PAT-ADR-0006, PAT-ADR-0014)."
+issue`. `linear-tracker.md` then stated: "Nothing is cached across calls, so a node
+added, reopened or modified between two snapshots is still detected exactly as before
+(PAT-ADR-0006, PAT-ADR-0014)." (the wording before PAT-168; the current one bounds it to
+snapshots outside the same read-only command).
 
 ## After PAT-168 lot 1 (read-only commands)
 
@@ -235,7 +237,7 @@ grants such a state.
 
 | # | Candidate | Starting figure | Constraint found | Decision needed |
 |---|---|---|---|---|
-| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (deduced) for `backlog`/`profile`; up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md`, on the Epic closure audit: "A valid non-code Epic closure audit supplies terminal **state** authority to `get_issue`, `observe_issue`, `query issue`, backlog and the groom profile", and "Reads verify [...] the complete current children/transitive dependency graph with its qualified acceptance evidence"; same file ("Provider-read cost of a graph snapshot (PAT-99)"): "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)"; docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
+| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (deduced) for `backlog`/`profile`; up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md`, on the Epic closure audit: "A valid non-code Epic closure audit supplies terminal **state** authority to `get_issue`, `observe_issue`, `query issue`, backlog and the groom profile", and "Reads verify [...] the complete current children/transitive dependency graph with its qualified acceptance evidence"; same file ("Provider-read cost of a graph snapshot (PAT-99)"): "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)" (wording before PAT-168, since reworded in that file); docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
 | 2 | Share issue reads inside one `query issue` between the embedded ADR validation, the requested issue and its links (one scope per command, dropped at exit) | Part of the 54 fixed requests; size **unknown** (number of pairs not known) | `linear-tracker.md` on ADR issue relations: "Every issue relation is re-read and must belong to the configured team and project, and the issue must retain its deterministic reciprocal Foundry comment"; scope rule of `graph_snapshot()`: "never shared with another scope" | Likely a maintainer decision (a scope per command is not state kept between commands, but it widens the PAT-99 scope rule) |
 | 3 | Deduplicate the `(ADR, issue)` reads in `_validate_adr_graph` across ADRs | The issue reads of each repeated reference (the reciprocal comment read stays); the number of repetitions is **unknown** | Same sentence as 2 (the reciprocal comment is per pair and must stay) | Only the issue reads, not the comment reads: probably within PAT-168 without a new decision, to be confirmed |
 | 4 | Reduce the back-to-back `_read_raw` of one transition (`set_state`, `_project_native_state`) | 3 reads of one issue per transition, 4 when the native state changes (code reading); the share of 13 (`issue start`) is **unknown** | `linear-tracker.md`: "re-read it immediately before one `issueUpdate`, then verify readback" (bounded detection, PAT-ADR-0006); the fresh pre-write read and the readback must stay | The first read and the lifecycle read may be mergeable; the others are the documented guarantee. Needs a maintainer reading of PAT-ADR-0006 |
