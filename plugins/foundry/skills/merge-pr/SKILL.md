@@ -233,8 +233,10 @@ run `query backlog` (the lean list of the project's issues, with `id`, `title`, 
 and `state`) and look for an issue whose `type` is `Epic` and whose `title` is exactly
 that name. To read the tracker back after a write, run `query issue <ISSUE-ID>`: its
 `issue` object carries `comments` and `links` (an adapter may return only the most
-recent comments). No command searches by title, and none compares a posted comment with the
-text that was sent: the comparison is made by reading those two outputs.
+recent comments). No command searches by title. No `query` command compares a posted comment
+with the text that was sent: the comparison is made by reading the outputs of
+`query backlog` and `query issue`. (The write `edit comment` may check its own comment,
+depending on the adapter.)
 
 The rule names no tracker. Its writes are operations of the portable contract
 `docs/tracker-contract.md`, whose table "Core journey" marks both rows below `supported`
