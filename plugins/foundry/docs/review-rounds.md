@@ -5,7 +5,8 @@ its effect is measured. Nothing in that measurement is computed by Foundry: the 
 below is done by hand. The last point of "Limits" and the last two sections (PAT-139)
 cite the code that bounds rule (b): what the merge command does not refuse, what no tool
 checks, what is not coded yet, and what each tracker provider carries. Paths are relative
-to `plugins/foundry/`, except `AGENTS.md` and `CLAUDE.md` at the repository root.
+to `plugins/foundry/`, except `AGENTS.md` and `CLAUDE.md` at the repository root and
+Markdown link targets, which are relative to this page.
 
 ## Baseline
 
@@ -148,28 +149,29 @@ What the coordinator does when the `Epic` type is missing (the table above) is i
 corrected before the merge and fully re-reviewed, and the refusal is reported in the PR
 description.
 
-This paragraph is about another failure, not about the missing `Epic` type. On
-YouTrack, `create_issue` with a parent makes two writes on the issue itself: a POST to
-`/issues`, then `link(..., "subtask-of", parent)` (`link` in
+This paragraph is about another failure, not about the missing `Epic` type. On YouTrack,
+`create_issue` with a parent makes two writes on the issue itself: a POST to `/issues`,
+then `link(..., "subtask-of", parent)` (`link` in
 `tooling/foundry/trackers/youtrack.py`), which posts a command to `/commands`. Before
 them, when `fields` carries a `Milestone` and the project has a milestone bundle,
-`_prewrite` has `_ensure_milestone` post that value to the bundle. The tests run it with a failure of the second
-write: the created issue stays, without its parent link, and `create_issue` removes
-nothing. How such a partial write is repaired is not decided on this page.
+`_prewrite` has `_ensure_milestone` post that value to the bundle. The tests run it with
+a failure of the second write: the created issue stays, without its parent link, and
+`create_issue` removes nothing. How such a partial write is repaired is not decided on
+this page.
 
 A transient failure is the other case of `AGENTS.md#R9` (b), next to the durable refusal
 of a missing `Epic` type: the coordinator waits and retries the write before the merge.
-When the failure leaves the effect of the write unknown (a network failure), it first reads the tracker to see whether the write
-happened, and retries only if it did not. That reading is what prevents a second issue
-or a second comment: no adapter retries a write by itself in the code read here, and a
-retry after an unknown outcome does this, per provider (files under
-`tooling/foundry/trackers/`):
+When the failure leaves the effect of the write unknown (a network failure), it first
+reads the tracker to see whether the write happened, and retries only if it did not.
+That reading is what prevents a second issue or a second comment: no adapter retries a
+write by itself in the code read here, and a retry after an unknown outcome does this,
+per provider (files under `tooling/foundry/trackers/`):
 
 | Provider | Retry of `create_issue` | Retry of `add_comment` |
 |---|---|---|
 | YouTrack | a plain second create: `create_issue` (`youtrack.py`) posts to `/issues` and takes the identifier the provider returns, with no client key. When the issue was created and only the parent link failed, a second call creates a second issue | a plain second comment: `add_comment` (`youtrack.py`) posts with no identifier and no readback |
 | Linear | a plain second create: `create_issue` (`linear.py`) sends a fresh `uuid.uuid4()` identifier at each call | a plain second comment: `add_comment` (`linear.py`) sends no client identifier; its readback checks the comment it has just created, not an earlier one |
-| `ghprojects` | on the same data directory, `create_issue` (`ghprojects.py`) keeps a pending intent written before its only issue POST. If the issue then exists once, the second call resumes it and creates no duplicate. If no matching issue exists, `_observe_create_candidate` raises `create_effect_unknown`: from the first call itself, when the issue POST has failed and the read of the candidates that follows it finds none (the error of the POST is then kept only as the context of the exception raised), and from every later call, whatever made the POST fail. If that read itself fails, the error of the read comes out instead. No code in the file removes a create intent: no recovery path was found. From another data directory, or once the intent is gone, an existing matching issue is refused with `unowned_create_candidate`, and with no matching issue the call is a plain create | a plain second comment: `add_comment` (`ghprojects.py`) posts once, reads back the comment it created and never looks for an earlier one |
+| `ghprojects` | on the same data directory, `create_issue` (`ghprojects.py`) keeps a pending intent written before its only issue POST. If the issue then exists once, the second call resumes it and creates no duplicate. If no matching issue exists, `_observe_create_candidate` raises `create_effect_unknown`: from the first call itself, when the issue POST has failed and the read of the candidates that follows it finds none (the error of the POST is then kept only as the context of the exception raised), and from every later call, whatever made the POST fail. If that read itself fails, the error of the read comes out instead; if it finds exactly one issue, the first call raises `partial_create:issue_response_lost`. No code in the file removes a create intent: no recovery path was found. From another data directory, or once the intent is gone, an existing matching issue is refused with `unowned_create_candidate`, and with no matching issue the call is a plain create | a plain second comment: `add_comment` (`ghprojects.py`) posts once, reads back the comment it created and never looks for an earlier one |
 
 [`tracker-contract.md`](tracker-contract.md) states the same for issue creation ("a
 replay with zero candidates remains unknown and refuses") and for comments ("Free-text
@@ -185,7 +187,7 @@ What each adapter gives the coordinator to recognise a transient failure:
 |---|---|---|
 | YouTrack | no quota-specific error in `tooling/foundry/trackers/youtrack.py`: an HTTP failure is raised as `_YouTrackHTTPError` with its status; reset time not verified | not verified |
 | Linear | `LinearQuotaExhaustedError` (`tooling/foundry/trackers/linear.py`), with the reset time in `reset_at` and `reset_at_ms`; never retried by the adapter ([`linear-tracker.md`](linear-tracker.md), "Transport errors, read retries and quota") | `transport_error`; a write is never retried by the adapter (same section) |
-| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`), raised for the reads and for the POST of `add_comment`; reset time not verified. For the issue POST of `create_issue`, what the coordinator receives depends on the read of the candidates that follows a failed POST (`_observe_create_candidate`, operation `issue.create_reconcile`): if that read fails too, its own reason comes out (`rate_limited` when the quota is still exhausted), and `rate_limited` of the POST is only the context; if that read succeeds and finds no issue, the call raises `create_effect_unknown` (see the previous table). The same read also runs once before the POST: if it fails, its reason comes out and no POST is made | reason `transport_failed`, which `_run` also gives to every `gh` failure it does not classify, and to a `gh` process that cannot run or times out: it does not tell a network failure from a refusal by the provider. For the issue POST of `create_issue`, the same two cases apply as in the previous cell: the reason of the failed read of the candidates (`transport_failed` when the network is still down) comes out if that read fails too, and `create_effect_unknown` only if the read succeeds and finds no issue. `_rest_write` never retries |
+| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`), raised for the reads and for the POST of `add_comment`; reset time not verified. For the issue POST of `create_issue`, what the coordinator receives depends on the read of the candidates that follows a failed POST (`_observe_create_candidate`, operation `issue.create_reconcile`): if that read fails too, its own reason comes out (`rate_limited` when the quota is still exhausted), and `rate_limited` of the POST is only the context; if that read succeeds and finds no issue, the call raises `create_effect_unknown` (see the previous table); if it finds exactly one, `partial_create:issue_response_lost`. The same read also runs once before the POST: if it fails, its reason comes out and no POST is made | reason `transport_failed`, which `_run` also gives to every `gh` failure it does not classify, and to a `gh` process that cannot run or times out: it does not tell a network failure from a refusal by the provider. For the issue POST of `create_issue`, the same three cases apply as in the previous cell: the reason of the failed read of the candidates (`transport_failed` when the network is still down) comes out if that read fails too; if it succeeds, `create_effect_unknown` when it finds no issue and `partial_create:issue_response_lost` when it finds exactly one. `_rest_write` never retries |
 
 Limits, as stated by PAT-ADR-0018 at its date and not lifted by these tests:
 
