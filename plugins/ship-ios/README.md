@@ -56,6 +56,36 @@ Use `/ship-ios:<skill>` in Claude Code and `$ship-ios:<skill>` in Codex.
 - Optional: **Foundry** (`foundry@patolabs`) if you want release notes auto-assembled
   from your tracker milestone. Optional: **XcodeBuildMCP** for build/sim from the agent.
 
+## Running the plugin's own tests
+
+From `plugins/ship-ios`:
+
+```
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
+Requirements: Python 3, `git` (`tests/test_tag_merged.py` creates temporary
+repositories) and `ruby` (the `SubmitLaneTests` class in
+`tests/test_submit_contract.py`, 3 tests, evaluates `templates/Fastfile` with a stub
+fastlane DSL). No Xcode, simulator, fastlane or Apple account is needed. Only those
+3 tests call `ruby`, without a skip guard, so they error if it is missing.
+
+Versions observed passing (35 tests): Python 3.13.13, git 2.54.0 and Ruby 4.0.7
+(Homebrew) locally; on `ubuntu-24.04` the CI job `ship-ios` (Python 3.13, `ruby` at
+`/usr/bin/ruby`, version not logged; run 38095058779) also passes.
+
+Observed failure: with macOS system Ruby 2.6.10 first on `PATH`, the 3
+`SubmitLaneTests` tests error (the `ruby -e` stub exits with status 1) and the other
+32 pass. The stub uses endless method definitions, one of them with a command-call body
+(`def self.user_error!(message) = raise SubmitError, message`), which Ruby accepts
+from 3.1 (Ruby 3.1.0 NEWS, Feature #17398); floor deduced from the syntax and the
+release notes; the only runs with a known Ruby version are 2.6.10 (the 3 tests error)
+and 4.0.7 (pass), and the CI Ruby version is not logged. Also deduced
+from the code, not observed on older versions: `str.removeprefix` in
+`tests/test_release_skill.py` (Python 3.9+), parenthesised `with (...)` in
+`tests/test_changelog_bridge.py` (Python 3.10+) and `git init -b` in
+`tests/test_tag_merged.py` (git 2.28+).
+
 ## Build model — A: Xcode Cloud builds, fastlane submits
 
 fastlane **never builds the release binary**. Xcode Cloud archives, signs (cloud-managed

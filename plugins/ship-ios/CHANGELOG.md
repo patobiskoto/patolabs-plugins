@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Documented how to run the plugin's own tests and what they require (Python, `git`, `ruby`).
 - Documentation compatibility note, 2026-10-03, updated 2026-10-04: Ship-iOS retains
   0.3.0 with the published Foundry 1.0.0 (2026-10-03). PAT-61's accepted
   six-configuration source qualification retains its original Foundry 0.9.0 producer

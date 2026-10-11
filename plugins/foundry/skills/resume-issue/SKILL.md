@@ -204,9 +204,13 @@ its implementation in the coordinator; inspect the returned diff and perform fin
 repository-level validation afterwards.
 When the remaining work is the correction of a review finding, R9 (a) and (c) of a
 repository that carries AGENTS.md#R9 apply to that correction, including a local one
-written by the coordinator: change as few sentences as possible and re-check each new sentence against the code before handing it
-back. Under Codex, write the same packet to a scratch
-file and run:
+written by the coordinator: change as few sentences as possible and re-check each new
+sentence against the code before handing it back. For a delegated correction, the
+`Constraints:` section of the packet carries rule (c) next to the six-point checklist:
+a correction changes as few sentences as possible, and every new sentence is re-checked
+against the code before the work is handed back.
+
+Under Codex, in every case above, write the same packet to a scratch file and run:
 
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing codex-plan implementer --issue <ISSUE-ID> --packet-file /path/to/task-packet.txt
