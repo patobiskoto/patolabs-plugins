@@ -1199,12 +1199,41 @@ Epic costs one read more (the read itself). Measured on the fake transport (31 c
 269 -> 56, closed-Epic read 270 -> 57, diagnostic 110 -> 55, a whole `close-epic`
 1118 -> 266 (S0 preflight, pre-write S1, the closed parent's replay check and the
 post-write S3, each one snapshot of 56 reads, plus the fixed pre-validation of N + 1).
-Guarantees unchanged: the scope is created empty for each snapshot, never shared with
-another snapshot (nested ones included), the pre-write S1, the post-write verification
-or the write, and dropped on exit; a failed read is never cached; a refused snapshot and
-its diagnostic form one snapshot. Nothing is cached across calls, so a node added,
-reopened or modified between two snapshots is still detected exactly as before
-(PAT-ADR-0006, PAT-ADR-0014).
+Guarantees unchanged for a snapshot: the scope is created empty for each snapshot, never
+shared with another snapshot (nested ones included), the pre-write S1, the post-write
+verification or the write, and dropped on exit; a failed read is never cached; a refused
+snapshot and its diagnostic form one snapshot. A snapshot keeps nothing across calls, so
+a node added, reopened or modified between two snapshots is still detected exactly as
+before (PAT-ADR-0006, PAT-ADR-0014).
+
+Reads shared inside a read-only command (PAT-168). `query issue`, `query adrs`, `query
+backlog` and `query profile` (and `candidates`, which calls `backlog`) additionally open
+`LinearTracker.read_scope()` for the duration of the command. It is a separate layer
+under the snapshot stack, which still decides first and keeps its contract above. Inside
+it, an issue is read at most once per command: a successful `issue.read` is reused by
+the next read of the same reference (a native id and an identifier are two references),
+and `search` fetches every listing page before normalizing, then seeds the layer with
+the listing's nodes (same fields as a single read) under their native id and identifier,
+so the replay of a closed Epic is served from the listing of the same command. An issue
+the listing does not carry is read individually, and fails exactly as before when it is
+unavailable or outside the binding. Inside `query issue` and `query adrs` this also
+covers the ADR index validation: a cited issue is read once per command, while the
+reciprocal comment is still read once per (ADR, issue) pair and both identity
+coordinates of a reference are still read the first time it is resolved. What is not
+shared: a failed read, anything in a write (`_graphql` refuses every document that is
+not a pure read while the layer is open, so a write started inside it fails before
+sending anything, and no command that writes opens it), and anything between two
+commands: the layer is created empty at the start of the command and dropped when it
+ends, so a node changed between two commands is seen by the second (PAT-ADR-0006,
+PAT-ADR-0014). ADR writes, which also run the ADR validation, are unchanged and keep
+exactly their reads.
+
+Error order of `search` (behaviour change, every caller): `search` now fetches every
+listing page before normalizing any node, whether or not the read layer is open. A
+failure of a later page (transport, invalid response, missing cursor, page limit) now
+surfaces before a normalization error of an earlier page, which used to surface first
+and spared the request for the next page. Outputs of a successful listing are identical;
+the difference is visible only when both kinds of failure occur in the same listing.
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only

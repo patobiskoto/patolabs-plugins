@@ -155,12 +155,66 @@ of 150 to 220 above is an earlier, non-reproduced note.
 
 ### The only cache, and its limit
 
+Before PAT-168 (see the section after the table of candidates for what changed),
 `graph_snapshot()` is the only read reuse found: inside one snapshot, `_read_raw`
 reuses a successful `issue.read` of an id. It is private to one snapshot and is not
 opened around `list_adrs`, around `search` as a whole, or between two reads of `query
 issue`. `linear-tracker.md` states: "Nothing is cached across calls, so a node added,
 reopened or modified between two snapshots is still detected exactly as before
 (PAT-ADR-0006, PAT-ADR-0014)."
+
+## After PAT-168 lot 1 (read-only commands)
+
+Status of the statements below: the fake-transport figures are **expected** (counted at
+the GraphQL transport by the test `tests/test_read_scope_cost.py`, one request per wire
+call, retries excluded); they are not the real project's. The "Measured" table above
+describes the code before this change.
+
+What changed, in `trackers/linear.py` and `query.py`: `query issue`, `query adrs`,
+`query backlog` and `query profile` open a read scope in which an issue is read at most
+once per command; `search` fetches all pages first (for every caller) and seeds that
+scope with the listing, so the closed-Epic replay is served from it. Nothing else: the
+reciprocal comment is still read per pair, the two identity reads are kept, every write
+path is untouched, outputs are identical.
+
+Fixture of the test (an Epic with one closed child and one dependency, two ADRs citing
+the same issue; 3 issues in the listing):
+
+| Command | requests before | requests after |
+|---|---|---|
+| `query issue` (plain issue) | 9 | 6 |
+| `query issue` (open Epic) | 9 | 6 |
+| `query issue` (closed Epic) | 12 | 7 |
+| `query adrs` | 7 | 5 |
+| `query backlog` (closed Epic in the listing) | 4 | 1 |
+| `query profile` (closed Epic in the listing) | 4 | 1 |
+
+Real project, **measured** by the coordinator on 2026-10-11 between 14:30 and 14:59
+(Europe/Paris, times of the output files): each command run once with the installed
+Foundry 1.1.1 ("before") and once with the code of this change ("after"), same counter,
+no tracker write between the two runs of a pair. Project at that time: 177 issues (the
+174 of the first measure plus three created since) and 45 ADRs.
+
+| Command | before | after | outputs |
+|---|---|---|---|
+| `query issue PAT-190` (plain issue, 1 link) | 56 | 48 | byte-identical (15,521 bytes) |
+| `query adrs` | 54 | 46 | byte-identical (10,455 bytes) |
+| `query issue PAT-151` (open Epic, 7 links) | 62 | 54 | byte-identical (20,000 bytes) |
+| `query backlog` | 171 | 2 | byte-identical (276,699 bytes) |
+| `query profile intake` (page 1) | 171 | 2 | byte-identical (114,763 bytes) |
+| `query issue PAT-51` (closed Epic, 50 links) | 262 | 132 | byte-identical (209,215 bytes), see below |
+
+For PAT-51 the "before" figure and output are those of the first measure of the same day
+(13:39, table "Measured"): the "before" run repeated at 14:58 was cut by the quota after
+243 requests. The comparison of outputs is therefore made against the 13:39 output; no
+issue of that Epic's graph was written in between by the coordinator, and the two
+outputs are identical. Not measured after the change: `query profile intake
+--all-pages`, any other profile, `candidates`.
+
+Limits that remain by design: the reciprocal comment of each (ADR, issue) pair and the
+second identity read of a reference are still requests; a node absent from the listing
+(for example outside the project binding) is still read individually; a node changed
+during the command is not seen again, as with any single read.
 
 ## Not measured
 

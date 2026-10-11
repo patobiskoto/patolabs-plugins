@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
+  `query backlog` and `query profile`, without changing any output or any write path. A
+  read scope, open only during one of those commands and dropped at its end, reads each
+  issue at most once, and `search` seeds it with its listing so a closed Epic's replay
+  is served from that listing. On the test fake: `query backlog` 4 -> 1, `query issue`
+  of a closed Epic 12 -> 7. Behaviour change in a double-failure case: `search` now
+  fetches every listing page before normalizing any node, for every caller, so a failure
+  of a later page surfaces before a normalization error of an earlier page. ADR writes
+  keep exactly their reads. `docs/linear-tracker.md` states what is shared inside a
+  command and what is not; `docs/linear-request-cost.md` gets the expected figures. The
+  real-project after-measure is recorded separately.
+
 - PAT-167: documentation only, no behaviour of any tool changes. New page
   `docs/linear-request-cost.md` records, as measured on 2026-10-11 on the real project
   (174 issues, 45 ADRs, Foundry 1.1.1), the number of Linear requests of `query issue`,

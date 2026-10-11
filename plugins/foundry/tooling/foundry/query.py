@@ -15,6 +15,7 @@ CLI: PYTHONPATH=…/tooling python3 -m foundry.query \
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sys
@@ -30,6 +31,17 @@ from foundry.trackers.base import (
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
+
+
+def _read_scope(tr):
+    """PAT-168: one issue is read at most once per read-only command (dropped on exit).
+
+    Used only around the tracker reads of the read-only commands below; a tracker with
+    no such scope reads as before.
+    """
+    scope = getattr(tr, "read_scope", None)
+    return scope() if callable(scope) else contextlib.nullcontext()
+
 
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _TERMINAL_STATES = {"done", "dropped", "fixed"}
@@ -332,7 +344,9 @@ def _profile_computation(workflow: str):
         raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
     tr = foundry.tracker()
     p = _project(tr)
-    all_dicts = _annotate(tr.search(p))
+    with _read_scope(tr):
+        issues = tr.search(p)
+    all_dicts = _annotate(issues)
     seeds = sorted(_profile_seed(workflow, all_dicts),
                    key=lambda d: (d["rank_index"], d["id"]))
     limit = _PROFILE_LIMITS[workflow]
@@ -423,7 +437,8 @@ def _profile_page(comp, page: int):
 def backlog(status: str | None = None):
     tr = foundry.tracker()
     p = _project(tr)
-    issues = tr.search(p)
+    with _read_scope(tr):
+        issues = tr.search(p)
     # annotate over the FULL set, filter after: blocked_by must see targets whose
     # state falls outside the filter (a `ready` issue blocked by an `in-progress` one).
     dicts = _annotate(issues)
@@ -509,19 +524,21 @@ def _adr_index_or_capability(tr, p):
 def issue(issue_id: str):
     tr = foundry.tracker()
     p = _project(tr)
-    it = tr.observe_issue(issue_id)
-    # the requested issue keeps its body + notes; related issues stay lean.
-    # Dedupe targets (two links to the same issue = one fetch) and tolerate
-    # unavailable ones (deleted / cross-project / forbidden) — backlog tolerates
-    # them too. Other failures must remain visible to the caller.
-    related = {}
-    for lk in it.links:
-        if lk.target in related or lk.target == it.id:
-            continue
-        try:
-            related[lk.target] = _lean(tr.observe_issue(lk.target).to_dict())
-        except IssueUnavailableError:
-            related[lk.target] = {"id": lk.target, "error": "issue unavailable"}
+    with _read_scope(tr):
+        it = tr.observe_issue(issue_id)
+        # the requested issue keeps its body + notes; related issues stay lean.
+        # Dedupe targets (two links to the same issue = one fetch) and tolerate
+        # unavailable ones (deleted / cross-project / forbidden) — backlog tolerates
+        # them too. Other failures must remain visible to the caller.
+        related = {}
+        for lk in it.links:
+            if lk.target in related or lk.target == it.id:
+                continue
+            try:
+                related[lk.target] = _lean(tr.observe_issue(lk.target).to_dict())
+            except IssueUnavailableError:
+                related[lk.target] = {"id": lk.target, "error": "issue unavailable"}
+        adr_index = _adr_index_or_capability(tr, p)
     return {"project": p.key, "issue": it.to_dict(), "related": related,
             "note": "adrs is an INDEX when the provider supports an ADR knowledge "
                     "base; otherwise it is a typed capability status, or — if the "
@@ -539,7 +556,7 @@ def issue(issue_id: str):
                     "ADR-gated step on the strength of this projection. Load the "
                     "full text of constraining ADRs with "
                     "`query adr <ADR-ID>` when available.",
-            "adrs": _adr_index_or_capability(tr, p)}
+            "adrs": adr_index}
 
 
 def adrs(adr_id=None):
@@ -550,12 +567,14 @@ def adrs(adr_id=None):
         return adr(adr_id)
     tr = foundry.tracker()
     p = _project(tr)
+    with _read_scope(tr):
+        index = _adr_index(tr, p)
     return {"project": p.key,
             "note": "Treat `accepted` ADRs as settled. This is an INDEX: load the full "
                     "text of the ADRs touching your topic with `query adr <ADR-ID>`, "
                     "cite one to close a reopened debate, supersede explicitly if it "
                     "must change.",
-            "adrs": _adr_index(tr, p)}
+            "adrs": index}
 
 
 def adr(adr_id: str):
