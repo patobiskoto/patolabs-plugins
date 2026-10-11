@@ -45,7 +45,8 @@ object, the embedded ADR index itself is in conflict or refers to an ADR absent 
 treat ADR constraints as unknown, not as none, and do not proceed as if the index
 were empty — do not accept or skip any ADR-gated step on the strength of this
 projection. This index does not validate ADR-to-issue links: a broken link is refused
-by the ADR commands (`query adr`, `query adrs`, `adr accept`, ...), not shown here.
+by the ADR commands (`query adr`, `query adrs`, `adr accept`, ...) of a tracker that
+has such links, not shown here.
 
 Before invoking either host, inspect the issue's explicit risk/ADR metadata. If it
 contains a listed signal (`security`, `data_migration`, `concurrency`, `public_api`,

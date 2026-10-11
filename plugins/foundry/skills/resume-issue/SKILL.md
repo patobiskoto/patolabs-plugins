@@ -29,8 +29,9 @@ the text of the cited ones, honor them; if `adrs` is instead a
 `{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}` object, treat
 constraints as unknown, not as none, and do not accept or skip any ADR-gated step on
 the strength of this projection; a broken ADR-to-issue link is not shown in this
-payload, the ADR commands refuse it), the PR URL if one was opened, and the last progress
-notes (`comments`) — the memory of what the previous session did and decided.
+payload, the ADR commands of a tracker that has such links refuse it), the PR URL if
+one was opened, and the last progress notes (`comments`) — the memory of what the
+previous session did and decided.
 
 ## 2. Reload the working state
 ```bash

@@ -4,17 +4,28 @@ ADR-to-issue links; every ADR command still does.  Fakes only, counted at the tr
 
 from __future__ import annotations
 
+import collections
 import json
+import subprocess
 
 import pytest
 
+import foundry
 from foundry import frame, query, write
+from foundry.registry import RepositoryTrackerBinding
 from foundry.trackers import linear as linear_module
 from foundry.trackers.base import (
-    AdrIssueUnavailableError, AdrUnavailableError, TrackerConflictError,
+    AdrIssueUnavailableError, AdrUnavailableError, Tracker, TrackerConflictError,
 )
+from foundry.trackers.devhub import DevHubTracker
+from foundry.trackers.ghprojects import GitHubProjectsTracker
+from foundry.trackers.linear import LinearTracker, LinearTrackerError
+from foundry.trackers.youtrack import YouTrackTracker
 
-from test_read_scope_cost import _OPERATION, _ops, _run, _world  # noqa: F401
+from test_ghprojects_tracker import (
+    PROJECT as GH_PROJECT, _AdrCycleTransport, _rest_issue,
+)
+from test_read_scope_cost import _OPERATION, _run, _world
 
 
 def _with_link_validation(tracker, monkeypatch):
@@ -33,6 +44,11 @@ def test_query_issue_issues_no_pair_validation_request(monkeypatch, tmp_path):
         "FoundryLinearAdrDocuments": 1, "FoundryLinearIssue": 2,
     }
     assert sum(ops.values()) == 3
+    # The two issue reads are those two issues, by the variables of the calls.
+    assert [
+        variables for document, variables in wire.calls
+        if _OPERATION.search(document).group(1) == "FoundryLinearIssue"
+    ] == [{"id": "LIN-2"}, {"id": "LIN-3"}]
     # The same state with the validation costs more, and the extra requests are
     # exactly the pair validation (two ADRs cite LIN-2).
     _with_link_validation(tracker, monkeypatch)
@@ -117,9 +133,9 @@ def test_issue_note_no_longer_announces_the_adr_issue_status(monkeypatch, tmp_pa
     note = query.issue("LIN-2")["note"]
     assert "adr_issue_unavailable" not in note
     assert note.endswith(
-        "ADR-to-issue links are not validated by this index; the ADR commands do. "
-        "Load the full text of constraining ADRs with `query adr <ADR-ID>` when "
-        "available."
+        "ADR-to-issue links are not validated by this index; the ADR commands of a "
+        "tracker that has such links do. Load the full text of constraining ADRs with "
+        "`query adr <ADR-ID>` when available."
     )
 
 
@@ -152,27 +168,54 @@ def test_issue_still_reports_a_broken_version_chain(monkeypatch, tmp_path):
         query.adrs()
 
 
-def test_a_tracker_without_the_capability_lists_as_before(monkeypatch):
-    class _Plain:
+def test_cited_issue_transport_failure_fails_adrs_and_not_issue(monkeypatch, tmp_path):
+    tracker, wire, _project = _world(monkeypatch, tmp_path, closed=False)
+    cited = {"LIN-2", wire.issues["LIN-2"]["id"]}  # both ADRs of the fixture cite LIN-2
+
+    def failing(document, variables):
+        if (
+            _OPERATION.search(document).group(1) == "FoundryLinearIssue"
+            and variables["id"] in cited
+        ):
+            wire.calls.append((document, variables))
+            raise OSError("connection reset")
+        return wire(document, variables)
+
+    tracker._transport = failing
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        query.adrs()
+    assert (caught.value.operation, caught.value.code) == ("issue.read", "transport_error")
+    assert {"id": "LIN-2"} in [variables for _document, variables in wire.calls]
+
+    # LIN-3 has no link: `query issue` reads it and one page of ADR documents only.
+    wire.calls.clear()
+    out = query.issue("LIN-3")
+    assert [variables for _document, variables in wire.calls] == [
+        {"id": "LIN-3"}, {"projectId": tracker._binding(_project)["project_id"],
+                          "after": None},
+    ]
+    assert len(out["adrs"]) == 2 and isinstance(out["adrs"], list)
+
+
+def test_port_default_is_list_adrs_and_link_validating_adapters_override_it():
+    class _Plain:  # the default of the port, on a tracker that validates no link
+        list_adrs_without_issue_links = Tracker.list_adrs_without_issue_links
+
         def list_adrs(self, project):
             raise AdrIssueUnavailableError("T-ADR-0002", "T-42")
 
     with pytest.raises(AdrIssueUnavailableError):
         query._adr_index(_Plain(), None, issue_links=False)
+    overriding = {
+        adapter for adapter in (
+            LinearTracker, GitHubProjectsTracker, YouTrackTracker, DevHubTracker,
+        ) if "list_adrs_without_issue_links" in vars(adapter)
+    }
+    assert overriding == {LinearTracker, GitHubProjectsTracker}
 
 
 # ---- GitHub Projects (fake gh transport of test_ghprojects_tracker) -----------------
-
-import collections  # noqa: E402
-import subprocess  # noqa: E402
-
-import foundry  # noqa: E402
-from foundry.registry import RepositoryTrackerBinding  # noqa: E402
-from foundry.trackers.ghprojects import GitHubProjectsTracker  # noqa: E402
-
-from test_ghprojects_tracker import (  # noqa: E402
-    PROJECT as GH_PROJECT, _AdrCycleTransport, _rest_issue,
-)
 
 
 class _Counting:

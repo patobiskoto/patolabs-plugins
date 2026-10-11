@@ -47,7 +47,8 @@ read-only Claude reviewer after it starts. If `adrs` is instead a
 `{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}` object, the
 embedded ADR index is in conflict or refers to an ADR absent from it — treat it
 as unresolved, not as "no ADRs", and carry that into step 5. A broken ADR-to-issue
-link is not shown in this payload; the ADR commands refuse it.
+link is not shown in this payload; the ADR commands of a tracker that has such links
+refuse it.
 
 ### 2. Code review (blank-context, two stages)
 Before launching anything, build a bounded packet with the literal sections `Goal:`

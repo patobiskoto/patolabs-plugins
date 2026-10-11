@@ -242,8 +242,9 @@ Same fixture as the PAT-168 section:
 | `query adrs` | 5 | 5 |
 
 The three remaining requests of the plain issue are the read of the requested issue
-(LIN-2), the read of its linked issue (LIN-3, a dependency; checked on the variables of
-the two calls) and one page of ADR documents.
+(LIN-2), the read of its linked issue (LIN-3, a dependency; asserted on the variables
+of the two calls by `tests/test_adr_index_without_links.py`) and one page of ADR
+documents.
 
 GitHub Projects, fake gh transport of `tests/test_ghprojects_tracker.py` (**expected**,
 counted by command, **not measured on a real project**; two ADRs citing one delivery

@@ -23,6 +23,7 @@ from foundry.trackers.base import (
     AdrUnavailableError,
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
+    Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
@@ -70,6 +71,9 @@ class _FakeTracker:
 
     def list_adrs(self, project):
         return self._adrs
+
+    # This double does not inherit the port: it borrows the port's own default (PAT-190).
+    list_adrs_without_issue_links = Tracker.list_adrs_without_issue_links
 
     def read_release_scope(self, project, release):
         if release not in {issue.milestone for issue in self._issues if issue.milestone}:
@@ -499,7 +503,7 @@ def test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status(mo
 def test_issue_does_not_validate_adr_issue_relations(monkeypatch):
     # PAT-190: an unavailable issue declared by an ADR is refused by the ADR commands
     # (`list_adrs`), never projected by `query issue`, which builds its index without
-    # validating ADR-to-issue links when the tracker offers that read.
+    # validating ADR-to-issue links, through the port method an adapter overrides.
     class _UnavailableAdrIssueTracker(_FakeTracker):
         def list_adrs(self, project):
             raise AdrIssueUnavailableError("T-ADR-0002", "T-42")

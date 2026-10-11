@@ -52,8 +52,11 @@ class AdrIssueUnavailableError(RuntimeError):
 
     Raised by the ADR commands (``query adr``, ``query adrs``, ``frame`` and the ADR
     writes) of the trackers that validate ADR-to-issue links; the pair is preserved so
-    the caller sees the exact broken relation.  ``query issue`` does not validate these
-    links (PAT-190) and never raises or projects this error.
+    the caller sees the exact broken relation.  ``query issue`` builds its ADR index
+    through ``Tracker.list_adrs_without_issue_links`` (PAT-190) and has no projection
+    for this error: it does not raise it as long as every adapter whose ``list_adrs``
+    validates these links overrides that method, which the built-in adapters do; raised
+    there, it would propagate out of ``query issue`` like any unexpected error.
     """
 
     def __init__(self, adr_id: str, issue_id: str):
@@ -509,6 +512,17 @@ class Tracker(ABC):
     @abstractmethod
     def list_adrs(self, project: Project) -> list[Adr]:
         """All ADRs for the project (for retrieval-before-reasoning)."""
+
+    def list_adrs_without_issue_links(self, project: Project) -> list[Adr]:
+        """The ADR index embedded in ``query issue`` (PAT-190).
+
+        Contract: the same ADRs as ``list_adrs``, without validating ADR-to-issue
+        links.  The default is ``list_adrs`` itself, which is right for an adapter
+        whose ``list_adrs`` validates no such link.  An adapter whose ``list_adrs``
+        validates them must override this method to skip that validation and nothing
+        else; every ADR command keeps ``list_adrs``.
+        """
+        return self.list_adrs(project)
 
     @abstractmethod
     def create_adr(

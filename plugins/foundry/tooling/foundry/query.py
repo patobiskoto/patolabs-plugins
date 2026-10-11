@@ -474,12 +474,11 @@ def milestones():
 def _adr_index(tr, p, *, issue_links=True):
     """id / title / status / ref of every ADR — the body only via `query adr <ID>`.
 
-    `issue_links=False` (the issue payload only, PAT-190) asks a tracker that can to
-    leave the ADR-to-issue links unchecked; any other tracker lists as usual.
+    `issue_links=False` (the issue payload only, PAT-190) reads the index through the
+    port method `Tracker.list_adrs_without_issue_links`, which leaves the ADR-to-issue
+    links unchecked; its default is `list_adrs`, for a tracker that validates none.
     """
-    list_adrs = tr.list_adrs
-    if not issue_links:
-        list_adrs = getattr(tr, "list_adrs_without_issue_links", list_adrs)
+    list_adrs = tr.list_adrs if issue_links else tr.list_adrs_without_issue_links
     return [{k: v for k, v in a.to_dict().items() if k != "body"}
             for a in list_adrs(p)]
 
@@ -550,8 +549,9 @@ def issue(issue_id: str):
                     "fail-closed on it. Treat ADR constraints as UNKNOWN (never as "
                     "none) while either status holds, and do not accept or skip an "
                     "ADR-gated step on the strength of this projection. ADR-to-issue "
-                    "links are not validated by this index; the ADR commands do. Load the "
-                    "full text of constraining ADRs with "
+                    "links are not validated by this index; the ADR commands of a "
+                    "tracker that has such links do. Load the full text of "
+                    "constraining ADRs with "
                     "`query adr <ADR-ID>` when available.",
             "adrs": adr_index}
 
