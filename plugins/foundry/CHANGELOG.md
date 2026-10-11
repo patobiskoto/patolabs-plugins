@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- PAT-138: non-blocking remarks of PAT-136 and PAT-139, wording and tests only. The one
+  change under `tooling/` is the module docstring of `foundry/edit.py`, which now names
+  the exception of the three writes pre-authorized by R9 (b). Rule R9 (b) and the
+  `merge-pr` skill no longer say "three cases" for the list of corrections before the
+  merge; `merge-pr` names no issue of this repository, names the existing commands
+  (`query backlog`, `query issue`) to look for a `Nits <ORIGIN-EPIC-ID>` Epic and to read
+  the tracker back, and says that after a validated round the coordinator, not the
+  reviewer, classes the remarks. The `resume-issue` packet of a delegated correction
+  carries rule (c). `docs/review-rounds.md` is corrected for `ghprojects` (the first
+  `create_issue` call itself raises `create_effect_unknown`; `transport_failed` is also
+  the default reason), for the seams of the conformance tests, and says that
+  `create_issue` with a parent makes two writes on YouTrack. Documentation status (R5):
+  `docs/review-rounds.md`, `AGENTS.md` / `CLAUDE.md` R9, the skills `merge-pr`,
+  `resume-issue`, `review-pr` and the docstring of `foundry/edit.py` updated; no CLI verb,
+  option or constant changed.
+
 - PAT-142: CI speed, no change under `tooling/`. The `foundry` job runs the public suite
   in parallel (`pytest -n auto`, `pytest-xdist` installed in the job); a new `plan` job
   runs `scripts/ci_plan.py`, which skips the whole `foundry` job (check `skipped`) when a
@@ -32,18 +48,22 @@
   maintainer creates or approves the follow-up issue" is removed. No second-level
   deferral: non-blocking remarks on a PR of a companion Epic are corrected before the
   merge and fully re-reviewed. The origin Epic of an issue is its direct parent Epic. If the
-  tracker durably refuses one of the three writes, no substitute write is made and the
-  remarks are corrected before the merge; on a transient failure (quota, network) the
+  tracker durably refuses one of the three writes, no substitute write is made, the
+  remarks are corrected before the merge and fully re-reviewed, and the refusal is
+  reported in the PR description; on a transient failure (quota, network) the
   write is retried and the merge waits for it, after a read of the tracker when its
   effect is unknown; a retry that the adapter itself refuses is treated as a durable
-  refusal. An issue without an origin Epic gets no
+  refusal (same handling). An issue without an origin Epic gets no
   deferral: its remarks are corrected before the merge and fully re-reviewed. Not mechanical:
   no gate checks the companion Epic. Not coded yet: inside a campaign the authorization has no effect yet,
   because three things are missing (a channel that carries the remarks to the campaign,
   the code that creates the companion Epic and its issues, campaigns usable on the
   repository's tracker); left to a later issue, PAT-141
-  ([review rounds](docs/review-rounds.md)). Six tracker conformance cases added, two per provider on its fake
-  transport: the three writes, and a project where the `Epic` type is unavailable. Text and tests only; no change under `tooling/`.
+  ([review rounds](docs/review-rounds.md)). Six tracker conformance cases added, two per provider on a double of the provider
+  (YouTrack: `_req` replaced; Linear: `transport=`; GitHub Projects: thirteen private
+  methods of the adapter replaced, not the `runner=` seam, except for the case of a
+  Project without `Epic` option, which goes through `runner=`): the three writes, and a
+  project where the `Epic` type is unavailable. Text and tests only; no change under `tooling/`.
 - PAT-136: new process rule R9 in `AGENTS.md` / `CLAUDE.md` (author checklist for
   documentation sentences, grouped deferral of non-blocking review remarks to one
   follow-up issue per batch, minimal correction commits), written into the
