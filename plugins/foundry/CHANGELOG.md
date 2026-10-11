@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- PAT-190: `query issue` returns the ADR index without validating the ADR-to-issue
+  links, on every tracker (Linear and GitHub Projects used to validate them; YouTrack
+  and DevHub never did). The ADR commands (`query adr`, `query adrs`, `frame`, the ADR
+  writes) keep the validation and still refuse a broken link. Behaviour changes: a
+  broken link (missing reciprocal comment, cited issue absent or inaccessible) is no
+  longer projected as `adr_issue_unavailable` or `conflict` by `query issue`, which
+  returns the plain index; a transport, binding or payload failure while reading a
+  cited issue no longer fails `query issue`. The reads its index still makes, and whose
+  failure still fails it, are per tracker: on Linear, the listing of ADR documents and
+  nothing else; on GitHub Projects, the repository Issue listing, the Project item
+  listing and, for each ADR, the read of its support Issue and of its comment history.
+  The port is explicit: `Tracker.list_adrs_without_issue_links` (default: `list_adrs`),
+  overridden by the Linear and GitHub Projects adapters, the two whose `list_adrs`
+  validates these links. The `note` of the `query issue` payload no longer announces the
+  `adr_issue_unavailable` status and says that the ADR commands of a tracker that has
+  such links validate them; every other field is identical for a valid graph. The
+  skills `start-issue`, `resume-issue` and `merge-pr` no longer list that shape for
+  `adrs` in this payload. Version chain, witness, history, status and supersession
+  checks stay in `query issue`, and so does, on Linear, the metadata check of each
+  stored relation list (an identifier repeated verbatim or malformed is a provider
+  error there, not a link the ADR commands alone detect). Fake
+  transport: a plain Linear `query issue` goes from 6 to 3 requests, GitHub Projects
+  from 17 to 15 commands; measured on the real Linear project in
+  `docs/linear-request-cost.md`. R5: documented in `docs/linear-tracker.md`,
+  `docs/ghprojects-tracker.md` and `docs/linear-request-cost.md`; no CLI option or
+  configuration key added.
 - PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
   `query backlog` and `query profile`, without changing any output or any write path. A
   read scope, open only during one of those commands and dropped at its end, reads each

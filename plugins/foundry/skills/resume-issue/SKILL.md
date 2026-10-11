@@ -26,11 +26,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 The payload carries the AC (`- [ ]` vs `- [x]`), the linked issues (lean — bodies via
 `query issue <ID>` if needed), the ADR index (constraints — `query adr <ADR-ID>` for
 the text of the cited ones, honor them; if `adrs` is instead a
-`{"status": "conflict", ...}`, `{"status": "adr_unavailable", ...}`, or
-`{"status": "adr_issue_unavailable", ...}` object, treat constraints as unknown, not
-as none, and do not accept or skip any ADR-gated step on
-the strength of this projection), the PR URL if one was opened, and the last progress
-notes (`comments`) — the memory of what the previous session did and decided.
+`{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}` object, treat
+constraints as unknown, not as none, and do not accept or skip any ADR-gated step on
+the strength of this projection; a broken ADR-to-issue link is not shown in this
+payload, the ADR commands of a tracker that has such links refuse it), the PR URL if
+one was opened, and the last progress notes (`comments`) — the memory of what the
+previous session did and decided.
 
 ## 2. Reload the working state
 ```bash

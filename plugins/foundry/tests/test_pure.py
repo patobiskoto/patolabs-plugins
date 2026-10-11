@@ -23,6 +23,7 @@ from foundry.trackers.base import (
     AdrUnavailableError,
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
+    Tracker,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
@@ -70,6 +71,9 @@ class _FakeTracker:
 
     def list_adrs(self, project):
         return self._adrs
+
+    # This double does not inherit the port: it borrows the port's own default (PAT-190).
+    list_adrs_without_issue_links = Tracker.list_adrs_without_issue_links
 
     def read_release_scope(self, project, release):
         if release not in {issue.milestone for issue in self._issues if issue.milestone}:
@@ -496,12 +500,16 @@ def test_issue_projects_embedded_adr_index_unavailable_adr_as_distinct_status(mo
     }
 
 
-def test_issue_projects_unavailable_adr_issue_relation_with_exact_provenance(monkeypatch):
-    # An unavailable issue declared by an ADR is neither an unavailable requested
-    # issue nor an unavailable ADR. Its source ADR and target issue stay explicit.
+def test_issue_does_not_validate_adr_issue_relations(monkeypatch):
+    # PAT-190: an unavailable issue declared by an ADR is refused by the ADR commands
+    # (`list_adrs`), never projected by `query issue`, which builds its index without
+    # validating ADR-to-issue links, through the port method an adapter overrides.
     class _UnavailableAdrIssueTracker(_FakeTracker):
         def list_adrs(self, project):
             raise AdrIssueUnavailableError("T-ADR-0002", "T-42")
+
+        def list_adrs_without_issue_links(self, project):
+            return []
 
     issues = [Issue(id="A", title="a", state="ready", body="text")]
     monkeypatch.setattr(
@@ -511,12 +519,8 @@ def test_issue_projects_unavailable_adr_issue_relation_with_exact_provenance(mon
 
     out = query.issue("A")
     assert out["issue"]["id"] == "A"
-    assert out["adrs"] == {
-        "status": "adr_issue_unavailable",
-        "tracker": "fake",
-        "adr_id": "T-ADR-0002",
-        "issue_id": "T-42",
-    }
+    assert out["adrs"] == []
+    assert "adr_issue_unavailable" not in out["note"]
 
 
 def test_issue_propagates_unexpected_adr_index_error(monkeypatch):

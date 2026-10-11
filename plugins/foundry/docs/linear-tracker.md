@@ -608,25 +608,37 @@ does not replace the citation at this provider-neutral CLI boundary.
 
 `query adr <ADR-ID>`, `query adrs`, `frame`, and every ADR write stay fail-closed on any
 of the conflicts above — none of them repair or normalize on read. `query issue <ID>` is
-the one exception: its `adrs` field only keeps the issue payload itself readable when the
-embedded index read raises a typed `TrackerConflictError` (e.g. a version without a
-matching witness), a typed `AdrUnavailableError` (e.g. a supersession relation whose
-target ADR is absent from the embedded index), or a typed `AdrIssueUnavailableError`
-(an ADR's declared issue relation is absent or inaccessible). It projects each as its
-own explicit, distinct status —
+the one exception, and it does not validate ADR-to-issue links at all (PAT-190, one rule
+for every tracker): its embedded index is built by `list_adrs_without_issue_links`,
+which reads the same documents and still checks the version chains, the witnesses, the
+statuses and the supersession relations, but neither resolves the issues an ADR declares
+nor reads their reciprocal comments. A broken ADR-issue link that needs one of those
+reads to be seen (a missing or altered reciprocal comment, a declared issue that is
+absent, inaccessible or outside the configured team and project, a stored identifier
+that Linear resolves to another canonical identifier, two different stored identifiers
+that resolve to the same native issue) is therefore detected only by `query adr`,
+`query adrs`, `frame` and the ADR writes, which refuse it as above; `query issue`
+returns the plain index for it. What needs no read stays checked in `query issue`
+too, by the metadata parser of each ADR document (`_parse_adr_document`): a relation
+list that repeats the same identifier verbatim, holds a malformed identifier or exceeds
+100 entries is an `adr.normalize` provider error, which propagates. The
+`adrs` field keeps the issue payload itself readable when the embedded index read raises
+a typed `TrackerConflictError` (e.g. a version without a matching witness) or a typed
+`AdrUnavailableError` (e.g. a supersession relation whose target ADR is absent from the
+embedded index). It projects each as its own explicit, distinct status —
 `{"status": "conflict", "tracker": <tracker name>, "reason": <fixed conflict message>}`
-for the former, `{"status": "adr_unavailable", "tracker": <tracker name>,
-"reason": "ADR unavailable: <adr id>"}` for the missing ADR, and
-`{"status": "adr_issue_unavailable", "tracker": <tracker name>, "adr_id": <adr id>,
-"issue_id": <issue id>}` for the missing ADR issue relation. Conflict messages are static
-literals (e.g. "Linear ADR version witness is missing"); the unavailable-ADR message
-interpolates only the missing ADR identifier, which metadata validation has already
-matched against the ADR-ID pattern, never other provider text. The unavailable-relation
-projection carries only the validated canonical identifiers from ADR metadata. None is
-ever an empty list, the `{"status": "unavailable", ...}` capability shape used when a
-tracker has no ADR knowledge base at all, or another projected state. Transport, binding,
-and other provider errors from the embedded index still
-propagate out of `query issue` unchanged.
+for the former and `{"status": "adr_unavailable", "tracker": <tracker name>,
+"reason": "ADR unavailable: <adr id>"}` for the missing ADR. Conflict messages are
+static literals (e.g. "Linear ADR version witness is missing"); the unavailable-ADR
+message interpolates only the missing ADR identifier, which metadata validation has
+already matched against the ADR-ID pattern, never other provider text. None is ever an
+empty list, the `{"status": "unavailable", ...}` capability shape used when a tracker
+has no ADR knowledge base at all, or another projected state. Transport, binding, and
+other provider errors from the embedded index still propagate out of `query issue`
+unchanged. Since the cited issues are no longer read for the index, a transport,
+binding or payload failure while reading a cited issue, which used to fail the whole
+`query issue`, no longer does: on Linear the listing of ADR documents (`adr.list`) is
+the only request the index still makes, so the only one whose failure still fails it.
 
 Reads also reject holes, forks, archive/deletion, metadata edits and project mismatch.
 Each additive version must have exactly one typed delta: body, status, source
@@ -640,8 +652,10 @@ through Linear and corroborated by both its returned readable identifier and nat
 Case variants and native UUID aliases are stored only as the canonical readable identifier;
 two inputs that resolve to the same native issue are a conflict, not two relations. The
 100-link bound applies before resolution and to the resulting canonical identity set.
-Reads and replay reject noncanonical stored aliases or malformed provider identities.
-Every issue relation is re-read and must belong to the configured team and project, and
+Reads and replay of the ADR commands reject noncanonical stored aliases or malformed
+provider identities (`query issue` does not resolve issue relations, see above).
+Every issue relation is re-read by the ADR commands (`query adr`, `query adrs`, `frame`
+and the ADR writes, not `query issue`) and must belong to the configured team and project, and
 the issue must retain its deterministic reciprocal Foundry comment bound to the project,
 ADR, canonical readable issue ID, and exact native issue ID. Its deterministic client ID
 is UUIDv4, as Linear requires.
@@ -1220,10 +1234,10 @@ normalizing, then seeds the layer with the listing's nodes (same fields as a sin
 read) under their native id and identifier, so the replay of a closed Epic is served
 from the listing of the same command. An issue the listing does not carry is read
 individually, and fails exactly as before when it is unavailable or outside the
-binding. Inside `query issue` and `query adrs` this also covers the ADR index
-validation: a cited issue is read once per command, while the reciprocal comment is
-still read once per (ADR, issue) pair and both identity coordinates of a reference are
-still read the first time it is resolved.
+binding. Inside `query adrs` this also covers the ADR index validation: a cited issue
+is read once per command, while the reciprocal comment is still read once per (ADR,
+issue) pair and both identity coordinates of a reference are still read the first time
+it is resolved. `query issue` no longer validates the ADR-to-issue links (PAT-190).
 
 What is not shared: a failed read; anything in a write (while the layer is open,
 `_graphql` refuses any document that is not a pure read, so the first mutation of a

@@ -25,7 +25,6 @@ from pathlib import Path
 import foundry
 from foundry import registry
 from foundry.trackers.base import (
-    AdrIssueUnavailableError,
     AdrUnavailableError,
     IssueUnavailableError,
     TrackerCapabilityUnavailableError,
@@ -472,28 +471,34 @@ def milestones():
             "note": "Reason about risk/trajectory, not just %: WIP, blocked, remaining estimate."}
 
 
-def _adr_index(tr, p):
-    """id / title / status / ref of every ADR — the body only via `query adr <ID>`."""
+def _adr_index(tr, p, *, issue_links=True):
+    """id / title / status / ref of every ADR — the body only via `query adr <ID>`.
+
+    `issue_links=False` (the issue payload only, PAT-190) reads the index through the
+    port method `Tracker.list_adrs_without_issue_links`, which leaves the ADR-to-issue
+    links unchecked; its default is `list_adrs`, for a tracker that validates none.
+    """
+    list_adrs = tr.list_adrs if issue_links else tr.list_adrs_without_issue_links
     return [{k: v for k, v in a.to_dict().items() if k != "body"}
-            for a in tr.list_adrs(p)]
+            for a in list_adrs(p)]
 
 
 def _adr_index_or_capability(tr, p):
     """Keep an issue readable when its tracker has no ADR knowledge base, when the
-    embedded ADR index itself is in conflict, when the embedded ADR index refers to an
-    ADR (e.g. a supersession target) that is absent from it, or when a declared ADR
-    issue relation is absent or inaccessible.
+    embedded ADR index itself is in conflict, or when the embedded ADR index refers to
+    an ADR (e.g. a supersession target) that is absent from it.
 
-    Only the provider's typed capability, conflict, unavailable-ADR and unavailable
-    ADR-issue-relation errors are projected — each as its own explicit, distinct
-    status, never as an empty list and never conflated with each other. Transport,
-    binding and payload failures still propagate rather than being mistaken for any of
-    them. `query adr`, `query adrs`, `frame` and ADR writes stay fail-closed on the
-    same integrity errors — this projection only keeps the issue payload readable; it
-    does not repair or normalize either integrity error.
+    Only the provider's typed capability, conflict and unavailable-ADR errors are
+    projected — each as its own explicit, distinct status, never as an empty list and
+    never conflated with each other. Transport, binding and payload failures still
+    propagate rather than being mistaken for any of them. The index is built without
+    validating the ADR-to-issue links (PAT-190), so a broken link is never projected
+    here; `query adr`, `query adrs`, `frame` and ADR writes validate it and stay
+    fail-closed on it and on the same integrity errors — this projection only keeps
+    the issue payload readable; it does not repair or normalize them.
     """
     try:
-        return _adr_index(tr, p)
+        return _adr_index(tr, p, issue_links=False)
     except TrackerCapabilityUnavailableError as exc:
         return {
             "status": "unavailable",
@@ -511,13 +516,6 @@ def _adr_index_or_capability(tr, p):
             "status": "adr_unavailable",
             "tracker": tr.name,
             "reason": str(exc),
-        }
-    except AdrIssueUnavailableError as exc:
-        return {
-            "status": "adr_issue_unavailable",
-            "tracker": tr.name,
-            "adr_id": exc.adr_id,
-            "issue_id": exc.issue_id,
         }
 
 
@@ -546,15 +544,14 @@ def issue(issue_id: str):
                     "status ({\"status\": \"conflict\", ...}), or — if the index "
                     "refers to an ADR absent from it (e.g. a missing supersession "
                     "target) — a typed unavailable-ADR status "
-                    "({\"status\": \"adr_unavailable\", ...}), or — if a declared "
-                    "ADR issue relation is unavailable — a typed unavailable-ADR-issue "
-                    "status ({\"status\": \"adr_issue_unavailable\", ...}). Neither "
-                    "clears on "
+                    "({\"status\": \"adr_unavailable\", ...}). Neither clears on "
                     "read: `query adr`, `query adrs`, `frame` and ADR writes stay "
                     "fail-closed on it. Treat ADR constraints as UNKNOWN (never as "
                     "none) while either status holds, and do not accept or skip an "
-                    "ADR-gated step on the strength of this projection. Load the "
-                    "full text of constraining ADRs with "
+                    "ADR-gated step on the strength of this projection. ADR-to-issue "
+                    "links are not validated by this index; the ADR commands of a "
+                    "tracker that has such links do. Load the full text of "
+                    "constraining ADRs with "
                     "`query adr <ADR-ID>` when available.",
             "adrs": adr_index}
 

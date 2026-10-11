@@ -220,6 +220,60 @@ second identity read of a reference are still requests; a node absent from the l
 (for example outside the project binding) is still read individually; a node changed
 during the command is not seen again, as with any single read.
 
+## After PAT-190 (`query issue` without ADR-issue link validation)
+
+Status: the fake-transport figures are **expected** (counted at the GraphQL transport by
+`tests/test_read_scope_cost.py` and `tests/test_adr_index_without_links.py`, retries
+excluded); they are not the real project's. The real-project measure follows the table.
+
+What changed: the ADR index embedded in the `query issue` payload is built without
+resolving the issues that ADRs declare and without reading the reciprocal comment of
+each (ADR, issue) pair. Version chains, witnesses, statuses and supersession relations
+are still checked, and the output for a valid graph is unchanged. `query adrs`,
+`query adr`, `frame` and the ADR writes keep the full validation.
+
+Same fixture as the PAT-168 section:
+
+| Command | requests after PAT-168 | requests after PAT-190 |
+|---|---|---|
+| `query issue` (plain issue) | 6 | 3 |
+| `query issue` (open Epic) | 6 | 3 |
+| `query issue` (closed Epic) | 7 | 4 |
+| `query adrs` | 5 | 5 |
+
+The three remaining requests of the plain issue are the read of the requested issue
+(LIN-2), the read of its linked issue (LIN-3, a dependency; asserted on the variables
+of the two calls by `tests/test_adr_index_without_links.py`) and one page of ADR
+documents.
+
+GitHub Projects, fake gh transport of `tests/test_ghprojects_tracker.py` (**expected**,
+counted by command, **not measured on a real project**; two ADRs citing one delivery
+issue, `query issue` of another issue): 17 commands before PAT-190, 15 after. The two
+removed are the Project listing and the native read of the cited issue, which only the
+link validation made (once, although two ADRs cite it); `query adrs` is unchanged.
+
+Real project, **measured** by the coordinator on 2026-10-11 between 16:01 and 16:03
+(Europe/Paris, times of the output files), 177 issues and 45 ADRs: "before" is the
+installed Foundry 1.1.1 (the code before PAT-168), "after PAT-168" the figures of the
+section above, "after PAT-190" the code of this change, same counter.
+
+| Command | before | after PAT-168 | after PAT-190 | outputs |
+|---|---|---|---|---|
+| `query issue PAT-189` (plain issue, 1 link) | 56 | 48 (PAT-190 at the time) | 5 | byte-identical to the 1.1.1 output of the same minute (17,870 bytes) |
+| `query issue PAT-151` (open Epic, 7 links) | 62 | 54 | 11 | byte-identical to the 1.1.1 output of the same minute (20,000 bytes) |
+| `query issue PAT-51` (closed Epic, 50 links) | 262 | 132 | 99 | byte-identical to the 1.1.1 output of 13:39 (209,215 bytes) |
+| `query adrs` | 54 | 46 | 46 | not compared again (path unchanged by PAT-190) |
+
+These real outputs were compared before the `note` field of `query issue` was corrected
+(same PR). After that correction the coordinator ran `query issue PAT-189` again with
+the final code (5 requests): every field except `note` equals the 1.1.1 output of 16:02,
+and `note` differs as intended. The open and the closed Epic were not run again after
+the correction.
+
+The 5 requests of a plain issue are the issue, its linked issue and the three `adr.list`
+pages. For PAT-51 the 1.1.1 side was not run again (262 requests); its output of 13:39
+is the reference, as in the section above.
+
 ## Not measured
 
 - `issue merge`, `issue openpr`, `edit comment`, a real `close-epic` attempt.
