@@ -2146,12 +2146,14 @@ def test_pat66_stderr_permission_hint_does_not_clear_pending_create(
 def test_failed_issue_post_surfaces_create_effect_unknown_at_the_first_call(
     monkeypatch, tmp_path, stderr, stdout, cause,
 ):
-    """The classification of ``_run`` reaches the coordinator only as an exception context.
+    """When the candidate read after a failed POST finds nothing, the cause is only context.
 
-    Through the real ``runner=`` seam: the single issue POST fails, the candidate read that
-    follows finds nothing, so the FIRST ``create_issue`` call raises
-    ``create_effect_unknown``; ``rate_limited`` / ``transport_failed`` (``_run``, the default
-    for an unclassified failure) are only the context, and ``_rest_write`` posts once.
+    The single issue POST goes through the real ``runner=`` seam and fails; the candidate
+    read that follows is replaced here by ``_create_candidates`` returning no issue (the
+    case where that read fails too is the next test, through ``runner=``). So the FIRST
+    ``create_issue`` call raises ``create_effect_unknown``; ``rate_limited`` /
+    ``transport_failed`` (``_run``, the default for an unclassified failure) are only the
+    context, and ``_rest_write`` posts once.
     """
     posts = []
 
@@ -2180,6 +2182,52 @@ def test_failed_issue_post_surfaces_create_effect_unknown_at_the_first_call(
     assert isinstance(context, GitHubProjectsTrackerError)
     assert (context.operation, context.reason) == ("issue.create", cause)
     assert len(posts) == 1
+
+
+@pytest.mark.parametrize(("stderr", "cause"), [
+    ("HTTP 429: API rate limit exceeded", "rate_limited"),
+    ("connection reset by peer", "transport_failed"),
+])
+def test_failed_issue_post_then_failed_candidate_read_surfaces_the_read_error(
+    monkeypatch, tmp_path, stderr, cause,
+):
+    """If the read after the failed POST fails too, its own error comes out, not the unknown.
+
+    Everything goes through the real ``runner=`` seam (``_create_candidates`` is not
+    replaced): the first candidate read, before the POST, answers an empty list; the POST
+    fails; the second candidate read fails with the same cause. The exception is the read's
+    (operation ``issue.create_reconcile``), the POST error is only its context, and the
+    POST was sent once.
+    """
+    posts, reads = [], []
+
+    def runner(command, **kwargs):
+        if command[:4] == ["gh", "api", "-X", "POST"]:
+            posts.append(command)
+            return subprocess.CompletedProcess(command, 1, "", stderr)
+        assert command[:4] == ["gh", "api", "-X", "GET"]
+        assert "/issues?state=all" in command[4]
+        reads.append(command)
+        if len(reads) == 1:
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+        return subprocess.CompletedProcess(command, 1, "", stderr)
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+        "type": type("F", (), {
+            "id": "type", "data_type": "SINGLE_SELECT", "options": {"Task": "type-task"},
+        })(),
+    })
+
+    with pytest.raises(GitHubProjectsTrackerError) as first:
+        tracker.create_issue(PROJECT, "partial", "body")
+
+    assert (first.value.operation, first.value.reason) == ("issue.create_reconcile", cause)
+    context = first.value.__context__
+    assert isinstance(context, GitHubProjectsTrackerError)
+    assert (context.operation, context.reason) == ("issue.create", cause)
+    assert len(posts) == 1 and len(reads) == 2
 
 
 def test_add_comment_post_failure_raises_the_run_reason_itself_and_never_retries(

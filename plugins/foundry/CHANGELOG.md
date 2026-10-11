@@ -11,8 +11,10 @@
   the tracker back, and says that after a validated round the coordinator, not the
   reviewer, classes the remarks. The `resume-issue` packet of a delegated correction
   carries rule (c). `docs/review-rounds.md` is corrected for `ghprojects` (the first
-  `create_issue` call itself raises `create_effect_unknown`; `transport_failed` is also
-  the default reason), for the seams of the conformance tests, and says that
+  `create_issue` call itself raises `create_effect_unknown` when the read of the
+  candidates that follows a failed issue POST succeeds and finds none, and the error of
+  that read comes out when it fails too; `transport_failed` is also the default reason),
+  for the seams of the conformance tests, and says that
   `create_issue` with a parent makes two writes on YouTrack. Documentation status (R5):
   `docs/review-rounds.md`, `AGENTS.md` / `CLAUDE.md` R9, the skills `merge-pr`,
   `resume-issue`, `review-pr` and the docstring of `foundry/edit.py` updated; no CLI verb,

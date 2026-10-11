@@ -55,9 +55,9 @@ decides, in either of these cases:
   the same 6 tasks, when one arm covered 5). Rule (b) gives up that extra look. That defect
   is of the kind targeted by checklist point 4; nothing shows the checklist would have
   prevented it.
-- Presence tests in `tests/test_skills.py` and `tests/test_process_contract.py` prove that the rules are written, not
-  that they are followed. Which parts only the reviewer can judge is listed
-  in `AGENTS.md#R9`.
+- Presence tests in `tests/test_skills.py` and `tests/test_process_contract.py` prove
+  that the rules are written, not that they are followed. Which parts only the reviewer
+  can judge is listed in `AGENTS.md#R9`.
 - No gate sees the "fix before merge" mark or the existence of the follow-up issue. The
   review proof keeps `quality=mergeable` (`quality` is only `mergeable` or `blocked`:
   `skills/review-pr/SKILL.md`, Output section; `_review_evidence` in
@@ -143,18 +143,21 @@ provider covers a project where the `Epic` type is not available:
 | Linear | the `Epic` entry of the binding's `type_label_ids` | the adapter refuses with `type_unmapped` before the create mutation (`tooling/foundry/trackers/linear.py`) |
 | `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `invalid_field_options:type` when it reads the Project, before any write (`_field_map`, `tooling/foundry/trackers/ghprojects.py`), because it requires the options of that field to be exactly the declared set; a read of that Project is refused the same way |
 
-On YouTrack, `create_issue` with a parent makes two writes: a POST to `/issues`, then
+What the coordinator does when the `Epic` type is missing (the table above) is in
+`AGENTS.md#R9` (b): this is a durable refusal, so no substitute write, the remarks are
+corrected before the merge and fully re-reviewed, and the refusal is reported in the PR
+description.
+
+This paragraph is about another failure, not about the missing `Epic` type. On
+YouTrack, `create_issue` with a parent makes two writes: a POST to `/issues`, then
 `link(..., "subtask-of", parent)` (`link` in `tooling/foundry/trackers/youtrack.py`),
 which posts a command to `/commands`. The tests run it with a failure of the second
 write: the created issue stays, without its parent link, and `create_issue` removes
 nothing. How such a partial write is repaired is not decided on this page.
 
-What the coordinator does then is in `AGENTS.md#R9` (b): this is a durable refusal, so
-no substitute write, the remarks are corrected before the merge and fully re-reviewed,
-and the refusal is reported in the PR description.
-
-A transient failure is the other case of `AGENTS.md#R9` (b): the coordinator waits and
-retries the write before the merge. When the failure leaves the effect of the write
+A transient failure is the other case of `AGENTS.md#R9` (b), next to the durable refusal
+of a missing `Epic` type: the
+coordinator waits and retries the write before the merge. When the failure leaves the effect of the write
 unknown (a network failure), it first reads the tracker to see whether the write
 happened, and retries only if it did not. That reading is what prevents a second issue
 or a second comment: no adapter retries a write by itself in the code read here, and a
@@ -181,7 +184,7 @@ What each adapter gives the coordinator to recognise a transient failure:
 |---|---|---|
 | YouTrack | no quota-specific error in `tooling/foundry/trackers/youtrack.py`: an HTTP failure is raised as `_YouTrackHTTPError` with its status; reset time not verified | not verified |
 | Linear | `LinearQuotaExhaustedError` (`tooling/foundry/trackers/linear.py`), with the reset time in `reset_at` and `reset_at_ms`; never retried by the adapter ([`linear-tracker.md`](linear-tracker.md), "Transport errors, read retries and quota") | `transport_error`; a write is never retried by the adapter (same section) |
-| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`), raised for the reads and for the POST of `add_comment`; reset time not verified. For the issue POST of `create_issue`, `rate_limited` is not what the coordinator receives: it stays only as the context of the `create_effect_unknown` raised by that same call (see the previous table) | reason `transport_failed`, which `_run` also gives to every `gh` failure it does not classify, and to a `gh` process that cannot run or times out: it does not tell a network failure from a refusal by the provider. For the issue POST of `create_issue`, the coordinator receives `create_effect_unknown` instead. `_rest_write` never retries |
+| `ghprojects` | reason `rate_limited` (`_run` in `tooling/foundry/trackers/ghprojects.py`), raised for the reads and for the POST of `add_comment`; reset time not verified. For the issue POST of `create_issue`, what the coordinator receives depends on the read of the candidates that follows a failed POST (`_observe_create_candidate`, operation `issue.create_reconcile`): if that read fails too, its own reason comes out (`rate_limited` when the quota is still exhausted), and `rate_limited` of the POST is only the context; if that read succeeds and finds no issue, the call raises `create_effect_unknown` (see the previous table). The same read also runs once before the POST: if it fails, its reason comes out and no POST is made | reason `transport_failed`, which `_run` also gives to every `gh` failure it does not classify, and to a `gh` process that cannot run or times out: it does not tell a network failure from a refusal by the provider. For the issue POST of `create_issue`, the same two cases apply as in the previous cell: the reason of the failed read of the candidates (`transport_failed` when the network is still down) comes out if that read fails too, and `create_effect_unknown` only if the read succeeds and finds no issue. `_rest_write` never retries |
 
 Limits, as stated by PAT-ADR-0018 at its date and not lifted by these tests:
 
