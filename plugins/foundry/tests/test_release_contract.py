@@ -116,10 +116,15 @@ def changelog_sections():
 
 
 def release_documents(version):
-    """Release evidence carrying this version in its name."""
+    """Release evidence carrying this version in its name.
+
+    An ``-errata.md`` page corrects a frozen release without rewriting it (PAT-137);
+    it is deliberately not frozen, so it is not release evidence here.
+    """
     return sorted(
         path.relative_to(PLUGIN_ROOT).as_posix()
         for path in (PLUGIN_ROOT / "docs").glob(f"*{version}*.md")
+        if not path.name.endswith("-errata.md")
     )
 
 
