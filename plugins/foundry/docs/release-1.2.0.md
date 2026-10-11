@@ -189,9 +189,14 @@ The figures below are copied from [linear-request-cost.md](linear-request-cost.m
 They are **request counts**, not durations, costs or quota shares.
 
 Conditions, as that page states them: the real project of this repository, on
-2026-10-11, 177 issues and 45 ADRs; each command run once per column; "1.1.1" is the
-installed Foundry 1.1.1 plugin; "after PAT-168" and "after PAT-190" are the code of
-those two changes; the counter is the one of `FOUNDRY_REQUEST_COUNT`, a single total of
+2026-10-11, 45 ADRs, in three measures. The first, on a project of 174 issues, gives
+figures of the installed Foundry 1.1.1 plugin only. The second, on 177 issues, ran each
+command once with the installed 1.1.1 and once with the code of PAT-168, with no
+tracker write between the two runs of a pair. The third, on 177 issues, gives the
+figures of the code of PAT-190, its "before" being the installed 1.1.1 again. The
+"1.1.1" column below is the figure that page gives for the installed 1.1.1 plugin in
+those measures; for PAT-51 it comes from the first measure only (174 issues, see the
+limits below). The counter is the one of `FOUNDRY_REQUEST_COUNT`, a single total of
 HTTP attempts per process, retries included.
 
 | Command | 1.1.1 | after PAT-168 | after PAT-190 |
@@ -224,10 +229,11 @@ What limits these figures, from the same page:
   states that no output of any command changes. A measure on 1.2.0 itself has not been
   made.
 - Not measured after the changes: `query profile intake --all-pages`, any other
-  profile, `candidates`, any write (`issue merge`, `issue openpr`, `edit comment`, a
-  real `close-epic` attempt). Wall time was recorded for the 1.1.1 runs of the first
-  measure only. Whether a retry happened during the measures, and whether a retry
-  counts against the hourly quota, are unknown.
+  profile, `candidates`. Never measured, before or after: `issue merge`, `issue
+  openpr`, `edit comment`, a real `close-epic` attempt. `issue start` was measured
+  under 1.1.1 only (13 requests). Wall time was recorded for the 1.1.1 runs of the
+  first measure only. Whether a retry happened during the measures, and whether a
+  retry counts against the hourly quota, are unknown.
 
 On the fake transports of the tests the counts are **expected**, not measured on a real
 project: a plain Linear `query issue` goes from 9 requests to 6 (PAT-168) then 3
@@ -244,8 +250,8 @@ PAT-190 removes no read there, and the read scope is Linear only.
   [linear-request-cost.md](linear-request-cost.md) states.
 - No request reduction for a write, for `query milestones`, for `query adr <ID>`, or
   for a tracker other than Linear on a real project.
-- No conclusion on Haiku 5.5, on the 1-hour cache or on the review-round rule: the
-  three observations are open (below).
+- No conclusion on Haiku 5.5, on the 1-hour cache or on the review-round rule: none
+  of the three observations below is concluded.
 - No new model, effort, profile, routing default, tracker variant, CLI verb or option,
   or configuration key.
 - No minimum Codex command-line version enforced by Foundry: PAT-187 left that idea to
@@ -261,9 +267,12 @@ PAT-190 removes no read there, and the read scope is Linear only.
 - **An interrupted `issue merge` can leave a Linear issue in `disagreement` until the
   same command is replayed.** [linear-tracker.md](linear-tracker.md) documents the
   mechanism: `set_state` appends the receipt, then writes the native State, and an
-  interrupted second write is repaired by replaying the same merge. The coordinator
-  reports one such case on 2026-10-11, on PAT-170, repaired by that replay; that
-  observation is not recorded in a page of this repository, and its cause is unknown.
+  interrupted second write is repaired by replaying the same merge. A case with the
+  same symptom, by a comment on PAT-170 in the tracker and no page of this repository:
+  on 2026-10-11 the `issue merge` of PAT-170 failed after the GitHub merge with a
+  Linear lifecycle divergence error, the issue read `disagreement`, and replaying the
+  same command repaired it. Its cause is unknown: it is not established that it is an
+  instance of the mechanism above.
 - **The reciprocal comment of each (ADR, issue) pair and the second identity read of a
   reference are still requests** in `query adrs` and in the ADR commands; a node absent
   from the listing is still read individually.
@@ -272,17 +281,20 @@ PAT-190 removes no read there, and the read scope is Linear only.
   binding read included (`test_issue_reads_of_one_transition`). The measured total of
   `issue start` on the real project is 13 under 1.1.1; its split is unknown.
 - **The realignment of PAT-163 leaves unknowns** named in
-  [linear-tracker.md](linear-tracker.md): what realigned 28 other issues on
-  2026-10-04, and why the Linear GitHub integration did not move the two issues to
-  Done at the merge.
+  [linear-tracker.md](linear-tracker.md). That page deduces, without observing it,
+  that 28 other issues carried the same divergence until they were realigned on
+  2026-10-04. Unknown: what ran the pass of 14:50Z to 14:53Z that closed 27 of them,
+  whether PAT-52 was realigned by the same means, and why the Linear GitHub
+  integration did not move PAT-72 and PAT-73 to Done at the merge.
 
 ## Observation windows in progress
 
-Three observations are open. None is concluded by this version.
+Three observations are listed, each with its own state. None is concluded by this
+version.
 
 | Change | Rule | State |
 | --- | --- | --- |
-| Haiku 5.5 / `medium` on the `economy` tier (PAT-ADR-0016) | Window: the first 10 issues delivered by Foundry on the Claude host after the merge of PAT-125 (2026-10-09), or 30 days, whichever comes first. Reference: the last 10 issues delivered before that merge. Immediate trigger: on a conforming host, a `haiku-5.5` profile unavailable or divergent, an executed model other than `claude-haiku-5-5`, or a transmitted effort other than `medium`. Regression trigger: the number of issues with a blocking first-pass review, an escalation or a red CI on the delivered SHA exceeds the reference by at least two. The maintainer may roll back at any time without justification. | **Measure not made, decision not taken.** No page of this repository records a count of this window against its reference. The measure and the decision are the subject of PAT-171, open on the tracker. |
+| Haiku 5.5 / `medium` on the `economy` tier (PAT-ADR-0016) | Window: the first 10 issues delivered by Foundry on the Claude host after the merge of PAT-125 (2026-10-09), or 30 days, whichever comes first. Reference: the last 10 issues delivered before that merge. Immediate trigger: on a conforming host, a `haiku-5.5` profile unavailable or divergent, an executed model other than `claude-haiku-5-5`, or a transmitted effort other than `medium`. Regression trigger: the number of issues with a blocking first-pass review, an escalation or a red CI on the delivered SHA exceeds the reference by at least two. The maintainer may roll back at any time without justification. | **Bound not established here, measure not made, decision not taken.** More than 10 issues were merged on `main` after the merge of PAT-125 (`git log --first-parent`), but which host delivered each is not readable in this repository, so whether the 10-issue bound is reached is not established here; the 30-day bound is not reached at the date of this page. No page of this repository records a count of this window against its reference. The measure and the decision are the subject of PAT-171 (state backlog on the tracker on 2026-10-11). |
 | 1-hour cache on the Sonnet 5.5 subagent profiles (PAT-134) | At closure the 5 most recent main conversations are replayed and `rollback_decision` (`cache_ttl_replay.py`) returns `keep`, `roll_back` or `unknown`; fewer than 3 sessions is `unknown`. The maintainer may extend the window by a written decision. | **Extended to 2026-11-09 (PAT-170).** The window reached its first bound at the tenth delivered issue (PAT-146). Only 2 main conversations qualified, so `rollback_decision` returned `unknown` and the change stays without conclusion. The maintainer decided on 2026-10-11 that the 1-hour cache stays and extended the window to the 30-day bound; the measure is made again, with the same rule, when at least 3 sessions qualify. Threshold, selection rule and rollback procedure are unchanged. |
 | Review-round rule, `AGENTS.md#R9` (PAT-136, PAT-139, amended by PAT-144) | Second window: from the merge of PAT-144, the first 10 origin issues merged after it, with their follow-up issues. Return trigger: a blocking-level defect found after the merge in a diff merged under rule (b), or, when the window closes, a total number of rounds divided by the number of origin issues that is not below 3.2. | **Second window open (PAT-169).** First window: 39 rounds over 10 origin issues, 3.9, not below 3.2; the maintainer decided on 2026-10-11 to keep the rule as amended and to open the second window. State recorded at `a75e4f7`: 9 of 10 origin issues merged. The rounds of the second window are not counted yet. |
 
@@ -315,8 +327,11 @@ slip to a later version. The list below is the tracker's list of their unmerged 
 issues, read on 2026-10-11. None of their scope is in this package:
 
 - the rest of PAT-151: PAT-63, PAT-162, PAT-165, PAT-166 and PAT-185;
+- PAT-152: none. Its child issues on the tracker are PAT-167, PAT-168 and PAT-190,
+  all three merged in this package;
 - PAT-153 other than PAT-169 and PAT-170: PAT-171 to PAT-176;
-- PAT-154.
+- PAT-154: an Epic in state backlog on the tracker, whose child issues are PAT-141,
+  PAT-177 and PAT-178; none of them is in the merged history.
 
 Also outside: any reduction of `query milestones` or of the reads of a write, a
 minimum Codex version guard, any model or routing change, and any Ship-iOS change.
