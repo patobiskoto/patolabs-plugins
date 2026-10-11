@@ -175,10 +175,11 @@ command (PAT-190). The index of `query issue` therefore still reads (read in cod
 `_adr_supports`, `_adr_snapshot`, `_repository_issue_inventory`,
 `_project_issue_inventory`): the repository Issue list (`_rows`, one request per page of
 100), the Project items (one GraphQL request per page), and, for each ADR, its support
-Issue **twice** (once to identify the corpus, once more by the history check) and its
-comment history (one request per page of 100). One more read is conditional: a
-support seen in the Project but absent from the repository list is read once more
-before the conflict is raised. The binding check (`_authoritative_binding`, twice) reads
+Issue **twice** (once to identify the corpus, once more by the head-commitment check,
+after the history) and its comment history (one request per page of 100). One more read
+is conditional: a support recognized in the Project but not in the repository listing
+(absent from it, or present there without the reserved label and without a head) is
+read once before the conflict is raised. The binding check (`_authoritative_binding`, twice) reads
 the local checkout registry and sends no provider request. A transport or provider
 failure of any of those still fails `query issue`; a failure while reading a cited
 delivery Issue no longer does. With the fake transport of the test, two ADRs citing one

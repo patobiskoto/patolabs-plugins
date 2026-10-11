@@ -458,7 +458,7 @@
         "linear"
       ],
       "categories": [
-        "conflicts"
+        "core-operations"
       ],
       "operations": [
         "adr-read"

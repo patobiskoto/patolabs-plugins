@@ -1299,8 +1299,10 @@ listing request, so a listing that fails while fetching sends none of them. With
 read-only layer open, an individual read that the listing seeded is not sent at all: a
 listing whose only failure came from such a read (transport, quota) no longer fails
 (PAT-189), and the sentence above holds only for the reads that are still sent. The
-early stop on a repeated issue compares any hashable `identifier`, not only a string,
-as the code before PAT-168 did with `Issue.id` (PAT-189).
+early stop on a repeated issue counts every node whose `identifier` key is present,
+whatever its type (the code before PAT-168 compared `Issue.id` after normalization, and
+normalization accepts any value of that key); a node with no `identifier` key is not
+counted and fails normalization (`invalid_response`), as before (PAT-189).
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only

@@ -4749,7 +4749,7 @@ class LinearTracker(Tracker):
         binding = self._activate(project)
         nodes: list[dict] = []
         cursor = None
-        earlier: set[str] = set()  # identifiers (``Issue.id``) of the earlier pages
+        earlier: set = set()  # ``identifier`` values (``Issue.id``) of the earlier pages
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
@@ -4771,12 +4771,16 @@ class LinearTracker(Tracker):
             # A provider that re-serves a page stops here, not after _MAX_PAGES
             # requests. Only against EARLIER pages: a duplicate inside one page is left
             # to the normalization below, as before.
-            # Any hashable ``identifier`` counts, not only a string: the previous code
-            # compared ``Issue.id`` (= ``identifier``, whatever its type) the same way.
+            # Same set as the code before PAT-168, which compared ``Issue.id`` (=
+            # ``raw["identifier"]``, any type, None included) on every node that
+            # normalized: a node with no ``identifier`` key is NOT counted (it fails
+            # normalization, ``invalid_response``), any other hashable value is.
             current = {
                 raw["identifier"]
                 for raw in connection["nodes"]
-                if isinstance(raw, dict) and _is_hashable(raw.get("identifier"))
+                if isinstance(raw, dict)
+                and "identifier" in raw
+                and _is_hashable(raw["identifier"])
             }
             if current & earlier:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")

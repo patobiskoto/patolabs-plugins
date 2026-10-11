@@ -440,18 +440,20 @@ def test_a_normalization_failure_asks_for_every_page_first(monkeypatch, tmp_path
     assert _ops(wire)["FoundryLinearIssues"] == 3
 
 
-def test_a_repeated_non_string_identifier_stops_the_listing_like_a_string_one(
-    monkeypatch, tmp_path,
+@pytest.mark.parametrize("value", [7, None])
+def test_a_repeated_present_identifier_of_any_type_stops_the_listing(
+    monkeypatch, tmp_path, value,
 ):
-    """PAT-189 (PAT-168 remark 3): an out-of-schema ``identifier`` is compared too.
+    """PAT-189 (PAT-168 remark 3): the early stop counts a present ``identifier``.
 
-    The code before PAT-168 compared ``Issue.id`` (= ``identifier``, any type) page after
-    page, so a page repeating such a node stopped at its second request.
+    Checked against the code at 8367180 (before PAT-168), run on the same pages: a node
+    whose ``identifier`` is present, whatever its type (7, None), normalizes, and a page
+    repeating it stopped at the second request with ``pagination_stalled``.
     """
     tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
     tracker.search(project)
     first = _listing_nodes(wire, tracker, project)[0]
-    first["identifier"] = 7
+    first["identifier"] = value
     _serve_raw_pages(tracker, [
         _page([first], next_cursor="c1"), _page([first], next_cursor="c2"), _page([first]),
     ])
@@ -460,6 +462,26 @@ def test_a_repeated_non_string_identifier_stops_the_listing_like_a_string_one(
         tracker.search(project)
     assert (caught.value.operation, caught.value.code) == ("issue.search", "pagination_stalled")
     assert _ops(wire)["FoundryLinearIssues"] == 2
+
+
+def test_nodes_without_identifier_on_two_pages_fail_normalization_not_the_early_stop(
+    monkeypatch, tmp_path,
+):
+    """PAT-189: a missing ``identifier`` key is not counted by the early stop.
+
+    Same error as before PAT-168 (checked on the code at 8367180, where it came after
+    one request); since PAT-168 every page is fetched first, hence two requests here.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second = _listing_nodes(wire, tracker, project)[:2]
+    del first["identifier"], second["identifier"]
+    _serve_raw_pages(tracker, [_page([first], next_cursor="c1"), _page([second])])
+    wire.calls.clear()
+    with pytest.raises(LinearTrackerError) as caught:
+        tracker.search(project)
+    assert (caught.value.operation, caught.value.code) == ("normalize", "invalid_response")
+    assert _ops(wire)["FoundryLinearIssues"] == 2  # every page is fetched first (PAT-168)
 
 
 def test_nodes_of_the_first_search_are_kept_by_a_second_search_in_the_scope(
@@ -491,3 +513,30 @@ def test_a_nested_read_scope_is_refused_and_keeps_the_outer_scope(monkeypatch, t
         tracker._read_raw("LIN-2")
         assert _ops(wire) == {}
     assert getattr(tracker._read_scopes, "scope", None) is None
+
+
+def test_issue_reads_of_one_transition(monkeypatch, tmp_path):
+    """PAT-189: the per-transition `issue.read` counts cited by linear-request-cost.md.
+
+    Fake transport, one request per wire call: the binding read of ``write.issue_binding``
+    plus ``set_state``.  Native state already matching: 1 + 5; native state changing
+    (to review): 1 + 7, with one lifecycle comment read, one create and one issueUpdate.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    monkeypatch.setattr(write, "mutation_project", lambda _t: project)
+    wire.calls.clear()
+    write.issue_binding(tracker, "LIN-1")
+    assert _ops(wire) == {"FoundryLinearIssue": 1}
+    wire.calls.clear()
+    tracker.set_state("LIN-1", "in-progress", project=project)
+    assert _ops(wire) == {
+        "FoundryLinearIssue": 5, "FoundryLinearCommentsById": 1,
+        "FoundryLinearCommentCreate": 1,
+    }
+    wire.calls.clear()
+    write.issue_binding(tracker, "LIN-1")
+    tracker.set_state("LIN-1", "review", context=_REVIEW, project=project)
+    assert _ops(wire) == {
+        "FoundryLinearIssue": 8, "FoundryLinearCommentsById": 1,
+        "FoundryLinearCommentCreate": 1, "FoundryLinearIssueUpdate": 1,
+    }
