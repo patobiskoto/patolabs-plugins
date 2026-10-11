@@ -2,17 +2,18 @@
 
 ## Unreleased
 
-- PAT-170: documentation only, no behaviour of any tool changes; closes the observation
-  window of the 1-hour cache on the Sonnet 5.5 subagent profiles (PAT-134) by the
-  tenth delivered issue. Only 2 main conversations qualified, so `rollback_decision`
-  returned `unknown` (fewer than 3 sessions) and the change stays without conclusion; the
-  indicative figures are recorded as such. The maintainer decided on 2026-10-11 that
-  the 1-hour cache stays and extended the window to the 30-day bound, 2026-11-09; the
-  measure is made again with the same rule when at least 3 sessions qualify. Threshold,
-  selection rule and rollback procedure are unchanged. Written in
-  `docs/qualification/pat-134-subagent-cache-1h.md` and `docs/model-routing.md`. R5: the
-  documented artifacts are those two pages (the observation window of PAT-134); no CLI,
-  option, key, constant or profile changes.
+- PAT-170: documentation only, no behaviour of any tool changes; records the measure
+  made when the observation window of the 1-hour cache on the Sonnet 5.5 subagent
+  profiles (PAT-134) reached its first bound, the tenth delivered issue, and the
+  maintainer's decision. Only 2 main conversations qualified (one of them contributes a
+  1-hour Sonnet 5.5 lineage), so `rollback_decision` returned `unknown` (fewer than 3
+  sessions) and the change stays without conclusion; the indicative figures are recorded
+  as such. The maintainer decided on 2026-10-11 that the 1-hour cache stays and extended
+  the window to the 30-day bound, 2026-11-09; the measure is made again with the same
+  rule when at least 3 sessions qualify. Threshold, selection rule and rollback
+  procedure are unchanged. Written in `docs/qualification/pat-134-subagent-cache-1h.md`
+  and `docs/model-routing.md`. R5: the documented artifacts are those two pages (the
+  observation window of PAT-134); no CLI, option, key, constant or profile changes.
 
 - PAT-189: settles the non-blocking remarks deferred from the reviews of PAT-167,
   PAT-168 and PAT-190. Behaviour: opening `LinearTracker.read_scope()` while it is
