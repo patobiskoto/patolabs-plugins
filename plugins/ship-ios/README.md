@@ -65,11 +65,23 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Requirements: Python 3, `git` (`tests/test_tag_merged.py` creates temporary
-repositories) and `ruby` (`tests/test_submit_contract.py` evaluates
-`templates/Fastfile` with a stub fastlane DSL). No Xcode, simulator, fastlane or
-Apple account is needed. `ruby` is called without a skip guard, so those tests error
-if it is missing. The CI job `ship-ios` runs this command on `ubuntu-24.04`, where
-`ruby` was found at `/usr/bin/ruby` (run 38095058779: 35 tests, success).
+repositories) and `ruby` (the `SubmitLaneTests` class in
+`tests/test_submit_contract.py`, 3 tests, evaluates `templates/Fastfile` with a stub
+fastlane DSL). No Xcode, simulator, fastlane or Apple account is needed. Only those
+3 tests call `ruby`, without a skip guard, so they error if it is missing.
+
+Versions observed passing (35 tests): Python 3.13.13, git 2.54.0 and Ruby 4.0.7
+(Homebrew) locally; on `ubuntu-24.04` the CI job `ship-ios` (Python 3.13, `ruby` at
+`/usr/bin/ruby`, version not logged; run 38095058779) also passes.
+
+Observed failure: with macOS system Ruby 2.6.10 first on `PATH`, the 3
+`SubmitLaneTests` tests error (the `ruby -e` stub exits with status 1) and the other
+32 pass. The stub uses endless method definitions (`def f(*) = nil`), which is a
+Ruby 3.0+ feature (deduced from the syntax, not tested on 3.0 to 3.3). Also deduced
+from the code, not observed on older versions: `str.removeprefix` in
+`tests/test_release_skill.py` (Python 3.9+), parenthesised `with (...)` in
+`tests/test_changelog_bridge.py` (Python 3.10+) and `git init -b` in
+`tests/test_tag_merged.py` (git 2.28+).
 
 ## Build model — A: Xcode Cloud builds, fastlane submits
 
