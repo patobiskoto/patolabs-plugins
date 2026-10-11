@@ -6,6 +6,7 @@ Fake transport only; no test contacts a Linear workspace. The autouse conftest f
 import email.message
 import io
 import json
+import threading
 import urllib.error
 
 import pytest
@@ -396,6 +397,23 @@ def test_request_counter_counts_every_attempt_retries_included(capsys):
     assert linear.request_count() - before == 3 == len(t.calls)
     tracker(scripted(OK))._graphql(READ, {}, "issue.read")
     assert linear.request_count() - before == 4
+
+
+def test_request_counter_is_exact_across_threads():
+    """PAT-145: the increment is locked, so concurrent attempts are all counted."""
+    before = linear.request_count()
+    workers, each = 8, 2000
+
+    def run():
+        for _ in range(each):
+            linear._count_request()
+
+    threads = [threading.Thread(target=run) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert linear.request_count() - before == workers * each
 
 
 def test_request_counter_report_is_on_demand_and_fail_open(tmp_path, monkeypatch, capsys):

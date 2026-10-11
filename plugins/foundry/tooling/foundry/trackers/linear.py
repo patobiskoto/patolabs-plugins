@@ -75,16 +75,22 @@ _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 # to); it never alters behaviour and never raises.
 REQUEST_COUNT_ENV = "FOUNDRY_REQUEST_COUNT"
 _request_count = 0
+_request_count_lock = threading.Lock()
 
 
 def request_count() -> int:
     """Linear HTTP attempts made so far by this process."""
-    return _request_count
+    with _request_count_lock:
+        return _request_count
 
 
 def _count_request() -> None:
     global _request_count
-    _request_count += 1
+    try:
+        with _request_count_lock:
+            _request_count += 1
+    except Exception:  # diagnostic only: never alter a request
+        pass
 
 
 def _report_request_count() -> None:
