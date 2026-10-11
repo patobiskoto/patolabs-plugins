@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- PAT-148: wording and tests only, no behaviour of any tool changes; settles the
+  non-blocking remarks deferred from PAT-137, PAT-147 and PAT-146. Errata page: `screen`
+  reaches `_bundle` through `local_attempt` only (read in `Runner.screen` and
+  `Runner.compare`), the twenty-minute bound kills the `claude -p` parent, counts removed.
+  `intake` skill: the removal command refuses an empty argument, and the skill says what
+  to do when `--all-pages` names a directory or the removal fails; a failure of
+  `--all-pages` after the directory is created and before any page is written, whose
+  message does not name the directory (tracker error, quota), still leaves an empty
+  temporary directory (not changed: that needs a change of `--all-pages`).
+  `test_release_contract.py`: tests of the crossed paths of the frozen-release check,
+  exact fault lists, a synthetic frozen map, and a shape check of
+  `FROZEN_DOCUMENT_EXCEPTIONS`; the reason of the absent
+  benchmark artifact is now worded as deduced. `plugins/foundry/README.md` states the
+  freeze rule once.
+  Documentation status (R5): `docs/release-1.1.0-errata.md`, `docs/query-profiles.md`,
+  `skills/intake` and `plugins/foundry/README.md` updated; no CLI verb, option or
+  constant changed.
+
 - PAT-146: tests only, no behaviour of any tool changes. A variant of the frozen-release
   check now runs in CI: it passes with three named exceptions (`docs/migration-0.7.0.md`
   and `docs/migration-0.8.0.md`, digests pinned in the test; and the absent
@@ -38,8 +56,8 @@
 
 - PAT-147: the `intake` skill now asks to remove the `--all-pages` directory once the pages
   are read, including when the intake stops midway; `docs/query-profiles.md` states that
-  cleaning it is the caller's job. Skill text, documentation and one test only; the code of
-  `--all-pages` is unchanged.
+  cleaning it is the caller's job. Skill text, documentation and assertions added to an
+  existing test only; the code of `--all-pages` is unchanged.
 - PAT-137: 1.1.0 release paperwork, no change under `tooling/`; the frozen 1.1.0 pages
   (`docs/release-1.1.0.md`, `docs/migration-1.1.0.md`, the 1.1.0 section below) are
   unchanged. `tests/fixtures/release-history.json` freezes 1.1.0 from the tree of the tag

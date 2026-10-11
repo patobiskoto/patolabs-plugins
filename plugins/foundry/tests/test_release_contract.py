@@ -18,6 +18,9 @@ release. It now separates three concerns:
   CHANGELOG section and every release document byte-for-byte, so the contract
   grows by one data entry per release instead of ~100 lines of literal
   assertions. A missing entry fails closed and prints the block to paste.
+  The variant that runs in CI (PAT-146) keeps every document frozen except the few
+  named in ``FROZEN_DOCUMENT_EXCEPTIONS``, each pinned exactly (a digest for a
+  rewritten document, absence for a missing one).
 
 Documents that describe the *live* production contract — ``docs/model-routing.md``
 and ``docs/local-scout.md`` — are not release evidence and stay asserted literally
@@ -26,6 +29,7 @@ below, independently of any version.
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -241,8 +245,9 @@ FROZEN_DOCUMENT_EXCEPTIONS = (
         "version": "0.8.0",
         "document": "benchmarks/foundry-46/report-v2/pilot-20260825/results-v2.json",
         "kind": "absent",
-        "reason": "benchmark artifact, which FOUNDRY-ADR-0024 excludes from the "
-        "public snapshot",
+        "reason": "benchmark artifact, absent from this checkout (it tracks no "
+        "benchmarks/ directory; pytest.ini only names the path); cause deduced, not "
+        "observed: FOUNDRY-ADR-0024 excludes benchmark artifacts from the public snapshot",
     },
 )
 
@@ -347,11 +352,17 @@ def test_published_releases_stay_frozen_except_declared_exceptions():
 
     for e in FROZEN_DOCUMENT_EXCEPTIONS:
         assert e["kind"] in ("rewritten", "absent") and e["reason"].strip()
+        if e["kind"] == "rewritten":
+            assert re.fullmatch(r"[0-9a-f]{64}", e.get("sha256", "")), e["document"]
+        else:
+            assert "sha256" not in e, e["document"]
+    keys = [(e["version"], e["document"]) for e in FROZEN_DOCUMENT_EXCEPTIONS]
+    assert len(set(keys)) == len(keys), "duplicate (version, document) exception"
     assert stale_frozen_exceptions(frozen, FROZEN_DOCUMENT_EXCEPTIONS) == []
     assert frozen_release_faults(frozen, published, FROZEN_DOCUMENT_EXCEPTIONS) == []
 
 
-def test_frozen_release_check_reports_a_rewrite_of_another_document():
+def test_frozen_release_check_reports_a_rewrite_of_a_version_without_exception():
     frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
     published = changelog_sections()
     real = {
@@ -360,11 +371,6 @@ def test_frozen_release_check_reports_a_rewrite_of_another_document():
         for document in entry["documents"]
         if _is_file(document)
     }
-
-    def altered(target):
-        return lambda document: "0" * 64 if document == target else real.get(document, "")
-
-    # A version without exception: one of its documents is rewritten (in memory).
     version, target = next(
         (v, d)
         for v, entry in frozen.items()
@@ -372,31 +378,98 @@ def test_frozen_release_check_reports_a_rewrite_of_another_document():
         for d in entry["documents"]
         if d in real
     )
-    faults = frozen_release_faults(
-        frozen, published, FROZEN_DOCUMENT_EXCEPTIONS, digest=altered(target),
-    )
-    assert (version, target, "frozen evidence was rewritten") in faults
 
-    # An exception for one document does not hide another document of its version.
-    first = FROZEN_DOCUMENT_EXCEPTIONS[1]
-    sibling = next(
-        d
-        for d in frozen[first["version"]]["documents"]
-        if d != first["document"] and d in real
-    )
-    faults = frozen_release_faults(
-        frozen, published, FROZEN_DOCUMENT_EXCEPTIONS, digest=altered(sibling),
-    )
-    assert (first["version"], sibling, "frozen evidence was rewritten") in faults
-
-    # An exception is exact: a further rewrite of an excepted guide fails too.
     faults = frozen_release_faults(
         frozen, published, FROZEN_DOCUMENT_EXCEPTIONS,
-        digest=altered(first["document"]),
+        digest=lambda document: "0" * 64 if document == target else real.get(document, ""),
     )
-    assert (
-        first["version"], first["document"], "frozen evidence was rewritten",
-    ) in faults
+
+    assert faults == [(version, target, "frozen evidence was rewritten")]
+
+
+REWRITTEN = "frozen evidence was rewritten"
+DISAPPEARED = "frozen evidence disappeared"
+
+
+def _synthetic_release():
+    """A small frozen map: ``docs/a.md`` is excepted as rewritten, ``docs/b.md`` is not."""
+    section = "## 9.9.9 — 2026-01-01\n\nbody"
+    frozen = {
+        "9.9.9": {
+            "date": "2026-01-01",
+            "changelog_sha256": hashlib.sha256(section.encode("utf-8")).hexdigest(),
+            "documents": {"docs/a.md": "x", "docs/b.md": "y"},
+        },
+    }
+    published = [("9.9.9", "2026-01-01", section)]
+    excepted_a = ({"version": "9.9.9", "document": "docs/a.md", "kind": "rewritten",
+                   "sha256": "r", "reason": "r"},)
+    return frozen, published, excepted_a
+
+
+def _digests(**overrides):
+    table = {"docs/a.md": "r", "docs/b.md": "y", **overrides}
+    return lambda document: table[document]
+
+
+def test_frozen_release_exception_covers_only_its_own_document_and_digest():
+    frozen, published, excepted_a = _synthetic_release()
+    present = lambda document: True  # noqa: E731
+
+    assert frozen_release_faults(
+        frozen, published, excepted_a, digest=_digests(), exists=present,
+    ) == []
+    # An exception for one document does not hide another document of its version.
+    assert frozen_release_faults(
+        frozen, published, excepted_a, digest=_digests(**{"docs/b.md": "0"}),
+        exists=present,
+    ) == [("9.9.9", "docs/b.md", REWRITTEN)]
+    # An exception is exact: a further rewrite of the excepted document fails too.
+    assert frozen_release_faults(
+        frozen, published, excepted_a, digest=_digests(**{"docs/a.md": "0"}),
+        exists=present,
+    ) == [("9.9.9", "docs/a.md", REWRITTEN)]
+
+
+def test_frozen_release_exceptions_of_one_kind_do_not_hide_the_other_fault():
+    frozen, published, excepted_a = _synthetic_release()
+    absent_a = ({"version": "9.9.9", "document": "docs/a.md", "kind": "absent",
+                 "reason": "r"},)
+
+    # An `absent` exception does not hide a rewrite of the document.
+    assert frozen_release_faults(
+        frozen, published, absent_a, digest=_digests(), exists=lambda document: True,
+    ) == [("9.9.9", "docs/a.md", REWRITTEN)]
+    # A `rewritten` exception does not hide the disappearance of the document.
+    assert frozen_release_faults(
+        frozen, published, excepted_a, digest=_digests(),
+        exists=lambda document: document != "docs/a.md",
+    ) == [("9.9.9", "docs/a.md", DISAPPEARED)]
+    # The matching kind hides its own fault, and only that one.
+    assert frozen_release_faults(
+        frozen, published, absent_a, digest=_digests(),
+        exists=lambda document: document != "docs/a.md",
+    ) == []
+
+
+def test_frozen_release_check_still_reports_changelog_and_unfrozen_faults(monkeypatch):
+    frozen, published, excepted_a = _synthetic_release()
+    frozen["9.9.9"]["date"] = "2025-12-31"
+    frozen["9.9.9"]["changelog_sha256"] = "0" * 64
+    monkeypatch.setattr(
+        sys.modules[__name__], "release_documents",
+        lambda version: ["docs/a.md", "docs/b.md", "docs/new.md"],
+    )
+
+    faults = frozen_release_faults(
+        frozen, published, excepted_a, digest=_digests(), exists=lambda document: True,
+    )
+
+    assert faults == [
+        ("9.9.9", "CHANGELOG", "date differs from the frozen one"),
+        ("9.9.9", "CHANGELOG", "published section was rewritten"),
+        ("9.9.9", "docs/new.md", "unfrozen release evidence"),
+    ]
 
 
 def test_frozen_release_exceptions_must_not_go_stale():

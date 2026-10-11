@@ -1,6 +1,6 @@
 # Foundry 1.1.0 — errata
 
-This page corrects four points of the 1.1.0 release material without rewriting it.
+This page corrects points of the 1.1.0 release material without rewriting it.
 [release-1.1.0.md](release-1.1.0.md), [migration-1.1.0.md](migration-1.1.0.md) and the
 1.1.0 section of the CHANGELOG are frozen as shipped in the tag `foundry-v1.1.0`
 (`04af3595b0f76f760f618867f2a2f4e488e6a904`); their digests are pinned in
@@ -22,13 +22,17 @@ a bullet says otherwise:
 - builds a real git bundle for each attempt, through `Runner._bundle`, which calls
   `lfc.build_bundle` (`local_first_corpus.build_bundle`) on the repository given with
   `--repo`, then removes it afterwards (`Runner._discard`). All four verbs reach
-  `_bundle`: `screen` and `compare` through `local_attempt` and `cloud_path`;
-  `screen-exploration` through `explore_local`; `compare-exploration` through
-  `explore_local`, the cloud exploration step and `cloud_path`;
+  `_bundle`: `screen` through `local_attempt` only; `compare` through `local_attempt`
+  (path N, and path C through `hybrid_path`) and `cloud_path` (paths A and B, and the
+  takeover of path C through `hybrid_path`); `screen-exploration` through
+  `explore_local`; `compare-exploration` through `explore_local`, the cloud exploration
+  step and `cloud_path`;
 - runs the judge on that bundle, through `Runner._judge`, which calls `lfc.judge`
   (`local_first_corpus.judge`), after the fake driver. It is reached from
-  `Runner.local_attempt` and `Runner.cloud_path`, hence by `screen` and `compare`, and
-  by `compare-exploration` for its implementation arms (through `cloud_path`). It is
+  `Runner.local_attempt` and `Runner.cloud_path`, hence by `screen` (through
+  `local_attempt` only), by `compare` (`local_attempt` for paths N and C, `cloud_path`
+  for paths A and B and for the takeover of path C), and by `compare-exploration` for
+  its implementation arms (through `cloud_path`). It is
   **not** reached by `screen-exploration`, nor by the exploration steps of
   `compare-exploration`: `Runner.explore_local` takes its verdict from
   `lfe.verdict_of`, not from `lfc.judge`. It is also skipped when `_patch_of` raises
@@ -52,8 +56,11 @@ and the exact set of files a given campaign configuration produces.
 
 ## 2. "Killed at twenty minutes" is a bound, not a duration
 
-The note says that the native trial tool starts its subagents "killed at twenty
-minutes" (line 256). Twenty minutes is the upper bound, not what a run lasts:
+The note describes "one `claude -p` parent that starts real model subagents (one scout
+in the default mode, two subagents in the cache mode), killed at twenty minutes" (lines
+254 to 256). What the bound kills is the `claude -p` parent, as a process group
+(`_launch`), not each subagent separately. Twenty minutes is the upper bound, not what a
+run lasts:
 `TIMEOUT_SECONDS = 20 * 60` in `tooling/foundry/claude_profile_trial.py` is passed as
 `process.wait(timeout=TIMEOUT_SECONDS)` in `_launch`. A session that ends earlier ends
 earlier; a session still running at the bound is killed (the whole process group,
@@ -97,7 +104,7 @@ run, and none is established by this page.
 
 ## Other statements made stale by the tag
 
-Two sentences read differently now:
+Some sentences read differently now:
 
 - the release note opens with "not tagged, not verified installed" and says "No tag
   exists for this version at the time of writing" (first lines of `release-1.1.0.md`);
@@ -118,4 +125,6 @@ Two sentences read differently now:
 and fails on any other rewrite of a frozen document. It also fails while a published
 CHANGELOG section has no entry in `tests/fixtures/release-history.json`
 (`_assert_frozen_coverage`), so the pull request that publishes a version must now
-carry its entry.
+carry its entry. For future releases this replaces "computed from the tagged tree,
+through an issue of its own" (`release-1.1.0.md`, lines 416 to 417, frozen). The rule is
+stated in `plugins/foundry/README.md`.
