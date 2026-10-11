@@ -76,16 +76,19 @@ by a per-operation trace.
    `_validate_adr_graph`.
 3. `_validate_adr_graph`, for every `(ADR, issue)` pair in the ADR relations, calls
    `_resolve_adr_issue_reference` and then `_read_comment` (the reciprocal comment).
-   `_resolve_adr_issue_reference` calls `_read_raw` on the reference and, when the
-   corroborated identity holds a coordinate different from the reference, `_read_raw`
-   a second time on that coordinate. Outside a `graph_snapshot()` scope, `_read_raw`
-   is one `issue.read` request each time. No scope is opened around `list_adrs`, and
-   the `issue_refs` list is built per ADR without deduplicating the referenced issue
-   across ADRs: an issue referenced by several ADRs is read again for each pair. This
-   gives, in code, up to three requests per pair plus the `adr.list` pages. **Not
-   verified against the measure**: with 54 requests and one `adr.list` page, 53 is not
-   a multiple of 3, so either the page count, the number of pairs or the per-pair cost
-   differs from this reading. The number of pairs in the project is **unknown**.
+   `_resolve_adr_issue_reference` calls `_read_raw` on the reference, then `_read_raw`
+   again on every coordinate of the corroborated identity that differs from the
+   reference; whether a valid pair always has exactly one such coordinate (which would
+   make a pair cost exactly three requests) was not established for this page. Outside a
+   `graph_snapshot()` scope, `_read_raw` is one `issue.read` request each time. No scope
+   is opened around `list_adrs`, and the `issue_refs` list is built per ADR without
+   deduplicating the referenced issue across ADRs: an issue referenced by several ADRs
+   is read again for each pair. `_adr_documents` pages through the project's Documents
+   with the operation `adr.list`; what it lists is Documents (ADR versions and their
+   witnesses), not ADRs, so 45 ADRs do not imply one page. The measured 54 is therefore
+   the number of `adr.list` pages plus the pair reads; the number of pages and the
+   number of pairs in the project are both **unknown**, so the split of 54 is not
+   established.
 4. The related issues of `query issue` (point 1) and the requested issue are
    normalized by `_to_issue`. When the native state is `done` and a comment starts
    with `Foundry Epic closure audit (append-only).`, `_to_issue` calls
@@ -101,10 +104,12 @@ by a per-operation trace.
 
 ### `query backlog` and `query profile <name>`
 
-1. Both call `search` exactly once per process (`_profile_computation` states "ONE
-   tracker search"); `query profile` serves every page from that one computation,
-   which "survives" only for the process (docstring of `_profile_computation`). This
-   explains why both cost 171.
+1. Both call `search` exactly once per process: the docstring of `_profile_computation`
+   says "Compute everything a profile page needs, ONCE (one tracker search)". `query
+   profile <name> <page>` computes, then renders one page, so each page asked by a new
+   process pays the search again; only `--all-pages` renders every page from one
+   computation. This explains why `query backlog` and one page of `query profile intake`
+   both cost 171.
 2. `search` pages through `_ISSUES_QUERY` and calls `_to_issue` with
    `observe_lifecycle=True` for every node of the project. Each node whose native
    state is `done` and which carries an Epic closure audit comment triggers the replay
@@ -120,27 +125,33 @@ by a per-operation trace.
 ### `issue start`, and the state transitions in general
 
 1. `set_state` reads the issue (`_read_raw`) and its lifecycle projection, writes the
-   lifecycle receipt (`_project_lifecycle`), then `_project_native_state` reads the
-   issue twice (`_read_raw` for the desired update, `_read_raw` again as the fresh
-   read before the bounded write), runs `_bounded_issue_update`, and `set_state` ends
-   with another `_read_raw` and `_lifecycle_projection`. That is at least four direct
-   `_read_raw` of the same issue in one transition, before counting those inside
-   `_project_lifecycle` and `_bounded_issue_update`, which were not read for this
+   lifecycle receipt (`_project_lifecycle`), then calls `_project_native_state`, which
+   reads the issue (`_read_raw`) and returns at once when the native state already
+   matches; otherwise it reads the issue again (`_read_raw`, the fresh read before the
+   bounded write) and runs `_bounded_issue_update`. `set_state` ends with another
+   `_read_raw` and `_lifecycle_projection`. That is three direct `_read_raw` of the same
+   issue in one transition, four when the native state changes, before counting those
+   inside `_project_lifecycle` and `_bounded_issue_update`, which were not read for this
    page. The measured total for `issue start` is 13; its split is **unknown**.
 2. Some of these reads are the documented detection of a concurrent write:
-   [`linear-tracker.md`](linear-tracker.md) ("captures the targeted expected snapshot,
-   re-reads it immediately before one `issueUpdate`, then verifies readback"). Which
-   of the four are redundant and which are that guarantee is a design question, not
-   settled here.
+   [`linear-tracker.md`](linear-tracker.md) ("capture the targeted expected snapshot,
+   re-read it immediately before one `issueUpdate`, then verify readback"). Which reads
+   are redundant and which are that guarantee is a design question, not settled here.
 
 ### `issue close-epic`
 
-`--status` read only the local intent store and one issue (2 requests measured). The
-cost of a real closure was **not measured**. The PAT-99 paragraph of
-`linear-tracker.md` documents the closure as four snapshots (S0 preflight, pre-write
-S1, the replay check of the closed parent, post-write S3) plus a fixed pre-validation,
-measured on the fake transport only (266 requests for 55 nodes); the real-project
-figure of 150 to 220 above is an earlier, non-reproduced note.
+`--status` reads the local intent store and the provider state of the Epic through
+`read_epic_closure_state_with_id` (called by `epic_closure_state` in `write.py`). That
+function calls `validate_issue_binding`, which does one `_read_raw` of the Epic, then
+does its own `_read_raw` of the same Epic: the same issue is read twice, which matches
+the 2 requests measured. Its docstring ("One issue read, no graph snapshot, no write")
+and the sentence of `linear-tracker.md` that describes this read ("one `issue.read`, no
+graph snapshot") announce one read: the second is a repetition. The cost of a real
+closure was **not measured**. The PAT-99 paragraph of `linear-tracker.md` documents the
+closure as four snapshots (S0 preflight, pre-write S1, the replay check of the closed
+parent, post-write S3) plus a fixed pre-validation, measured on the fake transport only
+(266 requests for 55 nodes); the real-project figure of 150 to 220 above is an earlier,
+non-reproduced note.
 
 ### The only cache, and its limit
 
@@ -159,12 +170,6 @@ reopened or modified between two snapshots is still detected exactly as before
   the hourly quota (already stated unknown in the PAT-145 section).
 - The number of ADR-issue pairs, the number of `adr.list` pages, the number of closed
   Epics with an audit, and the size of each.
-- Two observations the code reading does not explain, left **unknown**: (a) in a live
-  `query issue`, the `adr.list` request was seen before the issue read, whereas the
-  code of `query.py::issue` reads the issue first; (b) `query backlog` exhausted the
-  quota on a day when `query profile intake` did not, although both cost 171 here. A
-  cost quota on query complexity, rather than the request count, is a hypothesis with
-  no evidence.
 
 ## Candidate reductions for PAT-168
 
@@ -176,9 +181,9 @@ grants such a state.
 
 | # | Candidate | Starting figure | Constraint found | Decision needed |
 |---|---|---|---|---|
-| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (deduced) for `backlog`/`profile`; up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md` ("Provider-read cost of a graph snapshot (PAT-99)"): replay of a closed Epic is its terminal authority, "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)"; docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
+| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (deduced) for `backlog`/`profile`; up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md`, on the Epic closure audit: "A valid non-code Epic closure audit supplies terminal **state** authority to `get_issue`, `observe_issue`, `query issue`, backlog and the groom profile", and "Reads verify [...] the complete current children/transitive dependency graph with its qualified acceptance evidence"; same file ("Provider-read cost of a graph snapshot (PAT-99)"): "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)"; docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
 | 2 | Share issue reads inside one `query issue` between the embedded ADR validation, the requested issue and its links (one scope per command, dropped at exit) | Part of the 54 fixed requests; size **unknown** (number of pairs not known) | `linear-tracker.md` on ADR issue relations: "Every issue relation is re-read and must belong to the configured team and project, and the issue must retain its deterministic reciprocal Foundry comment"; scope rule of `graph_snapshot()`: "never shared with another scope" | Likely a maintainer decision (a scope per command is not state kept between commands, but it widens the PAT-99 scope rule) |
-| 3 | Deduplicate the `(ADR, issue)` reads in `_validate_adr_graph` across ADRs | Up to 2 of 3 requests per repeated issue reference; the number of repetitions is **unknown** | Same sentence as 2 (the reciprocal comment is per pair and must stay) | Only the issue reads, not the comment reads: probably within PAT-168 without a new decision, to be confirmed |
-| 4 | Reduce the back-to-back `_read_raw` of one transition (`set_state`, `_project_native_state`) | At least 4 reads of one issue per transition; the share of 13 (`issue start`) is **unknown** | `linear-tracker.md`: "re-reads it immediately before one `issueUpdate`, then verifies readback" (bounded detection, PAT-ADR-0006); the fresh pre-write read and the readback must stay | The first read and the lifecycle read may be mergeable; the others are the documented guarantee. Needs a maintainer reading of PAT-ADR-0006 |
-| 5 | Make `query issue` skip the embedded ADR index, or return it on request | 54 of 56 (96 %) of a plain issue read | The `query issue` payload documents `adrs` as an index in the note of `query.py::issue` and the ADR retrieval rule (`AGENTS.md#R2`) | Yes: it changes the output, so it conflicts with "byte-identical outputs" unless the maintainer accepts a new option |
+| 3 | Deduplicate the `(ADR, issue)` reads in `_validate_adr_graph` across ADRs | The issue reads of each repeated reference (the reciprocal comment read stays); the number of repetitions is **unknown** | Same sentence as 2 (the reciprocal comment is per pair and must stay) | Only the issue reads, not the comment reads: probably within PAT-168 without a new decision, to be confirmed |
+| 4 | Reduce the back-to-back `_read_raw` of one transition (`set_state`, `_project_native_state`) | 3 reads of one issue per transition, 4 when the native state changes (code reading); the share of 13 (`issue start`) is **unknown** | `linear-tracker.md`: "re-read it immediately before one `issueUpdate`, then verify readback" (bounded detection, PAT-ADR-0006); the fresh pre-write read and the readback must stay | The first read and the lifecycle read may be mergeable; the others are the documented guarantee. Needs a maintainer reading of PAT-ADR-0006 |
+| 5 | Make `query issue` skip the embedded ADR index, or return it on request | 54 of 56 (96 %) of a plain issue read | `linear-tracker.md`: "The issue payload's `adrs` field is a project-level retrieval index, never a delivery relation"; the note of `query.py::issue`; the ADR retrieval rule (`AGENTS.md#R2`) | Yes: it changes the output, so it conflicts with "byte-identical outputs" unless the maintainer accepts a new option |
 | 6 | Merge the reads of `issue merge`, `openpr`, `edit comment`, `close-epic` | **Not measured** | Same as 4 for writes | Measure first |

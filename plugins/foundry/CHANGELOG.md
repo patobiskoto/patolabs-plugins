@@ -5,11 +5,11 @@
 - PAT-167: documentation only, no behaviour of any tool changes. New page
   `docs/linear-request-cost.md` records, as measured on 2026-10-11 on the real project
   (174 issues, 45 ADRs, Foundry 1.1.1), the number of Linear requests of `query issue`,
-  `query adrs`, `query backlog`, `query profile intake` and `close-epic --status`, the
-  reads that the code repeats inside one command, and the candidate reductions for the
-  follow-up ticket PAT-168, with the sentences that may constrain each.
-  `docs/linear-tracker.md` points to it from "Request counter (PAT-145)". Nothing is
-  reduced.
+  `query adrs`, `query backlog`, `query profile intake`, `close-epic --status` and
+  `issue start`, the reads that the code repeats inside one command, and the candidate
+  reductions for the follow-up ticket PAT-168, with the sentences that may constrain
+  each. `docs/linear-tracker.md` points to it from "Request counter (PAT-145)". Nothing
+  is reduced.
 
 - PAT-164: documentation only, no behaviour of any tool changes. Records, as observed on
   2026-10-11, that a new Codex session loads the 1.1.1 plugin root under Codex CLI
