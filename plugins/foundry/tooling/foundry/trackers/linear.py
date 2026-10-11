@@ -2800,6 +2800,7 @@ class LinearTracker(Tracker):
         self.retry_stats = {"retries": 0, "recovered": 0, "exhausted": 0}
         self._epic_closure_reads = threading.local()
         self._snapshot_scopes = threading.local()
+        self._read_scopes = threading.local()
         self._active_project: Project | None = None
 
     def migration_attribute_exceptions(
@@ -3070,6 +3071,9 @@ class LinearTracker(Tracker):
         retried. When retries are exhausted the error of the last attempt is raised. Writes, data/binding/authorization errors and quota exhaustion never are.
         The retry wraps the single raw HTTP call, never any caller recovery logic.
         """
+        if getattr(self._read_scopes, "scope", None) is not None and not _is_read_only_document(document):
+            # PAT-168: a write must never run beside reads served from the read scope.
+            raise RuntimeError("Linear write refused inside a read-only command scope")
         retries = 0
         while True:
             try:
@@ -4429,6 +4433,26 @@ class LinearTracker(Tracker):
         finally:
             stack.pop()
 
+    @contextlib.contextmanager
+    def read_scope(self):
+        """PAT-168: one read-only command reads each issue reference at most once.
+
+        Opened only by the read-only ``query`` commands (``query.py``), for the duration
+        of one command, never nested (not re-entrant). A separate layer under
+        ``graph_snapshot``: that stack still decides first, and keeps its own
+        per-snapshot contract. Only successful issue
+        reads are stored (a failure is read again), the listing of ``search`` seeds it,
+        and it is dropped on exit, so nothing survives the command. It is never open
+        during a write: ``_graphql`` refuses any document that is not a pure read while
+        it is, so the first mutation of a write started inside it is refused and never sent
+        (reads issued before it are sent).
+        """
+        self._read_scopes.scope = {}
+        try:
+            yield
+        finally:
+            self._read_scopes.scope = None
+
     def _read_raw(self, issue_id: str) -> dict:
         if not isinstance(issue_id, str) or not issue_id:
             raise IssueUnavailableError(str(issue_id))
@@ -4436,14 +4460,24 @@ class LinearTracker(Tracker):
         scope = stack[-1] if stack else None
         if scope is not None and issue_id in scope:
             return copy.deepcopy(scope[issue_id])
+        command = getattr(self._read_scopes, "scope", None)
+        if command is not None and issue_id in command:
+            if scope is not None:
+                scope[issue_id] = command[issue_id]
+            return copy.deepcopy(command[issue_id])
         data = self._graphql(_ISSUE_QUERY, {"id": issue_id}, "issue.read")
         raw = data.get("issue")
         if raw is None:
             raise IssueUnavailableError(issue_id)
         if not isinstance(raw, dict):
             raise LinearTrackerError("issue.read", None, "invalid_response")
-        if scope is not None:
-            scope[issue_id] = copy.deepcopy(raw)
+        if scope is not None or command is not None:
+            # Stored copies are never handed out or mutated: every caller gets its own.
+            stored = copy.deepcopy(raw)
+            if scope is not None:
+                scope[issue_id] = stored
+            if command is not None:
+                command[issue_id] = stored
         return raw
 
     @staticmethod
@@ -4687,9 +4721,9 @@ class LinearTracker(Tracker):
                 self.name, "provider-native-search-query"
             )
         binding = self._activate(project)
-        out: list[Issue] = []
+        nodes: list[dict] = []
         cursor = None
-        seen = set()
+        earlier: set[str] = set()  # identifiers (``Issue.id``) of the earlier pages
         for _ in range(_MAX_PAGES):
             data = self._graphql(
                 _ISSUES_QUERY,
@@ -4708,22 +4742,49 @@ class LinearTracker(Tracker):
             page = connection.get("pageInfo")
             if not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool:
                 raise LinearTrackerError("issue.search", None, "invalid_response")
-            for raw in connection["nodes"]:
-                # Backlog/graph queries must surface an authenticated lifecycle
-                # disagreement instead of making the whole project unreadable.
-                # Unknown or malformed proof chains remain explicit with
-                # ``state=None`` and never become terminal authority.
-                issue = self._to_issue(raw, project, observe_lifecycle=True)
-                if issue.id in seen:
-                    raise LinearTrackerError("issue.search", None, "pagination_stalled")
-                seen.add(issue.id)
-                out.append(issue)
+            # A provider that re-serves a page stops here, not after _MAX_PAGES
+            # requests. Only against EARLIER pages: a duplicate inside one page is left
+            # to the normalization below, as before.
+            current = {
+                raw["identifier"]
+                for raw in connection["nodes"]
+                if isinstance(raw, dict) and isinstance(raw.get("identifier"), str)
+            }
+            if current & earlier:
+                raise LinearTrackerError("issue.search", None, "pagination_stalled")
+            earlier |= current
+            nodes.extend(connection["nodes"])
             if not page["hasNextPage"]:
-                return out
+                break
             cursor = page.get("endCursor")
             if not isinstance(cursor, str) or not cursor:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
-        raise LinearTrackerError("issue.search", None, "pagination_limit")
+        else:
+            raise LinearTrackerError("issue.search", None, "pagination_limit")
+        # PAT-168: every page is fetched before the first normalization so that, inside
+        # a read-only command, the closed-Epic replay is served from this listing (same
+        # ``_ISSUE_FIELDS`` as a single read). An issue absent from it is read as before.
+        command = getattr(self._read_scopes, "scope", None)
+        if command is not None:
+            for raw in nodes:
+                if isinstance(raw, dict):
+                    stored = copy.deepcopy(raw)  # one copy, shared under both keys
+                    for key in (raw.get("id"), raw.get("identifier")):
+                        if isinstance(key, str) and key and key not in command:
+                            command[key] = stored
+        out: list[Issue] = []
+        seen = set()
+        for raw in nodes:
+            # Backlog/graph queries must surface an authenticated lifecycle
+            # disagreement instead of making the whole project unreadable.
+            # Unknown or malformed proof chains remain explicit with
+            # ``state=None`` and never become terminal authority.
+            issue = self._to_issue(raw, project, observe_lifecycle=True)
+            if issue.id in seen:
+                raise LinearTrackerError("issue.search", None, "pagination_stalled")
+            seen.add(issue.id)
+            out.append(issue)
+        return out
 
     def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
         binding = self._activate(project)

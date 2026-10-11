@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
+  `query backlog` and `query profile`, without changing any output or any write path. A
+  read scope, open only during one of those commands and dropped at its end, reads each
+  issue reference at most once (a native id and an identifier are two references, so an
+  issue resolved by both in `query issue` or `query adrs` still costs two reads), and
+  `search` seeds it with its listing so a closed Epic's replay is served from that
+  listing. Measured on the real project (outputs byte-identical): `query backlog` and an
+  intake profile page 171 -> 2, closed Epic PAT-51 262 -> 132, plain issue 56 -> 48;
+  `docs/linear-request-cost.md` records them. Behaviour change of `search`, for every
+  caller: it now fetches every listing page before normalizing any node. A successful
+  listing, a listing that fails in only one way and a listing whose first response
+  announces no next page report exactly what they reported; a re-served page is still
+  stopped at the second listing request. Only when two failures meet in a longer listing
+  does the reported error differ: a failure met while fetching (transport, invalid
+  response, missing cursor, page limit, or an issue of a later page repeating an earlier
+  page) now surfaces before a failure met while normalizing a node already fetched. A
+  listing that fails while normalizing now requests every page before reporting its
+  error. Inside one command, two snapshots no longer re-read a node they share. ADR
+  writes keep exactly their reads. `docs/linear-tracker.md` states what is shared inside
+  a command and what is not.
+
 - PAT-167: documentation only, no behaviour of any tool changes. New page
   `docs/linear-request-cost.md` records, as measured on 2026-10-11 on the real project
   (174 issues, 45 ADRs, Foundry 1.1.1), the number of Linear requests of `query issue`,

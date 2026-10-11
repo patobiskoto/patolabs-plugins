@@ -1199,12 +1199,71 @@ Epic costs one read more (the read itself). Measured on the fake transport (31 c
 269 -> 56, closed-Epic read 270 -> 57, diagnostic 110 -> 55, a whole `close-epic`
 1118 -> 266 (S0 preflight, pre-write S1, the closed parent's replay check and the
 post-write S3, each one snapshot of 56 reads, plus the fixed pre-validation of N + 1).
-Guarantees unchanged: the scope is created empty for each snapshot, never shared with
-another snapshot (nested ones included), the pre-write S1, the post-write verification
-or the write, and dropped on exit; a failed read is never cached; a refused snapshot and
-its diagnostic form one snapshot. Nothing is cached across calls, so a node added,
-reopened or modified between two snapshots is still detected exactly as before
-(PAT-ADR-0006, PAT-ADR-0014).
+Guarantees unchanged for a snapshot: the scope is created empty for each snapshot, never
+shared with another snapshot (nested ones included), the pre-write S1, the post-write
+verification or the write, and dropped on exit; a failed read is never cached; a refused
+snapshot and its diagnostic form one snapshot. A snapshot keeps nothing across calls, so
+a node added, reopened or modified between two snapshots that are not inside the same
+read-only command is still detected exactly as before (PAT-ADR-0006, PAT-ADR-0014).
+Two snapshots inside the same read-only command are the exception, see below.
+
+Reads shared inside a read-only command (PAT-168). `query issue`, `query adrs`, `query
+backlog` and `query profile` (and `candidates`, which calls `backlog`) additionally open
+`LinearTracker.read_scope()`. For `query issue` and `query adrs` it stays open for the
+tracker reads of the command; for `query backlog` and `query profile` it surrounds only
+the `search` call (the rest of those commands is computation); `query adr <ID>` opens
+none. It is a separate layer under the snapshot stack, which still decides first and
+keeps its contract above. Inside it, a reference is read at most once per command: a
+successful `issue.read` is reused by the next read of the same reference (a native id
+and an identifier are two references), and `search` fetches every listing page before
+normalizing, then seeds the layer with the listing's nodes (same fields as a single
+read) under their native id and identifier, so the replay of a closed Epic is served
+from the listing of the same command. An issue the listing does not carry is read
+individually, and fails exactly as before when it is unavailable or outside the
+binding. Inside `query issue` and `query adrs` this also covers the ADR index
+validation: a cited issue is read once per command, while the reciprocal comment is
+still read once per (ADR, issue) pair and both identity coordinates of a reference are
+still read the first time it is resolved.
+
+What is not shared: a failed read; anything in a write (while the layer is open,
+`_graphql` refuses any document that is not a pure read, so the first mutation of a
+write started inside it is refused and never sent, reads issued before it are sent, and
+no command that writes opens the layer); anything between two commands (the layer is
+created empty at the start of the command and dropped when it ends, so a node changed
+between two commands is seen by the second). Limit inside one command: two snapshots of
+the same read-only command (two closed Epics sharing a node in `backlog`, a closed Epic
+that is a child of a closed Epic in `query issue`) are served the node from the command
+layer without a re-read, so a change made to that node while the command runs is not
+seen by the second snapshot (PAT-ADR-0006, PAT-ADR-0014). ADR writes, which also run
+the ADR validation, are unchanged and keep exactly their reads.
+
+Error order of `search` (behaviour change, every caller, with or without the layer):
+`search` fetches every listing page before normalizing any node. While fetching it
+checks what it checked before on each response (transport, shape of the response, a
+missing or empty `endCursor` when a next page is announced, the page limit) and one
+thing more: a page carrying an issue identifier already carried by an earlier page is
+refused at once (`pagination_stalled`), so a provider that re-serves a page is stopped
+at its second listing request, as before. A repeated `endCursor` is not a failure by
+itself, as before: the listing continues, and stalls only if an issue comes back. A
+duplicate inside one page, and any duplicate the fetch did not catch, is refused by the
+check on the normalized issue, kept unchanged and run in listing order with the
+normalization.
+
+What cannot differ from the previous code: the output of a successful listing; the error
+of a listing that fails in only one way; and the output or the error, in every case, of
+a listing whose first response announces no next page (one listing request). What can
+differ, only when two failures meet in one listing whose first response announces a next
+page: a failure met while fetching (transport, invalid response, missing cursor, page
+limit, an issue of a later page repeating an earlier page) now wins over a failure met
+while normalizing a node already fetched (a normalization error, or a duplicate inside
+one page). The previous code reported the normalization failure whenever its node came
+at or before the point of the fetch failure, because each page was normalized before the
+next request, and it then spared the later requests. Number of listing requests, for a
+listing that succeeds or fails in only one way: unchanged, except when the one failure
+is met while normalizing; every page is then requested before the error is reported,
+where the previous code stopped at the page of the failing node. The individual reads a
+normalization issues (the replay of a closed Epic) are now all sent after the last
+listing request, so a listing that fails while fetching sends none of them.
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
