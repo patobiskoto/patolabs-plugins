@@ -209,7 +209,9 @@ the same way, except that the re-review of the first is limited as stated below:
 There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
 correct its non-blocking remarks before the merge. The review that follows covers what
 changed since the previous round, not the whole diff; after a blocking round it stays
-full. The merge gate asks for a review proof covering all criteria for the exact diff, so
+full. This holds for every non-blocking remark of such a PR, the three cases above
+included. When AC are unchecked, the merge gate asks for a review proof covering all
+criteria for the exact diff (step 1 above), so
 after such a partial review that proof relies on the previous round for the unchanged
 parts; the merge gate is not modified. After a validated round the reviewer's mark "fix
 before merge" decides the first case and the coordinator applies the two other cases (a

@@ -265,9 +265,13 @@ stated below:
 There is no second-level deferral: the non-blocking remarks left by the PR of an issue
 that belongs to a companion Epic are corrected before the merge. The review that follows
 covers what changed since the previous round, not the whole diff; after a blocking round
-it stays full (maintainer decision of 2026-10-11). The merge gate asks for a review proof
-covering all criteria for the exact diff, so after such a partial review that proof relies
-on the previous round for the unchanged parts; the merge gate is not modified (PAT-ADR-0018).
+it stays full (maintainer decision of 2026-10-11). This holds for every non-blocking
+remark of such a PR, the three cases above included. When the criteria of the issue are
+not all checked in the tracker, the merge gate asks for a review proof covering all
+criteria for the exact diff (`valid_for_merge`, called by `merge` in
+`plugins/foundry/tooling/foundry/issue.py`), so after such a partial review that proof
+relies on the previous round for the unchanged parts; the merge gate is not modified
+(PAT-ADR-0018).
 
 Four writes are authorized in advance, without human confirmation, inside and outside
 an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every repository where the

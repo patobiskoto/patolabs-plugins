@@ -87,8 +87,10 @@ Not mechanical:
 - No gate checks that a PR of a companion Epic deferred nothing (no second-level
   deferral), that the fourth write was made when needed, that the companion Epic has a
   single follow-up issue, or that the review after a correction was limited to what
-  changed. The merge gate is not modified: after such a partial review its review proof
-  relies on the previous round for the unchanged parts.
+  changed. The merge gate is not modified: when the criteria of the issue are not all
+  checked in the tracker it asks for a review proof of the exact diff (`valid_for_merge`,
+  called by `merge` in `tooling/foundry/issue.py`), and after such a partial review that
+  proof relies on the previous round for the unchanged parts.
 - Nothing checks that only one companion Epic carries a given name. The name and a
   mention in text are the only relation between the two Epics, and no file under
   `tooling/` or `hooks/` contains the word `Nits`.
@@ -119,8 +121,9 @@ Not coded yet:
 
 ## Portability of the three writes (PAT-139)
 
-The three writes are `create_issue` with the field `Type: Epic` and no parent,
-`create_issue(parent=…)` and `add_comment`. [`tracker-contract.md`](tracker-contract.md),
+The first three writes of `AGENTS.md#R9` (b) are `create_issue` with the field
+`Type: Epic` and no parent, `create_issue(parent=…)` and `add_comment`.
+[`tracker-contract.md`](tracker-contract.md),
 table "Core journey", marks the rows "Frame/intake/groom: create, comment" and
 "Epics/enfants/dépendances: child creation, relations" `supported` for YouTrack, Linear
 and `ghprojects`.
