@@ -2160,7 +2160,7 @@ def test_failed_issue_post_surfaces_create_effect_unknown_at_the_first_call(
     def runner(command, **kwargs):
         assert command[:5] == [
             "gh", "api", "-X", "POST",
-            "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues",
+            "repos/" + PROJECT.extra["canonical_repo"].removeprefix("github.com/") + "/issues",
         ]
         posts.append(command)
         return subprocess.CompletedProcess(command, 1, stdout, stderr)
@@ -2240,9 +2240,6 @@ def test_add_comment_post_failure_raises_the_run_reason_itself_and_never_retries
         return subprocess.CompletedProcess(command, 1, "", "HTTP 429 rate limit")
 
     tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
-    monkeypatch.setattr(tracker, "_authoritative_binding", lambda *_: _Binding(
-        "patobiskoto", 7, "PVT_project", "patobiskoto/foundry-v1-ghprojects-sandbox", "GHQUAL",
-    ))
     monkeypatch.setattr(tracker, "_native_issue", lambda *_: (3, 1003))
     monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-3", "node-3"))
 
