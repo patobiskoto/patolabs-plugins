@@ -79,7 +79,8 @@ Observed failure: with macOS system Ruby 2.6.10 first on `PATH`, the 3
 32 pass. The stub uses endless method definitions, one of them with a command-call body
 (`def self.user_error!(message) = raise SubmitError, message`), which Ruby accepts
 from 3.1 (Ruby 3.1.0 NEWS, Feature #17398); floor deduced from the syntax and the
-release notes, not tested on Ruby 3.0 to 3.3. Also deduced
+release notes; the only runs with a known Ruby version are 2.6.10 (the 3 tests error)
+and 4.0.7 (pass), and the CI Ruby version is not logged. Also deduced
 from the code, not observed on older versions: `str.removeprefix` in
 `tests/test_release_skill.py` (Python 3.9+), parenthesised `with (...)` in
 `tests/test_changelog_bridge.py` (Python 3.10+) and `git init -b` in
