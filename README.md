@@ -31,18 +31,6 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
-**Patch release 1.1.1:** it sets both Foundry host manifests to **1.1.1** (Ship-iOS
-stays at **0.3.0**). Its content is the `1.1.1` section of the
-[CHANGELOG](plugins/foundry/CHANGELOG.md); as a patch it has neither a release note nor
-a migration guide (`release_requirements` in
-`plugins/foundry/tests/test_release_contract.py`). That section opens with a change of
-behaviour for every repository that uses the plugin: after a fully validated review
-round, the Foundry skills write to the tracker without asking, in four bounded cases
-(rule R9 (b) of `AGENTS.md`). Whether 1.1.1 is tagged, and the
-installed and loaded state per host, are not asserted in this file; they are to be read
-on the tracker issue PAT-149. The 1.1.0 statuses below are the last per-host statuses
-this file records.
-
 **Tagged, installed state observed per host:** Foundry **1.1.0** (both host
 manifests declared it at the tag; Ship-iOS stays at **0.3.0**). Its
 [release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
@@ -63,6 +51,29 @@ Statuses, with their source (the readbacks recorded on the tracker issue PAT-135
   `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.0.
 - **Return to 1.0.0 through an official manager:** not tried, see the
   [errata](plugins/foundry/docs/release-1.1.0-errata.md).
+
+**Patch release 1.1.1:** it sets both Foundry host manifests to **1.1.1** (Ship-iOS
+stays at **0.3.0**). Its content is the `1.1.1` section of the
+[CHANGELOG](plugins/foundry/CHANGELOG.md); as a patch it has neither a release note nor
+a migration guide (`release_requirements` in
+`plugins/foundry/tests/test_release_contract.py`). That section opens with a change of
+behaviour for every repository that uses the plugin: after a fully validated review
+round, the Foundry skills write to the tracker without asking, in four bounded cases
+(rule R9 (b) of `AGENTS.md`). Statuses, as recorded on the tracker issue PAT-149 on
+2026-10-11:
+
+- **Tag:** `foundry-v1.1.1` points at `343be14`, the commit that merged the release pull
+  request (read back on the remote).
+- **Claude Code:** Claude Code 2.1.294, the official manager reported "updated from
+  1.1.0 to 1.1.1" and lists 1.1.1; a new non-interactive session started after the
+  update loads 1.1.1 (the session reported that the context injected by its start-up
+  hook cites the 1.1.1 plugin root). A new interactive session was not observed.
+- **Codex:** Codex CLI 0.155.1, the official manager lists 1.1.1, installed and enabled.
+  A new Codex session is **not** verified: the attempt ran the session-start hook and
+  was then refused before any model turn (model not supported with the account).
+- **Not verified:** the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host, `configure show`,
+  `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.1.
+  The return to 1.1.0 or 1.0.0 through an official manager is not tried.
 
 ## Public scope
 
@@ -97,7 +108,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. 1.0.0 (published). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.1.1 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog

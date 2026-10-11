@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- PAT-150: wording and one code comment only, no behaviour of any tool changes; settles
+  the non-blocking remarks deferred from PAT-149. Both READMEs record the 1.1.1 tag and
+  per-host statuses instead of pointing at the tracker. `plugins/foundry/README.md` lists
+  1.1.1 among the releases the CI release rule is derived from (also the comment in
+  `scripts/ci_plan.py`) and stops calling the 1.0.0 guide "current". The root README
+  stops calling foundry "1.0.0 (published)" and orders its status paragraphs
+  chronologically.
+
 ## 1.1.1 — 2026-10-11
 
 Patch release. Entries below change behaviour for every repository that uses the
