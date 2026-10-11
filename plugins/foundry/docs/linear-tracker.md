@@ -892,8 +892,10 @@ it then deletes the merged branch on the code host and cleans the local branch (
 Codex in a linked worktree). A coordinate mismatch refuses before any write. Run on a
 copy: a fixture of the same receipt shape (`_historical_done_shape` in
 `tests/test_linear_tracker.py`) goes from `disagreement` to `done` with its comments
-unchanged. Not run against the real issues. No strict read is weakened: `get_issue`
-still refuses a `disagreement`.
+unchanged. Run against the real issues on 2026-10-11, from a linked worktree: each
+command printed that the receipt was already durable and the issue already done, and a
+`query issue` read then gave `native_state=done` and `projection_status=aligned` for
+both. No strict read is weakened: `get_issue` still refuses a `disagreement`.
 
 A merge that completes today cannot leave this state: `set_state` appends the receipt
 then writes the native State (`linear.py:5547`), and an interrupted second write is

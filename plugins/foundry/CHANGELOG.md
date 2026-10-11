@@ -4,9 +4,9 @@
 
 - PAT-163: documentation only, no behaviour of any tool changes. `docs/linear-tracker.md`
   records why PAT-72 and PAT-73 read `done` with a native In Progress (both merged
-  before PAT-56 added the native State projection; until then only receipts were written), the
-  existing `issue merge <ISSUE-ID> <PR-NUMBER>` replay that realigns them, and why a
-  merge that completes today cannot leave that state.
+  before PAT-56 added the native State projection; until then only receipts were
+  written), the existing `issue merge <ISSUE-ID> <PR-NUMBER>` replay that realigned them
+  on 2026-10-11, and why a merge that completes today cannot leave that state.
 
 - PAT-150: wording and one code comment only, no behaviour of any tool changes; settles
   the non-blocking remarks deferred from PAT-149. Both READMEs record the 1.1.1 tag and
