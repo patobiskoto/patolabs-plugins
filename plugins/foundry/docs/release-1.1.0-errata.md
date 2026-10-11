@@ -23,15 +23,16 @@ a bullet says otherwise:
   `lfc.build_bundle` (`local_first_corpus.build_bundle`) on the repository given with
   `--repo`, then removes it afterwards (`Runner._discard`). All four verbs reach
   `_bundle`: `screen` through `local_attempt` only; `compare` through `local_attempt`
-  (path N) and `cloud_path` (paths A and B); `screen-exploration` through
+  (path N, and path C through `hybrid_path`) and `cloud_path` (paths A and B, and the
+  takeover of path C through `hybrid_path`); `screen-exploration` through
   `explore_local`; `compare-exploration` through `explore_local`, the cloud exploration
   step and `cloud_path`;
 - runs the judge on that bundle, through `Runner._judge`, which calls `lfc.judge`
   (`local_first_corpus.judge`), after the fake driver. It is reached from
   `Runner.local_attempt` and `Runner.cloud_path`, hence by `screen` (through
-  `local_attempt` only), by `compare` (`local_attempt` for path N, `cloud_path` for
-  paths A and B), and by `compare-exploration` for its implementation arms (through
-  `cloud_path`). It is
+  `local_attempt` only), by `compare` (`local_attempt` for paths N and C, `cloud_path`
+  for paths A and B and for the takeover of path C), and by `compare-exploration` for
+  its implementation arms (through `cloud_path`). It is
   **not** reached by `screen-exploration`, nor by the exploration steps of
   `compare-exploration`: `Runner.explore_local` takes its verdict from
   `lfe.verdict_of`, not from `lfc.judge`. It is also skipped when `_patch_of` raises

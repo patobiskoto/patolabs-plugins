@@ -7,11 +7,13 @@
   reaches `_bundle` through `local_attempt` only (read in `Runner.screen` and
   `Runner.compare`), the twenty-minute bound kills the `claude -p` parent, counts removed.
   `intake` skill: the removal command refuses an empty argument, and the skill says what
-  to do when `--all-pages` names a directory or the removal fails; an `--all-pages`
-  failure before any page still leaves an empty temporary directory named nowhere (not
-  changed: that needs a change of `--all-pages`). `test_release_contract.py`: tests of
-  the crossed paths of the frozen-release check, exact fault lists, a synthetic frozen
-  map, and a shape check of `FROZEN_DOCUMENT_EXCEPTIONS`; the reason of the absent
+  to do when `--all-pages` names a directory or the removal fails; a failure of
+  `--all-pages` after the directory is created and before any page is written, whose
+  message does not name the directory (tracker error, quota), still leaves an empty
+  temporary directory (not changed: that needs a change of `--all-pages`).
+  `test_release_contract.py`: tests of the crossed paths of the frozen-release check,
+  exact fault lists, a synthetic frozen map, and a shape check of
+  `FROZEN_DOCUMENT_EXCEPTIONS`; the reason of the absent
   benchmark artifact is now worded as deduced. `plugins/foundry/README.md` states the
   freeze rule once.
   Documentation status (R5): `docs/release-1.1.0-errata.md`, `docs/query-profiles.md`,

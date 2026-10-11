@@ -245,9 +245,9 @@ FROZEN_DOCUMENT_EXCEPTIONS = (
         "version": "0.8.0",
         "document": "benchmarks/foundry-46/report-v2/pilot-20260825/results-v2.json",
         "kind": "absent",
-        "reason": "benchmark artifact; deduced to be absent because FOUNDRY-ADR-0024 "
-        "excludes benchmark artifacts from the public snapshot, not observed (this "
-        "checkout tracks no benchmarks/ directory; pytest.ini only names the path)",
+        "reason": "benchmark artifact, absent from this checkout (it tracks no "
+        "benchmarks/ directory; pytest.ini only names the path); cause deduced, not "
+        "observed: FOUNDRY-ADR-0024 excludes benchmark artifacts from the public snapshot",
     },
 )
 

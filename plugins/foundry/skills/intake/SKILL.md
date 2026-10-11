@@ -30,8 +30,9 @@ to what `query profile intake <page>` prints for the same tracker state; that si
 form remains available. Do not reuse `<DIR>` in a later session: it is a one-shot output,
 not a cache. Once the pages are read, and also when the intake stops midway (an accepted
 ADR settles the idea, rejection, restart, user stop), remove that directory (the parent of
-the manifest paths; the command deletes nothing itself). This removes only the page files, then the directory, and
-fails if anything else is in it, and refuses an empty argument:
+the manifest paths; the command deletes nothing itself). This removes only the page
+files, then the directory; it fails if anything else is in it and refuses an empty
+argument:
 `python3 -c 'import pathlib,sys; sys.argv[1] or sys.exit("empty directory argument"); d=pathlib.Path(sys.argv[1]); [p.unlink() for p in d.glob("intake-page-*.json")]; d.rmdir()' "<DIR>"`.
 When `--all-pages` fails with a message naming a directory, remove that directory with
 the same command. When the removal command itself fails (directory already gone, wrong
