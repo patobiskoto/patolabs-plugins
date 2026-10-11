@@ -88,9 +88,11 @@ Not mechanical:
   deferral), that the fourth write was made when needed, that the companion Epic has a
   single follow-up issue, or that the review after a correction was limited to what
   changed. The merge gate is not modified: when the criteria of the issue are not all
-  checked in the tracker it asks for a review proof of the exact diff (`valid_for_merge`,
-  called by `merge` in `tooling/foundry/issue.py`), and after such a partial review that
-  proof relies on the previous round for the unchanged parts.
+  checked in the tracker, and also when they are all checked on a tracker whose adapter
+  sets `delivery_receipt_supported` if the issue has a binding (`write.issue_binding`),
+  it asks for a review proof of the exact diff (`valid_for_merge`, called twice by
+  `merge` in `tooling/foundry/issue.py`), and after
+  such a partial review that proof relies on the previous round for the unchanged parts.
 - Nothing checks that only one companion Epic carries a given name. The name and a
   mention in text are the only relation between the two Epics, and no file under
   `tooling/` or `hooks/` contains the word `Nits`.
