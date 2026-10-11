@@ -870,9 +870,9 @@ PAT-73 (PR 50) were merged on 2026-09-27. Observed in a `query issue` read of
 of `linear.py`: before commit `97b9316` (PAT-56) nothing in that file wrote the native
 State of a lifecycle transition (lines matching `_project_native_state` or
 `issue.update.lifecycle-state`: 0 at `9603302`, `9d7cb50`, `40cbccc` and `82c5e73`, 4 at
-`97b9316`), so `set_state` only appended receipts. The contract of that time said so:
-"Status projection ... (not met — PAT-56)" (`tracker-contract.md` at `9d7cb50`). Both
-issues were merged by `9603302` and `9d7cb50`, before `97b9316`. Deduced, not observed:
+`97b9316`), so `set_state` only appended receipts: at `9d7cb50` it ends with the call
+to `_project_lifecycle` and writes no native State. Both issues were merged by `9603302`
+and `9d7cb50`, before `97b9316`. Deduced, not observed:
 their native In Progress was written by the Linear GitHub integration at the first
 review receipt (PAT-72 06:22Z, PAT-73 07:28Z, native history read through the Linear
 connector), not by Foundry; the earlier `state-in-progress` receipts record `backlog` as
