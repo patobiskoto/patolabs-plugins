@@ -218,7 +218,6 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_write
                   "the code that creates the companion Epic and its issues",
                   "campaigns usable on the repository's tracker"):
         assert piece in text
-    # the later issue: a placeholder until it is created, then its identifier
     # this skill is shipped to every repository: it names no issue of this repository
     # and says where the page that names it is
     assert not re.search(r"PAT-\d+", text.replace("PAT-ADR-0018", ""))

@@ -2253,9 +2253,13 @@ def test_add_comment_post_failure_raises_the_run_reason_itself_and_never_retries
     assert len(posts) == 1
 
 
-def test_run_classifies_an_unrunnable_gh_process_as_transport_failed(tmp_path):
+@pytest.mark.parametrize("failure", [
+    FileNotFoundError("gh"),
+    subprocess.TimeoutExpired("gh", 1),
+], ids=["cannot_run", "timeout"])
+def test_run_classifies_an_unrunnable_gh_process_as_transport_failed(tmp_path, failure):
     def runner(command, **kwargs):
-        raise subprocess.TimeoutExpired(command, 1)
+        raise failure
 
     tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
     with pytest.raises(GitHubProjectsTrackerError) as raised:
