@@ -76,8 +76,10 @@ Versions observed passing (35 tests): Python 3.13.13, git 2.54.0 and Ruby 4.0.7
 
 Observed failure: with macOS system Ruby 2.6.10 first on `PATH`, the 3
 `SubmitLaneTests` tests error (the `ruby -e` stub exits with status 1) and the other
-32 pass. The stub uses endless method definitions (`def f(*) = nil`), which is a
-Ruby 3.0+ feature (deduced from the syntax, not tested on 3.0 to 3.3). Also deduced
+32 pass. The stub uses endless method definitions, one of them with a command-call body
+(`def self.user_error!(message) = raise SubmitError, message`), which Ruby accepts
+from 3.1 (Ruby 3.1.0 NEWS, Feature #17398); floor deduced from the syntax and the
+release notes, not tested on Ruby 3.0 to 3.3. Also deduced
 from the code, not observed on older versions: `str.removeprefix` in
 `tests/test_release_skill.py` (Python 3.9+), parenthesised `with (...)` in
 `tests/test_changelog_bridge.py` (Python 3.10+) and `git init -b` in
