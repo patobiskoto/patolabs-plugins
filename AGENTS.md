@@ -215,7 +215,8 @@ document.
 `foundry:maigret`'s "project conventions" quality criterion is this document. A finding
 that cites a convention breach must point at a rule here (`AGENTS.md#R<n>` /
 `CLAUDE.md#R<n>`) or at an accepted ADR by ID — never an unwritten preference. A diff
-that does not touch any rule of this contract passes this criterion without further comment.
+that does not touch any rule of this contract passes this criterion without further
+comment.
 
 ## R9 — Fewer review rounds: author checklist, grouped deferral, minimal corrections (PAT-136, PAT-139)
 
@@ -243,13 +244,14 @@ a review round that is fully validated, non-blocking remarks are not corrected i
 The remarks deferred from the issues of an Epic go to a companion Epic, named `Nits`
 followed by the identifier of the origin Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic
 of an issue is its direct parent Epic: an issue under a sub-Epic uses that sub-Epic. The
-two Epics
-have no tracker link between them: no parent, no dependency, no relation. What relates
-them is that name and a mention in text, nothing else. Inside the companion Epic the
-remarks are held by follow-up issues, one per batch or per theme, never one per PR. The
-follow-up issue that receives the remarks of a PR is cited in that PR's description
-before the merge. Three cases are still corrected before the merge and then fully
-re-reviewed, as before:
+two Epics have no tracker link between them: no parent, no dependency, no relation. What
+relates them is that name and a mention in text, nothing else. Inside the companion Epic
+the remarks are held by follow-up issues, one per batch or per theme, never one per PR.
+The follow-up issue that receives the remarks of a PR is cited in that PR's description
+before the merge. These three cases are still corrected before the merge and then fully
+re-reviewed, as before; the rest of this rule adds three more (the PR of an issue of a
+companion Epic, an issue with no origin Epic, a durable refusal of one of the writes),
+corrected the same way:
 
 - a remark the reviewer marks "fix before merge";
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -319,14 +321,14 @@ the right source and is true; that a procedure was really run; that a correction
 changed "as few sentences as possible"; that a remark was rightly classed as deferrable.
 `plugins/foundry/tests/test_skills.py` and `plugins/foundry/tests/test_process_contract.py`
 prove only that these rules are written in the skills and in this contract, not that they
-are followed (FOUNDRY-ADR-0018: a mechanical
-check never proves that documentation is true). Likewise, neither the "fix before merge"
-mark nor the existence of the follow-up issue is seen by any gate: the review proof stays
-`quality=mergeable`, so the merge command does not refuse a diff because a marked remark
-was left uncorrected or because the follow-up issue does not exist. The checklist is an obligation of the
-author judged by the reviewer, not a gate. In the same way no gate checks that the
-companion Epic of (b) exists, that it has no tracker link with the origin Epic, or that
-a PR of a companion Epic deferred nothing: this is judged in review.
+are followed (FOUNDRY-ADR-0018: a mechanical check never proves that documentation is
+true). Likewise, neither the "fix before merge" mark nor the existence of the follow-up
+issue is seen by any gate: the review proof stays `quality=mergeable`, so the merge
+command does not refuse a diff because a marked remark was left uncorrected or because
+the follow-up issue does not exist. The checklist is an obligation of the author judged
+by the reviewer, not a gate. In the same way no gate checks that the companion Epic of
+(b) exists, that it has no tracker link with the origin Epic, or that a PR of a companion
+Epic deferred nothing: this is judged in review.
 
 **What is not coded yet.** The three writes of (b) are made by the coordinator that
 applies the skills. An Epic campaign does not receive the reviewer's prose: its review
