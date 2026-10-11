@@ -92,9 +92,12 @@ PYTHONPATH=plugins/foundry/tooling python3 -m foundry.claude_profile_trial \
   --out plugins/foundry/docs/qualification/pat-125-native-trial.json
 ```
 
-`--dry-run` prépare la fixture dans le dossier donné et affiche la commande sans rien
-lancer ; le lancement réel exige ensuite un autre dossier, car un dossier de travail ou
-un fichier de résultat existant est refusé (aucun rejeu).
+`--dry-run` affiche la commande sans rien lancer et ne crée rien sous le dossier de
+travail (depuis PAT-134 ; la création de la fixture est gardée par `if not args.dry_run`
+dans `run` et `run_cache_ttl` de `tooling/foundry/claude_profile_trial.py`, et l'option
+est décrite comme « create nothing under the work directory, launch nothing »). Le
+lancement réel refuse ensuite un dossier de travail ou un fichier de résultat existant
+(aucun rejeu).
 
 - Ce que fait l'outil : il crée hors de tout dépôt git une fixture portant sa propre
   politique (`economy` → `haiku-5.5` / `medium`, le défaut du produit n'est donc pas
