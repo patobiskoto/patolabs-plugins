@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- PAT-170: documentation only, no behaviour of any tool changes; closes the observation
+  window of the 1-hour cache on the Sonnet 5.5 subagent profiles (PAT-134) by the
+  tenth delivered issue. Only 2 main conversations qualified, so `rollback_decision`
+  returned `unknown` (fewer than 3 sessions) and the change stays without conclusion; the
+  indicative figures are recorded as such. The maintainer decided on 2026-10-11 that
+  the 1-hour cache stays and extended the window to the 30-day bound, 2026-11-09; the
+  measure is made again with the same rule when at least 3 sessions qualify. Threshold,
+  selection rule and rollback procedure are unchanged. Written in
+  `docs/qualification/pat-134-subagent-cache-1h.md` and `docs/model-routing.md`. R5: the
+  documented artifacts are those two pages (the observation window of PAT-134); no CLI,
+  option, key, constant or profile changes.
 - PAT-187: documentation only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from the reviews of PAT-163 and PAT-164.
   `docs/linear-tracker.md` limits "the same divergence" to the 28 issues completed on
