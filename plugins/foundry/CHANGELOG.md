@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.1 — 2026-10-11
+
 - PAT-148: wording and tests only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from PAT-137, PAT-147 and PAT-146. Errata page: `screen`
   reaches `_bundle` through `local_attempt` only (read in `Runner.screen` and
