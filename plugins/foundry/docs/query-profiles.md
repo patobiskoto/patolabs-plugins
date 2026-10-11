@@ -63,9 +63,12 @@ reused: run it again into a new directory. Stdout is a small
 `pages`); pages stay bounded and are meant to be read one at a time. Nothing survives the
 command except these files (and the directory created for them, and, when
 `FOUNDRY_REQUEST_COUNT` is a file path, the line appended to that file), and no Foundry
-command reads the pages back. Cleaning `<DIR>` is the caller's job: the command never deletes it
-(the `intake` skill asks to remove it after reading, including when the intake stops midway). Documentation status (R5): new CLI option, documented here
-and in the `intake` skill; the other profile skills are unchanged. Observed on 2026-10-11
+command reads the pages back. Cleaning `<DIR>` is the caller's job: the command never
+deletes it (`profile_all_pages` in `tooling/foundry/query.py` calls no removal on the
+directory, and its docstring says "nothing is deleted"); the `intake` skill asks to
+remove it after reading, including when the intake stops midway. Documentation status
+(R5): new CLI option, documented here and in the `intake` skill; the other profile
+skills are unchanged. Observed on 2026-10-11
 in a Claude Code host session (Bash tool, working directory `plugins/foundry`): the
 launcher called by its relative path
 (`python3 tooling/foundry_cli.py query profile intake --all-pages "$(mktemp -d)"`) ran

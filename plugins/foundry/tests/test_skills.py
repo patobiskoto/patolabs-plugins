@@ -333,5 +333,10 @@ def test_intake_uses_the_all_pages_route_and_keeps_the_snapshot_identity_rule():
     assert "when the intake stops midway" in text
     assert "remove that directory" in text
     assert "fails if anything else is in it" in text
-    assert ('[p.unlink() for p in d.glob("intake-page-*.json")]; d.rmdir()\' "<DIR>"') in text
+    assert ("python3 -c 'import pathlib,sys; sys.argv[1] or sys.exit(\"empty directory argument\"); "
+            "d=pathlib.Path(sys.argv[1]); [p.unlink() for p in d.glob(\"intake-page-*.json\")]; "
+            "d.rmdir()' \"<DIR>\"") in text
+    assert "refuses an empty argument" in text
+    assert "When `--all-pages` fails with a message naming a directory, remove that directory" in text
+    assert "do not try another path: report it" in text
     assert "rmtree" not in text

@@ -597,6 +597,13 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   1.1.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
+- Freeze rule: the pull request that publishes a version must carry its entry in
+  `tests/fixtures/release-history.json`, because a CI test fails while a published
+  CHANGELOG section has no entry there (`_assert_frozen_coverage` and
+  `test_published_releases_stay_frozen_except_declared_exceptions` in
+  `tests/test_release_contract.py`). This replaces, for future releases, the 1.1.0
+  note's "computed from the tagged tree, through an issue of its own"
+  (`docs/release-1.1.0-errata.md`).
 - `ship-ios` runs on `ubuntu-24.04`: its tests call Python, `git` and `ruby` (to evaluate
   the Fastfile), and no test calls Xcode or a simulator. The job installs `ruby` with
   `apt-get` only if the image lacks it. Observed in CI run 38095058779 (head `d640c1a`):
