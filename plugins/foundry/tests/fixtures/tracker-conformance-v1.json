@@ -437,7 +437,7 @@
     },
     {
       "id": "linear-adr-unavailable",
-      "test": "test_linear_tracker.py::test_query_issue_projects_real_unavailable_adr_issue_with_provenance",
+      "test": "test_linear_tracker.py::test_query_adr_paths_stay_fail_closed_on_real_unavailable_adr_issue",
       "providers": [
         "linear"
       ],

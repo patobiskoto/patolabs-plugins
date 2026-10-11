@@ -44,11 +44,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 The payload's `adrs` are only an index. Before review, load the full text of every cited
 accepted ADR with `query adr <ADR-ID>`; a tracker-only ADR cannot be recovered by the
 read-only Claude reviewer after it starts. If `adrs` is instead a
-`{"status": "conflict", ...}`, `{"status": "adr_unavailable", ...}`, or
-`{"status": "adr_issue_unavailable", ...}` object, the embedded ADR index is in
-conflict, refers to an ADR absent from it, or has an unavailable declared ADR issue
-relation — treat it
-as unresolved, not as "no ADRs", and carry that into step 5.
+`{"status": "conflict", ...}` or `{"status": "adr_unavailable", ...}` object, the
+embedded ADR index is in conflict or refers to an ADR absent from it — treat it
+as unresolved, not as "no ADRs", and carry that into step 5. A broken ADR-to-issue
+link is not shown in this payload; the ADR commands refuse it.
 
 ### 2. Code review (blank-context, two stages)
 Before launching anything, build a bounded packet with the literal sections `Goal:`
@@ -348,9 +347,8 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 If there is no single unambiguous frame citation for the exact ADR, STOP: do not infer
 one from a native relation or from the index. `adr accept <ADR-ID>` without
 `--framed-by` remains the separate explicit human decision path. If the `query issue`
-payload's `adrs` is a `{"status": "conflict", ...}`,
-`{"status": "adr_unavailable", ...}`, or `{"status": "adr_issue_unavailable", ...}`
-object rather than a list, do not conclude "no
+payload's `adrs` is a `{"status": "conflict", ...}` or
+`{"status": "adr_unavailable", ...}` object rather than a list, do not conclude "no
 proposed ADR to accept" — the index is unreadable, not empty. Acceptance stays blocked
 until the conflict or unavailable ADR is resolved (`query adr`/`query adrs` still fail
 closed on either); say so explicitly rather than silently skipping this step.

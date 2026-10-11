@@ -2,16 +2,23 @@
 
 ## Unreleased
 
-- PAT-190: `query issue` no longer validates the ADR-to-issue links of the ADR index it
-  embeds (Linear): it does not resolve the issues an ADR declares nor read their
-  reciprocal comments. Behaviour change: a broken link (missing reciprocal comment,
-  declared issue absent or inaccessible) is no longer projected as `conflict` or
-  `adr_issue_unavailable` in `query issue`, which returns the plain index; it is still
-  refused, as before, by `query adr`, `query adrs`, `frame` and the ADR writes. Version
-  chain, witness, status and supersession checks stay in `query issue`, and its output is
-  unchanged for a valid ADR graph. On the fake transport a plain `query issue` goes from
-  6 to 3 requests; `docs/linear-request-cost.md` ("After PAT-190"). R5: documented in
-  `docs/linear-tracker.md` and `docs/linear-request-cost.md`; no CLI option or
+- PAT-190: `query issue` returns the ADR index without validating the ADR-to-issue
+  links, on every tracker (Linear and GitHub Projects used to validate them; YouTrack
+  and DevHub never did). The ADR commands (`query adr`, `query adrs`, `frame`, the ADR
+  writes) keep the validation and still refuse a broken link. Behaviour changes: a
+  broken link (missing reciprocal comment, cited issue absent or inaccessible) is no
+  longer projected as `adr_issue_unavailable` or `conflict` by `query issue`, which
+  returns the plain index; a transport, binding or payload failure while reading a
+  cited issue no longer fails `query issue` (only the listing of ADR documents can).
+  The `note` of the `query issue` payload no longer announces the
+  `adr_issue_unavailable` status and says the ADR commands validate the links; every
+  other field is identical for a valid graph. The skills `start-issue`, `resume-issue`
+  and `merge-pr` no longer list that shape for `adrs` in this payload. Version chain,
+  witness, history, status and supersession checks stay in `query issue`. Fake
+  transport: a plain Linear `query issue` goes from 6 to 3 requests, GitHub Projects
+  from 17 to 15 commands; measured on the real Linear project in
+  `docs/linear-request-cost.md`. R5: documented in `docs/linear-tracker.md`,
+  `docs/ghprojects-tracker.md` and `docs/linear-request-cost.md`; no CLI option or
   configuration key added.
 - PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
   `query backlog` and `query profile`, without changing any output or any write path. A

@@ -4192,6 +4192,7 @@ class GitHubProjectsTracker(Tracker):
         _migration: bool = False,
         _resume_incomplete_source_ref: str | None = None,
         _resume_intent_fingerprint: str | None = None,
+        _issue_links: bool = True,
     ) -> tuple[_Binding, dict[str, tuple[Adr, dict[str, Any], int]]]:
         binding = (
             self._binding(project) if _migration
@@ -4305,6 +4306,8 @@ class GitHubProjectsTracker(Tracker):
                     or adr_id not in latest[target][1]["relations"]["supersedes"]
                 ):
                     raise TrackerConflictError("ADR GitHub supersession is not reciprocal")
+        if not _issue_links:
+            return binding, latest
         linked_by_issue: dict[str, list[str]] = {}
         for adr_id, (_adr, metadata, _comment) in latest.items():
             for issue_id in metadata["relations"]["issues"]:
@@ -4396,6 +4399,14 @@ class GitHubProjectsTracker(Tracker):
 
     def list_adrs(self, project: Project) -> list[Adr]:
         _binding, latest = self._adr_snapshot(project)
+        return [latest[key][0] for key in sorted(latest)]
+
+    def list_adrs_without_issue_links(self, project: Project) -> list[Adr]:
+        """The ADR index of `query issue` (PAT-190): `list_adrs` without the final
+        ADR-to-issue relation block (the project listing, then the native read of each
+        cited issue). History, head, supersession checks are kept; every ADR command
+        keeps `list_adrs`, which validates the links."""
+        _binding, latest = self._adr_snapshot(project, _issue_links=False)
         return [latest[key][0] for key in sorted(latest)]
 
     def migration_export_adrs(self, project: Project) -> list[dict]:

@@ -1453,7 +1453,7 @@ def test_query_issue_projects_real_transport_missing_witness_as_conflict(
     assert result["project"] == PROJECT.key
 
 
-def test_query_issue_projects_real_unavailable_adr_issue_with_provenance(
+def test_query_issue_returns_the_plain_index_when_a_declared_adr_issue_disappears(
     tracker, monkeypatch,
 ):
     # PAT-190: an ADR's declared issue disappears after its witnessed reciprocal link

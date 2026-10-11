@@ -165,7 +165,12 @@ returns authority. Each current ADR-to-Issue relation must also resolve once thr
 complete bound Project read and the canonical Issue endpoint. A removed, deleted or
 permission-inaccessible delivery Issue raises `AdrIssueUnavailableError` with the exact
 ADR/Issue pair; malformed, foreign and globally ambiguous reads remain conflicts or
-transport errors rather than being collapsed into unavailability.
+transport errors rather than being collapsed into unavailability. This validation
+belongs to the ADR commands (`query adr`, `query adrs`, `frame`, the ADR writes):
+`query issue` builds its embedded index with `list_adrs_without_issue_links`, which skips
+only this relation check (the Project listing and the native read of each cited Issue)
+and still verifies history, head commitment and supersession, so a broken ADR-to-Issue
+link gives a plain index there and is refused by the next ADR command (PAT-190).
 Duplicate supports, a hole, a malformed same-namespace support, missing/deleted comment,
 foreign coordinate, altered source or ambiguous history fail closed. The old PAT-65
 `EXP-ADR-0001` prototype is a foreign namespace and is not imported as GHQUAL authority.

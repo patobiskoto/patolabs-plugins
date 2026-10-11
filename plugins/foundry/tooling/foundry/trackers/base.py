@@ -50,9 +50,10 @@ class AdrUnavailableError(RuntimeError):
 class AdrIssueUnavailableError(RuntimeError):
     """An ADR's declared issue relation is absent or inaccessible.
 
-    The pair is preserved so the one read-only ``query issue`` projection can
-    report the exact broken relation without treating the requested issue as
-    unavailable.  ADR reads and writes deliberately continue to fail closed.
+    Raised by the ADR commands (``query adr``, ``query adrs``, ``frame`` and the ADR
+    writes) of the trackers that validate ADR-to-issue links; the pair is preserved so
+    the caller sees the exact broken relation.  ``query issue`` does not validate these
+    links (PAT-190) and never raises or projects this error.
     """
 
     def __init__(self, adr_id: str, issue_id: str):
