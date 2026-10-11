@@ -452,6 +452,22 @@
       ]
     },
     {
+      "id": "linear-query-issue-plain-index-on-broken-adr-link",
+      "test": "test_linear_tracker.py::test_query_issue_returns_the_plain_index_when_a_declared_adr_issue_disappears",
+      "providers": [
+        "linear"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "adr-read"
+      ],
+      "adversarial": [
+        "adr-unavailable"
+      ]
+    },
+    {
       "id": "ghprojects-read-pagination",
       "test": "test_ghprojects_tracker.py::test_search_pages_graphql_and_excludes_only_reserved_adr_support",
       "providers": [

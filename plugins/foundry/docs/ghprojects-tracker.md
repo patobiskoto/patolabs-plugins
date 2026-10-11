@@ -171,10 +171,19 @@ belongs to the ADR commands (`query adr`, `query adrs`, `frame`, the ADR writes)
 skips only this relation check (its own complete Project read and the native read of
 each cited Issue) and still verifies history, head commitment and supersession, so a
 broken ADR-to-Issue link gives a plain index there and is refused by the next ADR
-command (PAT-190). The index of `query issue` therefore still reads the repository
-Issue list, the Project items and, for each ADR, its support Issue and its comment
-history; a transport or provider failure of any of those still fails `query issue`,
-a failure while reading a cited delivery Issue no longer does.
+command (PAT-190). The index of `query issue` therefore still reads (read in code:
+`_adr_supports`, `_adr_snapshot`, `_repository_issue_inventory`,
+`_project_issue_inventory`): the repository Issue list (`_rows`, one request per page of
+100), the Project items (one GraphQL request per page), and, for each ADR, its support
+Issue **twice** (once to identify the corpus, once more by the history check) and its
+comment history (one request per page of 100). One more read is conditional: a
+support seen in the Project but absent from the repository list is read once more
+before the conflict is raised. The binding check (`_authoritative_binding`, twice) reads
+the local checkout registry and sends no provider request. A transport or provider
+failure of any of those still fails `query issue`; a failure while reading a cited
+delivery Issue no longer does. With the fake transport of the test, two ADRs citing one
+Issue give 15 commands for `query issue` of another issue, "before" measured on a second
+fresh instance (17), not on the same one.
 Duplicate supports, a hole, a malformed same-namespace support, missing/deleted comment,
 foreign coordinate, altered source or ambiguous history fail closed. The old PAT-65
 `EXP-ADR-0001` prototype is a foreign namespace and is not imported as GHQUAL authority.

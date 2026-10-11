@@ -423,6 +423,27 @@ class LinearTrackerError(RuntimeError):
         return self
 
 
+def _is_hashable(value: object) -> bool:
+    try:
+        hash(value)
+    except TypeError:
+        return False
+    return True
+
+
+class LinearReadScopeError(RuntimeError):
+    """Misuse of the read scope of a read-only command (PAT-168, PAT-189).
+
+    Raised for a write attempted while the scope is open and for an attempt to open it
+    while it is already open. It is deliberately NOT a ``LinearTrackerError``: it is
+    not a sanitized transport/provider failure (no operation, status or code, nothing
+    was sent) and the handlers written for those must not treat it as one. It stays a
+    ``RuntimeError`` like the other domain errors of the trackers, so the callers that
+    already let a ``RuntimeError`` propagate (or stop on ``Exception``) behave exactly
+    as before; a handler that wants to tell it apart names this class.
+    """
+
+
 class LinearQuotaExhaustedError(LinearTrackerError):
     """Linear API quota exhausted (PAT-98). Never retried automatically."""
 
@@ -3073,7 +3094,9 @@ class LinearTracker(Tracker):
         """
         if getattr(self._read_scopes, "scope", None) is not None and not _is_read_only_document(document):
             # PAT-168: a write must never run beside reads served from the read scope.
-            raise RuntimeError("Linear write refused inside a read-only command scope")
+            raise LinearReadScopeError(
+                "Linear write refused inside a read-only command scope"
+            )
         retries = 0
         while True:
             try:
@@ -4438,15 +4461,18 @@ class LinearTracker(Tracker):
         """PAT-168: one read-only command reads each issue reference at most once.
 
         Opened only by the read-only ``query`` commands (``query.py``), for the duration
-        of one command, never nested (not re-entrant). A separate layer under
-        ``graph_snapshot``: that stack still decides first, and keeps its own
-        per-snapshot contract. Only successful issue
-        reads are stored (a failure is read again), the listing of ``search`` seeds it,
-        and it is dropped on exit, so nothing survives the command. It is never open
-        during a write: ``_graphql`` refuses any document that is not a pure read while
-        it is, so the first mutation of a write started inside it is refused and never sent
-        (reads issued before it are sent).
+        of one command, never nested: opening it while it is already open raises
+        ``LinearReadScopeError`` instead of replacing the outer scope. A separate layer
+        under ``graph_snapshot``: that stack still decides first, and keeps its own
+        per-snapshot contract. Only successful issue reads are stored (a failure is read
+        again), the listing of ``search`` seeds it, and it is dropped on exit, so nothing
+        survives the command. It is never open during a write: ``_graphql`` refuses any
+        document that is not a pure read while it is (``LinearReadScopeError``), so the
+        first mutation of a write started inside it is refused and never sent (reads
+        issued before it are sent).
         """
+        if getattr(self._read_scopes, "scope", None) is not None:
+            raise LinearReadScopeError("Linear read scope already open (not re-entrant)")
         self._read_scopes.scope = {}
         try:
             yield
@@ -4745,10 +4771,12 @@ class LinearTracker(Tracker):
             # A provider that re-serves a page stops here, not after _MAX_PAGES
             # requests. Only against EARLIER pages: a duplicate inside one page is left
             # to the normalization below, as before.
+            # Any hashable ``identifier`` counts, not only a string: the previous code
+            # compared ``Issue.id`` (= ``identifier``, whatever its type) the same way.
             current = {
                 raw["identifier"]
                 for raw in connection["nodes"]
-                if isinstance(raw, dict) and isinstance(raw.get("identifier"), str)
+                if isinstance(raw, dict) and _is_hashable(raw.get("identifier"))
             }
             if current & earlier:
                 raise LinearTrackerError("issue.search", None, "pagination_stalled")
