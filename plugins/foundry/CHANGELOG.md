@@ -9,11 +9,14 @@
   merge of the tenth origin issue); the first window's "complete" says when it is
   judged; the state of the second window is rewritten as a state at `a75e4f7`, 9 of 10
   origin issues merged, PAT-189 delivered (it was recorded as not delivered), PAT-192
-  not delivered until this pull request is merged. In
+  not delivered until this pull request is merged. "counted" no longer carries two
+  meanings there ("origin issues merged so far", "PAT-148 will be counted in full"), and
+  the PAT-169 entry below now says "the 7 origin issues already merged" (the state when
+  PAT-169 was written) instead of "already counted". In
   `docs/qualification/pat-134-subagent-cache-1h.md`: the raw replay file is said not to
-  be versioned (the earlier claim that it carries host paths and session identifiers
-  was false), the meaning of the session rank, the lower bound of the replay, and the
-  cases where three designated sessions are not enough, including `roll_back` when no
+  be versioned (the earlier claim that it carries host paths and session identifiers was
+  false), the meaning of the session rank, the lower bound of the replay, and the cases
+  where three designated sessions are not enough, including `roll_back` when no subagent
   lineage is observed at 1 hour. R5: the documented artifacts are those two pages; no
   CLI, option, key or constant changes. No remark is set aside.
 

@@ -287,7 +287,7 @@ profils, ni le routage, ni le code.
 le nombre de sessions qui répondront à la règle d'ici le 2026-11-09. La décision ne dit pas ce qui se passe si moins de 3 sessions répondent
 encore à cette date : la règle écrite donne `unknown` (le changement reste, sans conclusion) et aucune décision nouvelle n'est prise ici pour ce cas.
 Trois sessions désignées ne suffisent pas à obtenir `keep` ou un `roll_back` chiffré : il faut aussi 3 sessions qui contribuent une lignée Sonnet 5.5 tarifable
-observée à 1 heure (`fewer_contributing_sessions_than_the_minimum`) ; sans aucune lignée à 1 heure, la règle rend `roll_back` (`no_lineage_of_the_model_observed_at_1h`) ; au 2026-10-11, une seule contribue. La décision ne dit pas si cette
+observée à 1 heure (`fewer_contributing_sessions_than_the_minimum`) ; sans aucune lignée de sous-agent observée à 1 heure, la règle rend `roll_back` (`no_lineage_of_the_model_observed_at_1h`) ; au 2026-10-11, une seule contribue. La décision ne dit pas si cette
 nouvelle mesure, faite avant le 2026-11-09, ferme la fenêtre, ni à quel instant `--until` est alors figé : à faire préciser par le mainteneur
 avant cette mesure.
 
