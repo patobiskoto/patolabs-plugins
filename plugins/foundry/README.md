@@ -59,9 +59,10 @@ remote). Claude Code 2.1.294: the official manager reported "updated from 1.1.0 
 1.1.1 plugin root); a new interactive session was not observed. Codex CLI 0.155.1: the
 official manager lists 1.1.1, installed and enabled; a new Codex session is **not**
 verified (the attempt ran the session-start hook and was then refused before any model
-turn: model not supported with the account). Also not verified: the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host,
-`configure show`, `registry selection --require-v1`, and a real Sonnet 5.5 subagent run
-under 1.1.1. The return to 1.1.0 or 1.0.0 through an official manager is not tried.
+turn: model not supported with the account). Also not verified: the Foundry 1.1.1 /
+Ship-iOS 0.3.0 pair on a host, `configure show`, `registry selection --require-v1`, and
+a real Sonnet 5.5 subagent run under 1.1.1. The return to 1.1.0 or 1.0.0 through an
+official manager is not tried.
 
 ## Why
 
