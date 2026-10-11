@@ -343,6 +343,9 @@ is the reference, as in the section above.
 
 ## Not measured
 
+- After the changes: `query issue PAT-87` and `issue close-epic PAT-151 --status`.
+  Their earlier measurements above (145 and 2 requests respectively) have no after
+  measurement in this page; neither is a measured before/after comparison.
 - `issue merge`, `issue openpr`, `edit comment`, a real `close-epic` attempt.
 - Any per-operation breakdown other than the traces of one `query issue` of a plain
   issue and of `query backlog` (2026-10-11); the counter itself is a single total.

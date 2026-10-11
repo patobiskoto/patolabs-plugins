@@ -1,0 +1,46 @@
+{
+  "schema": "foundry-post-publication-observation.v1",
+  "issue": "PAT-194",
+  "observed_on": "2026-10-11",
+  "read_only": true,
+  "tag": {
+    "name": "foundry-v1.2.0",
+    "commit": "81724f129cde7b59c1fca4a11e1d74ed2441fc7d",
+    "commit_subject": "[PAT-193] chore: Publier Foundry 1.2.0 (#136)",
+    "sources": [
+      "git show -s --format=%H%n%s foundry-v1.2.0",
+      "git ls-remote --tags origin refs/tags/foundry-v1.2.0"
+    ],
+    "local_remote_equal": true
+  },
+  "claude": {
+    "installed_version": "1.2.0",
+    "installed_commit": "81724f129cde7b59c1fca4a11e1d74ed2441fc7d",
+    "last_updated": "2026-10-11T17:12:12.981Z",
+    "cached_manifest_version": "1.2.0",
+    "sources": [
+      "~/.claude/plugins/installed_plugins.json: plugins[foundry@patolabs]",
+      "~/.claude/plugins/cache/patolabs/foundry/1.2.0/.claude-plugin/plugin.json: version"
+    ],
+    "update_execution": "not_observed",
+    "loaded_session_version": "unknown"
+  },
+  "codex": {
+    "installed_version": "1.2.0",
+    "installed": true,
+    "enabled": true,
+    "manager_source": "codex plugin list --json -m patolabs",
+    "loaded_session_version": "1.2.0",
+    "loaded_sources": [
+      "Foundry skill paths supplied in this session context: ~/.codex/plugins/cache/patolabs/foundry/1.2.0/skills/",
+      "~/.codex/plugins/cache/patolabs/foundry/1.2.0/.codex-plugin/plugin.json: version = 1.2.0"
+    ],
+    "update_execution": "not_observed"
+  },
+  "limits": [
+    "Selected manager fields only; user paths omitted.",
+    "No update, restart or rollback performed during this observation.",
+    "No Claude session loaded-version evidence observed.",
+    "No Foundry 1.2.0 / Ship-iOS 0.3.0 pair or Linear request count qualified on 1.2.0."
+  ]
+}

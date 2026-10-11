@@ -95,10 +95,15 @@ Statuses:
 
 - **Done by the release pull request:** the manifests, the CHANGELOG section, the two
   pages and the freeze entry. The two pages are frozen from that pull request on.
-- **Not done by it, and not claimed here:** the tag `foundry-v1.2.0`, the update of the
-  installed plugin on Claude Code and on Codex, and the readback of the version a host
-  actually loads. They come after the merge, the tag on the maintainer's explicit
-  agreement on the content of the release notes. This list is updated when they exist.
+- **Observed after publication on 2026-10-11 (PAT-194):** the local and remote tag
+  `foundry-v1.2.0` point at `81724f1`, the merge of PAT-193 (PR 136). Claude Code's
+  local installation metadata records 1.2.0 at that commit, last updated at
+  `17:12:12.981Z`; its cached manifest also reads 1.2.0. The Codex manager lists
+  1.2.0, installed and enabled. This Codex session's supplied Foundry skill paths
+  identify the 1.2.0 cache, whose manifest reads 1.2.0: loaded version observed here.
+  The update commands themselves and the version loaded by a Claude session were
+  not observed; the latter remains unknown. Selected evidence and sources are in
+  [the observation record](plugins/foundry/docs/qualification/pat-194-post-publication-observation.json).
 - **Not verified:** the Foundry 1.2.0 / Ship-iOS 0.3.0 pair on a host, and a Linear
   request count on 1.2.0 itself (the counts quoted were measured before the last change
   to the Linear adapter). The return to 1.1.1 through an official manager is not tried.

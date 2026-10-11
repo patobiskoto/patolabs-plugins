@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-194: documentation only; settles deferred PAT-193 remarks. Both README files
+  record the observed 1.2.0 tag, installed versions and loaded Codex session version,
+  with Claude's loaded session version unknown; sources are in
+  `docs/qualification/pat-194-post-publication-observation.json`. The Release rule's
+  version list and the `scripts/ci_plan.py` comment now include 1.2.0.
+  `docs/linear-tracker.md` distinguishes the removed merge-to-Done automation from
+  the unobserved configuration at the PAT-72/PAT-73 merges;
+  `docs/linear-request-cost.md` explicitly marks PAT-87 and `close-epic --status`
+  without after measurements. No tool behaviour or frozen release evidence changes.
+
 ## 1.2.0 — 2026-10-11
 
 Minor release. Entries below change behaviour. `query issue` no longer reports a broken
