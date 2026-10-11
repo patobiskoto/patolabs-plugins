@@ -7,6 +7,7 @@ must not change with it; only the request counts do.
 
 from __future__ import annotations
 
+import ast
 import collections
 import contextlib
 import copy
@@ -226,16 +227,39 @@ def _is_write(document):
     return document.lstrip().startswith("mutation")
 
 
-def test_only_the_read_only_query_commands_open_a_read_scope():
+def test_only_read_only_query_and_review_packet_paths_open_a_read_scope():
     root = Path(__file__).parents[1] / "tooling" / "foundry"
     openers = sorted(
         str(path.relative_to(root)) for path in root.rglob("*.py")
         if "read_scope" in path.read_text(encoding="utf-8")
     )
-    assert openers == ["query.py", "trackers/linear.py"]
+    assert openers == ["query.py", "review_packet.py", "trackers/linear.py"]
     query_source = (root / "query.py").read_text(encoding="utf-8")
     for name in ("set_state", "close_epic", "merge", "update", "create_adr", "comment"):
         assert f"tr.{name}" not in query_source
+    # PAT-174 adds one explicit read-only opener. Check its complete provider-call
+    # surface, not just absence of a few familiar mutation names: a newly introduced
+    # or renamed direct provider method must be reviewed before joining it.
+    packet = ast.parse((root / "review_packet.py").read_text(encoding="utf-8"))
+    provider_calls = {provider: set() for provider in ("tr", "ch")}
+    for node in ast.walk(packet):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in provider_calls):
+            provider_calls[node.func.value.id].add(node.func.attr)
+    assert provider_calls == {
+        "tr": {"resolve_checkout_project", "observe_issue", "list_adrs"},
+        "ch": {"resolve_repo", "get_pr", "check_runs", "commit_statuses", "ci_expected"},
+    }
+    scopes = [node for node in ast.walk(packet) if isinstance(node, ast.With)
+              and any(isinstance(item.context_expr, ast.Call)
+                      and isinstance(item.context_expr.func, ast.Name)
+                      and item.context_expr.func.id == "_read_scope" for item in node.items)]
+    assert len(scopes) == 1
+    scoped_tracker_calls = [node.func.attr for node in ast.walk(scopes[0])
+                            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and isinstance(node.func.value, ast.Name) and node.func.value.id == "tr"]
+    assert set(scoped_tracker_calls) == provider_calls["tr"]
 
 
 def test_adr_write_keeps_its_exact_reads(monkeypatch, tmp_path):

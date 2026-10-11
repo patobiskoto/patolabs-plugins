@@ -51,11 +51,10 @@ link is not shown in this payload; the ADR commands of a tracker that has such l
 refuse it.
 
 ### 2. Code review (blank-context, two stages)
-Before launching anything, build a bounded packet with the literal sections `Goal:`
-(two-stage review), `Inputs:` (every AC, the full text of every cited accepted ADR, and
-the PR number), `Constraints:` (blank context, read diff only through `routing
-read-review`, never edit), and `Done when:` (`AC: PASS|BLOCK` and `QUALITY: OK to
-merge|BLOCK`). The branch must already include the current base.
+Before launching anything, use `routing prepare-review` below to produce the bounded
+packet and its literal `Goal:`, `Inputs:`, `Constraints:`, and `Done when:` send text.
+It references every AC, its digest, the PR description, CI observations and selected
+accepted ADR files. The branch must already include the current base.
 
 Resolve the PR through GitHub REST before claiming the review and retain `.base.sha` as
 `<BASE-SHA>`. It must be exactly 40 lowercase hexadecimal characters. Use that immutable
@@ -65,11 +64,11 @@ fresh secret `<CLAIM-ATTEMPT-TOKEN>` with `secrets.token_hex(32)` (exactly 64 lo
 hex characters). Retain it privately until the claim command returns complete JSON;
 never include it in a packet, log, or reviewer message.
 
-Under Claude Code, atomically claim the exact `<BASE-SHA>...HEAD` diff in the shared
+On both hosts, atomically claim the exact `<BASE-SHA>...HEAD` diff in the shared
 cross-host ledger:
 
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN>
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
 If that process is interrupted after publication but before returning any JSON, replay
@@ -79,18 +78,42 @@ ledger write, so another interruption can be replayed again identically. Never u
 replay flag after a complete result; a normal retry without it remains a capability-free
 duplicate.
 
+
+Build the packet with the read-only command after a successful claim. Keep the complete
+claim JSON in a private file (use `umask 077` before redirecting claim output there).
+Reuse a caller's existing packet only for these exact active coordinates. Select the
+accepted ADRs that constrain the review with repeated `--adr`; their full texts become
+separate files, rather than a large inline task packet. Optional
+`--declarations-file /private/path/declarations.json` carries a JSON object of coordinator
+assertions; it never becomes tool-read evidence or external authority.
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing prepare-review --issue <ISSUE-ID> --pr <PR-NUMBER> --root <ROOT> --base <BASE-SHA> --claim-file /private/path/claim.json --output-dir /private/path/review-packet --adr <ADR-ID>
+```
+
+The command checks the PR's immutable base/head SHAs and the active claim before writing
+`coordinates.json` and `reviewer-send.txt`; its stdout contains only a capability-free
+summary. Send `reviewer-send.txt` only to the designated reviewer. That file supplies
+`diff_hash`, `claim_id`, `root`, and `base` and references the packet files. Keep the
+whole directory private; never paste its contents into a public PR, tracker note or log.
+The provenance, bounds, file permissions and error output are documented in
+`docs/review-packet.md`. Packet generation makes no tracker or PR writes and grants no
+authority to bypass the independent review or the merge gates.
+
+When `should_run` is `false`, stop before preparing or launching a reviewer.
+
 When `should_run` is `true`, execute the `foundry:review-pr` contract exactly once and
 pass it the returned `diff_hash`, `generation`, and `claim_id`; invoke the logical
 `foundry:maigret` agent exactly once; the routing hook enforces its frontier gate and
 read-only profile. Precede its packet with
 `FOUNDRY_ROUTE_REQUEST={"issue":"<ISSUE-ID>"}` so an escalated reviewer floor persists.
 
-Under Codex, write the packet to a scratch file. The Codex façade performs that same
-common claim, injects its exact hash into the reviewer message, and resolves the actual
-frontier-or-higher invocation:
+
+Under Codex, pass the generated send file and the existing claim to the façade, which
+validates that owner and resolves the actual frontier-or-higher invocation:
 
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing codex-plan reviewer --issue <ISSUE-ID> --packet-file /path/to/review-packet.txt --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN>
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing codex-plan reviewer --issue <ISSUE-ID> --packet-file /private/path/review-packet/reviewer-send.txt --git-diff --root <ROOT> --base <BASE-SHA> --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID>
 ```
 
 Append `--profile-model-active` / `--profile-effort-active` when host-supplied effective

@@ -23,10 +23,10 @@ launch the reviewer before the claim below.
    characters). Retain it privately until the claim command returns a complete JSON
    result; never include it in a packet, log, or reviewer message.
 2. Unless the caller already supplied a claimed `diff_hash`, atomically claim the exact
-   review diff now, in the current context. Under Claude Code use:
+   review diff now, in the current context. Both hosts use:
 
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN>
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
 If that process is interrupted after publication but before returning any JSON, replay
@@ -48,22 +48,44 @@ whose quality is `mergeable` and whose acceptance criteria all pass. In that sol
 the ledger atomically records one audited rearm and binds the new hash; every later
 different hash remains refused before a reviewer claim.
 
-Under Codex, instead write the four-section review packet to a scratch file and use
-`routing codex-plan reviewer --issue <ISSUE-ID> --packet-file
-/path/to/review-packet.txt --git-diff --root <ROOT> --base <BASE-SHA>
---claim-attempt-token <CLAIM-ATTEMPT-TOKEN>`; that
-façade feeds the exact diff to the same common ledger, respects `mode=deduplicated`, and
-injects the returned `diff_hash` and active `claim_id` into the reviewer message. Append
-the value-free `--profile-model-active` / `--profile-effort-active` flags when
-host-supplied effective profile metadata reports those keys.
+Build the packet with the read-only command after a successful claim. Keep the complete
+claim JSON in a private file (use `umask 077` before redirecting claim output there).
+Reuse a caller's existing packet only for these exact active coordinates. Select the
+accepted ADRs that constrain the review with repeated `--adr`; their full texts become
+separate files, rather than a large inline task packet. Optional
+`--declarations-file /private/path/declarations.json` carries a JSON object of coordinator
+assertions; it never becomes tool-read evidence or external authority.
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing prepare-review --issue <ISSUE-ID> --pr <PR-NUMBER> --root <ROOT> --base <BASE-SHA> --claim-file /private/path/claim.json --output-dir /private/path/review-packet --adr <ADR-ID>
+```
+
+The command checks the PR's immutable base/head SHAs and the active claim before writing
+`coordinates.json` and `reviewer-send.txt`; its stdout contains only a capability-free
+summary. Send `reviewer-send.txt` only to the designated reviewer. That file supplies
+`diff_hash`, `claim_id`, `root`, and `base` and references the packet files. Keep the
+whole directory private; never paste its contents into a public PR, tracker note or log.
+The provenance, bounds, file permissions and error output are documented in
+`docs/review-packet.md`. Packet generation makes no tracker or PR writes and grants no
+authority to bypass the independent review or the merge gates.
+
+Under Codex, supply the generated send file to the façade with the already active claim:
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing codex-plan reviewer --issue <ISSUE-ID> --packet-file /private/path/review-packet/reviewer-send.txt --git-diff --root <ROOT> --base <BASE-SHA> --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID>
+```
+
+This uses the same common ledger and validates the existing owner, without making a
+second claim. Append the value-free `--profile-model-active` / `--profile-effort-active`
+flags when host-supplied effective profile metadata reports those keys.
 
 3. Only now, if a subagent is available, launch a fresh one. On Codex pass every field
    of `spawn` unchanged, including explicit `model`, `reasoning_effort`, and
    `fork_turns=none`. Determine availability before calling `codex-plan`; if unavailable,
-   include `--no-subagent` in that first claim/plan call, perform the same read-only
+   include `--no-subagent` in that first plan call, perform the same read-only
    review from `current_context_instructions`, and display its disclosure that
-   blank-context independence was lost. Never retry after claiming: the second verdict
-   is correctly deduplicated.
+   blank-context independence was lost. Launch one reviewer for this active claim;
+   a second plan does not create a second review owner.
 
 4. A Codex `current_context` fallback has no distinct host-return boundary and no
    completion capability. After an actual `mode=subagent` reviewer call settles,

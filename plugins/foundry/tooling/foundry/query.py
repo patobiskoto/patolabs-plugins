@@ -35,8 +35,8 @@ from foundry.trackers.base import (
 def _read_scope(tr):
     """PAT-168: a reference is read at most once per read-only command (dropped on exit).
 
-    Used only around the tracker reads of the read-only commands below; a tracker with
-    no such scope reads as before.
+    Used around tracker reads of the read-only query commands below and PAT-174
+    prepare-review (review_packet.py); a tracker with no such scope reads as before.
     """
     scope = getattr(tr, "read_scope", None)
     return scope() if callable(scope) else contextlib.nullcontext()
