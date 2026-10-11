@@ -509,6 +509,95 @@ pytest -q -m "not integration" tests  # pure-logic tests, no network; benchmark/
 pytest -q tests/test_routing_contract.py  # resolved host invocation + pilot contract
 ```
 
+The public suite (the exact selection the CI job `foundry` runs) can run in parallel
+with `pytest-xdist` (`pip install pytest-xdist`), one worker process per core:
+
+```
+pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests --ignore=tests/test_routing_contract.py
+pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
+```
+
+The second command runs, alone, the four tests marked `timing_sensitive` (declared in
+`pytest.ini`): three in `tests/test_local_scout.py` that assert a 0.5 s deadline, and
+`tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
+which races a reader thread against a producer. Only the last one was observed to fail
+under parallel load: one local `-n 4` run during PAT-142 (200 steps seen, bound is below
+200; that run was not recorded). The three scout tests are marked because they assert a
+wall-clock bound, not because a failure was observed. Other unmarked tests also assert a
+bound on time (for example `test_local_attempt_is_bounded_in_time_and_the_group_is_killed`);
+they were not observed to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
+parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
+step: 4 passed in 2.84s. The log does not show the number of xdist workers.
+
+`tests/test_local_first_runner.py::test_B1_an_interrupted_execution_kills_the_whole_process_group[2-KeyboardInterrupt]`
+used to fail when launched from a background job of a non-interactive shell (`cmd &`).
+Such a job starts with SIGINT ignored; `execute_driver` calls `_install_term_handlers`
+(`tooling/foundry/local_first_runner.py`), which does not replace the handler of a SIGINT
+that is ignored, so the test's own `os.kill(os.getpid(), SIGINT)` was a no-op and the call
+ended at `max_seconds=60` without `KeyboardInterrupt`. Reproduced in PAT-142 (3 of 3
+background launches failed after 60 s, `DID NOT RAISE KeyboardInterrupt`). The test now
+has a fixture that, only if SIGINT is ignored, installs Python's default handler for the
+test and restores the previous disposition afterwards; no assertion changed, and the
+three background launches then passed in under a second, as did a foreground launch. No
+other cause of the earlier failure report was verified.
+
+Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tested in
+`scripts/test_ci_plan.py`), not by workflow expressions:
+
+- `ship-ios` and `catalogue` run on every push to `main` and every internal pull request.
+  On a fork pull request none of the four jobs runs, because all four carry the fork guard
+  (`test_required_checks_keep_their_names_and_fork_guard` in `scripts/test_ci_plan.py`;
+  FOUNDRY-ADR-0025).
+- `foundry` is skipped only when the `plan` job outputs `run_foundry=false`, which
+  `scripts/ci_plan.py` does only when every changed file is under `plugins/ship-ios/` on a
+  pull request. Except for the stale base case below, it runs in every other case: a push
+  to `main`, a pull request that changes a file outside `plugins/ship-ios/`, a release
+  change, any doubt in the script (unknown event, diff unavailable or empty), and a `plan`
+  job that fails (empty output). The
+  workflow condition uses `!cancelled()` and `!= 'false'` for that last case, because a job
+  whose `needs` failed is otherwise skipped. A cancelled run does not run `foundry`. When
+  skipped, the required check `foundry` ends as `skipped`, which the merge gate accepts
+  next to a real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
+  `tooling/foundry/write.py`, tests
+  `test_ci_gate_neutral_and_skipped_pass_alongside_a_success` and
+  `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`). Derived from GitHub
+  documentation, not shown by a run: a failed `plan` makes `foundry` run, and the fork
+  pull request behaviour.
+- Stale `plan` after a base change. The `ci.yml` workflow triggers on `pull_request` with
+  the default activity types (`opened`, `synchronize`, `reopened`); changing the base of a
+  pull request emits `edited`, which starts no run, so `plan` keeps the decision computed
+  against the old base. Example: a `ship-ios`-only pull request stacked on an unmerged
+  branch that changes Foundry files, then retargeted to `main`, keeps `foundry` skipped. A
+  plain re-run replays the same event payload. Procedure: after changing the base of a
+  pull request, push a commit (or close and reopen it) so that `plan` is computed again
+  before merging. Derived from GitHub documentation, not observed in a run. The push to
+  `main` after the merge still runs everything. Adding the `edited` type was not chosen:
+  it would start a run at every title or description edit.
+- Cancellation: if a run is cancelled while `plan` runs, `foundry` ends `skipped` (the
+  `!cancelled()` condition is false; deduced from the condition, not shown by a run). `ci_gate` only tolerates `success`, `neutral` and
+  `skipped` conclusions on completed checks; any other conclusion, `cancelled` included,
+  is listed in `failing` and `passed` is false. So a `cancelled` check next to successes
+  blocks the merge gate by reading the code; no test in `tests/test_pure.py` feeds a
+  `cancelled` conclusion, and no run showed it. Residual risk: the gate reads all check
+  runs of the sha, so a cancelled run is expected to block until it is re-run; how it
+  treats the check runs of a re-run next to those of the cancelled one was not verified.
+- Release rule: a change is a release change, and runs everything even inside
+  `plugins/ship-ios/`, when it touches a
+  `plugin.json` or a `marketplace.json` directly inside a `.claude-plugin`,
+  `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
+  combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
+  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0 and
+  1.1.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  the branch name is not used. The rule is deliberately broader than "version bumped": a
+  manifest edit that is not a release also runs everything (safe side).
+- `ship-ios` runs on `ubuntu-24.04`: its tests call Python, `git` and `ruby` (to evaluate
+  the Fastfile), and no test calls Xcode or a simulator. The job installs `ruby` with
+  `apt-get` only if the image lacks it. Observed in CI run 38095058779 (head `d640c1a`):
+  `command -v ruby` printed `/usr/bin/ruby` (no install), and "Ran 35 tests" passed on
+  `ubuntu-24.04`. The log does not show the Ruby version. The `foundry` job took 5 min 49
+  in that run (23:27:06Z to 23:32:55Z); the previous `foundry` job, on a push to `main`
+  at `0814db2`, took 11 min 50.
+
 Benchmark-campaign and proof-of-concept tests (evidence under `benchmarks/`) carry the
 `benchmark_campaign` marker and are excluded from the default run above. See
 [`docs/benchmark-campaign-tests.md`](docs/benchmark-campaign-tests.md) to replay them and

@@ -1339,6 +1339,7 @@ def test_generation_can_exceed_connect_cap_with_remaining_total_socket_timeout()
     assert read_timeout != connection.kwargs["timeout"]
 
 
+@pytest.mark.timing_sensitive
 def test_real_total_deadline_bounds_headers_with_frozen_accounting_clock():
     response = FakeResponse(200, b"")
     seen = []
@@ -1384,6 +1385,7 @@ def test_headerless_oversized_response_is_progressively_read_to_only_limit_plus_
     assert response.offset < len(response.body)
 
 
+@pytest.mark.timing_sensitive
 def test_total_deadline_aborts_a_blocked_drip_read_and_closes_connection():
     response = DripResponse()
     seen = []
@@ -1410,6 +1412,7 @@ def test_total_deadline_aborts_a_blocked_drip_read_and_closes_connection():
     assert seen[0].closed
 
 
+@pytest.mark.timing_sensitive
 def test_total_deadline_returns_when_will_close_response_detaches_connection_socket():
     response = DripResponse()
     seen = []

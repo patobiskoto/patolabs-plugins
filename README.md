@@ -105,6 +105,9 @@ distribution, not versioning, per accepted FOUNDRY-ADR-0004/0005 (retrievable th
 cd plugins/foundry && pip install pytest ruff && pytest -q -m "not integration" tests  # Foundry: pure logic
 ```
 
+Parallel run (`pytest-xdist`), which pull requests the CI skips `foundry` for, and the
+release rule: see the "Which CI jobs run" part of [`plugins/foundry/README.md`](plugins/foundry/README.md).
+
 Foundry is piloted with its own method (Linear project `PAT`, bound by `.foundry/tracker.json`); the pipeline runs in-repo via
 `python3 plugins/foundry/tooling/foundry_cli.py <module>`. Runtime configuration resolves
 from environment variables, Claude plugin options, the macOS keychain, then
