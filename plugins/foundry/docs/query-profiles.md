@@ -63,10 +63,12 @@ reused: run it again into a new directory. Stdout is a small `foundry.query-prof
 one at a time. Nothing survives the command except these files, and no Foundry command
 reads them back. Documentation status (R5): new CLI option, documented here and in the
 `intake` skill; the other profile skills are unchanged. Observed on 2026-10-11 in a Claude Code host session
-(Bash tool, working directory `plugins/foundry`): the command exactly as the `intake` skill
-writes it (`python3 tooling/foundry_cli.py query profile intake --all-pages "$(mktemp -d)"`)
-ran without a permission prompt, printed the manifest (6 pages) with absolute paths under
-the system temporary directory, and the Read tool read a page file there. Not established:
+(Bash tool, working directory `plugins/foundry`): the launcher called by its relative path
+(`python3 tooling/foundry_cli.py query profile intake --all-pages "$(mktemp -d)"`) ran
+without a permission prompt, printed the manifest (6 pages) with absolute paths under the
+system temporary directory, and the Read tool read a page file there. That is not the
+`intake` skill's own launcher form (it prefixes the path with a command substitution), which
+was not the one run. Not established:
 the same under Codex, or in a Claude Code session with a stricter permission mode. Not
 measured here: the request saving on a real project.
 
