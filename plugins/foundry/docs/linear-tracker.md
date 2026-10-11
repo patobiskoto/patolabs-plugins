@@ -1246,27 +1246,39 @@ issue) pair and both identity coordinates of a reference are still read the firs
 it is resolved. `query issue` no longer validates the ADR-to-issue links (PAT-190).
 
 What is not shared: a failed read; anything in a write (while the layer is open,
-`_graphql` refuses any document that is not a pure read, so the first mutation of a
-write started inside it is refused and never sent, reads issued before it are sent, and
-no command that writes opens the layer); anything between two commands (the layer is
-created empty at the start of the command and dropped when it ends, so a node changed
-between two commands is seen by the second). Limit inside one command: two snapshots of
-the same read-only command (two closed Epics sharing a node in `backlog`, a closed Epic
-that is a child of a closed Epic in `query issue`) are served the node from the command
-layer without a re-read, so a change made to that node while the command runs is not
-seen by the second snapshot (PAT-ADR-0006, PAT-ADR-0014). ADR writes, which also run
-the ADR validation, are unchanged and keep exactly their reads.
+`_graphql` refuses any document that is not a pure read, with `LinearReadScopeError`, so
+the first mutation of a write started inside it is refused and never sent, reads issued
+before it are sent, and no command that writes opens the layer); anything between two
+commands (the layer is created empty at the start of the command and dropped when it
+ends, so a node changed between two commands is seen by the second). Limit inside one
+command: two snapshots of the same read-only command (two closed Epics sharing a node in
+`backlog`, a closed Epic that is a child of a closed Epic in `query issue`) are served
+the node from the command layer without a re-read, so a change made to that node while
+the command runs is not seen by the second snapshot (PAT-ADR-0006, PAT-ADR-0014). ADR
+writes, which also run the ADR validation, are unchanged and keep exactly their reads.
 
-Error order of `search` (behaviour change, every caller, with or without the layer):
-`search` fetches every listing page before normalizing any node. While fetching it
-checks what it checked before on each response (transport, shape of the response, a
-missing or empty `endCursor` when a next page is announced, the page limit) and one
-thing more: a page carrying an issue identifier already carried by an earlier page is
-refused at once (`pagination_stalled`), so a provider that re-serves a page is stopped
-at its second listing request, as before. A repeated `endCursor` is not a failure by
-itself, as before: the listing continues, and stalls only if an issue comes back. A
-duplicate inside one page, and any duplicate the fetch did not catch, is refused by the
-check on the normalized issue, kept unchanged and run in listing order with the
+Opening the layer while it is already open is refused with `LinearReadScopeError`
+(it never replaces the outer layer); no command nests it today. That error is a
+`RuntimeError` that is not a `LinearTrackerError`: nothing was sent, and the handlers of
+transport or provider failures do not apply to it. A second `search` inside the same
+layer lists again, but the layer keeps the nodes the first one seeded (a node is stored
+under a key only when that key is absent): a node changed between the two listings is
+reported as changed by the second listing, and is still read from the layer, in its
+first version, until the command ends. No command calls `search` twice in one layer
+today (PAT-189).
+
+Error order of `search` (behaviour change, every caller; the paragraph describes the
+requests of the listing and of the individual reads it triggers, which is the whole
+story only without the layer: see the sentence "With the read-only layer open" near the
+end of the next paragraph): `search` fetches every listing page before normalizing any
+node. While fetching it checks what it checked before on each response (transport, shape
+of the response, a missing or empty `endCursor` when a next page is announced, the page
+limit) and one thing more: a page carrying an issue identifier already carried by an
+earlier page is refused at once (`pagination_stalled`), so a provider that re-serves a
+page is stopped at its second listing request, as before. A repeated `endCursor` is not
+a failure by itself, as before: the listing continues, and stalls only if an issue comes
+back. A duplicate inside one page, and any duplicate the fetch did not catch, is refused
+by the check on the normalized issue, kept unchanged and run in listing order with the
 normalization.
 
 What cannot differ from the previous code: the output of a successful listing; the error
@@ -1283,14 +1295,24 @@ listing that succeeds or fails in only one way: unchanged, except when the one f
 is met while normalizing; every page is then requested before the error is reported,
 where the previous code stopped at the page of the failing node. The individual reads a
 normalization issues (the replay of a closed Epic) are now all sent after the last
-listing request, so a listing that fails while fetching sends none of them.
+listing request, so a listing that fails while fetching sends none of them. With the
+read-only layer open, an individual read that the listing seeded is not sent at all: a
+listing whose only failure came from such a read (transport, quota) no longer fails
+(PAT-189), and the sentence above holds only for the reads that are still sent. The
+early stop on a repeated issue counts every node whose `identifier` key is present,
+whatever its type, provided it is hashable (a list or an object is not counted and fails
+afterwards as it did before, outside the early stop: `TypeError` on the normalized
+issue); the code before PAT-168 compared `Issue.id` after normalization, and
+normalization accepts any value of that key. A node with no `identifier` key is not
+counted and fails normalization (`invalid_response`), as before (PAT-189).
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
 and each read itself guarded, the real state from two sources and says what is proven.
 The provider receipt is the Epic closure audit comment (one issue, no graph
-snapshot: `LinearTracker.read_epic_closure_state`; that issue is read twice, two
-`issue.read` requests measured, see [`linear-request-cost.md`](linear-request-cost.md)),
+snapshot: `LinearTracker.read_epic_closure_state`; that issue is read twice: two
+requests measured, both `issue.read` by code reading, see
+[`linear-request-cost.md`](linear-request-cost.md)),
 the local intent is
 `linear-epic-closure-intents/<fingerprint>.json` (keyed by provider, project id/key and
 Epic id, read without creating anything). States: (a) no audit and the tracker's intent store
