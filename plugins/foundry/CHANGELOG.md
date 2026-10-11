@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- PAT-192: documentation only, no behaviour of any tool changes; settles the
+  non-blocking remarks deferred from the reviews of PAT-169 (3) and PAT-170 (4). In
+  `docs/review-rounds.md`: the closing of the second window names the right actors
+  (counted for the maintainer's decision, at a date the maintainer chooses after the
+  merge of the tenth origin issue); the first window's "complete" says when it is
+  judged; the state of the second window is rewritten as a state at `a75e4f7`, 9 of 10
+  origin issues merged, PAT-189 delivered (it was recorded as not delivered), PAT-192
+  not delivered until this pull request is merged. "counted" no longer carries two
+  meanings there ("origin issues merged so far", "PAT-148 will be counted in full"), and
+  the PAT-169 entry below now says "the 7 origin issues already merged" (the state when
+  PAT-169 was written) instead of "already counted". In
+  `docs/qualification/pat-134-subagent-cache-1h.md`: the raw replay file is said not to
+  be versioned (the earlier claim that it carries host paths and session identifiers was
+  false), the meaning of the session rank, the lower bound of the replay, and the cases
+  where three designated sessions are not enough, including `roll_back` when no subagent
+  lineage is observed at 1 hour. R5: the documented artifacts are those two pages; no
+  CLI, option, key or constant changes. No remark is set aside.
+
 - PAT-170: documentation only, no behaviour of any tool changes; records the measure
   made when the observation window of the 1-hour cache on the Sonnet 5.5 subagent
   profiles (PAT-134) reached its first bound, the tenth delivered issue, and the
@@ -60,7 +78,7 @@
   confirmed by the maintainer the same day on the corrected 3.9 and 3.5; a reservation
   written after that confirmation: 3.5 charges PAT-148 in full although it also holds
   remarks of PAT-137 and PAT-147, 2.5 without it), and the definition of the second
-  window with the 7 origin issues already counted. R5: the documented artifact is that
+  window with the 7 origin issues already merged. R5: the documented artifact is that
   page; `AGENTS.md`, `CLAUDE.md` and `skills/merge-pr` state neither the window nor its
   status, so they are unchanged; no CLI, option, key or constant changes.
 

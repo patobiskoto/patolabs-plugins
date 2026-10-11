@@ -46,9 +46,10 @@ pull request that carries it. The ten origin issues merged from then on, in merg
 order, are PAT-136, PAT-139, PAT-142, PAT-143, PAT-145, PAT-137, PAT-147, PAT-144,
 PAT-146 and PAT-149. Their follow-up issues are PAT-138, PAT-148 and PAT-150.
 
-Result: complete in the sense of the paragraph above, because the three follow-up issues
-are delivered (merged in PRs 118, 123 and 125). One count is a lower bound (PAT-143,
-below).
+Result: complete in the sense of the paragraph above, because the three follow-up
+issues were delivered when the window was counted on 2026-10-11 (merged in PRs 118, 123
+and 125; PR 125 was merged after the tenth origin issue, see the closing rule under
+"Second window"). One count is a lower bound (PAT-143, below).
 
 Rounds per issue, observed in the PR descriptions (read with `gh pr view` on
 2026-10-11; "line" is a line in the format of `skills/merge-pr/SKILL.md`, "prose" a
@@ -138,24 +139,28 @@ Coordinator's reading, to be confirmed by the maintainer: an origin issue is any
 issue that is not an issue of a companion Epic, whether or not it has an origin Epic
 (first window: PAT-138 is a follow-up issue although companion Epics did not exist yet).
 The list of origin issues is fixed at the merge of the tenth; the window closes, and the
-result is called complete or incomplete, when the maintainer counts it (as done for the
-first window on 2026-10-11); the maintainer then decides (section "Return to the
-previous practice" below).
+result is called complete or incomplete, when the count is made for the maintainer's
+decision, at a date the maintainer chooses after that merge (first window: counted by
+the coordinator and decided by the maintainer on 2026-10-11); the maintainer then
+decides (section "Return to the previous practice" below).
 
-State on `origin/main` at `6865648` (2026-10-11), from `git log --first-parent`:
+State on `origin/main` at `a75e4f7` (2026-10-11 18:13 UTC+2), from
+`git log --first-parent`. It is a state at that commit, not kept up to date by later
+pull requests:
 
-- origin issues counted so far, 7 of 10: PAT-146, PAT-149, PAT-163, PAT-164, PAT-167,
-  PAT-168, PAT-190;
-- follow-up issues delivered: PAT-148, PAT-150 and PAT-187 (PAT-187 settles the remarks
-  deferred by PAT-163 and PAT-164);
-- PAT-189 holds the remarks deferred by PAT-167, PAT-168 and PAT-190 (cited in their PR
-  descriptions); it is not delivered on 2026-10-11 (stated by the coordinator, not
-  checked in the repository), so it counts as not delivered;
-- PAT-148 is counted in full although it also holds remarks of PAT-137 and PAT-147,
-  merged before the start.
+- origin issues merged so far, 9 of 10, in merge order: PAT-146, PAT-149, PAT-163,
+  PAT-164, PAT-167, PAT-168, PAT-190, PAT-169 (PR 133) and PAT-170 (PR 134);
+- follow-up issues delivered: PAT-148, PAT-150, PAT-187 (it settles the remarks
+  deferred by PAT-163 and PAT-164) and PAT-189 (PR 132, merged the same day after
+  PAT-190; it settles the remarks deferred by PAT-167, PAT-168 and PAT-190);
+- PAT-192 is a follow-up issue, not an origin issue: it holds the remarks deferred by
+  PAT-169 and PAT-170, and it is not delivered as long as its pull request is not
+  merged;
+- PAT-148 will be counted in full although it also holds remarks of PAT-137 and
+  PAT-147, merged before the start.
 
-The rounds of the second window are not counted on this page yet; they are counted when
-the window closes.
+The rounds of the second window are not counted on this page yet; they are counted
+after the merge of the tenth origin issue, for that decision.
 
 ## Return to the previous practice
 
