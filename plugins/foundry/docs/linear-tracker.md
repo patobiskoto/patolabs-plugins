@@ -88,6 +88,8 @@ threads). It is diagnostic only (a failure to count or to report is swallowed) a
 Linear-only: the other adapters have no counter. Whether a read retry counts against the
 hourly quota is not established. Documentation status (R5): new environment variable,
 documented here. The saving it measures on a real project is not measured in this page.
+The counts measured on the real project with it, and where the code repeats reads, are in
+[`linear-request-cost.md`](linear-request-cost.md) (PAT-167).
 
 ## Transport errors, read retries and quota (PAT-98)
 
@@ -1207,8 +1209,10 @@ reopened or modified between two snapshots is still detected exactly as before
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or
 refused `close-epic` no longer prints one fixed text: after the failure it reads, read-only
 and each read itself guarded, the real state from two sources and says what is proven.
-The provider receipt is the Epic closure audit comment (one `issue.read`, no graph
-snapshot: `LinearTracker.read_epic_closure_state`), the local intent is
+The provider receipt is the Epic closure audit comment (one issue, no graph
+snapshot: `LinearTracker.read_epic_closure_state`; that issue is read twice, two
+`issue.read` requests measured, see [`linear-request-cost.md`](linear-request-cost.md)),
+the local intent is
 `linear-epic-closure-intents/<fingerprint>.json` (keyed by provider, project id/key and
 Epic id, read without creating anything). States: (a) no audit and the tracker's intent store
 READ and empty: nothing was written, re-running is safe (this, and the words "aucune
