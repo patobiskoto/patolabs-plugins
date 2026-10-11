@@ -1009,6 +1009,23 @@ Codex exposes no portable per-call tool restriction for `default`, so the archit
 read-only constraint is prompt-enforced; the architect never writes the ADR itself and
 the coordinator remains responsible for materialization.
 
+**Operational note: "not supported when using Codex with a ChatGPT account".** Observed
+on 2026-10-11 (PAT-164): with Codex CLI 0.155.1 and a ChatGPT login, a non-interactive
+session asked for `gpt-6.1-sol` (named by the top-level `model` of that machine's own
+Codex configuration, and also the Codex `balanced`, `frontier` and `apex` targets of
+`DEFAULT_MAPPINGS` in `tooling/foundry/routing.py`) warned that the model was unknown,
+then was refused with status 400 "The 'gpt-6.1-sol' model is not supported when using
+Codex with a ChatGPT account"; `gpt-6-sol` and `gpt-6-luna` were accepted by the same
+CLI. The model list cached by Codex (`models_cache.json`, field `client_version`) did
+not contain `gpt-6.1-sol` when fetched by CLI 0.155.1 and contained it when fetched by
+CLI 0.160.0 for the same account. After upgrading the CLI to 0.162.1, the same request
+started normally. Deduced, not proven beyond these observations: the refusal came from
+the outdated CLI, not from the account nor from Foundry's routing. Unknown: the minimum
+CLI version that is offered the model (above 0.155.1, at most 0.160.0). When this 400
+appears, check `codex --version` and the cached model list before concluding that the
+account or the routing is at fault. A real Foundry delegation under Codex (subagent
+spawn) was not run in this check.
+
 `FOUNDRY_CODEX_AVAILABLE_MODELS` optionally supplies a non-secret CSV availability
 observation. Without it, `availability_probed=false` is explicit. With it, the common
 policy emits visible downward fallback for ordinary roles, upward-only fallback for

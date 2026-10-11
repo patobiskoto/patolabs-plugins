@@ -69,8 +69,10 @@ round, the Foundry skills write to the tracker without asking, in four bounded c
   update loads 1.1.1 (the session reported that the context injected by its start-up
   hook cites the 1.1.1 plugin root). A new interactive session was not observed.
 - **Codex:** Codex CLI 0.155.1, the official manager lists 1.1.1, installed and enabled.
-  A new Codex session is **not** verified: the attempt ran the session-start hook and
-  was then refused before any model turn (model not supported with the account).
+  A new Codex session was refused before any model turn (model not supported with the
+  account), after the session-start hook ran. Observed again on 2026-10-11 under
+  PAT-164: after the CLI was upgraded to 0.162.1, a new non-interactive session
+  started normally and reported the 1.1.1 plugin root.
 - **Not verified:** the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host, `configure show`,
   `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.1.
   The return to 1.1.0 or 1.0.0 through an official manager is not tried.
