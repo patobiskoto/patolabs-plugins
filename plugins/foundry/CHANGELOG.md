@@ -5,8 +5,8 @@
 - PAT-138: non-blocking remarks of PAT-136 and PAT-139, wording and tests only. The one
   change under `tooling/` is the module docstring of `foundry/edit.py`, which now names
   the exception of the three writes pre-authorized by R9 (b). Rule R9 (b) and the
-  `merge-pr` skill no longer say "three cases" for the list of corrections before the
-  merge; `merge-pr` names no issue of this repository, names the existing commands
+  `merge-pr` skill no longer present the list of corrections before the merge as
+  exhaustive; `merge-pr` names no issue of this repository, names the existing commands
   (`query backlog`, `query issue`) to look for a `Nits <ORIGIN-EPIC-ID>` Epic and to read
   the tracker back, and says that after a validated round the coordinator, not the
   reviewer, classes the remarks. The `resume-issue` packet of a delegated correction
@@ -14,8 +14,9 @@
   `create_issue` call itself raises `create_effect_unknown` when the read of the
   candidates that follows a failed issue POST succeeds and finds none, and the error of
   that read comes out when it fails too; `transport_failed` is also the default reason),
-  for the seams of the conformance tests, and says that
-  `create_issue` with a parent makes two writes on YouTrack. Documentation status (R5):
+  for the seams of the conformance tests, and says that `create_issue` with a parent
+  makes two writes on the issue itself on YouTrack (a `Milestone` value may be posted to
+  the project's milestone bundle before them). Documentation status (R5):
   `docs/review-rounds.md`, `AGENTS.md` / `CLAUDE.md` R9, the skills `merge-pr`,
   `resume-issue`, `review-pr` and the docstring of `foundry/edit.py` updated; no CLI verb,
   option or constant changed.

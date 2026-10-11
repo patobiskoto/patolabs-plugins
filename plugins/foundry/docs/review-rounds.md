@@ -149,16 +149,17 @@ corrected before the merge and fully re-reviewed, and the refusal is reported in
 description.
 
 This paragraph is about another failure, not about the missing `Epic` type. On
-YouTrack, `create_issue` with a parent makes two writes: a POST to `/issues`, then
-`link(..., "subtask-of", parent)` (`link` in `tooling/foundry/trackers/youtrack.py`),
-which posts a command to `/commands`. The tests run it with a failure of the second
+YouTrack, `create_issue` with a parent makes two writes on the issue itself: a POST to
+`/issues`, then `link(..., "subtask-of", parent)` (`link` in
+`tooling/foundry/trackers/youtrack.py`), which posts a command to `/commands`. Before
+them, when `fields` carries a `Milestone` and the project has a milestone bundle,
+`_prewrite` has `_ensure_milestone` post that value to the bundle. The tests run it with a failure of the second
 write: the created issue stays, without its parent link, and `create_issue` removes
 nothing. How such a partial write is repaired is not decided on this page.
 
 A transient failure is the other case of `AGENTS.md#R9` (b), next to the durable refusal
-of a missing `Epic` type: the
-coordinator waits and retries the write before the merge. When the failure leaves the effect of the write
-unknown (a network failure), it first reads the tracker to see whether the write
+of a missing `Epic` type: the coordinator waits and retries the write before the merge.
+When the failure leaves the effect of the write unknown (a network failure), it first reads the tracker to see whether the write
 happened, and retries only if it did not. That reading is what prevents a second issue
 or a second comment: no adapter retries a write by itself in the code read here, and a
 retry after an unknown outcome does this, per provider (files under
