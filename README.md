@@ -31,14 +31,15 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
-**Released and tagged, installed state observed per host:** Foundry **1.1.0** (both host
+**Tagged, installed state observed per host:** Foundry **1.1.0** (both host
 manifests declare it; Ship-iOS stays at **0.3.0**). Its
 [release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
 (Claude Code 2.1.293 minimum for the default `economy` tier, among others) and its
 [upgrade and rollback guide](plugins/foundry/docs/migration-1.1.0.md) gives the
 update sequence and the rollbacks, each as far as it is established. Both are frozen as
-shipped in the tag; their wording "not tagged, not verified installed" is superseded by
-the statuses below and the [errata](plugins/foundry/docs/release-1.1.0-errata.md).
+shipped in the tag; the release note's wording "not tagged, not verified installed" and the guide's
+"Candidate guide; the tag and the official installed-version checks are pending" are
+superseded by the statuses below and the [errata](plugins/foundry/docs/release-1.1.0-errata.md).
 Statuses, with their source (the readbacks recorded on the tracker issue PAT-135):
 
 - **Tag:** `foundry-v1.1.0` points at `04af359`, the commit that merged the release pull

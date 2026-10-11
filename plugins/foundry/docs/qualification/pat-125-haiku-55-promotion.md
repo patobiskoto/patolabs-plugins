@@ -92,7 +92,9 @@ PYTHONPATH=plugins/foundry/tooling python3 -m foundry.claude_profile_trial \
   --out plugins/foundry/docs/qualification/pat-125-native-trial.json
 ```
 
-`--dry-run` affiche la commande sans rien lancer et ne crée rien sous le dossier de
+`--dry-run` affiche la commande sans lancer de session `claude` ; il lit le commit et
+l'état du dépôt par `git rev-parse` et `git status` (`_head`), crée brièvement un dossier
+temporaire système (`_policy_root`) et ne crée rien sous le dossier de
 travail (depuis PAT-134 ; la création de la fixture est gardée par `if not args.dry_run`
 dans `run` et `run_cache_ttl` de `tooling/foundry/claude_profile_trial.py`, et l'option
 est décrite comme « create nothing under the work directory, launch nothing »). Le
