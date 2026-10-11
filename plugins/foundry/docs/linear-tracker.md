@@ -863,6 +863,43 @@ an unmapped state are not. The issue's present native state must be the last dur
 snapshot. A review or acceptance write may record one next forward native snapshot, but
 an ordinary query remains fail-closed until that receipt exists.
 
+**Issues merged before the native projection existed (PAT-163).** PAT-72 (PR 48) and
+PAT-73 (PR 50) were merged on 2026-09-27. Observed in a `query issue` read of
+2026-10-11: both read `state=done`, `native_state=in-progress`,
+`projection_status=disagreement`, with accepted AC proof. Cause, observed in the history
+of `linear.py`: before commit `97b9316` (PAT-56) nothing in that file wrote the native
+State of a lifecycle transition (lines matching `_project_native_state` or
+`issue.update.lifecycle-state`: 0 at `9603302`, `9d7cb50`, `40cbccc` and `82c5e73`, 4 at
+`97b9316`), so `set_state` only appended receipts. The contract of that time said so:
+"Status projection ... (not met — PAT-56)" (`tracker-contract.md` at `9d7cb50`). Both
+issues were merged by `9603302` and `9d7cb50`, before `97b9316`. Deduced, not observed:
+their native In Progress was written by the Linear GitHub integration at the first
+review receipt (PAT-72 06:22Z, PAT-73 07:28Z, native history read through the Linear
+connector), not by Foundry; the earlier `state-in-progress` receipts record `backlog` as
+the native State observed, which `linear.py:3697` describes as the shape of older
+receipts. Neither issue was ever moved natively to review or done. Unknown: why no other
+issue of the project shows this divergence.
+
+Realignment needs no new command. With the tracker forced to Linear, from a checkout
+bound to the repository, run `python3 plugins/foundry/tooling/foundry_cli.py issue merge
+PAT-72 48`, then `... issue merge PAT-73 50`. For a merged PR whose strict issue read
+refuses with a disagreement, `merge` (`issue.py:482`) requires the PR to be merged with
+the issue's PR URL, then `LinearTracker.recover_done_projection` requires one `state-done`
+receipt with the same PR URL, head, base and merge commits, authenticates the whole
+receipt chain, and writes only the native State `done` (one `issueUpdate` carrying
+`stateId`, `set_state` at `linear.py:5535`). It appends no receipt and merges nothing;
+it then deletes the merged branch on the code host and cleans the local branch (left to
+Codex in a linked worktree). A coordinate mismatch refuses before any write. Run on a
+copy: a fixture of the same receipt shape (`_historical_done_shape` in
+`tests/test_linear_tracker.py`) goes from `disagreement` to `done` with its comments
+unchanged. Not run against the real issues. No strict read is weakened: `get_issue`
+still refuses a `disagreement`.
+
+A merge that completes today cannot leave this state: `set_state` appends the receipt
+then writes the native State (`linear.py:5547`), and an interrupted second write is
+repaired by replaying the same merge. A native State changed outside Foundry after the
+merge is still a `disagreement` by design.
+
 **Abandoned issue (PAT-ADR-0017, PAT-131).** One exception applies to reads only: for
 `dropped` the native State is the authority. An issue whose present native state is
 `dropped` and whose receipt chain is valid and non-terminal (`state-in-progress` and/or
