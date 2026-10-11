@@ -348,10 +348,10 @@ issue is seen by any gate: the review proof stays `quality=mergeable`, so the me
 command does not refuse a diff because a marked remark was left uncorrected or because
 the follow-up issue does not exist. The checklist is an obligation of the author judged
 by the reviewer, not a gate. In the same way no gate checks that the companion Epic of
-(b) exists, that it has no tracker link with the origin Epic, that a PR of a companion
-Epic deferred nothing, that the fourth write was made when needed, that the companion Epic
-has a single follow-up issue, or that the review after a correction on a companion Epic
-was limited to what changed: this is judged in review.
+(b) exists, that it has no tracker link with the origin Epic, or that a PR of a companion
+Epic deferred nothing: this is judged in review. Nothing checks either that the fourth
+write was made when needed, that the companion Epic has a single follow-up issue, or that
+the review after a correction on a companion Epic was limited to what changed.
 
 **What is not coded yet.** The four writes of (b) are made by the coordinator that
 applies the skills. An Epic campaign does not receive the reviewer's prose: its review
