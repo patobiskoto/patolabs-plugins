@@ -38,6 +38,125 @@ The first 10 issues delivered under the rule, with their follow-up issues. If a 
 issue is not delivered when the window closes, the result is called "incomplete" and the
 gain stays unknown.
 
+### First window: result (PAT-169)
+
+Which ten issues. This page does not date the start of the rule; this reading is
+deduced: the rule starts at the merge of PAT-136 (PR 112, 2026-10-10), the first
+pull request that carries it. The ten origin issues merged from then on, in merge
+order, are PAT-136, PAT-139, PAT-142, PAT-143, PAT-145, PAT-137, PAT-147, PAT-144,
+PAT-146 and PAT-149. Their follow-up issues are PAT-138, PAT-148 and PAT-150.
+
+Result: complete in the sense of the paragraph above, because the three follow-up issues
+are delivered (merged in PRs 118, 123 and 125). One count is a lower bound (PAT-143,
+below).
+
+Rounds per issue, observed in the PR descriptions (read with `gh pr view` on
+2026-10-11; "line" is a line in the format of `skills/merge-pr/SKILL.md`, "prose" a
+free-text `Round N` line of the description, written before that format was used):
+
+| Issue | PR | Rounds | First | After blocking | After remarks | Kind of source |
+|---|---|---|---|---|---|---|
+| PAT-136 | 112 | 3 | 1 | 0 | 2 | line |
+| PAT-139 | 113 | 3 | 1 | 0 | 2 | line |
+| PAT-142 | 114 | 4 | not split (prose) | not split (prose) | not split (prose) | prose |
+| PAT-143 | 116 | 3 (lower bound) | not split (prose) | not split (prose) | not split (prose) | prose |
+| PAT-145 | 119 | 6 | 1 | 0 | 5 | line |
+| PAT-137 | 117 | 2 | 1 | 1 | 0 | line |
+| PAT-147 | 120 | 3 | 1 | 0 | 2 | line |
+| PAT-144 | 121 | 4 | 1 | 0 | 3 | line |
+| PAT-146 | 122 | 1 | 1 | 0 | 0 | line |
+| PAT-149 | 124 | 2 | 1 | 1 | 0 | line |
+| PAT-138 (follow-up) | 118 | 4 | 1 | 1 | 2 | line |
+| PAT-148 (follow-up) | 123 | 2 | 1 | 0 | 1 | line |
+| PAT-150 (follow-up) | 125 | 2 | 1 | 0 | 1 | line |
+| Eleven PRs with lines | | 32 | 11 | 3 | 18 | line |
+
+The split is read from "follows first|blocking|remarks" in the lines of the eleven PRs
+that carry them (PRs 112, 113, 117 to 125; the sum 11 + 3 + 18 = 32 equals the
+24 + 8 rounds of the second bullet below). On PR 120, round 3 is marked "follows
+remarks" although the PR itself says it followed a merge of `origin/main`, not
+remarks. PRs 114 and 116 have no line in the format: their split is not given.
+
+- Origin issues: 31 rounds. Follow-up issues: 8 rounds. Total 39 rounds over 10 origin
+  issues, i.e. 3.9 rounds per origin issue (arithmetic of the table).
+- Counting only the eight origin issues that carry lines in the format (PAT-142 and
+  PAT-143 left out): 24 + 8 = 32 rounds over 8 origin issues, i.e. 4.0 (all 8 follow-up
+  rounds are charged to these eight; which origin issues PAT-138 serves is not stated
+  here). This is the same computation as the coordinator's first whole-window figure,
+  which left PAT-142 and PAT-143 out because their rounds were believed unknown: the two
+  "4.0" of the decision below are one figure.
+- Unknown: the rounds of PAT-143 in PR 115, a trial pull request closed without merge
+  that carries no round line. The 3 counted for PAT-143 are those of PR 116, the merged
+  one, so the true figure is at least 3. A higher figure can only raise the average,
+  which is already above 3.2.
+- Both figures are not below 3.2, so the return trigger on the number of rounds (the
+  second of the two below) is met on the whole window.
+- A round is not a cost. One partial review took about 30 seconds and one full review
+  about 3 minutes, one observation each, not a measure; the cost of a round was not
+  measured in this window.
+- Of these issues, the ones merged after PAT-144 (PR 121, 2026-10-11 08:54 UTC+2, the
+  amendment of the rule: a single follow-up issue per companion Epic, and a partial
+  review after non-blocking remarks on an issue of a companion Epic) are PAT-146 (1
+  round), PAT-149 (2) and the follow-up issues PAT-148 (2) and PAT-150 (2): 7 rounds
+  over 2 origin issues, i.e. 3.5. PAT-137 and PAT-147 were merged before PAT-144, so a
+  figure of 3.0 (12 rounds over 4 origin issues) that groups them with the later issues
+  mixes both states of the rule. Two issues are too few to conclude anything. PAT-148
+  also holds the remarks deferred from PAT-137 and PAT-147 (CHANGELOG, entry PAT-148),
+  merged before PAT-144; its 2 rounds are counted here in full against 2 origin issues.
+  Without PAT-148 the figure is 5 rounds over 2 origin issues, i.e. 2.5: on which side
+  of 3.2 this subset falls depends on that attribution. 2.5 is a lower bound and 3.5 an
+  upper bound, since PAT-148 also holds remarks of PAT-146.
+
+Decision of the maintainer (2026-10-11), in two steps the same day:
+
+- Decided first, on the coordinator's figures 4.0 (whole window) and 3.0 (PAT-137,
+  PAT-147, PAT-146 and PAT-149 with PAT-148 and PAT-150). The 3.0 wrongly included
+  PAT-137 and PAT-147, merged before the amendment of PAT-144.
+- Observed afterwards: the count was corrected to 3.9 (whole window, ten origin issues)
+  and 3.5 (the two origin issues merged after PAT-144, too few to conclude), against the
+  3.2 baseline. The reservation on the attribution of PAT-148 (2.5 without it) was
+  written after the confirmation below, which was given on "3.5 against 3.2"; the
+  coordinator reported it to the maintainer afterwards (2026-10-11). No answer of the
+  maintainer on it is recorded here.
+- Decided, confirmed by the maintainer on the corrected figures the same day: keep the
+  rule as amended by PAT-144 and open a second window, defined below. The 3.2 threshold
+  and the return triggers are not changed; they apply as they are to the second window.
+  The first window therefore did not lead to the return to the previous practice.
+
+### Second window
+
+Start: the merge of PAT-144 (PR 121); PAT-144 itself is not in it. Content: the first 10
+origin issues merged after it, with their follow-up issues, under the rule as amended by
+PAT-144. Same count (the section "What is counted"), same result vocabulary (complete or
+incomplete), same return triggers and same threshold of 3.2.
+
+An issue belongs to the window by its merge instant; all its rounds are counted,
+including those run before the merge of PAT-144. So PAT-146 and PAT-149, with PAT-148
+and PAT-150, belong to both windows and their rounds are counted in each.
+
+Coordinator's reading, to be confirmed by the maintainer: an origin issue is any merged
+issue that is not an issue of a companion Epic, whether or not it has an origin Epic
+(first window: PAT-138 is a follow-up issue although companion Epics did not exist yet).
+The list of origin issues is fixed at the merge of the tenth; the window closes, and the
+result is called complete or incomplete, when the maintainer counts it (as done for the
+first window on 2026-10-11); the maintainer then decides (section "Return to the
+previous practice" below).
+
+State on `origin/main` at `6865648` (2026-10-11), from `git log --first-parent`:
+
+- origin issues counted so far, 7 of 10: PAT-146, PAT-149, PAT-163, PAT-164, PAT-167,
+  PAT-168, PAT-190;
+- follow-up issues delivered: PAT-148, PAT-150 and PAT-187 (PAT-187 settles the remarks
+  deferred by PAT-163 and PAT-164);
+- PAT-189 holds the remarks deferred by PAT-167, PAT-168 and PAT-190 (cited in their PR
+  descriptions); it is not delivered on 2026-10-11 (stated by the coordinator, not
+  checked in the repository), so it counts as not delivered;
+- PAT-148 is counted in full although it also holds remarks of PAT-137 and PAT-147,
+  merged before the start.
+
+The rounds of the second window are not counted on this page yet; they are counted when
+the window closes.
+
 ## Return to the previous practice
 
 Previous practice: correct before the merge, then a full re-review. The maintainer
