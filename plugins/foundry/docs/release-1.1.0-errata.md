@@ -108,3 +108,14 @@ Two sentences read differently now:
 - `release-1.1.0.md` (around line 266) says that the sentence of the PAT-125 page
   about `--dry-run` "is not corrected by this release". It is corrected since: the PAT-125
   qualification page now states the current `--dry-run` behaviour.
+
+## Since PAT-146: the frozen-release check in CI
+
+`release-1.1.0.md` (around line 418) says the frozen-release test is excluded from CI
+(`historical_fixture`). That test is still excluded. Since PAT-146 a second test,
+`test_published_releases_stay_frozen_except_declared_exceptions` in
+`tests/test_release_contract.py`, runs in CI: it passes with three declared exceptions
+and fails on any other rewrite of a frozen document. It also fails while a published
+CHANGELOG section has no entry in `tests/fixtures/release-history.json`
+(`_assert_frozen_coverage`), so the pull request that publishes a version must now
+carry its entry.

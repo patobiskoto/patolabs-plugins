@@ -211,16 +211,44 @@ def test_changelog_publishes_unique_strictly_descending_versions():
         assert body, f"empty CHANGELOG section for {version}"
 
 
-@pytest.mark.historical_fixture(
-    reason="requires unsanitized historical release documents omitted from this snapshot",
+# PAT-146. Three frozen documents of the public repository do not match
+# ``tests/fixtures/release-history.json``. The cause is DEDUCED, not observed: the
+# existing ``historical_fixture`` reason says the public snapshot omits unsanitized
+# historical release documents (FOUNDRY-ADR-0024: audited snapshot, no benchmark
+# artifacts, personal paths or private operational data). The fixture is not edited
+# (a changed digest would mean a published document was rewritten) and no original
+# is restored (maintainer decision of 2026-10-11). Each exception is exact: a
+# ``rewritten`` document is pinned to its digest in this repository, so a further
+# rewrite fails; an ``absent`` document must stay absent.
+FROZEN_DOCUMENT_EXCEPTIONS = (
+    {
+        "version": "0.7.0",
+        "document": "docs/migration-0.7.0.md",
+        "kind": "rewritten",
+        "sha256": "9f7deb0ba9488cce3afc1255a510e98347b3cb44f8883f9aa72e2cd60d196fcb",
+        "reason": "migration guide differs from its frozen digest; deduced to be "
+        "the public snapshot's sanitization (FOUNDRY-ADR-0024), not observed",
+    },
+    {
+        "version": "0.8.0",
+        "document": "docs/migration-0.8.0.md",
+        "kind": "rewritten",
+        "sha256": "aacbdcf68910ae8524e95706c2b8379e1dd39f5b9d8b0bd3570de6d1b7ba0f12",
+        "reason": "migration guide differs from its frozen digest; deduced to be "
+        "the public snapshot's sanitization (FOUNDRY-ADR-0024), not observed",
+    },
+    {
+        "version": "0.8.0",
+        "document": "benchmarks/foundry-46/report-v2/pilot-20260825/results-v2.json",
+        "kind": "absent",
+        "reason": "benchmark artifact, which FOUNDRY-ADR-0024 excludes from the "
+        "public snapshot",
+    },
 )
-def test_published_release_sections_and_documents_stay_frozen():
-    frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
-    published = changelog_sections()
 
-    missing = [
-        version for version, _, _ in published if version not in frozen
-    ]
+
+def _assert_frozen_coverage(frozen, published):
+    missing = [version for version, _, _ in published if version not in frozen]
     if missing:
         blocks = {
             version: freeze_entry(version, date, section)
@@ -237,26 +265,159 @@ def test_published_release_sections_and_documents_stay_frozen():
         f"{sorted(set(frozen) - {version for version, _, _ in published})}"
     )
 
+
+def _is_file(document):
+    return (PLUGIN_ROOT / document).is_file()
+
+
+def frozen_release_faults(
+    frozen, published, exceptions=(), digest=_digest, exists=_is_file,
+):
+    """Every fault of the frozen releases as ``(version, document, fault)``.
+
+    Does not stop at the first fault. An exception hides only the exact fault it
+    declares on its own document of its own version.
+    """
+    excepted = {(e["version"], e["document"]): e for e in exceptions}
+    faults = []
     for version, date, section in published:
         entry = frozen[version]
-        assert entry["date"] == date
-        assert entry["changelog_sha256"] == hashlib.sha256(
+        if entry["date"] != date:
+            faults.append((version, "CHANGELOG", "date differs from the frozen one"))
+        if entry["changelog_sha256"] != hashlib.sha256(
             section.encode("utf-8"),
-        ).hexdigest(), (
-            f"the published {version} CHANGELOG section was rewritten; published "
-            "history is immutable"
-        )
+        ).hexdigest():
+            faults.append((version, "CHANGELOG", "published section was rewritten"))
         for document in release_documents(version):
-            assert document in entry["documents"], (
-                f"{document} is unfrozen {version} release evidence"
-            )
+            if document not in entry["documents"]:
+                faults.append((version, document, "unfrozen release evidence"))
         for document, expected in entry["documents"].items():
-            assert (PLUGIN_ROOT / document).is_file(), (
-                f"frozen {version} evidence disappeared: {document}"
+            exception = excepted.get((version, document))
+            if not exists(document):
+                if exception and exception["kind"] == "absent":
+                    continue
+                faults.append((version, document, "frozen evidence disappeared"))
+            elif digest(document) != expected:
+                if (
+                    exception
+                    and exception["kind"] == "rewritten"
+                    and digest(document) == exception["sha256"]
+                ):
+                    continue
+                faults.append((version, document, "frozen evidence was rewritten"))
+    return faults
+
+
+def stale_frozen_exceptions(frozen, exceptions, digest=_digest, exists=_is_file):
+    """Exceptions that no longer match reality."""
+    stale = []
+    for e in exceptions:
+        version, document = e["version"], e["document"]
+        expected = frozen.get(version, {}).get("documents", {}).get(document)
+        if expected is None:
+            stale.append(f"{version} {document}: the fixture does not list it")
+        elif e["kind"] == "absent" and exists(document):
+            stale.append(
+                f"{version} {document}: now present, reconsider this exception",
             )
-            assert _digest(document) == expected, (
-                f"frozen {version} evidence was rewritten: {document}"
-            )
+        elif (
+            e["kind"] == "rewritten"
+            and exists(document)
+            and digest(document) == expected
+        ):
+            stale.append(f"{version} {document}: now equals its frozen digest")
+    return stale
+
+
+@pytest.mark.historical_fixture(
+    reason="requires unsanitized historical release documents omitted from this snapshot",
+)
+def test_published_release_sections_and_documents_stay_frozen():
+    frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
+    published = changelog_sections()
+    _assert_frozen_coverage(frozen, published)
+
+    assert frozen_release_faults(frozen, published) == []
+
+
+def test_published_releases_stay_frozen_except_declared_exceptions():
+    frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
+    published = changelog_sections()
+    _assert_frozen_coverage(frozen, published)
+
+    for e in FROZEN_DOCUMENT_EXCEPTIONS:
+        assert e["kind"] in ("rewritten", "absent") and e["reason"].strip()
+    assert stale_frozen_exceptions(frozen, FROZEN_DOCUMENT_EXCEPTIONS) == []
+    assert frozen_release_faults(frozen, published, FROZEN_DOCUMENT_EXCEPTIONS) == []
+
+
+def test_frozen_release_check_reports_a_rewrite_of_another_document():
+    frozen = json.loads(RELEASE_HISTORY.read_text(encoding="utf-8"))["releases"]
+    published = changelog_sections()
+    real = {
+        document: _digest(document)
+        for entry in frozen.values()
+        for document in entry["documents"]
+        if _is_file(document)
+    }
+
+    def altered(target):
+        return lambda document: "0" * 64 if document == target else real.get(document, "")
+
+    # A version without exception: one of its documents is rewritten (in memory).
+    version, target = next(
+        (v, d)
+        for v, entry in frozen.items()
+        if not any(e["version"] == v for e in FROZEN_DOCUMENT_EXCEPTIONS)
+        for d in entry["documents"]
+        if d in real
+    )
+    faults = frozen_release_faults(
+        frozen, published, FROZEN_DOCUMENT_EXCEPTIONS, digest=altered(target),
+    )
+    assert (version, target, "frozen evidence was rewritten") in faults
+
+    # An exception for one document does not hide another document of its version.
+    first = FROZEN_DOCUMENT_EXCEPTIONS[1]
+    sibling = next(
+        d
+        for d in frozen[first["version"]]["documents"]
+        if d != first["document"] and d in real
+    )
+    faults = frozen_release_faults(
+        frozen, published, FROZEN_DOCUMENT_EXCEPTIONS, digest=altered(sibling),
+    )
+    assert (first["version"], sibling, "frozen evidence was rewritten") in faults
+
+    # An exception is exact: a further rewrite of an excepted guide fails too.
+    faults = frozen_release_faults(
+        frozen, published, FROZEN_DOCUMENT_EXCEPTIONS,
+        digest=altered(first["document"]),
+    )
+    assert (
+        first["version"], first["document"], "frozen evidence was rewritten",
+    ) in faults
+
+
+def test_frozen_release_exceptions_must_not_go_stale():
+    frozen = {
+        "9.9.9": {"documents": {"docs/a.md": "x", "docs/gone.md": "y"}},
+    }
+    equal = {"version": "9.9.9", "document": "docs/a.md", "kind": "rewritten",
+             "sha256": "z", "reason": "r"}
+    reappeared = {"version": "9.9.9", "document": "docs/gone.md", "kind": "absent",
+                  "reason": "r"}
+    unlisted = {"version": "9.9.9", "document": "docs/other.md", "kind": "absent",
+                "reason": "r"}
+
+    stale = stale_frozen_exceptions(
+        frozen, (equal, reappeared, unlisted),
+        digest=lambda document: "x", exists=lambda document: True,
+    )
+    assert len(stale) == 3
+    assert "now equals its frozen digest" in stale[0]
+    assert "reconsider" in stale[1]
+    assert "does not list" in stale[2]
 
 
 def test_release_requirements_separate_a_patch_from_a_minor():

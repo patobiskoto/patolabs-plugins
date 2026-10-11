@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- PAT-146: tests only, no behaviour of any tool changes. A variant of the frozen-release
+  check now runs in CI: it passes with three named exceptions (`docs/migration-0.7.0.md`
+  and `docs/migration-0.8.0.md`, digests pinned in the test; and the absent
+  `benchmarks/foundry-46/report-v2/pilot-20260825/results-v2.json`), and fails on a
+  stale exception or on a rewrite of any other frozen document. The strict test stays
+  marked `historical_fixture` and excluded from CI. The cause of the three faults is
+  deduced, not observed: the public snapshot omits unsanitized historical documents
+  (FOUNDRY-ADR-0024). `tests/fixtures/release-history.json` is unchanged. Consequence
+  for the next release: the CI test also fails while a published CHANGELOG section has
+  no entry in that fixture (`_assert_frozen_coverage`), so the pull request that
+  publishes a version must carry its entry.
+  Documentation status (R5): `docs/release-1.1.0-errata.md` updated; no CLI verb, option
+  or constant changed.
+
 - PAT-144: wording, one docstring and presence tests only, no behaviour of any tool
   changes; the texts of rule R9 follow the maintainer's decisions of 2026-10-11 and the
   amended PAT-ADR-0018. A fourth write is pre-authorized: attaching to the companion Epic
