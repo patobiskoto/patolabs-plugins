@@ -464,6 +464,26 @@ def test_a_repeated_present_identifier_of_any_type_stops_the_listing(
     assert _ops(wire)["FoundryLinearIssues"] == 2
 
 
+def test_a_non_hashable_identifier_is_not_counted_by_the_early_stop(monkeypatch, tmp_path):
+    """PAT-189: ``identifier = ["x"]`` on nodes of two pages (non-hashable value).
+
+    The early stop skips it, so no ``pagination_stalled`` comes from the fetch and both
+    pages are requested; the failure is then the one the code at 8367180 gave too (run
+    on the same pages, after one request): ``TypeError`` from ``issue.id in seen`` on the
+    normalized issue.
+    """
+    tracker, wire, project = _world(monkeypatch, tmp_path, closed=False)
+    tracker.search(project)
+    first, second = _listing_nodes(wire, tracker, project)[:2]
+    first["identifier"] = ["x"]
+    second["identifier"] = ["x"]
+    _serve_raw_pages(tracker, [_page([first], next_cursor="c1"), _page([second])])
+    wire.calls.clear()
+    with pytest.raises(TypeError, match="unhashable type: 'list'"):
+        tracker.search(project)
+    assert _ops(wire)["FoundryLinearIssues"] == 2
+
+
 def test_nodes_without_identifier_on_two_pages_fail_normalization_not_the_early_stop(
     monkeypatch, tmp_path,
 ):

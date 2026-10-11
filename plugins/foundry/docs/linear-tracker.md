@@ -1269,7 +1269,8 @@ today (PAT-189).
 
 Error order of `search` (behaviour change, every caller; the paragraph describes the
 requests of the listing and of the individual reads it triggers, which is the whole
-story only without the layer, see its last sentence):
+story only without the layer: see the sentence "With the read-only layer open" at the
+end of the next paragraph):
 `search` fetches every listing page before normalizing any node. While fetching it
 checks what it checked before on each response (transport, shape of the response, a
 missing or empty `endCursor` when a next page is announced, the page limit) and one
@@ -1300,8 +1301,10 @@ read-only layer open, an individual read that the listing seeded is not sent at 
 listing whose only failure came from such a read (transport, quota) no longer fails
 (PAT-189), and the sentence above holds only for the reads that are still sent. The
 early stop on a repeated issue counts every node whose `identifier` key is present,
-whatever its type (the code before PAT-168 compared `Issue.id` after normalization, and
-normalization accepts any value of that key); a node with no `identifier` key is not
+whatever its type, provided it is hashable (a list or an object is not counted and fails
+afterwards as it did before, outside the early stop: `TypeError` on the normalized
+issue); the code before PAT-168 compared `Issue.id` after normalization, and
+normalization accepts any value of that key. A node with no `identifier` key is not
 counted and fails normalization (`invalid_response`), as before (PAT-189).
 
 **Truthful interruption messages and read-only status (PAT-100).** An interrupted or

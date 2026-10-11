@@ -5,9 +5,9 @@ project, where the code reads the same thing several times inside one command, a
 reductions a follow-up ticket (PAT-168) could consider. It decides nothing. Three kinds
 of statement are kept apart: **measured** (the table, and the trace under it),
 **deduced** (arithmetic on the measured figures) and **read in code** (symbols named
-below, not run under a per-operation trace, except the one trace of one `query issue`
-described under "Conditions of the measure"). Where nothing supports an answer, it says
-**unknown**.
+below, not run under a per-operation trace, except the two traces (`query issue`,
+`query backlog`) described under "Conditions of the measure"). Where nothing supports
+an answer, it says **unknown**.
 
 Documentation status (R5, `AGENTS.md#R5`): new page, no CLI verb, option, configuration
 key or constant changes. PAT-189 corrected statements of this page in place (dated
@@ -33,13 +33,14 @@ PAT-145 one, documented in [`linear-tracker.md`](linear-tracker.md) ("Request co
   "Repetitions located in code".
 - `linear_requests` is the total number of HTTP attempts of the process, retries
   included. It is a single total: there is no per-operation breakdown in the counter.
-- Per-operation trace (one command, by the coordinator, after the table): command `query
-  issue PAT-168` (a plain issue, one link: its parent), 2026-10-11 about 14:02 to 14:06
-  (Europe/Paris), project of 176 issues and 45 ADRs, installed Foundry 1.1.1, run
-  through a wrapper script that patches `LinearTracker._graphql_once` to tally its
-  `operation` argument and the id variable, then runs the unmodified CLI module.
-  Read-only commands only. Quota exhaustion cut a `query issue PAT-87` trace at 130
-  requests; it is not used.
+- Per-operation traces (two commands, `query issue PAT-168` (a plain issue, one link:
+  its parent) and `query backlog`, by the coordinator, after the table): 2026-10-11
+  about 14:02 to 14:06 (Europe/Paris), project of 176 issues and 45 ADRs, installed
+  Foundry 1.1.1, run through a wrapper script that patches `LinearTracker._graphql_once`
+  to tally its `operation` argument and the id variable, then runs the unmodified CLI
+  module. Read-only commands only. Quota exhaustion cut a third trace, `query issue
+  PAT-87`, at 130 requests (125 `issue.read`, 3 `adr.list`, 2 link reads); it is
+  incomplete and not used.
 
 ## Measured
 
@@ -73,6 +74,13 @@ are distinct over the 36, so, deduced, 8 of the 34 pair reads repeat an earlier 
 trace is one command on one project state: 3 pages and 17 pairs hold for that state
 only.
 
+Trace of `query backlog` (171 requests, **measured**, same conditions): 2 `issue.search`
+and 169 `issue.read`, on 98 distinct ids (PAT-10, PAT-12, PAT-21, PAT-23 and PAT-24 are
+read three times each). So 71 of the 169 individual reads repeat an id already read in
+the same command (169 - 98). That these reads are the closed-Epic replays is not shown
+by the trace (code reading, below); that they read issues the two listing pages of the
+same command had just returned is presumed by the coordinator, not checked here.
+
 ## Deduced by arithmetic
 
 - `query issue PAT-167`: 56 = 54 + 1 + 1. `query issue PAT-151`: 62 = 54 + 1 + 7. 54
@@ -80,12 +88,6 @@ only.
   requests on every `query issue`: 96 % of the plain issue read (54 of 56) and 87 % of
   PAT-151 (54 of 62). The other terms are the issue itself (1) and one read per linked
   issue.
-- The cost of a valid pair is exactly three requests **by code reading**, which agrees
-  with the trace: `_validate_adr_graph` refuses any reference that is not the canonical
-  identifier (`Linear ADR issue relation identifier is not canonical`), so for a pair
-  that passes, `_resolve_adr_issue_reference` reads the reference (an identifier), then
-  the only other coordinate of the identity (the native id), and `_read_comment` reads
-  the reciprocal comment.
 - `query issue PAT-87`: 54 + 1 + 15 = 70; the 75 other requests are not attributed by
   any measure. `query issue PAT-51`: 54 + 1 + 50 = 105; the 157 others are not
   attributed by any measure. The code reading below proposes a cause; it is not proven
@@ -93,8 +95,9 @@ only.
 - `query backlog` and `query profile intake` cost the same 171, as the code predicts
   (one `search` each, see below).
 - 174 issues at `first: 100` per page (`_ISSUES_QUERY`) is two `issue.search` pages,
-  so the other 169 of the 171 requests are not the listing itself (deduced, assuming
-  the provider returned the two pages the arithmetic implies).
+  which the trace of `query backlog` measures (2 `issue.search`); the other 169 of the
+  171 requests are `issue.read`, measured by the same trace, so they are not the listing
+  itself.
 
 ## Repetitions located in code
 
@@ -102,7 +105,7 @@ Symbols are in `plugins/foundry/tooling/foundry/trackers/linear.py` unless said
 otherwise. Each statement describes the code **before PAT-168 and before PAT-190**
 (Foundry 1.1.1, commit `87bb8eb`), as it stood when PAT-167 wrote it; the sections
 "After PAT-168" and "After PAT-190" below say what changed. Each statement was verified
-by reading the named function; the only per-operation trace is the one of `query issue`
+by reading the named function; the only per-operation traces are the two
 described under "Conditions of the measure".
 
 ### `query issue` (`query.py::issue`)
@@ -159,10 +162,11 @@ described under "Conditions of the measure".
    native state is `done` and which carries an Epic closure audit comment triggers the
    replay described above (`_verified_epic_closure` and `bounded_epic_graph_snapshot`),
    one snapshot per closed Epic, with no sharing between two snapshots
-   (`graph_snapshot()` opens a private scope). With two listing pages, the 169 other
-   requests are consistent with this reading and with nothing else found in `search`;
-   how many closed Epics with an audit the project holds, and their size, is
-   **unknown**.
+   (`graph_snapshot()` opens a private scope). The trace of `query backlog` measures the
+   two listing pages and the 169 individual `issue.read`; that these reads are the
+   closed-Epic replays is code reading: it is consistent with the trace and with nothing
+   else found in `search`. How many closed Epics with an audit the project holds, and
+   their size, is **unknown**.
 3. Before PAT-168, a node read in the replay of one closed Epic was read again in the
    replay of another closed Epic that contained it, or in the listing itself: the scope
    of `graph_snapshot()` is created empty per snapshot (still true of a snapshot; the
@@ -287,9 +291,9 @@ excluded); they are not the real project's. The real-project measure follows the
 What changed: the ADR index embedded in the `query issue` payload is built without
 resolving the issues that ADRs declare and without reading the reciprocal comment of
 each (ADR, issue) pair. Version chains, witnesses, statuses and supersession relations
-are still checked, and the output for a valid graph is unchanged except the `note`
-field (see below). `query adrs`,
-`query adr`, `frame` and the ADR writes keep the full validation.
+are still checked, and the output for a valid graph is unchanged except the `note` field
+(see below). `query adrs`, `query adr`, `frame` and the ADR writes keep the full
+validation.
 
 Same fixture as the PAT-168 section:
 
@@ -340,8 +344,8 @@ is the reference, as in the section above.
 ## Not measured
 
 - `issue merge`, `issue openpr`, `edit comment`, a real `close-epic` attempt.
-- Any per-operation breakdown other than the trace of one `query issue` of a plain
-  issue (2026-10-11); the counter itself is a single total.
+- Any per-operation breakdown other than the traces of one `query issue` of a plain
+  issue and of `query backlog` (2026-10-11); the counter itself is a single total.
 - Whether any retry happened during the measures, and whether a retry counts against
   the hourly quota (already stated unknown in the PAT-145 section).
 - The number of ADR-issue pairs and of `adr.list` pages on any state other than the one
@@ -352,15 +356,14 @@ is the reference, as in the section above.
 
 Written by PAT-167 on the code before PAT-168 and before PAT-190: the figures and
 constraints below are those of that code, not of the current one. Listed by the largest
-measured or deduced figure, not decided. Every candidate must
-keep the outputs byte-identical for the same tracker state and keep no state between
-two commands unless an architecture decision (an accepted ADR) allows it. That rule is
-the maintainer's constraint for PAT-168; this page found no accepted sentence that
-grants such a state.
+measured or deduced figure, not decided. Every candidate must keep the outputs
+byte-identical for the same tracker state and keep no state between two commands unless
+an architecture decision (an accepted ADR) allows it. That rule is the maintainer's
+constraint for PAT-168; this page found no accepted sentence that grants such a state.
 
 | # | Candidate | Starting figure | Constraint found | Decision needed |
 |---|---|---|---|---|
-| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (deduced) for `backlog`/`profile`; up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md`, on the Epic closure audit: "A valid non-code Epic closure audit supplies terminal **state** authority to `get_issue`, `observe_issue`, `query issue`, backlog and the groom profile", and "Reads verify [...] the complete current children/transitive dependency graph with its qualified acceptance evidence"; same file ("Provider-read cost of a graph snapshot (PAT-99)"): "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)" (wording before PAT-168, since reworded in that file); docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
+| 1 | Do not replay closed Epics inside list reads (`search`) and related reads of `query issue`, or replay each once per command | 169 of 171 (measured for `backlog`: 169 `issue.read`; that they are replays is code reading; `profile` deduced from the same `search`); up to 75 (PAT-87) and 157 (PAT-51) of 145 and 262 (code reading) | `linear-tracker.md`, on the Epic closure audit: "A valid non-code Epic closure audit supplies terminal **state** authority to `get_issue`, `observe_issue`, `query issue`, backlog and the groom profile", and "Reads verify [...] the complete current children/transitive dependency graph with its qualified acceptance evidence"; same file ("Provider-read cost of a graph snapshot (PAT-99)"): "Nothing is cached across calls ... (PAT-ADR-0006, PAT-ADR-0014)" (wording before PAT-168, since reworded in that file); docstring of `_verified_epic_closure`: "Read-only terminal authority shared by ordinary reads and Epic replay" | Yes, a maintainer or architecture decision: skipping a replay may change what a list reports for a disagreeing closed Epic, so identical output is not guaranteed by construction |
 | 2 | Share issue reads inside one `query issue` between the embedded ADR validation, the requested issue and its links (one scope per command, dropped at exit) | 51 of the 54 fixed requests are the 17 pairs x 3 (trace of 2026-10-11, before PAT-168 and PAT-190) | `linear-tracker.md` on ADR issue relations: "Every issue relation is re-read and must belong to the configured team and project, and the issue must retain its deterministic reciprocal Foundry comment"; scope rule of `graph_snapshot()`: "never shared with another scope" | Likely a maintainer decision (a scope per command is not state kept between commands, but it widens the PAT-99 scope rule) |
 | 3 | Deduplicate the `(ADR, issue)` reads in `_validate_adr_graph` across ADRs | The issue reads of each repeated reference (the reciprocal comment read stays); the trace records 36 `issue.read` on 28 distinct ids, so, deduced, 8 of the 34 pair reads repeat an earlier one | Same sentence as 2 (the reciprocal comment is per pair and must stay) | Only the issue reads, not the comment reads: probably within PAT-168 without a new decision, to be confirmed |
 | 4 | Reduce the back-to-back `_read_raw` of one transition (`set_state`, `_project_native_state`) | 6 `issue.read` of one issue per transition, 8 when the native state changes, binding read included (fake-transport count pinned by a test at PAT-189); the share of 13 (`issue start`) is **unknown** | `linear-tracker.md` ("re-read it immediately before one `issueUpdate`, then verify readback", written for grooming replacements under PAT-ADR-0006) and `_project_native_state`, which applies the same sequence to the native State; the fresh pre-write read and the readback must stay | The first read and the lifecycle read may be mergeable; the others are the documented guarantee. Needs a maintainer reading of PAT-ADR-0006 |

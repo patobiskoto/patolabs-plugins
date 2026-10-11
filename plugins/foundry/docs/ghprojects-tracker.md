@@ -179,7 +179,8 @@ Issue **twice** (once to identify the corpus, once more by the head-commitment c
 after the history) and its comment history (one request per page of 100). One more read
 is conditional: a support recognized in the Project but not in the repository listing
 (absent from it, or present there without the reserved label and without a head) is
-read once before the conflict is raised. The binding check (`_authoritative_binding`, twice) reads
+read once before the conflict is raised. The binding check (`_authoritative_binding`,
+twice) reads
 the local checkout registry and sends no provider request. A transport or provider
 failure of any of those still fails `query issue`; a failure while reading a cited
 delivery Issue no longer does. With the fake transport of the test, two ADRs citing one
