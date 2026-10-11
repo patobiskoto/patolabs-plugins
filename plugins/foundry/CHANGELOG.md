@@ -9,7 +9,10 @@
   stale exception or on a rewrite of any other frozen document. The strict test stays
   marked `historical_fixture` and excluded from CI. The cause of the three faults is
   deduced, not observed: the public snapshot omits unsanitized historical documents
-  (FOUNDRY-ADR-0024). `tests/fixtures/release-history.json` is unchanged.
+  (FOUNDRY-ADR-0024). `tests/fixtures/release-history.json` is unchanged. Consequence
+  for the next release: the CI test also fails while a published CHANGELOG section has
+  no entry in that fixture (`_assert_frozen_coverage`), so the pull request that
+  publishes a version must carry its entry.
   Documentation status (R5): `docs/release-1.1.0-errata.md` updated; no CLI verb, option
   or constant changed.
 

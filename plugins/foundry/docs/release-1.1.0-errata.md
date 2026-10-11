@@ -115,4 +115,7 @@ Two sentences read differently now:
 (`historical_fixture`). That test is still excluded. Since PAT-146 a second test,
 `test_published_releases_stay_frozen_except_declared_exceptions` in
 `tests/test_release_contract.py`, runs in CI: it passes with three declared exceptions
-and fails on any other rewrite of a frozen document.
+and fails on any other rewrite of a frozen document. It also fails while a published
+CHANGELOG section has no entry in `tests/fixtures/release-history.json`
+(`_assert_frozen_coverage`), so the pull request that publishes a version must now
+carry its entry.
