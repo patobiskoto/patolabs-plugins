@@ -246,12 +246,15 @@ followed by the identifier of the origin Epic (`Nits <ORIGIN-EPIC-ID>`). The ori
 of an issue is its direct parent Epic: an issue under a sub-Epic uses that sub-Epic. The
 two Epics have no tracker link between them: no parent, no dependency, no relation. What
 relates them is that name and a mention in text, nothing else. Inside the companion Epic
-the remarks are held by follow-up issues, one per batch or per theme, never one per PR.
-The follow-up issue that receives the remarks of a PR is cited in that PR's description
-before the merge. These three cases are still corrected before the merge and then fully
-re-reviewed, as before; the rest of this rule adds three more (the PR of an issue of a
-companion Epic, an issue with no origin Epic, a durable refusal of one of the writes),
-corrected the same way:
+the remarks are held by a single follow-up issue, which gathers all the deferred remarks
+of the origin Epic. If that issue is already started or closed, a new follow-up issue is
+created: no remark is added to a started or closed issue (maintainer decision of
+2026-10-11). The follow-up issue that receives the remarks of a PR is cited in that PR's
+description before the merge. These three cases are still corrected before the merge and
+then fully re-reviewed, as before; the rest of this rule adds three more (the PR of an
+issue of a companion Epic, an issue with no origin Epic, a durable refusal of one of the
+writes), corrected the same way, except that the re-review of the first is limited as
+stated below:
 
 - a remark the reviewer marks "fix before merge";
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -260,33 +263,43 @@ corrected the same way:
   a deferrable remark.
 
 There is no second-level deferral: the non-blocking remarks left by the PR of an issue
-that belongs to a companion Epic are corrected before the merge and then fully
-re-reviewed.
+that belongs to a companion Epic are corrected before the merge. The review that follows
+covers what changed since the previous round, not the whole diff; after a blocking round
+it stays full (maintainer decision of 2026-10-11). The merge gate asks for a review proof
+covering all criteria for the exact diff, so after such a partial review that proof relies
+on the previous round for the unchanged parts; the merge gate is not modified (PAT-ADR-0018).
 
-Three writes are authorized in advance, without human confirmation, inside and outside
+Four writes are authorized in advance, without human confirmation, inside and outside
 an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every repository where the
-plugin is installed. For these three writes this rule gives the confirmation that
+plugin is installed. For these four writes this rule gives the confirmation that
 `foundry:intake` requires before a write ("3. Apply (human-confirmed)"):
 
 1. create the companion Epic, the first time;
 2. create a follow-up issue in it;
-3. add deferred remarks to such an issue.
+3. add deferred remarks to such an issue;
+4. attach to the companion Epic a follow-up issue whose creation succeeded but whose
+   parent link was not set, with `edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`
+   (the case, described in `plugins/foundry/docs/review-rounds.md`, "Portability of the
+   three writes", where creating an issue under a parent makes two writes and the second
+   failed).
 
 The coordinator reports these writes in the PR description. Nothing else is
 pre-authorized: the companion Epic and its issues are neither prioritized nor started
 without the maintainer (deciding to treat them, and when, is a human verdict under
 FOUNDRY-ADR-0014), and every other intake write keeps its confirmation.
 
-The rule names no tracker. Its three writes are operations of the portable contract
-`plugins/foundry/docs/tracker-contract.md`, whose table "Core journey" marks both rows
-below `supported` in each of its three provider columns:
+The rule names no tracker. Its four writes are operations of the portable contract
+`plugins/foundry/docs/tracker-contract.md`, whose table "Core journey" marks the three
+rows below `supported` in each of its three provider columns:
 
 - row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`) carries
   writes 1 and 3;
 - row "Epics/enfants/dépendances: child creation, relations" (`create_issue(parent=…)`,
-  `link(depends-on|blocks|relates)`) carries write 2.
+  `link(depends-on|blocks|relates)`) carries write 2;
+- row "Epics/enfants/dépendances: reparent an existing issue" (`link(subtask-of|parent-of)`)
+  carries write 4.
 
-When one of the three writes does not go through, two cases are told apart:
+When one of the four writes does not go through, two cases are told apart:
 
 - durable refusal (the project cannot carry the write, for example it has no `Epic`
   type): the coordinator makes no substitute write: the remarks of that round are
@@ -307,18 +320,26 @@ PAT-ADR-0018.
 
 PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
 its non-blocking remarks are corrected before the merge and then fully re-reviewed
-(maintainer decision of 2026-10-10).
+(maintainer decision of 2026-10-10). That includes an issue whose direct parent is not an
+Epic: the chain of parents is not walked up (maintainer decision of 2026-10-11).
 
 The Foundry skills apply this grouped deferral and this standing authorization in every
 repository where the plugin is installed, by the maintainer's decision of 2026-10-10;
-this contract is where the rule is recorded.
+this contract is where the rule is recorded. Checklist (a) and correction rule (c) live in
+a repository's contract file, so they apply where a repository carries them; deferral (b)
+is applied by the Foundry skills, which ship with the plugin, so it applies wherever the
+plugin is installed (maintainer decision of 2026-10-11).
 
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.
 
 **What only the reviewer can judge.** No mechanical check covers: that a sentence cites
 the right source and is true; that a procedure was really run; that a correction commit
-changed "as few sentences as possible"; that a remark was rightly classed as deferrable.
+changed "as few sentences as possible"; that the coordinator rightly classed a remark as
+deferrable. The reviewer judges through its "fix before merge" mark; the coordinator then
+applies the two other cases (a page frozen after publication, a missing or generic
+documentation status), and nobody re-reads that second step before the merge and no gate
+checks it: an accepted risk (maintainer decision of 2026-10-11).
 `plugins/foundry/tests/test_skills.py` and `plugins/foundry/tests/test_process_contract.py`
 prove only that these rules are written in the skills and in this contract, not that they
 are followed (FOUNDRY-ADR-0018: a mechanical check never proves that documentation is
@@ -327,10 +348,12 @@ issue is seen by any gate: the review proof stays `quality=mergeable`, so the me
 command does not refuse a diff because a marked remark was left uncorrected or because
 the follow-up issue does not exist. The checklist is an obligation of the author judged
 by the reviewer, not a gate. In the same way no gate checks that the companion Epic of
-(b) exists, that it has no tracker link with the origin Epic, or that a PR of a companion
-Epic deferred nothing: this is judged in review.
+(b) exists, that it has no tracker link with the origin Epic, that a PR of a companion
+Epic deferred nothing, that the fourth write was made when needed, that the companion Epic
+has a single follow-up issue, or that the review after a correction on a companion Epic
+was limited to what changed: this is judged in review.
 
-**What is not coded yet.** The three writes of (b) are made by the coordinator that
+**What is not coded yet.** The four writes of (b) are made by the coordinator that
 applies the skills. An Epic campaign does not receive the reviewer's prose: its review
 step (`_review_observation` in `plugins/foundry/tooling/foundry/campaign_runtime.py`)
 reads only the structured proof stored by `AcceptanceProofStore`

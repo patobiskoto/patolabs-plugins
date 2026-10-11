@@ -191,12 +191,14 @@ of an Epic go to a companion Epic, named `Nits` followed by the identifier of th
 Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic of an issue is its direct parent Epic:
 an issue under a sub-Epic uses that sub-Epic. Give the two Epics no tracker link: no
 parent, no dependency, no relation. What relates them is that name and a mention in text,
-nothing else. Inside the companion Epic, put the remarks in a follow-up issue, one per
-batch or per theme, never one per PR, and cite that issue in the PR description before
-the merge. These three cases are still corrected before the merge and then fully
+nothing else. Inside the companion Epic, put the remarks in a single follow-up issue,
+which gathers all the deferred remarks of the origin Epic, and cite that issue in the PR
+description before the merge. If that issue is already started or closed, create a new
+follow-up issue: never add a remark to a started or closed issue (maintainer decision of
+2026-10-11). These three cases are still corrected before the merge and then fully
 re-reviewed; the rest of this section adds three more (the PR of an issue of a companion
 Epic, an issue with no origin Epic, a durable refusal of one of the writes), corrected
-the same way:
+the same way, except that the re-review of the first is limited as stated below:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -205,11 +207,17 @@ the same way:
   repository's contract carries it).
 
 There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
-correct its non-blocking remarks before the merge and re-review in full. After a
-validated round it is the coordinator that classes a remark as deferrable or not: no
-reviewer re-reads that classification before the merge, and no gate checks it.
+correct its non-blocking remarks before the merge. The review that follows covers what
+changed since the previous round, not the whole diff; after a blocking round it stays
+full. The merge gate asks for a review proof covering all criteria for the exact diff, so
+after such a partial review that proof relies on the previous round for the unchanged
+parts; the merge gate is not modified. After a validated round the reviewer's mark "fix
+before merge" decides the first case and the coordinator applies the two other cases (a
+frozen page, a missing or generic documentation status): no reviewer re-reads that second
+step before the merge, and no gate checks it. This is an accepted risk (maintainer
+decision of 2026-10-11).
 
-Three writes are authorized in advance by this skill's rule, without human confirmation,
+Four writes are authorized in advance by this skill's rule, without human confirmation,
 inside and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every
 repository where the plugin is installed, as an exception to the confirmation
 `foundry:intake` requires before a write:
@@ -220,7 +228,9 @@ repository where the plugin is installed, as an exception to the confirmation
    `"Type": "Epic"` and no `parent`;
 2. create a follow-up issue in it: `edit create-issue` with `parent` set to the
    companion Epic;
-3. add deferred remarks to such an issue: `edit comment` (command in `foundry:open-pr`).
+3. add deferred remarks to such an issue: `edit comment` (command in `foundry:open-pr`);
+4. attach to the companion Epic a follow-up issue whose creation succeeded but whose
+   parent link was not set: `edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`.
 
 Perform them without asking and report them in the PR description: the companion Epic
 when this PR created it, the follow-up issue ID and the number of deferred remarks.
@@ -239,15 +249,17 @@ with the text that was sent: the comparison is made by reading the outputs of
 depending on the adapter.)
 
 The rule names no tracker. Its writes are operations of the portable contract
-`docs/tracker-contract.md`, whose table "Core journey" marks both rows below `supported`
+`docs/tracker-contract.md`, whose table "Core journey" marks the three rows below `supported`
 in each of its three provider columns:
 
 - row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`) carries
   writes 1 and 3;
 - row "Epics/enfants/dépendances: child creation, relations" (`create_issue(parent=…)`,
-  `link(depends-on|blocks|relates)`) carries write 2.
+  `link(depends-on|blocks|relates)`) carries write 2;
+- row "Epics/enfants/dépendances: reparent an existing issue" (`link(subtask-of|parent-of)`)
+  carries write 4.
 
-When one of the three writes does not go through, tell two cases apart:
+When one of the four writes does not go through, tell two cases apart:
 
 - durable refusal (the project cannot carry the write, for example it has no `Epic`
   type): make no substitute write: correct the remarks of that round before the merge,
@@ -262,7 +274,9 @@ When one of the three writes does not go through, tell two cases apart:
   refusal in the PR description.
 
 An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
-before the merge and re-review in full. Inside an Epic campaign the authorization has no
+before the merge and re-review in full; that includes an issue whose direct parent is not
+an Epic, the chain of parents not being walked up (maintainer decision of 2026-10-11).
+Inside an Epic campaign the authorization has no
 effect yet. Three things are missing: a channel that carries the remarks to the campaign,
 the code that creates the companion Epic and its issues, and campaigns usable on the
 repository's tracker (`docs/review-rounds.md`, "What is not mechanical and what is not

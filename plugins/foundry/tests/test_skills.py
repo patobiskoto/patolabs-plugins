@@ -173,26 +173,38 @@ def test_merge_pr_describes_the_grouped_deferral_and_its_three_exceptions():
 
 
 # PAT-139 / PAT-ADR-0018. Presence only, like the PAT-136 tests above.
-def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_writes():
+def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes():
     text = _merge_pr_deferral_section()
     assert "PAT-ADR-0018" in text
     assert "named `Nits` followed by the identifier of the origin Epic" in text
     assert "no tracker link: no parent, no dependency, no relation" in text
-    assert "one per batch or per theme, never one per PR" in text
+    assert "put the remarks in a single follow-up issue, which gathers all the deferred" in text
+    assert "one per batch or per theme" not in text
+    assert ("If that issue is already started or closed, create a new follow-up issue: never "
+            "add a remark to a started or closed issue") in text
     # same scope as R9 and intake: inside and outside a campaign, every repository
-    assert ("Three writes are authorized in advance by this skill's rule, without human "
+    assert ("Four writes are authorized in advance by this skill's rule, without human "
             "confirmation, inside and outside an Epic campaign (FOUNDRY-ADR-0013, "
             "FOUNDRY-ADR-0016), in every repository where the plugin is installed") in text
     for write in ("1. create the companion Epic, the first time:",
                   "2. create a follow-up issue in it:",
-                  "3. add deferred remarks to such an issue:"):
+                  "3. add deferred remarks to such an issue:",
+                  "4. attach to the companion Epic a follow-up issue whose creation "
+                  "succeeded but whose parent link was not set: `edit link <FOLLOW-UP-ID> "
+                  "subtask-of <COMPANION-EPIC-ID>`"):
         assert write in text
     assert "Perform them without asking and report them in the PR description" in text
     assert "neither prioritized nor started without the maintainer" in text
     assert "every other intake write keeps its confirmation" in text
     # no second-level deferral
     assert ("when the PR belongs to an issue of a companion Epic, correct its non-blocking "
-            "remarks before the merge and re-review in full") in text
+            "remarks before the merge. The review that follows covers what changed since "
+            "the previous round, not the whole diff; after a blocking round it stays full"
+            ) in text
+    assert ("after such a partial review that proof relies on the previous round for the "
+            "unchanged parts; the merge gate is not modified") in text
+    assert "the reviewer's mark \"fix before merge\" decides the first case" in text
+    assert "This is an accepted risk" in text
     # the campaign special case of PAT-136 is gone
     assert "creates or approves" not in text
     assert "on its own authority" not in text
@@ -201,6 +213,8 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_write
             "sub-Epic uses that sub-Epic") in text
     assert ("An issue that has no origin Epic gets no deferral: correct its non-blocking "
             "remarks before the merge and re-review in full") in text
+    assert ("that includes an issue whose direct parent is not an Epic, the chain of "
+            "parents not being walked up") in text
     assert "stays with the maintainer" not in text
     assert ("durable refusal (the project cannot carry the write, for example it has no "
             "`Epic` type): make no substitute write") in text
@@ -237,13 +251,15 @@ def test_merge_pr_deferral_names_no_tracker_and_cites_the_portable_contract_rows
     assert "edit comment" in _skill_text("open-pr")
 
 
-def test_intake_points_to_the_standing_authorization_of_the_three_writes():
+def test_intake_points_to_the_standing_authorization_of_the_four_writes():
     text = _flat(_skill_text("intake"))
     assert ("authorizes in advance, inside and outside an Epic campaign, in every "
             "repository where the plugin is installed") in text
     assert "`foundry:merge-pr`" in text
     assert "repository that carries it" not in text
-    assert "except for the three writes" in text
+    assert "except for the four writes" in text
+    assert ("attaching to the companion Epic a follow-up issue whose creation succeeded but "
+            "whose parent link was not set") in text
     assert "creating the companion Epic of an origin Epic" in text
     assert "with no tracker link to it" in text
     assert "creating a follow-up issue in that companion Epic" in text
@@ -291,7 +307,7 @@ def test_merge_pr_names_only_existing_commands_to_find_and_read_back():
     query = open(os.path.join(_SKILLS_DIR, "..", "tooling", "foundry", "query.py")).read()
     assert "def backlog(" in query and "def issue(" in query
     assert "No command searches by title" in text
-    assert "no reviewer re-reads that classification before the merge" in text
+    assert "no reviewer re-reads that second step before the merge" in text
     assert "judged by the reviewer" not in text
 
 
