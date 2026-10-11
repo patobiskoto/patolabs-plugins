@@ -39,8 +39,10 @@ not evidence of absence: follow the top-level `pagination.next_page` through the
 (or `query profile intake <page>`), union both `issues` and `historical_index` slices, and exhaust them before
 ruling out a duplicate or related work. Then load bodies explicitly as required.
 Require the same `pagination.snapshot_identity` on every page (and the manifest's
-`snapshot_identity`); restart at page 1 on a change instead of combining stale and fresh
-results.
+`snapshot_identity`); restart on a change instead of combining stale and fresh results.
+On the all-pages route, restarting means running the `--all-pages` command again into a new
+directory (re-reading page 1 of the same files changes nothing); with the single-page form,
+restart at page 1.
 
 ## 2. Brief brainstorm, then classify
 Short, focused. Then pick exactly one:
