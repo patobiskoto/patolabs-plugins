@@ -51,15 +51,15 @@ note nor a migration guide (`release_requirements` in `tests/test_release_contra
 That section opens with a change of behaviour for every repository that uses the plugin:
 after a fully validated review round, the Foundry skills write to the tracker without
 asking, in four bounded cases (rule R9 (b) of `AGENTS.md`).
-Per host, as recorded on the tracker issue PAT-149 on 2026-10-11: tag `foundry-v1.1.1`
+Statuses, as recorded on the tracker issue PAT-149 on 2026-10-11: tag `foundry-v1.1.1`
 points at `343be14`, the commit that merged the release pull request (read back on the
 remote). Claude Code 2.1.294: the official manager reported "updated from 1.1.0 to
 1.1.1" and lists 1.1.1; a new non-interactive session started after the update loads
-1.1.1 (its start-up hook cites the 1.1.1 plugin root); a new interactive session was
-not observed. Codex CLI 0.155.1: the official manager lists 1.1.1, installed and
-enabled; a new Codex session is **not** verified (the attempt ran the session-start
-hook and was then refused before any model turn: model not supported with the
-account). Also not verified: the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host,
+1.1.1 (the session reported that the context injected by its start-up hook cites the
+1.1.1 plugin root); a new interactive session was not observed. Codex CLI 0.155.1: the
+official manager lists 1.1.1, installed and enabled; a new Codex session is **not**
+verified (the attempt ran the session-start hook and was then refused before any model
+turn: model not supported with the account). Also not verified: the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host,
 `configure show`, `registry selection --require-v1`, and a real Sonnet 5.5 subagent run
 under 1.1.1. The return to 1.1.0 or 1.0.0 through an official manager is not tried.
 

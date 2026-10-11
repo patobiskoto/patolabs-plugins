@@ -66,8 +66,8 @@ round, the Foundry skills write to the tracker without asking, in four bounded c
   request (read back on the remote).
 - **Claude Code:** Claude Code 2.1.294, the official manager reported "updated from
   1.1.0 to 1.1.1" and lists 1.1.1; a new non-interactive session started after the
-  update loads 1.1.1 (its start-up hook cites the 1.1.1 plugin root). A new interactive
-  session was not observed.
+  update loads 1.1.1 (the session reported that the context injected by its start-up
+  hook cites the 1.1.1 plugin root). A new interactive session was not observed.
 - **Codex:** Codex CLI 0.155.1, the official manager lists 1.1.1, installed and enabled.
   A new Codex session is **not** verified: the attempt ran the session-start hook and
   was then refused before any model turn (model not supported with the account).
