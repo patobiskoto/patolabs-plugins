@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- PAT-164: documentation only, no behaviour of any tool changes. Records, as observed on
+  2026-10-11, that a new Codex session loads the 1.1.1 plugin root under Codex CLI
+  0.162.1, and that the earlier refusal of `gpt-6.1-sol` (status 400, "not supported
+  when using Codex with a ChatGPT account") happened under the outdated CLI 0.155.1,
+  whose cached model list did not contain it. `docs/model-routing.md` gets an
+  operational note; both READMEs update their Codex status. No routing change.
+
 - PAT-163: documentation only, no behaviour of any tool changes. `docs/linear-tracker.md`
   records why PAT-72 and PAT-73 read `done` with a native In Progress (both merged
   before PAT-56 added the native State projection; until then only receipts were
