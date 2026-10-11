@@ -71,9 +71,9 @@ round, the Foundry skills write to the tracker without asking, in four bounded c
 - **Codex:** Codex CLI 0.155.1, the official manager lists 1.1.1, installed and enabled.
   A new Codex session was refused before any model turn (the service's message: the
   model is not supported when using Codex with a ChatGPT account), after the
-  session-start hook ran. The refused session took its model from the top-level `model`
-  of `~/.codex/config.toml`, not from Foundry's routing. Observed on 2026-10-11 under
-  PAT-164 (a separate observation, not a repeat of the refusal): after the CLI was
+  session-start hook ran. Observed on 2026-10-11 under PAT-164, separately from the
+  refusal and not a repeat of it: the refused session took its model from the top-level
+  `model` of `~/.codex/config.toml`, not from Foundry's routing; and after the CLI was
   upgraded to 0.162.1, a new non-interactive session with the same model (`gpt-6.1-sol`)
   started normally and reported the 1.1.1 plugin root (see the Codex invocation façade
   section of `plugins/foundry/docs/model-routing.md` for the refusal).
