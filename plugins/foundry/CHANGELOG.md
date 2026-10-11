@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.2.0 — 2026-10-11
+
+Minor release. Entries below change behaviour. `query issue` no longer reports a broken
+ADR-to-issue link (Linear and GitHub Projects used to; YouTrack and DevHub never did):
+it returns the plain ADR index, without the `adr_issue_unavailable` or `conflict` status
+it used to project for such a link, and the ADR commands (`query adr`, `query adrs`,
+`frame`, the ADR writes) still refuse it; the `note` field of its payload changes
+accordingly (PAT-190). The Tracker port gains `list_adrs_without_issue_links`: an
+adapter whose `list_adrs` validates ADR-to-issue links must override it (PAT-190). On
+Linear, the read-only commands `query issue`, `query adrs`, `query backlog` and `query
+profile` read each issue reference at most once per command, and `search` fetches every
+listing page before normalizing any node, which changes the error reported when two
+failures meet in one listing (PAT-168); a write or a nested opening inside a read scope
+is refused with `LinearReadScopeError` (PAT-189). The Linear request counts are in
+`docs/linear-request-cost.md`, with their conditions. Release note:
+`docs/release-1.2.0.md`; upgrade guide: `docs/migration-1.2.0.md`. This dated section is
+not a claim that 1.2.0 is already tagged or installed. The entries below are those
+merged after `foundry-v1.1.1`, kept as written.
+
 - PAT-192: documentation only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from the reviews of PAT-169 (3) and PAT-170 (4). In
   `docs/review-rounds.md`: the closing of the second window names the right actors
