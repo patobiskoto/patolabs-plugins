@@ -290,7 +290,11 @@ def profile_all_pages(workflow: str, directory: str):
     if workflow not in _PROFILE_LIMITS:
         raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
     target = Path(directory)
-    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+    try:
+        occupied = target.exists() and (not target.is_dir() or any(target.iterdir()))
+    except OSError as exc:
+        raise SystemExit("--all-pages : dossier inutilisable %s (%s)." % (target, exc)) from None
+    if occupied:
         raise SystemExit("--all-pages : le dossier doit etre absent ou vide.")
     # Create and prove the directory writable BEFORE the (quota-costly) computation.
     try:

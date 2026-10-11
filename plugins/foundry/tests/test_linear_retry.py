@@ -389,7 +389,7 @@ def test_retry_stats_expose_instability_without_final_failure():
     assert tr.retry_stats == {"retries": 3, "recovered": 0, "exhausted": 1}
 
 
-def test_request_counter_counts_every_attempt_retries_included(capsys):
+def test_request_counter_counts_every_attempt_retries_included():
     """PAT-145: one counted HTTP attempt per `_graphql_once`, including retries."""
     before = linear.request_count()
     t = scripted(Boom(), Boom(503), OK)

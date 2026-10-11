@@ -373,6 +373,24 @@ def test_all_pages_non_writable_directory_fails_before_any_tracker_request(
     assert tracker.calls == 0
 
 
+def test_all_pages_unreadable_directory_gives_the_clear_message_and_no_request(
+        monkeypatch, tmp_path):
+    import os
+    tracker = _history_tracker(monkeypatch)
+    locked = tmp_path / "unreadable"
+    locked.mkdir()
+    locked.chmod(0o000)
+    try:
+        if os.access(locked, os.R_OK):
+            pytest.skip("directory permissions are not enforced for this user")
+        with pytest.raises(SystemExit) as exc:
+            query.profile_all_pages("intake", str(locked))
+        assert "--all-pages" in str(exc.value) and str(locked) in str(exc.value)
+    finally:
+        locked.chmod(0o700)
+    assert tracker.calls == 0
+
+
 def test_all_pages_mid_loop_write_failure_names_the_directory_and_deletes_nothing(
         monkeypatch, tmp_path):
     _history_tracker(monkeypatch)
