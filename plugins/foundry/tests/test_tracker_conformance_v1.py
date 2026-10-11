@@ -551,16 +551,15 @@ def test_ghprojects_reparent_conformance_uses_reciprocal_readback(
 # Epic, create a follow-up issue under it, add deferred remarks to that issue. Each test
 # below performs exactly these three writes through the portable ``Tracker`` operations
 # (``create_issue`` with ``Type: Epic`` and no parent, ``create_issue(parent=...)``,
-# ``add_comment``) on a double of one provider, and checks that the origin Epic is
-# never written and never linked. The double is not the same seam for the three:
-# YouTrack replaces ``_req`` and Linear its ``transport=``, so the adapter runs as
-# written; GitHub Projects replaces thirteen methods of the adapter, twelve private and
-# the public ``verify_project_identity`` (see ``_GitHubCompanionProvider.install``), not
-# the ``runner=`` seam, so the links read back and the absence of a write to the origin
-# Epic are read from the double. These tests
-# prove that the adapters carry the writes against such doubles; they prove nothing about
-# a real provider project (for example whether a YouTrack project's Type field has an
-# ``Epic`` value).
+# ``add_comment``) on a double of one provider, and checks that the origin Epic is never
+# written and never linked. The double is not the same seam for the three: YouTrack
+# replaces ``_req`` and Linear its ``transport=``, so the adapter runs as written;
+# GitHub Projects replaces thirteen methods of the adapter, twelve private and the
+# public ``verify_project_identity`` (see ``_GitHubCompanionProvider.install``), not the
+# ``runner=`` seam, so the links read back and the absence of a write to the origin Epic
+# are read from the double. These tests prove that the adapters carry the writes against
+# such doubles; they prove nothing about a real provider project (for example whether a
+# YouTrack project's Type field has an ``Epic`` value).
 _COMPANION_FIELDS = {"Type": "Epic", "State": "backlog"}
 _FOLLOW_UP_BODY = "- [ ] deferred remarks corrected"
 _DEFERRED_REMARK = "deferred non-blocking remark"
@@ -810,10 +809,11 @@ class _GitHubCompanionProvider:
     Same seams as ``_install_create_harness`` in ``test_ghprojects_tracker.py``, with
     several issues instead of one. Thirteen methods are replaced, twelve private and the
     public ``verify_project_identity`` (``install`` lists them), among them
-    ``_field_catalog``, ``_rest_write`` and ``_rows``; it is not the ``runner=`` seam, so the links read back and the absence of a write to the origin
-    Epic come from this double. ``_write_catalog`` (which reads the catalog through the
-    doubled ``_field_catalog``), the create-intent journal, the create/resume sequence
-    and the parent pairing checks stay the adapter's own code.
+    ``_field_catalog``, ``_rest_write`` and ``_rows``; it is not the ``runner=`` seam,
+    so the links read back and the absence of a write to the origin Epic come from this
+    double. ``_write_catalog`` (which reads the catalog through the doubled
+    ``_field_catalog``), the create-intent journal, the create/resume sequence and the
+    parent pairing checks stay the adapter's own code.
     """
 
     def __init__(self, *, type_options: tuple[str, ...]):
