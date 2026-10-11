@@ -60,9 +60,10 @@
   the code that creates the companion Epic and its issues, campaigns usable on the
   repository's tracker); left to a later issue, PAT-141
   ([review rounds](docs/review-rounds.md)). Six tracker conformance cases added, two per provider on a double of the provider
-  (YouTrack: `_req` replaced; Linear: `transport=`; GitHub Projects: thirteen private
-  methods of the adapter replaced, not the `runner=` seam, except for the case of a
-  Project without `Epic` option, which goes through `runner=`): the three writes, and a
+  (YouTrack: `_req` replaced; Linear: `transport=`; GitHub Projects: thirteen methods
+  of the adapter replaced, twelve private and the public `verify_project_identity`, not
+  the `runner=` seam, except for the case of a Project without `Epic` option, which goes
+  through `runner=`): the three writes, and a
   project where the `Epic` type is unavailable. Text and tests only; no change under `tooling/`.
 - PAT-136: new process rule R9 in `AGENTS.md` / `CLAUDE.md` (author checklist for
   documentation sentences, grouped deferral of non-blocking review remarks to one

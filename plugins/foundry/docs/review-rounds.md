@@ -124,12 +124,12 @@ the three providers:
   of `tooling/foundry/trackers/youtrack.py` run as written;
 - Linear: the `transport=` argument of `LinearTracker` is replaced; the adapter runs as
   written;
-- `ghprojects`: not the `runner=` seam. Thirteen private methods of the adapter are
-  replaced (the list is in `_GitHubCompanionProvider.install` in that test file; it
-  includes `_field_catalog`, `_rest_write`, `_add_project_item` and
-  `_set_project_field`), so the links read back and
-  the absence of a write to the origin Epic are read from the double, not produced by the
-  adapter. What runs as written is the create-intent journal, the create and resume
+- `ghprojects`: not the `runner=` seam. Thirteen methods of the adapter are replaced,
+  twelve private and the public `verify_project_identity` (the list is in
+  `_GitHubCompanionProvider.install` in that test file; it includes `_field_catalog`,
+  `_rest_write`, `_add_project_item` and `_set_project_field`), so the links read back
+  and the absence of a write to the origin Epic are read from the double, not produced
+  by the adapter. What runs as written is the create-intent journal, the create and resume
   sequence, the parent pairing checks and `_write_catalog` (over the doubled
   `_field_catalog`). Only the test of a Project without `Epic` option goes through the
   `runner=` seam.
