@@ -1370,6 +1370,15 @@ the tuple empty both tools still import and run: `--cache-ttl-trial` refuses (ex
 work directory), `ROLLBACK_MODEL` and `CACHE_TTL_POLICY` are `None`, and `rollback_decision` returns `unknown`
 (`no_model_carries_the_field`).
 
+Window closing (PAT-170, 2026-10-11): the tenth delivered issue (PAT-146) closed the window by the
+first bound reached; only 2 main conversations qualified, so `rollback_decision` returned `unknown`
+(`fewer_designated_sessions_than_the_minimum`) and the change stays without conclusion. The maintainer
+decided that the 1-hour cache stays and extended the window by written decision to the 30-day bound,
+2026-11-09; the measure is made again, with the same rule, when at least 3 sessions qualify. Threshold,
+selection rule and rollback procedure are unchanged. Figures and decision: the closing section of
+[the PAT-134 page](qualification/pat-134-subagent-cache-1h.md). Documentation only, no constant, option or
+profile changes.
+
 Documentation status (PAT-134, R5): updated here and in that page for `--cache-ttl-trial`
 (and its result schema `foundry.pat134-cache-ttl-trial.v1`), `--subagent-1h-to-5m`, the `subagent_1h`
 group, the constants `CLAUDE_CACHE_TTL_1H_PINS` and `CLAUDE_CACHE_TTL_1H_MODELS`, `rollback_decision` (call,

@@ -244,6 +244,53 @@ documentation lue ne dit pas qu'il est sûr. Retour arrière : la procédure ci-
 - Ajouts d'énoncé seulement : asymétrie assumée du `roll_back` sans lignée, appel et codes de `rollback_decision`, écart `log_sha256`,
   risque nommé dans R7.
 
+## Fermeture de la fenêtre (PAT-170, 2026-10-11) : mesure faite, décision du mainteneur
+
+**Règle relue, citée de la section « Règle d'observation et de retour arrière » ci-dessus, non modifiée.** Fenêtre : « Elle commence à la
+livraison de la version qui porte le changement et se ferme à la première des deux échéances : **les 10 premières issues livrées**
+(fusionnées) après cette version, ou **30 jours**. Le mainteneur peut la prolonger par une décision écrite ; sans décision, elle n'est pas
+prolongée. » Sessions : « les 5 conversations principales les plus récentes (date de modification du fichier) [...] qui ont au moins un
+journal de sous-agent et au moins une requête dans la fenêtre. [...] Moins de 3 sessions : **inconnu** (le changement reste, sans
+conclusion). » Appel : `rollback_decision` (`cache_ttl_replay.py`).
+
+**Observé (hors ligne, sur les journaux locaux de l'hôte, aucun appel infonuagique).**
+
+- Début de la fenêtre : fusion de la pull request de release de la 1.1.0, commit `04af359`, 2026-10-10T10:42:34Z (voir
+  [`release-1.1.0.md`](../release-1.1.0.md), « Observation windows this version carries »). Fermeture à la première échéance atteinte : la
+  dixième issue fusionnée après ce commit, PAT-146, 2026-10-11T07:25:01Z (`git log --reverse 04af359..origin/main`). Les dix, dans l'ordre de
+  fusion : PAT-136, PAT-139, PAT-142, PAT-143, PAT-138, PAT-145, PAT-137, PAT-147, PAT-144, PAT-146. L'échéance de 30 jours n'était pas atteinte.
+- Sessions : parmi les répertoires de projet de l'hôte qui correspondent à ce dépôt et à ses arbres de travail, **2** conversations principales
+  seulement avaient au moins un journal de sous-agent et au moins une requête dans la fenêtre (rang 1 : répertoire de projet principal du dépôt ;
+  rang 2 : répertoire de projet d'un arbre de travail ; jamais nommées par identifiant). Les deux ont été rejouées, figées par
+  `--until 2026-10-11T07:25:01Z`, l'instant de fermeture (la sélection a été faite après ; aucune requête hors fenêtre n'est ainsi comptée après
+  cet instant), avec `--subagent-1h-to-5m`.
+- `rollback_decision` sur cette sortie : `{"decision": "unknown", "reason": "fewer_designated_sessions_than_the_minimum"}`. **La règle donne donc
+  `unknown` : le changement reste, sans conclusion.**
+- Chiffres du groupe `subagent_1h` du modèle `claude-sonnet-5-5`, **indicatifs, qui ne décident rien** (moins de 3 sessions) : 434 requêtes ;
+  coût réel 6,009722 USD au prix de liste ; coût simulé à 5 minutes 5,321189 (`favourable`) à 6,104237 (`prudent`) ;
+  `usd.entry_reads_not_expired.delta_usd_exact` : `favourable` « -0.8655189 », `prudent` « -0.0824709 » ; `usd.result` :
+  `undecidable_between_the_bounds`. Les 26 lignées et les 434 requêtes de ce groupe viennent toutes de la session de rang 2 ; la session de
+  rang 1 n'a aucune lignée de sous-agent observée à 1 heure. Sur cette seule session contributrice, le 1 heure n'apparaît donc pas moins cher sur
+  la lecture que la règle retiendrait (un minimum négatif), mais **aucune conclusion n'en est tirée** : deux sessions désignées, dont une seule
+  contribue, ne sont pas l'échantillon que la règle exige. Le rejeu n'a pas de borne basse : les chiffres portent sur les sessions entières
+  jusqu'à `--until`, requêtes antérieures au début de la fenêtre comprises si elles existent (non vérifié pour ce groupe). Le fichier brut du
+  rejeu reste hors dépôt (il porte des chemins et des identifiants de session de l'hôte) ; seuls les chiffres ci-dessus sont consignés.
+
+**Décidé (le mainteneur, 2026-10-11, sur un choix présenté par le coordinateur).** Le cache à 1 heure **reste** ; aucun retour arrière. La
+fenêtre est **prolongée par la présente décision écrite**, comme la règle le permet, jusqu'à l'échéance de 30 jours, soit le **2026-11-09** (début
+2026-10-10, plus 30 jours : 21 jours restants d'octobre, 9 de novembre ; l'instant exact est 2026-11-09T10:42:34Z). L'échéance des dix issues,
+déjà atteinte, ne ferme plus la fenêtre. La mesure est **refaite quand au moins 3 sessions** répondent à la règle de sélection ci-dessus, avec
+la même règle. **Rien d'autre ne change** : ni le seuil, ni la règle de sélection des sessions, ni la procédure de retour arrière, ni les
+profils, ni le routage, ni le code.
+
+**Inconnu.** Si le coût du 1 heure est inférieur à celui du 5 minutes (aucune conclusion avec 2 sessions) ; l'effet sur le quota d'abonnement ;
+le nombre de sessions qui répondront à la règle d'ici le 2026-11-09. La décision ne dit pas ce qui se passe si moins de 3 sessions répondent
+encore à cette date : la règle écrite donne `unknown` (le changement reste, sans conclusion) et aucune décision nouvelle n'est prise ici pour ce cas.
+Trois sessions désignées ne suffisent pas à sortir de `unknown` : il faut aussi 3 sessions qui contribuent une lignée Sonnet 5.5 tarifable
+observée à 1 heure (`fewer_contributing_sessions_than_the_minimum`) ; au 2026-10-11, une seule contribue. La décision ne dit pas si cette
+nouvelle mesure, faite avant le 2026-11-09, ferme la fenêtre, ni à quel instant `--until` est alors figé : à faire préciser par le mainteneur
+avant cette mesure.
+
 ## Statut documentaire (R5)
 
 - **Option nouvelle de `python3 -m foundry.claude_profile_trial`** : `--cache-ttl-trial` (incompatible avec `--neutral-fixture`) ; schéma de
@@ -265,3 +312,5 @@ documentation lue ne dit pas qu'il est sûr. Retour arrière : la procédure ci-
 - **Nouveau fichier** : `pat-134-native-trial.json`, résultat de l'essai, versé tel quel.
 - **Fichiers non modifiés** : tous les résultats de PAT-132 et de PAT-133, les résultats enregistrés de PAT-125.
 - Le détecteur de FOUNDRY-123 n'est pas livré : ce statut est affirmé ici et vérifié en revue, non appliqué mécaniquement.
+- **PAT-170** (documentation seule) : section « Fermeture de la fenêtre » ci-dessus (mesure `unknown`, décision du mainteneur, prolongation au
+  2026-11-09) ; aucune option, clé, constante, fonction ni profil ne change ; la règle, le seuil et la procédure de retour arrière ne sont pas modifiés.
