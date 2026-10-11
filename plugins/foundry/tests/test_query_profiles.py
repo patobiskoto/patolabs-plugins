@@ -286,3 +286,154 @@ def test_profile_retains_proof_native_disagreement(monkeypatch, profile):
     assert row["state"] == row["normalized_state"] == "review"
     assert row["native_state"] == "in-progress"
     assert row["projection_status"] == "disagreement"
+
+
+def _history_tracker(monkeypatch, n=100):
+    issues = [Issue("T-active", "Active", state="backlog")]
+    issues.extend(Issue(f"T-{i:04d}", f"History {i}", state="done") for i in range(n))
+    tracker = _Tracker(issues)
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "fixture")
+    return tracker
+
+
+def test_all_pages_use_one_search_and_are_byte_identical_to_single_pages(
+        monkeypatch, tmp_path):
+    tracker = _history_tracker(monkeypatch)
+    out = tmp_path / "pages"
+    manifest = query.profile_all_pages("intake", str(out))
+    assert tracker.calls == 1  # one search for the whole set of pages
+    assert manifest["page_count"] > 1
+    assert [p["page"] for p in manifest["pages"]] == list(range(1, manifest["page_count"] + 1))
+    assert len(list(out.iterdir())) == manifest["page_count"]  # nothing beyond page_count
+    single = []
+    for entry in manifest["pages"]:
+        single.append(query.serialize_stdout(query.profile("intake", entry["page"])))
+        assert Path(entry["path"]).read_bytes() == single[-1].encode("utf-8")
+    assert tracker.calls == 1 + manifest["page_count"]
+    identities = {json.loads(text)["pagination"]["snapshot_identity"] for text in single}
+    assert identities == {manifest["snapshot_identity"]}
+
+
+def test_all_pages_refuses_a_non_empty_directory_and_an_unknown_profile(
+        monkeypatch, tmp_path):
+    tracker = _history_tracker(monkeypatch)
+    (tmp_path / "old.json").write_text("{}")
+    with pytest.raises(SystemExit):
+        query.profile_all_pages("intake", str(tmp_path))
+    with pytest.raises(SystemExit):
+        query.profile_all_pages("nope", str(tmp_path / "x"))
+    assert not (tmp_path / "x").exists()
+    assert tracker.calls == 0
+
+
+def test_all_pages_manifest_is_small_and_carries_no_issue_content(monkeypatch, tmp_path):
+    _history_tracker(monkeypatch)
+    manifest = query.profile_all_pages("intake", str(tmp_path / "pages"))
+    assert set(manifest) == {"contract", "profile", "page_count", "snapshot_identity", "pages"}
+    assert all(set(entry) == {"page", "path"} for entry in manifest["pages"])
+    text = query.serialize_stdout(manifest)
+    assert "T-active" not in text and "T-0001" not in text
+    assert "Active" not in text and "History" not in text
+
+
+def _unusable_directories(tmp_path):
+    a_file = tmp_path / "afile"
+    a_file.write_text("x")
+    dangling = tmp_path / "dangling"
+    dangling.symlink_to(tmp_path / "missing-target")
+    return [a_file / "sub", dangling]
+
+
+def test_all_pages_unusable_directory_fails_before_any_tracker_request(
+        monkeypatch, tmp_path):
+    tracker = _history_tracker(monkeypatch)
+    for bad in _unusable_directories(tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            query.profile_all_pages("intake", str(bad))
+        assert str(bad) in str(exc.value)
+    assert tracker.calls == 0
+
+
+def test_all_pages_non_writable_directory_fails_before_any_tracker_request(
+        monkeypatch, tmp_path):
+    import os
+    tracker = _history_tracker(monkeypatch)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        if os.access(locked, os.W_OK):
+            pytest.skip("directory permissions are not enforced for this user")
+        with pytest.raises(SystemExit) as exc:
+            query.profile_all_pages("intake", str(locked))
+        assert str(locked) in str(exc.value)
+    finally:
+        locked.chmod(0o700)
+    assert tracker.calls == 0
+
+
+def test_all_pages_unreadable_directory_gives_the_clear_message_and_no_request(
+        monkeypatch, tmp_path):
+    import os
+    tracker = _history_tracker(monkeypatch)
+    locked = tmp_path / "unreadable"
+    locked.mkdir()
+    locked.chmod(0o000)
+    try:
+        if os.access(locked, os.R_OK):
+            pytest.skip("directory permissions are not enforced for this user")
+        with pytest.raises(SystemExit) as exc:
+            query.profile_all_pages("intake", str(locked))
+        assert "--all-pages" in str(exc.value) and str(locked) in str(exc.value)
+    finally:
+        locked.chmod(0o700)
+    assert tracker.calls == 0
+
+
+def test_all_pages_mid_loop_write_failure_names_the_directory_and_deletes_nothing(
+        monkeypatch, tmp_path):
+    _history_tracker(monkeypatch)
+    out = tmp_path / "pages"
+    real = Path.write_text
+
+    def flaky(self, *args, **kwargs):
+        if self.name.endswith("-page-2.json"):
+            raise OSError("disk full")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky)
+    with pytest.raises(SystemExit) as exc:
+        query.profile_all_pages("intake", str(out))
+    assert str(out) in str(exc.value) and "disk full" in str(exc.value)
+    assert [p.name for p in out.iterdir()] == ["intake-page-1.json"]
+
+
+def _run_main(monkeypatch, *args):
+    import runpy
+    import sys
+    monkeypatch.setattr(sys, "argv", ["query.py", *args])
+    # run the module entry fresh, as `python -m foundry.query` would
+    monkeypatch.delitem(sys.modules, "foundry.query", raising=False)
+    return runpy.run_module("foundry.query", run_name="__main__")
+
+
+def test_main_all_pages_dispatch_requires_exactly_one_directory(monkeypatch, tmp_path):
+    tracker = _history_tracker(monkeypatch)
+    for args in (("profile", "intake", "--all-pages"),
+                 ("profile", "intake", "--all-pages", str(tmp_path / "a"), "extra")):
+        with pytest.raises(SystemExit) as exc:
+            _run_main(monkeypatch, *args)
+        assert "usage: query profile <name> --all-pages <DIR>" in str(exc.value)
+    assert tracker.calls == 0
+    assert not (tmp_path / "a").exists()
+
+
+def test_main_all_pages_dispatch_prints_only_the_manifest(monkeypatch, tmp_path, capsys):
+    tracker = _history_tracker(monkeypatch)
+    out = tmp_path / "pages"
+    _run_main(monkeypatch, "profile", "intake", "--all-pages", str(out))
+    manifest = json.loads(capsys.readouterr().out)
+    assert tracker.calls == 1
+    assert set(manifest) == {"contract", "profile", "page_count", "snapshot_identity", "pages"}
+    assert len(list(out.iterdir())) == manifest["page_count"]

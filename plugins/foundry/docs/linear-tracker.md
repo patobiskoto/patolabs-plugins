@@ -67,6 +67,28 @@ Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
 structured input is rejected before the registry is written. Every non-Linear provider
 retains the historical scalar-extra contract, including for JSON-looking `k=v` values.
 
+## Request counter (PAT-145)
+
+Setting `FOUNDRY_REQUEST_COUNT` makes a Foundry process that imported
+`foundry.trackers.linear` report, when it exits, the number of HTTP attempts
+`LinearTracker._graphql_once` made (retries included), as one line
+`foundry linear_requests=<N>`. The line is written by any process that imported that
+module, whatever tracker the checkout is bound to. Import sites found under
+`plugins/foundry/tooling/foundry`: `foundry.tracker()` in `__init__.py`, when the tracker
+name it resolves is `linear` (a name that may be the bound tracker or one passed explicitly
+by its caller); `verify_existing_project` in `registry.py`; and the top level of `issue.py`
+(`LinearQuotaExhaustedError`, `LinearTrackerError`), which every `issue` command executes.
+A process bound to another tracker, or to none, may therefore write the line too, with `0`
+or with the requests it really made: the line does not prove that the bound tracker is
+Linear. The value `stderr` writes it to stderr; any other value is a file path the line is
+appended to. Unset (default), nothing is reported and stdout is never touched. The counter
+is per process; its increment is guarded by a lock, so concurrent threads of one process
+are all counted (unlike `rate_limit`/`retry_stats`, which stay best-effort across
+threads). It is diagnostic only (a failure to count or to report is swallowed) and
+Linear-only: the other adapters have no counter. Whether a read retry counts against the
+hourly quota is not established. Documentation status (R5): new environment variable,
+documented here. The saving it measures on a real project is not measured in this page.
+
 ## Transport errors, read retries and quota (PAT-98)
 
 The client wraps the single raw HTTP call of a **pure read** in a bounded retry; nothing
