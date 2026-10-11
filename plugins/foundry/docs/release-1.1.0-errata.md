@@ -23,13 +23,15 @@ a bullet says otherwise:
   `lfc.build_bundle` (`local_first_corpus.build_bundle`) on the repository given with
   `--repo`, then removes it afterwards (`Runner._discard`). All four verbs reach
   `_bundle`: `screen` through `local_attempt` only; `compare` through `local_attempt`
-  (path N) and `cloud_path` (paths A and B); `screen-exploration` through `explore_local`; `compare-exploration` through
-  `explore_local`, the cloud exploration step and `cloud_path`;
+  (path N) and `cloud_path` (paths A and B); `screen-exploration` through
+  `explore_local`; `compare-exploration` through `explore_local`, the cloud exploration
+  step and `cloud_path`;
 - runs the judge on that bundle, through `Runner._judge`, which calls `lfc.judge`
   (`local_first_corpus.judge`), after the fake driver. It is reached from
   `Runner.local_attempt` and `Runner.cloud_path`, hence by `screen` (through
   `local_attempt` only), by `compare` (`local_attempt` for path N, `cloud_path` for
-  paths A and B), and by `compare-exploration` for its implementation arms (through `cloud_path`). It is
+  paths A and B), and by `compare-exploration` for its implementation arms (through
+  `cloud_path`). It is
   **not** reached by `screen-exploration`, nor by the exploration steps of
   `compare-exploration`: `Runner.explore_local` takes its verdict from
   `lfe.verdict_of`, not from `lfc.judge`. It is also skipped when `_patch_of` raises
@@ -56,7 +58,8 @@ and the exact set of files a given campaign configuration produces.
 The note describes "one `claude -p` parent that starts real model subagents (one scout
 in the default mode, two subagents in the cache mode), killed at twenty minutes" (lines
 254 to 256). What the bound kills is the `claude -p` parent, as a process group
-(`_launch`), not each subagent separately. Twenty minutes is the upper bound, not what a run lasts:
+(`_launch`), not each subagent separately. Twenty minutes is the upper bound, not what a
+run lasts:
 `TIMEOUT_SECONDS = 20 * 60` in `tooling/foundry/claude_profile_trial.py` is passed as
 `process.wait(timeout=TIMEOUT_SECONDS)` in `_launch`. A session that ends earlier ends
 earlier; a session still running at the bound is killed (the whole process group,

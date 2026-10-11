@@ -28,9 +28,9 @@ empty); its stdout is only a small manifest (`page_count`, `snapshot_identity`, 
 per page). Read the page files one at a time, never all at once. Each file is byte-identical
 to what `query profile intake <page>` prints for the same tracker state; that single-page
 form remains available. Do not reuse `<DIR>` in a later session: it is a one-shot output,
-not a cache. Once the pages are read, and also when the intake stops midway (an accepted ADR settles the idea,
-rejection, restart, user stop), remove that directory (the parent of the manifest paths; the
-command deletes nothing itself). This removes only the page files, then the directory, and
+not a cache. Once the pages are read, and also when the intake stops midway (an accepted
+ADR settles the idea, rejection, restart, user stop), remove that directory (the parent of
+the manifest paths; the command deletes nothing itself). This removes only the page files, then the directory, and
 fails if anything else is in it, and refuses an empty argument:
 `python3 -c 'import pathlib,sys; sys.argv[1] or sys.exit("empty directory argument"); d=pathlib.Path(sys.argv[1]); [p.unlink() for p in d.glob("intake-page-*.json")]; d.rmdir()' "<DIR>"`.
 When `--all-pages` fails with a message naming a directory, remove that directory with
