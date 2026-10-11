@@ -30,8 +30,9 @@ to what `query profile intake <page>` prints for the same tracker state; that si
 form remains available. Do not reuse `<DIR>` in a later session: it is a one-shot output,
 not a cache. Once the pages are read, and also when the intake stops midway (ADR rules,
 rejection, restart, user stop), remove that directory (the parent of the manifest paths; the
-command deletes nothing itself):
-`python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' <DIR>`.
+command deletes nothing itself). This removes only the page files, then the directory, and
+fails if anything else is in it:
+`python3 -c 'import pathlib,sys; d=pathlib.Path(sys.argv[1]); [p.unlink() for p in d.glob("intake-page-*.json")]; d.rmdir()' "<DIR>"`.
 The ADR payload is an index — load the full text of any ADR whose title touches the
 idea (`query adr <ADR-ID>`) before ruling. If an **accepted** ADR already settles
 this idea → say so, cite the ADR, and stop

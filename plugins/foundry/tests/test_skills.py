@@ -316,4 +316,6 @@ def test_intake_uses_the_all_pages_route_and_keeps_the_snapshot_identity_rule():
     assert "with the single-page form, restart at page 1" in text
     assert "when the intake stops midway" in text
     assert "remove that directory" in text
-    assert "shutil.rmtree(sys.argv[1])' <DIR>" in text
+    assert "fails if anything else is in it" in text
+    assert ('[p.unlink() for p in d.glob("intake-page-*.json")]; d.rmdir()\' "<DIR>"') in text
+    assert "rmtree" not in text
