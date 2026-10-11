@@ -69,6 +69,29 @@ refusal). Not verified: the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host, `conf
 show`, `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under
 1.1.1. The return to 1.1.0 or 1.0.0 through an official manager is not tried.
 
+**1.2.0 is a minor release, prepared by its release pull request.** That pull request
+sets both host manifests to 1.2.0 and carries the dated `1.2.0` section of the
+[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.2.0.md), the
+[upgrade and rollback guide](docs/migration-1.2.0.md) and the freeze entry of
+`tests/fixtures/release-history.json`. The release notes open with the behaviour
+changes: `query issue` no longer reports a broken ADR-to-issue link (the ADR commands
+still refuse it) and its `note` field changes; on Linear, a read-only command reads each
+reference at most once and `search` fetches every page before normalizing; a write or a
+nested opening inside a read scope is refused with `LinearReadScopeError`; a tracker
+adapter outside this package whose `list_adrs` validates ADR-to-issue links must
+override `list_adrs_without_issue_links`. They quote the Linear request counts of
+[`docs/linear-request-cost.md`](docs/linear-request-cost.md) with their conditions and
+claim no other gain. The guide gives the upgrade from 1.1.1 on both hosts, the Codex
+CLI versions observed for `gpt-6.1-sol`, and what is known and unknown about returning
+to 1.1.1. Both pages are frozen from the release pull request on, so they state no tag
+and no installation. Not done by that pull request, and not claimed here: the tag
+`foundry-v1.2.0`, the update of the installed plugin on Claude Code and on Codex, and
+the readback of the version a host actually loads; they come after the merge, the tag
+on the maintainer's explicit agreement on the content of the release notes, and this
+paragraph is updated when they exist. Not verified: the Foundry 1.2.0 / Ship-iOS 0.3.0
+pair on a host, and a Linear request count on 1.2.0 itself. The return to 1.1.1 through
+an official manager is not tried.
+
 ## Why
 
 The skills this replaces were *too binary*: they sorted and counted, they didn't reason —
@@ -141,7 +164,8 @@ The dual-host setup of 1.0.0 (upgrade, trusted configuration, override diagnosis
 verification, and rollback constraints) is in
 [`docs/migration-1.0.0.md`](docs/migration-1.0.0.md); the upgrade from 1.0.0 to
 1.1.0 and its rollbacks are in
-[`docs/migration-1.1.0.md`](docs/migration-1.1.0.md). The former
+[`docs/migration-1.1.0.md`](docs/migration-1.1.0.md); the upgrade from 1.1.1 to 1.2.0
+is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.

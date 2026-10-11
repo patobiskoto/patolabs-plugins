@@ -81,6 +81,28 @@ round, the Foundry skills write to the tracker without asking, in four bounded c
   `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.1.
   The return to 1.1.0 or 1.0.0 through an official manager is not tried.
 
+**Release 1.2.0, prepared by its release pull request:** that pull request sets both
+Foundry host manifests to **1.2.0** (Ship-iOS stays at **0.3.0**) and carries the dated
+`1.2.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), the
+[release notes](plugins/foundry/docs/release-1.2.0.md), the
+[upgrade and rollback guide](plugins/foundry/docs/migration-1.2.0.md) and the freeze
+entry of `plugins/foundry/tests/fixtures/release-history.json`. It is a minor version
+because `query issue` no longer reports a broken ADR-to-issue link (the ADR commands
+still refuse it) and the Tracker port gains a method; the release notes open with these
+behaviour changes and quote the Linear request counts of
+`plugins/foundry/docs/linear-request-cost.md` with their conditions, and no other gain.
+Statuses:
+
+- **Done by the release pull request:** the manifests, the CHANGELOG section, the two
+  pages and the freeze entry. The two pages are frozen from that pull request on.
+- **Not done by it, and not claimed here:** the tag `foundry-v1.2.0`, the update of the
+  installed plugin on Claude Code and on Codex, and the readback of the version a host
+  actually loads. They come after the merge, the tag on the maintainer's explicit
+  agreement on the content of the release notes. This list is updated when they exist.
+- **Not verified:** the Foundry 1.2.0 / Ship-iOS 0.3.0 pair on a host, and a Linear
+  request count on 1.2.0 itself (the counts quoted were measured before the last change
+  to the Linear adapter). The return to 1.1.1 through an official manager is not tried.
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -114,7 +136,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.1.1 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.2.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
