@@ -905,9 +905,11 @@ that pass. The four others (PAT-12, PAT-21, PAT-24 and PAT-56) were already Done
 2026-10-04 (PAT-12, PAT-21 and PAT-24 on 2026-09-23, PAT-56 on 2026-09-27), by a
 mechanism that was not checked. Unknown: what ran the pass of 14:50Z to 14:53Z, whether
 PAT-52 was realigned by the same means, and why that pass left PAT-72 and PAT-73 out; no
-record of it was found. Unknown: why the Linear GitHub integration, if it moved PAT-72
-and PAT-73 to In Progress once the PR existed, did not also move them to Done at the
-merge.
+record of it was found. The incident record below documents removal of the team's
+`merge -> Done` automation on 2026-09-23, before these merges, while start and review
+rules remained. Their absence of an automatic move to Done is consistent with that
+repair (deduced); the integration configuration at their merges was not observed,
+so its exact role remains unknown.
 
 Realignment needs no new command. With the tracker forced to Linear, from a checkout
 bound to the repository, run `python3 plugins/foundry/tooling/foundry_cli.py issue merge

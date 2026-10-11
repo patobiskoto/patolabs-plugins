@@ -84,11 +84,16 @@ override `list_adrs_without_issue_links`. They quote the Linear request counts o
 claim no other gain. The guide gives the upgrade from 1.1.1 on both hosts, the Codex
 CLI versions observed for `gpt-6.1-sol`, and what is known and unknown about returning
 to 1.1.1. Both pages are frozen from the release pull request on, so they state no tag
-and no installation. Not done by that pull request, and not claimed here: the tag
-`foundry-v1.2.0`, the update of the installed plugin on Claude Code and on Codex, and
-the readback of the version a host actually loads; they come after the merge, the tag
-on the maintainer's explicit agreement on the content of the release notes, and this
-paragraph is updated when they exist. Not verified: the Foundry 1.2.0 / Ship-iOS 0.3.0
+and no installation. Observed after publication on 2026-10-11 (PAT-194): the local
+and remote tag `foundry-v1.2.0` point at `81724f1`, the merge of PAT-193 (PR 136).
+Claude Code's local installation metadata records 1.2.0 at that commit, last updated
+at `17:12:12.981Z`; its cached manifest also reads 1.2.0. The Codex manager lists
+1.2.0, installed and enabled. This Codex session's supplied Foundry skill paths
+identify the 1.2.0 cache, whose manifest reads 1.2.0: loaded version observed here.
+The update commands themselves and the version loaded by a Claude session were not
+observed; the latter remains unknown. Selected evidence and sources are in
+[the observation record](docs/qualification/pat-194-post-publication-observation.json).
+Not verified: the Foundry 1.2.0 / Ship-iOS 0.3.0
 pair on a host, and a Linear request count on 1.2.0 itself. The return to 1.1.1 through
 an official manager is not tried.
 
@@ -641,8 +646,8 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `plugin.json` or a `marketplace.json` directly inside a `.claude-plugin`,
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
-  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0
-  and 1.1.1), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
+  1.1.1 and 1.2.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
