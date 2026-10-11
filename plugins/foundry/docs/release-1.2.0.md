@@ -229,11 +229,13 @@ What limits these figures, from the same page:
   states that no output of any command changes. A measure on 1.2.0 itself has not been
   made.
 - Not measured after the changes: `query profile intake --all-pages`, any other
-  profile, `candidates`. Never measured, before or after: `issue merge`, `issue
-  openpr`, `edit comment`, a real `close-epic` attempt. `issue start` was measured
-  under 1.1.1 only (13 requests). Wall time was recorded for the 1.1.1 runs of the
-  first measure only. Whether a retry happened during the measures, and whether a
-  retry counts against the hourly quota, are unknown.
+  profile, `candidates`. Not measured by that page: `issue merge`, `issue openpr`,
+  `edit comment`, a real `close-epic` attempt; for the last one it keeps a
+  real-project figure of 150 to 220, which it calls an earlier, non-reproduced note.
+  `issue start` was measured under 1.1.1 only (13 requests). Wall time is given by
+  that page for the first measure only, except `issue start` ("not recorded").
+  Whether a retry happened during the measures, and whether a retry counts against
+  the hourly quota, are unknown.
 
 On the fake transports of the tests the counts are **expected**, not measured on a real
 project: a plain Linear `query issue` goes from 9 requests to 6 (PAT-168) then 3
@@ -283,9 +285,10 @@ PAT-190 removes no read there, and the read scope is Linear only.
 - **The realignment of PAT-163 leaves unknowns** named in
   [linear-tracker.md](linear-tracker.md). That page deduces, without observing it,
   that 28 other issues carried the same divergence until they were realigned on
-  2026-10-04. Unknown: what ran the pass of 14:50Z to 14:53Z that closed 27 of them,
-  whether PAT-52 was realigned by the same means, and why the Linear GitHub
-  integration did not move PAT-72 and PAT-73 to Done at the merge.
+  2026-10-04. That page lists as unknown: what ran the pass of 14:50Z to 14:53Z,
+  whether PAT-52 was realigned by the same means, why that pass left PAT-72 and
+  PAT-73 out, and why the Linear GitHub integration, if it moved PAT-72 and PAT-73 to
+  In Progress once the PR existed, did not also move them to Done at the merge.
 
 ## Observation windows in progress
 
