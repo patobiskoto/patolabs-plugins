@@ -140,18 +140,18 @@ by a per-operation trace.
 
 ### `issue close-epic`
 
-`--status` reads the local intent store and the provider state of the Epic through
-`read_epic_closure_state_with_id` (called by `epic_closure_state` in `write.py`). That
-function calls `validate_issue_binding`, which does one `_read_raw` of the Epic, then
-does its own `_read_raw` of the same Epic: the same issue is read twice, which matches
-the 2 requests measured. Its docstring ("One issue read, no graph snapshot, no write")
-and the sentence of `linear-tracker.md` that describes this read ("one `issue.read`, no
-graph snapshot") announce one read: the second is a repetition. The cost of a real
-closure was **not measured**. The PAT-99 paragraph of `linear-tracker.md` documents the
-closure as four snapshots (S0 preflight, pre-write S1, the replay check of the closed
-parent, post-write S3) plus a fixed pre-validation, measured on the fake transport only
-(266 requests for 55 nodes); the real-project figure of 150 to 220 above is an earlier,
-non-reproduced note.
+`--status` goes through `epic_closure_state` (`write.py`), which reads the local intent
+with `_read_local_intent` (no request) and the provider state of the Epic with
+`read_epic_closure_state_with_id`. That function calls `validate_issue_binding`, which
+does one `_read_raw` of the Epic, then does its own `_read_raw` of the same Epic: the
+same issue is read twice, which matches the 2 requests measured. Its docstring announces
+one read ("One issue read, no graph snapshot, no write"): the second is a repetition.
+The PAT-100 paragraph of `linear-tracker.md` said "one `issue.read`"; it is corrected
+with this page. The cost of a real closure was **not measured**. The PAT-99 paragraph of
+`linear-tracker.md` documents the closure as four snapshots (S0 preflight, pre-write S1,
+the replay check of the closed parent, post-write S3) plus a fixed pre-validation,
+measured on the fake transport only (266 requests for 55 nodes); the real-project figure
+of 150 to 220 above is an earlier, non-reproduced note.
 
 ### The only cache, and its limit
 
@@ -186,4 +186,5 @@ grants such a state.
 | 3 | Deduplicate the `(ADR, issue)` reads in `_validate_adr_graph` across ADRs | The issue reads of each repeated reference (the reciprocal comment read stays); the number of repetitions is **unknown** | Same sentence as 2 (the reciprocal comment is per pair and must stay) | Only the issue reads, not the comment reads: probably within PAT-168 without a new decision, to be confirmed |
 | 4 | Reduce the back-to-back `_read_raw` of one transition (`set_state`, `_project_native_state`) | 3 reads of one issue per transition, 4 when the native state changes (code reading); the share of 13 (`issue start`) is **unknown** | `linear-tracker.md`: "re-read it immediately before one `issueUpdate`, then verify readback" (bounded detection, PAT-ADR-0006); the fresh pre-write read and the readback must stay | The first read and the lifecycle read may be mergeable; the others are the documented guarantee. Needs a maintainer reading of PAT-ADR-0006 |
 | 5 | Make `query issue` skip the embedded ADR index, or return it on request | 54 of 56 (96 %) of a plain issue read | `linear-tracker.md`: "The issue payload's `adrs` field is a project-level retrieval index, never a delivery relation"; the note of `query.py::issue`; the ADR retrieval rule (`AGENTS.md#R2`) | Yes: it changes the output, so it conflicts with "byte-identical outputs" unless the maintainer accepts a new option |
-| 6 | Merge the reads of `issue merge`, `openpr`, `edit comment`, `close-epic` | **Not measured** | Same as 4 for writes | Measure first |
+| 6 | Merge the reads of `issue merge`, `openpr`, `edit comment`, a real `close-epic` | **Not measured** | Same as 4 for writes | Measure first |
+| 7 | Drop the second read of the Epic in `read_epic_closure_state_with_id` (`close-epic --status`) | 1 of 2 (measured total, repetition read in code) | None found: the docstring already promises one read | No |
