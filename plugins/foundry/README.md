@@ -45,12 +45,15 @@ Codex session **not** verified. Also not verified: the Foundry 1.1.0 / Ship-iOS 
 on a host, `configure show`, `registry selection --require-v1`, and a real Sonnet 5.5
 subagent run under 1.1.0. The return to 1.0.0 is not tried (see the errata).
 
-**1.1.1 is a patch release.** Both host manifests declare 1.1.1 and its content is the
-`1.1.1` section of the [CHANGELOG](CHANGELOG.md). As a patch it has neither a release
+**1.1.1 is a patch release.** It sets both host manifests to 1.1.1 and its content is
+the `1.1.1` section of the [CHANGELOG](CHANGELOG.md). As a patch it has neither a release
 note nor a migration guide (`release_requirements` in `tests/test_release_contract.py`).
-Its tag and the installed and loaded state per host are recorded on the tracker issue
-PAT-149 and are not asserted in this file; the 1.1.0 statuses above are the last
-per-host statuses this file records.
+That section opens with a change of behaviour for every repository that uses the plugin:
+after a fully validated review round, the Foundry skills write to the tracker without
+asking, in four bounded cases (rule R9 (b) of `AGENTS.md`).
+Whether 1.1.1 is tagged, and the installed and loaded state per host, are not asserted in
+this file; they are to be read on the tracker issue PAT-149. The 1.1.0 statuses above are
+the last per-host statuses this file records.
 
 ## Why
 

@@ -4,6 +4,16 @@
 
 ## 1.1.1 — 2026-10-11
 
+Patch release. Entries below change behaviour for every repository that uses the
+plugin: after a fully validated review round, the Foundry skills write to the tracker
+without asking, in four bounded cases (rule R9 (b), PAT-ADR-0018; entries PAT-136,
+PAT-139 and PAT-144). Two additions are also in this section: the option
+`query profile <name> --all-pages` and the variable `FOUNDRY_REQUEST_COUNT` (PAT-145).
+No release note and no migration guide: a patch requires neither
+(`release_requirements` in `tests/test_release_contract.py`). This dated section is not
+a claim that 1.1.1 is already tagged or installed. The entries below are those merged
+after `foundry-v1.1.0`, kept as written.
+
 - PAT-148: wording and tests only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from PAT-137, PAT-147 and PAT-146. Errata page: `screen`
   reaches `_bundle` through `local_attempt` only (read in `Runner.screen` and

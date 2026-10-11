@@ -31,13 +31,17 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
-**Patch release 1.1.1:** both Foundry host manifests declare **1.1.1** (Ship-iOS stays
-at **0.3.0**). Its content is the `1.1.1` section of the
+**Patch release 1.1.1:** it sets both Foundry host manifests to **1.1.1** (Ship-iOS
+stays at **0.3.0**). Its content is the `1.1.1` section of the
 [CHANGELOG](plugins/foundry/CHANGELOG.md); as a patch it has neither a release note nor
 a migration guide (`release_requirements` in
-`plugins/foundry/tests/test_release_contract.py`). Its tag and the installed and loaded
-state per host are recorded on the tracker issue PAT-149 and are not asserted in this
-file; the 1.1.0 statuses below are the last per-host statuses this file records.
+`plugins/foundry/tests/test_release_contract.py`). That section opens with a change of
+behaviour for every repository that uses the plugin: after a fully validated review
+round, the Foundry skills write to the tracker without asking, in four bounded cases
+(rule R9 (b) of `AGENTS.md`). Whether 1.1.1 is tagged, and the
+installed and loaded state per host, are not asserted in this file; they are to be read
+on the tracker issue PAT-149. The 1.1.0 statuses below are the last per-host statuses
+this file records.
 
 **Tagged, installed state observed per host:** Foundry **1.1.0** (both host
 manifests declared it at the tag; Ship-iOS stays at **0.3.0**). Its
