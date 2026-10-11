@@ -29,7 +29,7 @@ from foundry.trackers.ghprojects import _Binding as GitHubBinding
 from foundry.trackers.ghprojects import _CreateCandidate as GitHubCreateCandidate
 from foundry.trackers.ghprojects import _FieldBinding as GitHubFieldBinding
 from foundry.trackers.linear import LinearBindingError, LinearTracker
-from foundry.trackers.youtrack import YouTrackTracker
+from foundry.trackers.youtrack import YouTrackTracker, _YouTrackHTTPError
 
 from test_linear_tracker import LinearWire
 from test_linear_tracker import PROJECT as LINEAR_PROJECT
@@ -551,10 +551,15 @@ def test_ghprojects_reparent_conformance_uses_reciprocal_readback(
 # Epic, create a follow-up issue under it, add deferred remarks to that issue. Each test
 # below performs exactly these three writes through the portable ``Tracker`` operations
 # (``create_issue`` with ``Type: Epic`` and no parent, ``create_issue(parent=...)``,
-# ``add_comment``) on one provider's fake transport, and checks that the origin Epic is
-# never written and never linked. They prove that the adapters carry the writes on a
-# fake transport; they prove nothing about a real provider project (for example whether
-# a YouTrack project's Type field has an ``Epic`` value).
+# ``add_comment``) on a double of one provider, and checks that the origin Epic is
+# never written and never linked. The double is not the same seam for the three:
+# YouTrack replaces ``_req`` and Linear its ``transport=``, so the adapter runs as
+# written; GitHub Projects replaces thirteen private methods of the adapter (see
+# ``_GitHubCompanionProvider.install``), not the ``runner=`` seam, so the links read back
+# and the absence of a write to the origin Epic are read from the double. These tests
+# prove that the adapters carry the writes against such doubles; they prove nothing about
+# a real provider project (for example whether a YouTrack project's Type field has an
+# ``Epic`` value).
 _COMPANION_FIELDS = {"Type": "Epic", "State": "backlog"}
 _FOLLOW_UP_BODY = "- [ ] deferred remarks corrected"
 _DEFERRED_REMARK = "deferred non-blocking remark"
@@ -563,8 +568,10 @@ _DEFERRED_REMARK = "deferred non-blocking remark"
 class _YouTrackCompanionWire:
     """Stateful REST double: issues, the subtask command and comments."""
 
-    def __init__(self, *, epic_type_exists: bool = True):
+    def __init__(self, *, epic_type_exists: bool = True, fail_command: bool = False):
         self.epic_type_exists = epic_type_exists
+        self.fail_command = fail_command
+        self.requests: list[tuple[str, str]] = []
         self.posts: list[tuple[str, object]] = []
         self.rows = {"T-1": self._row("T-1", "origin Epic", "", [
             {"name": "Type", "value": {"name": "Epic"}},
@@ -580,6 +587,7 @@ class _YouTrackCompanionWire:
         }
 
     def __call__(self, method, path, body=None, fields=None, top=None):
+        self.requests.append((method, path))
         if method == "GET" and path.startswith("/issues/"):
             return copy.deepcopy(self.rows[path.split("/")[2]])
         self.posts.append((path, copy.deepcopy(body)))
@@ -591,13 +599,18 @@ class _YouTrackCompanionWire:
             if not self.epic_type_exists and any(
                 field == {"name": "Type", "value": {"name": "Epic"}} for field in custom
             ):
-                raise RuntimeError("synthetic provider refusal: unknown Type value")
+                # what ``YouTrackTracker._req`` raises on an HTTP failure
+                raise _YouTrackHTTPError(
+                    method, path, 400, "synthetic provider refusal: unknown Type value",
+                )
             identifier = f"T-{len(self.rows) + 1}"
             self.rows[identifier] = self._row(
                 identifier, body["summary"], body["description"], custom,
             )
             return {"idReadable": identifier}
         if method == "POST" and path == "/commands":
+            if self.fail_command:
+                raise _YouTrackHTTPError(method, path, 500, "synthetic link failure")
             role, _, parent = body["query"].rpartition(" ")
             assert role == "subtask of"
             link_type = {
@@ -667,20 +680,46 @@ def test_youtrack_companion_epic_refusal_leaves_no_later_write(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # The YouTrack adapter does not check that the project's Type field has an ``Epic``
-    # value before it posts. The refusal below is SIMULATED by the double: what a real
-    # project answers is not verified. The test shows only that the adapter then makes
-    # no further write, which is what the fallback of R9 (b) relies on.
+    # value before it posts. The refusal below is SIMULATED by the double, which raises
+    # the error type ``_req`` raises on an HTTP failure: what a real project answers is
+    # not verified. The test shows that ``create_issue`` lets that error out unchanged and
+    # then sends no further request (no readback, no link), which is what the fallback
+    # of R9 (b) relies on.
     wire = _YouTrackCompanionWire(epic_type_exists=False)
     tracker = _youtrack_companion_tracker(monkeypatch, wire)
     origin_before = copy.deepcopy(wire.rows["T-1"])
 
-    with pytest.raises(RuntimeError, match="synthetic provider refusal"):
+    with pytest.raises(_YouTrackHTTPError, match="synthetic provider refusal") as raised:
         tracker.create_issue(
             Project(key="T", id="0-1"), "Nits T-1", "", fields=_COMPANION_FIELDS,
         )
 
+    assert raised.value.status == 400
     assert [path for path, _body in wire.posts] == ["/issues"]
+    assert wire.requests[-1] == ("POST", "/issues")
     assert wire.rows == {"T-1": origin_before}
+
+
+def test_youtrack_child_creation_is_two_writes_and_a_failed_link_leaves_the_issue(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # ``create_issue(parent=...)`` posts the issue, then the ``subtask of`` command. When
+    # only the second fails, the created issue stays, without its parent link, and the
+    # adapter removes nothing. How to repair that is not decided here.
+    wire = _YouTrackCompanionWire(fail_command=True)
+    tracker = _youtrack_companion_tracker(monkeypatch, wire)
+
+    with pytest.raises(_YouTrackHTTPError, match="synthetic link failure"):
+        tracker.create_issue(
+            Project(key="T", id="0-1"), "Deferred remarks, batch 1", _FOLLOW_UP_BODY,
+            parent="T-1",
+        )
+
+    assert [path for path, _body in wire.posts] == ["/issues", "/commands"]
+    assert wire.rows["T-2"]["summary"] == "Deferred remarks, batch 1"
+    assert wire.rows["T-2"]["links"] == []
+    assert wire.rows["T-1"]["links"] == []
+    assert all(method != "DELETE" for method, _path in wire.requests)
 
 
 class _LinearCompanionWire(LinearWire):
@@ -746,7 +785,7 @@ def test_linear_companion_epic_child_issue_and_comment():
 
 def test_linear_companion_epic_without_type_mapping_refuses_before_any_write():
     # A Linear binding whose ``type_label_ids`` has no ``Epic`` entry: the adapter
-    # refuses in ``_desired_update`` before the create mutation.
+    # refuses with ``type_unmapped`` before the create mutation.
     tracker, wire, project = _linear_companion_tracker({"Feature": "label-feature"})
     issues_before = copy.deepcopy(wire.issues)
 
@@ -768,8 +807,12 @@ class _GitHubCompanionProvider:
     """Stateful double of the adapter's provider seams (REST, Project item, fields).
 
     Same seams as ``_install_create_harness`` in ``test_ghprojects_tracker.py``, with
-    several issues instead of one. ``_write_catalog``, the create-intent journal, the
-    create/resume sequence and the parent pairing checks stay the adapter's own code.
+    several issues instead of one. Thirteen private methods are replaced (``install``
+    lists them), among them ``_field_catalog``, ``_rest_write`` and ``_rows``; it is not
+    the ``runner=`` seam, so the links read back and the absence of a write to the origin
+    Epic come from this double. ``_write_catalog`` (which reads the catalog through the
+    doubled ``_field_catalog``), the create-intent journal, the create/resume sequence
+    and the parent pairing checks stay the adapter's own code.
     """
 
     def __init__(self, *, type_options: tuple[str, ...]):

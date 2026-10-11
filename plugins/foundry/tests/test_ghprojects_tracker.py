@@ -2136,6 +2136,97 @@ def test_pat66_stderr_permission_hint_does_not_clear_pending_create(
     assert len(posts) == 1
 
 
+@pytest.mark.parametrize(("stderr", "stdout", "cause"), [
+    ("HTTP 429: API rate limit exceeded", "", "rate_limited"),
+    ("secondary rate limit", json.dumps({"status": "403", "message": "rate limit"}),
+     "rate_limited"),
+    ("connection reset by peer", "", "transport_failed"),
+    ("", json.dumps({"status": "502", "message": "Bad Gateway"}), "transport_failed"),
+])
+def test_failed_issue_post_surfaces_create_effect_unknown_at_the_first_call(
+    monkeypatch, tmp_path, stderr, stdout, cause,
+):
+    """The classification of ``_run`` reaches the coordinator only as an exception context.
+
+    Through the real ``runner=`` seam: the single issue POST fails, the candidate read that
+    follows finds nothing, so the FIRST ``create_issue`` call raises
+    ``create_effect_unknown``; ``rate_limited`` / ``transport_failed`` (``_run``, the default
+    for an unclassified failure) are only the context, and ``_rest_write`` posts once.
+    """
+    posts = []
+
+    def runner(command, **kwargs):
+        assert command[:5] == [
+            "gh", "api", "-X", "POST",
+            "repos/patobiskoto/foundry-v1-ghprojects-sandbox/issues",
+        ]
+        posts.append(command)
+        return subprocess.CompletedProcess(command, 1, stdout, stderr)
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    monkeypatch.setattr(tracker, "verify_project_identity", lambda *_: True)
+    monkeypatch.setattr(tracker, "_write_catalog", lambda *_: {
+        "type": type("F", (), {
+            "id": "type", "data_type": "SINGLE_SELECT", "options": {"Task": "type-task"},
+        })(),
+    })
+    monkeypatch.setattr(tracker, "_create_candidates", lambda *_: [])
+
+    with pytest.raises(GitHubProjectsTrackerError) as first:
+        tracker.create_issue(PROJECT, "partial", "body")
+
+    assert first.value.reason == "create_effect_unknown"
+    context = first.value.__context__
+    assert isinstance(context, GitHubProjectsTrackerError)
+    assert (context.operation, context.reason) == ("issue.create", cause)
+    assert len(posts) == 1
+
+
+def test_add_comment_post_failure_raises_the_run_reason_itself_and_never_retries(
+    monkeypatch, tmp_path,
+):
+    posts = []
+
+    def runner(command, **kwargs):
+        posts.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "HTTP 429 rate limit")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    monkeypatch.setattr(tracker, "_authoritative_binding", lambda *_: _Binding(
+        "patobiskoto", 7, "PVT_project", "patobiskoto/foundry-v1-ghprojects-sandbox", "GHQUAL",
+    ))
+    monkeypatch.setattr(tracker, "_native_issue", lambda *_: (3, 1003))
+    monkeypatch.setattr(tracker, "_item_coordinate", lambda *_: ("item-3", "node-3"))
+
+    with pytest.raises(GitHubProjectsTrackerError) as raised:
+        tracker.add_comment("GHQUAL-3", "remark", project=PROJECT)
+
+    assert (raised.value.operation, raised.value.reason) == ("issue.comment", "rate_limited")
+    assert len(posts) == 1
+
+
+def test_run_classifies_an_unrunnable_gh_process_as_transport_failed(tmp_path):
+    def runner(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1)
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError) as raised:
+        tracker._rest("repos/o/r/issues/1/comments", "issue.comments")
+    assert (raised.value.operation, raised.value.reason) == (
+        "issue.comments", "transport_failed",
+    )
+
+
+def test_rate_limited_read_keeps_its_own_reason(tmp_path):
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, "", "HTTP 429 rate limit")
+
+    tracker = GitHubProjectsTracker(runner=runner, state_dir=tmp_path)
+    with pytest.raises(GitHubProjectsTrackerError) as raised:
+        tracker._rest("repos/o/r/issues/1/comments", "issue.comments")
+    assert raised.value.reason == "rate_limited"
+
+
 def test_pat66_multiple_reconciliation_candidates_never_repost(monkeypatch, tmp_path):
     provider = _create_provider_state()
     one = _CreateCandidate("GHQUAL-4", 4, 1004, "issue-node-4")
