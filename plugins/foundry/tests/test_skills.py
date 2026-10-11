@@ -141,8 +141,7 @@ def test_implementer_packet_requires_r9_and_the_source_of_each_doc_sentence(name
     assert "(constant, file:line, or page)" in text
     # the six points travel inside the packet itself, in the order of R9 (a)
     positions = [text.index(f"({n}) ") for n in range(1, 7)]
-    assert positions == sorted(positions)
-    assert len(set(positions)) == 6
+    assert all(a < b for a, b in zip(positions, positions[1:]))
     for fragment in ("cites its constant, file or page", "observed, deduced or unknown",
                      "searched for across the repository", "names the compared sets",
                      "run once, on a copy", "no proper name or user name"):
