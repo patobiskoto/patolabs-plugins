@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from pathlib import Path
 
 import foundry
 from foundry import registry
@@ -41,6 +42,7 @@ _UNLOCKS_ROLES = {"blocks", "parent-of"}
 # This is a consumer contract, not a YouTrack query language.  The adapter returns
 # normalized Issues first; profiles then make an explicit, auditable projection.
 PROFILE_CONTRACT_VERSION = "foundry.query-profile.v1"
+PROFILE_ALL_PAGES_CONTRACT_VERSION = "foundry.query-profile-pages.v1"
 _PROFILE_LIMITS = {"next-issue": 20, "roadmap": 20, "blockers": 20,
                    "groom": 20, "intake": 20}
 
@@ -270,32 +272,79 @@ def profile(workflow: str, page: int = 1):
         raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
     if isinstance(page, bool) or not isinstance(page, int) or page < 1:
         raise SystemExit("page de profil invalide : entier positif attendu.")
-    tr, p = foundry.tracker(), None
+    return _profile_page(_profile_computation(workflow), page)
+
+
+def profile_all_pages(workflow: str, directory: str):
+    """Write every page of a profile, from ONE computation, into `directory`.
+
+    Each file holds exactly what `query profile <workflow> <n>` prints for the same
+    tracker state. The agent still reads the pages one at a time; the returned
+    manifest is small (no issue content). The directory must be new or empty, and
+    nothing is kept by the command beyond the files written there.
+    """
+    if workflow not in _PROFILE_LIMITS:
+        raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
+    target = Path(directory)
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise SystemExit("--all-pages : le dossier doit etre absent ou vide.")
+    comp = _profile_computation(workflow)
+    target.mkdir(parents=True, exist_ok=True)
+    pages = []
+    for n in range(1, comp["page_count"] + 1):
+        path = target / ("%s-page-%d.json" % (workflow, n))
+        path.write_text(serialize_stdout(_profile_page(comp, n)), encoding="utf-8")
+        pages.append({"page": n, "path": str(path)})
+    return {"contract": PROFILE_ALL_PAGES_CONTRACT_VERSION, "profile": workflow,
+            "page_count": comp["page_count"],
+            "snapshot_identity": comp["snapshot"]["identity"], "pages": pages}
+
+
+def _profile_computation(workflow: str):
+    """Compute everything a profile page needs, ONCE (one tracker search).
+
+    Shared by the single-page path (`profile`) and the all-pages path
+    (`profile_all_pages`), so every page comes from the same code and the same
+    snapshot. Nothing here survives the process.
+    """
+    if workflow not in _PROFILE_LIMITS:
+        raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
+    tr = foundry.tracker()
     p = _project(tr)
     all_dicts = _annotate(tr.search(p))
     seeds = sorted(_profile_seed(workflow, all_dicts),
                    key=lambda d: (d["rank_index"], d["id"]))
     limit = _PROFILE_LIMITS[workflow]
     graph_pages = _closed_pages(seeds, all_dicts, limit)
-    selected = graph_pages[page - 1] if page <= len(graph_pages) else set()
-    nodes = [d for d in all_dicts if d["id"] in selected]
-    nodes.sort(key=lambda d: (d["rank_index"], d["id"]))
     snapshot = _snapshot(all_dicts)
-    graph_total = len(set().union(*graph_pages)) if graph_pages else 0
-    graph_overrun = any(len(values) > limit for values in graph_pages)
-
     history = (sorted(_history_index(all_dicts), key=lambda d: (d["id"], d["title"]))
                if workflow in {"groom", "intake"} else [])
-    history_page, history_page_count = _slice(history, limit, page)
-
     milestone_rollup = (_profile_milestone_rollup(all_dicts)
                         if workflow == "roadmap" else {})
     milestone_items = sorted(milestone_rollup.items(),
                              key=lambda item: (item[0].casefold(), item[0]))
-    milestone_page, milestone_page_count = _slice(milestone_items, limit, page)
+    page_count = max(1, len(graph_pages),
+                     _slice(history, limit, 1)[1], _slice(milestone_items, limit, 1)[1])
+    return {"workflow": workflow, "tr": tr, "p": p, "all_dicts": all_dicts,
+            "limit": limit, "graph_pages": graph_pages, "snapshot": snapshot,
+            "history": history, "milestone_items": milestone_items,
+            "page_count": page_count}
 
-    overall_page_count = max(1, len(graph_pages), history_page_count,
-                             milestone_page_count)
+
+def _profile_page(comp, page: int):
+    """Render one bounded page from an already computed profile."""
+    workflow, tr, p = comp["workflow"], comp["tr"], comp["p"]
+    all_dicts, limit = comp["all_dicts"], comp["limit"]
+    graph_pages, snapshot = comp["graph_pages"], comp["snapshot"]
+    history, milestone_items = comp["history"], comp["milestone_items"]
+    selected = graph_pages[page - 1] if page <= len(graph_pages) else set()
+    nodes = [d for d in all_dicts if d["id"] in selected]
+    nodes.sort(key=lambda d: (d["rank_index"], d["id"]))
+    graph_total = len(set().union(*graph_pages)) if graph_pages else 0
+    graph_overrun = any(len(values) > limit for values in graph_pages)
+    history_page, history_page_count = _slice(history, limit, page)
+    milestone_page, milestone_page_count = _slice(milestone_items, limit, page)
+    overall_page_count = comp["page_count"]
     sections = {
         "issues": _section_meta(
             total=graph_total, returned=len(nodes), limit=limit, page=page,
@@ -564,7 +613,11 @@ if __name__ == "__main__":
         raise SystemExit(f"commande query inconnue : {cmd}. {', '.join(_CMDS)}")
     if arg is None and cmd in _REQUIRE_ARG:
         raise SystemExit(f"usage: query {cmd} {_REQUIRE_ARG[cmd]}")
-    if cmd == "profile" and len(sys.argv) > 3:
+    if cmd == "profile" and len(sys.argv) > 3 and sys.argv[3] == "--all-pages":
+        if len(sys.argv) != 5:
+            raise SystemExit("usage: query profile <name> --all-pages <DIR>")
+        value = profile_all_pages(arg, sys.argv[4])
+    elif cmd == "profile" and len(sys.argv) > 3:
         try:
             value = fn(arg, int(sys.argv[3]))
         except ValueError:

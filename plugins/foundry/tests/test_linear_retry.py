@@ -386,3 +386,29 @@ def test_retry_stats_expose_instability_without_final_failure():
     with pytest.raises(LinearTrackerError):
         tr._graphql(READ, {}, "issue.read")
     assert tr.retry_stats == {"retries": 3, "recovered": 0, "exhausted": 1}
+
+
+def test_request_counter_counts_every_attempt_retries_included(capsys):
+    """PAT-145: one counted HTTP attempt per `_graphql_once`, including retries."""
+    before = linear.request_count()
+    t = scripted(Boom(), Boom(503), OK)
+    tracker(t)._graphql(READ, {}, "issue.read")
+    assert linear.request_count() - before == 3 == len(t.calls)
+    tracker(scripted(OK))._graphql(READ, {}, "issue.read")
+    assert linear.request_count() - before == 4
+
+
+def test_request_counter_report_is_on_demand_and_fail_open(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv(linear.REQUEST_COUNT_ENV, raising=False)
+    linear._report_request_count()
+    assert capsys.readouterr().err == ""
+    monkeypatch.setenv(linear.REQUEST_COUNT_ENV, "stderr")
+    linear._report_request_count()
+    out = capsys.readouterr()
+    assert out.out == "" and out.err.startswith("foundry linear_requests=")
+    target = tmp_path / "count.txt"
+    monkeypatch.setenv(linear.REQUEST_COUNT_ENV, str(target))
+    linear._report_request_count()
+    assert target.read_text().startswith("foundry linear_requests=")
+    monkeypatch.setenv(linear.REQUEST_COUNT_ENV, str(tmp_path / "missing" / "x"))
+    linear._report_request_count()  # must not raise

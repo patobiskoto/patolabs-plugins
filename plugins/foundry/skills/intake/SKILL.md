@@ -21,19 +21,26 @@ derive `<foundry-root>` from this skill's absolute path by removing
 ## 1. Retrieval BEFORE reasoning (non-negotiable)
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" query adrs
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" query profile intake
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" query profile intake --all-pages "$(mktemp -d)"
 ```
+`--all-pages <DIR>` computes the snapshot once and writes every page to `<DIR>` (new or
+empty); its stdout is only a small manifest (`page_count`, `snapshot_identity`, one path
+per page). Read the page files one at a time, never all at once. Each file is byte-identical
+to what `query profile intake <page>` prints for the same tracker state; that single-page
+form remains available. Do not reuse `<DIR>` in a later session: it is a one-shot output,
+not a cache.
 The ADR payload is an index — load the full text of any ADR whose title touches the
 idea (`query adr <ADR-ID>`) before ruling. If an **accepted** ADR already settles
 this idea → say so, cite the ADR, and stop
 (unless the user explicitly wants to supersede it via a new ADR). This is the mechanism
 that stops re-litigating validated points.
 Read the profile selection, truncation, and per-section counts. An omitted candidate is
-not evidence of absence: follow the top-level `pagination.next_page` with `query profile
-intake <page>`, union both `issues` and `historical_index` slices, and exhaust them before
+not evidence of absence: follow the top-level `pagination.next_page` through the page files
+(or `query profile intake <page>`), union both `issues` and `historical_index` slices, and exhaust them before
 ruling out a duplicate or related work. Then load bodies explicitly as required.
-Require the same `pagination.snapshot_identity` on every page; restart at page 1 on a
-change instead of combining stale and fresh results.
+Require the same `pagination.snapshot_identity` on every page (and the manifest's
+`snapshot_identity`); restart at page 1 on a change instead of combining stale and fresh
+results.
 
 ## 2. Brief brainstorm, then classify
 Short, focused. Then pick exactly one:

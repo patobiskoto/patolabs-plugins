@@ -286,3 +286,41 @@ def test_profile_retains_proof_native_disagreement(monkeypatch, profile):
     assert row["state"] == row["normalized_state"] == "review"
     assert row["native_state"] == "in-progress"
     assert row["projection_status"] == "disagreement"
+
+
+def _history_tracker(monkeypatch, n=100):
+    issues = [Issue("T-active", "Active", state="backlog")]
+    issues.extend(Issue(f"T-{i:04d}", f"History {i}", state="done") for i in range(n))
+    tracker = _Tracker(issues)
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+    monkeypatch.setattr(registry, "repo_basename", lambda cwd=None: "fixture")
+    return tracker
+
+
+def test_all_pages_use_one_search_and_are_byte_identical_to_single_pages(
+        monkeypatch, tmp_path):
+    tracker = _history_tracker(monkeypatch)
+    out = tmp_path / "pages"
+    manifest = query.profile_all_pages("intake", str(out))
+    assert tracker.calls == 1  # one search for the whole set of pages
+    assert manifest["page_count"] > 1
+    assert [p["page"] for p in manifest["pages"]] == list(range(1, manifest["page_count"] + 1))
+    assert len(list(out.iterdir())) == manifest["page_count"]  # nothing beyond page_count
+    single = []
+    for entry in manifest["pages"]:
+        single.append(query.serialize_stdout(query.profile("intake", entry["page"])))
+        assert Path(entry["path"]).read_bytes() == single[-1].encode("utf-8")
+    assert tracker.calls == 1 + manifest["page_count"]
+    identities = {json.loads(text)["pagination"]["snapshot_identity"] for text in single}
+    assert identities == {manifest["snapshot_identity"]}
+
+
+def test_all_pages_refuses_a_non_empty_directory_and_keeps_stdout_small(
+        monkeypatch, tmp_path):
+    _history_tracker(monkeypatch)
+    (tmp_path / "old.json").write_text("{}")
+    with pytest.raises(SystemExit):
+        query.profile_all_pages("intake", str(tmp_path))
+    with pytest.raises(SystemExit):
+        query.profile_all_pages("nope", str(tmp_path / "x"))
+    assert not (tmp_path / "x").exists()

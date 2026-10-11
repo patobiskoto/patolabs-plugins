@@ -46,6 +46,20 @@ aggregate `blocked` and `wip` counts rather than unbounded nested ID lists. Exac
 IDs and their states, milestones, and blocker relations are derived from the union of all
 `issues` pages. Historical IDs are recovered from every `historical_index` slice.
 
+## All pages from one computation (PAT-145)
+
+`foundry_cli.py query profile <name> --all-pages <DIR>` computes the snapshot once
+(`query._profile_computation`, one `search` call) and writes every page to `<DIR>` as
+`<name>-page-<n>.json` through the same renderer (`query._profile_page`) that
+`query profile <name> <n>` uses, so each file is byte-identical to the single-page output
+for the same tracker state. `<DIR>` must be absent or empty, otherwise the command
+refuses. Stdout is a small `foundry.query-profile-pages.v1` manifest (`profile`,
+`page_count`, `snapshot_identity`, `pages`); pages stay bounded and are meant to be read
+one at a time. Nothing survives the command except these files, and no Foundry command
+reads them back. Documentation status (R5): new CLI option, documented here and in the
+`intake` skill; the other profile skills are unchanged. Not measured here: the request
+saving on a real project.
+
 ## Audit measurements
 
 The profile CLI uses compact JSON; existing query commands keep their established

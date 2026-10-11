@@ -67,6 +67,18 @@ Only a `tracker=linear` registration JSON-decodes `state_ids`, `type_label_ids`,
 structured input is rejected before the registry is written. Every non-Linear provider
 retains the historical scalar-extra contract, including for JSON-looking `k=v` values.
 
+## Request counter (PAT-145)
+
+Setting `FOUNDRY_REQUEST_COUNT` makes a Foundry process report, when it exits, the number
+of HTTP attempts `LinearTracker._graphql_once` made (retries included), as one line
+`foundry linear_requests=<N>`. The value `stderr` writes it to stderr; any other value is a
+file path the line is appended to. Unset (default), nothing is reported and stdout is
+never touched. The counter is per process, diagnostic only (a failure to report is
+swallowed) and Linear-only: the other adapters have no counter. Whether a read retry
+counts against the hourly quota is not established. Documentation status (R5): new
+environment variable, documented here. The saving it measures on a real project is not
+measured in this page.
+
 ## Transport errors, read retries and quota (PAT-98)
 
 The client wraps the single raw HTTP call of a **pure read** in a bounded retry; nothing

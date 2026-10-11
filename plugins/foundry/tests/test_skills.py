@@ -303,3 +303,11 @@ def test_fix_before_merge_mark_is_output_only_and_leaves_the_verdict_unchanged()
     assert "End with exactly: `AC: PASS|BLOCK · QUALITY: OK to merge|BLOCK`." in review_pr
     assert verdict in maigret
     assert "exactly `outcomes` and `quality`" in review_pr
+
+
+def test_intake_uses_the_all_pages_route_and_keeps_the_snapshot_identity_rule():
+    text = _flat(_skill_text("intake"))
+    assert "query profile intake --all-pages" in text
+    assert "Read the page files one at a time" in text
+    assert "Require the same `pagination.snapshot_identity` on every page" in text
+    assert "restart at page 1 on a change" in text

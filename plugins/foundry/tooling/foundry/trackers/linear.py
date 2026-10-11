@@ -16,6 +16,7 @@ writes retain their append-only paths where those are available.
 
 from __future__ import annotations
 
+import atexit
 import base64
 import binascii
 import contextlib
@@ -23,7 +24,9 @@ import copy
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
+import sys
 import threading
 import time
 import unicodedata
@@ -65,6 +68,41 @@ from foundry.trackers.epic_intent import EpicAuditIntent
 
 LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql"
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+# Diagnostic request counter (PAT-145). Counts every HTTP attempt made by
+# `LinearTracker._graphql_once` in this process, retries included. It is only
+# reported when FOUNDRY_REQUEST_COUNT is set ("stderr" or a file path to append
+# to); it never alters behaviour and never raises.
+REQUEST_COUNT_ENV = "FOUNDRY_REQUEST_COUNT"
+_request_count = 0
+
+
+def request_count() -> int:
+    """Linear HTTP attempts made so far by this process."""
+    return _request_count
+
+
+def _count_request() -> None:
+    global _request_count
+    _request_count += 1
+
+
+def _report_request_count() -> None:
+    try:
+        target = os.environ.get(REQUEST_COUNT_ENV, "").strip()
+        if not target:
+            return
+        line = "foundry linear_requests=%d\n" % _request_count
+        if target == "stderr":
+            sys.stderr.write(line)
+        else:
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write(line)
+    except Exception:  # diagnostic only: never change the command's outcome
+        pass
+
+
+atexit.register(_report_request_count)
 _PAGE_SIZE = 100
 _MAX_PAGES = 100
 _STATES = frozenset(
@@ -3097,6 +3135,7 @@ class LinearTracker(Tracker):
         return codes
 
     def _graphql_once(self, document: str, variables: dict, operation: str) -> dict:
+        _count_request()
         headers = None
         if self._transport is not None:
             # Test seam: a fake transport may raise an exception carrying `status` (int HTTP
