@@ -88,6 +88,8 @@ threads). It is diagnostic only (a failure to count or to report is swallowed) a
 Linear-only: the other adapters have no counter. Whether a read retry counts against the
 hourly quota is not established. Documentation status (R5): new environment variable,
 documented here. The saving it measures on a real project is not measured in this page.
+The counts measured on the real project with it, and where the code repeats reads, are in
+[`linear-request-cost.md`](linear-request-cost.md) (PAT-167).
 
 ## Transport errors, read retries and quota (PAT-98)
 
