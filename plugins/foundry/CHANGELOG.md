@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- PAT-147: the `intake` skill now asks to remove the `--all-pages` directory once the pages
+  are read, including when the intake stops midway; `docs/query-profiles.md` states that
+  cleaning it is the caller's job. Skill text, documentation and one test only; the code of
+  `--all-pages` is unchanged.
 - PAT-137: 1.1.0 release paperwork, no change under `tooling/`; the frozen 1.1.0 pages
   (`docs/release-1.1.0.md`, `docs/migration-1.1.0.md`, the 1.1.0 section below) are
   unchanged. `tests/fixtures/release-history.json` freezes 1.1.0 from the tree of the tag
