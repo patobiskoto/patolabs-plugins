@@ -472,10 +472,17 @@ def milestones():
             "note": "Reason about risk/trajectory, not just %: WIP, blocked, remaining estimate."}
 
 
-def _adr_index(tr, p):
-    """id / title / status / ref of every ADR — the body only via `query adr <ID>`."""
+def _adr_index(tr, p, *, issue_links=True):
+    """id / title / status / ref of every ADR — the body only via `query adr <ID>`.
+
+    `issue_links=False` (the issue payload only, PAT-190) asks a tracker that can to
+    leave the ADR-to-issue links unchecked; any other tracker lists as usual.
+    """
+    list_adrs = tr.list_adrs
+    if not issue_links:
+        list_adrs = getattr(tr, "list_adrs_without_issue_links", list_adrs)
     return [{k: v for k, v in a.to_dict().items() if k != "body"}
-            for a in tr.list_adrs(p)]
+            for a in list_adrs(p)]
 
 
 def _adr_index_or_capability(tr, p):
@@ -488,12 +495,14 @@ def _adr_index_or_capability(tr, p):
     ADR-issue-relation errors are projected — each as its own explicit, distinct
     status, never as an empty list and never conflated with each other. Transport,
     binding and payload failures still propagate rather than being mistaken for any of
-    them. `query adr`, `query adrs`, `frame` and ADR writes stay fail-closed on the
+    them. A tracker that can (Linear, PAT-190) builds the index without validating the
+    ADR-to-issue links, so for it the last projection no longer occurs here. `query adr`,
+    `query adrs`, `frame` and ADR writes stay fail-closed on the
     same integrity errors — this projection only keeps the issue payload readable; it
     does not repair or normalize either integrity error.
     """
     try:
-        return _adr_index(tr, p)
+        return _adr_index(tr, p, issue_links=False)
     except TrackerCapabilityUnavailableError as exc:
         return {
             "status": "unavailable",

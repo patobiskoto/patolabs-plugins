@@ -6464,10 +6464,12 @@ class LinearTracker(Tracker):
             after = cursor
         raise LinearTrackerError("adr.list", None, "pagination_limit")
 
-    def _adr_snapshot(self, project: Project) -> tuple[dict, dict]:
+    def _adr_snapshot(
+        self, project: Project, *, issue_links: bool = True
+    ) -> tuple[dict, dict]:
         binding, documents = self._adr_documents(project)
         chains = _adr_chain(documents, binding)
-        self._validate_adr_graph(chains, binding)
+        self._validate_adr_graph(chains, binding, issue_links=issue_links)
         return binding, chains
 
     def _recover_native_create_witness(
@@ -6540,7 +6542,12 @@ class LinearTracker(Tracker):
         return True
 
     def _validate_adr_graph(
-        self, chains: dict, binding: dict, *, pending_comments: set[str] | None = None
+        self,
+        chains: dict,
+        binding: dict,
+        *,
+        pending_comments: set[str] | None = None,
+        issue_links: bool = True,
     ) -> None:
         latest = {adr_id: versions[-1][0] for adr_id, versions in chains.items()}
         issue_refs = []
@@ -6567,6 +6574,8 @@ class LinearTracker(Tracker):
                     raise TrackerConflictError(
                         "Linear ADR supersession relation is not reciprocal"
                     )
+            if not issue_links:
+                continue
             observed_native_ids = set()
             for issue_id in relations["issues"]:
                 try:
@@ -7104,6 +7113,14 @@ class LinearTracker(Tracker):
 
     def list_adrs(self, project: Project) -> list[Adr]:
         _, chains = self._adr_snapshot(project)
+        return [self._adr_model(chains[key]) for key in sorted(chains)]
+
+    def list_adrs_without_issue_links(self, project: Project) -> list[Adr]:
+        """The ADR index of `query issue` (PAT-190): same documents, version chains,
+        witnesses and supersession checks as `list_adrs`, but the ADR-to-issue links are
+        neither resolved nor checked for reciprocity. Every ADR command keeps
+        `list_adrs`, which does."""
+        _, chains = self._adr_snapshot(project, issue_links=False)
         return [self._adr_model(chains[key]) for key in sorted(chains)]
 
     def migration_export_adrs(self, project: Project) -> list[dict]:

@@ -1456,9 +1456,10 @@ def test_query_issue_projects_real_transport_missing_witness_as_conflict(
 def test_query_issue_projects_real_unavailable_adr_issue_with_provenance(
     tracker, monkeypatch,
 ):
-    # Exercise the actual Linear document and issue reads: an ADR's declared issue
-    # disappears after its witnessed reciprocal link exists. Only `query issue`
-    # projects that precise relation; the requested issue remains readable.
+    # PAT-190: an ADR's declared issue disappears after its witnessed reciprocal link
+    # exists. `query issue` no longer validates ADR-issue links: it returns the plain
+    # index and the requested issue remains readable. The link is still refused by
+    # every ADR command (see the fail-closed test below).
     instance, wire = tracker
     created = instance.create_adr(PROJECT, "Linked issue disappears", "decision body")
     instance.link_adr_issue(created, "LIN-2", project=PROJECT)
@@ -1469,12 +1470,7 @@ def test_query_issue_projects_real_unavailable_adr_issue_with_provenance(
     result = query.issue("LIN-1")
 
     assert result["issue"]["id"] == "LIN-1"
-    assert result["adrs"] == {
-        "status": "adr_issue_unavailable",
-        "tracker": "linear",
-        "adr_id": created.id,
-        "issue_id": "LIN-2",
-    }
+    assert [entry["id"] for entry in result["adrs"]] == [created.id]
 
 
 @pytest.mark.parametrize(
@@ -1485,12 +1481,12 @@ def test_query_issue_projects_real_unavailable_adr_issue_with_provenance(
         ("payload", LinearTrackerError, "invalid_response"),
     ],
 )
-def test_query_issue_propagates_real_adr_issue_nonabsence_failures(
+def test_query_adrs_propagates_real_adr_issue_nonabsence_failures(
     tracker, monkeypatch, failure, error_type, code,
 ):
-    # The projection has one narrow meaning: a null Linear issue relation. A
-    # transport, binding, or payload failure while resolving that same relation
-    # must stay fail-closed instead of looking like an unavailable relation.
+    # PAT-190: `query issue` no longer resolves ADR issue relations; `query adrs` does.
+    # A transport, binding, or payload failure while resolving a relation must stay
+    # fail-closed instead of looking like an unavailable relation.
     instance, wire = tracker
     created = instance.create_adr(PROJECT, "Linked issue failure", "decision body")
     instance.link_adr_issue(created, "LIN-2", project=PROJECT)
@@ -1512,7 +1508,7 @@ def test_query_issue_propagates_real_adr_issue_nonabsence_failures(
     _bind_query_registry(monkeypatch, instance)
 
     with pytest.raises(error_type) as raised:
-        query.issue("LIN-1")
+        query.adrs()
     assert raised.value.code == code
 
 

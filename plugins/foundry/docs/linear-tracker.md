@@ -608,12 +608,20 @@ does not replace the citation at this provider-neutral CLI boundary.
 
 `query adr <ADR-ID>`, `query adrs`, `frame`, and every ADR write stay fail-closed on any
 of the conflicts above — none of them repair or normalize on read. `query issue <ID>` is
-the one exception: its `adrs` field only keeps the issue payload itself readable when the
-embedded index read raises a typed `TrackerConflictError` (e.g. a version without a
-matching witness), a typed `AdrUnavailableError` (e.g. a supersession relation whose
-target ADR is absent from the embedded index), or a typed `AdrIssueUnavailableError`
-(an ADR's declared issue relation is absent or inaccessible). It projects each as its
-own explicit, distinct status —
+the one exception, and it does not validate ADR-to-issue links at all (PAT-190): on Linear
+its embedded index is built by `list_adrs_without_issue_links`, which reads the same
+documents and still checks the version chains, the witnesses, the statuses and the
+supersession relations, but neither resolves the issues an ADR declares nor reads their
+reciprocal comments. A broken ADR-issue link (a missing reciprocal comment, a declared
+issue that is absent or inaccessible, a non-canonical or duplicated relation) is
+therefore detected only by `query adr`, `query adrs`, `frame` and the ADR writes, which
+refuse it as above; `query issue` returns the plain index for it. Its `adrs` field keeps
+the issue payload itself readable when the embedded index read raises a typed
+`TrackerConflictError` (e.g. a version without a matching witness), a typed
+`AdrUnavailableError` (e.g. a supersession relation whose target ADR is absent from the
+embedded index), or, for a tracker that validates ADR-issue links in the index it embeds
+(not Linear), a typed `AdrIssueUnavailableError` (an ADR's declared issue relation is
+absent or inaccessible). It projects each as its own explicit, distinct status —
 `{"status": "conflict", "tracker": <tracker name>, "reason": <fixed conflict message>}`
 for the former, `{"status": "adr_unavailable", "tracker": <tracker name>,
 "reason": "ADR unavailable: <adr id>"}` for the missing ADR, and
@@ -641,7 +649,8 @@ Case variants and native UUID aliases are stored only as the canonical readable 
 two inputs that resolve to the same native issue are a conflict, not two relations. The
 100-link bound applies before resolution and to the resulting canonical identity set.
 Reads and replay reject noncanonical stored aliases or malformed provider identities.
-Every issue relation is re-read and must belong to the configured team and project, and
+Every issue relation is re-read by the ADR commands (`query adr`, `query adrs`, `frame`
+and the ADR writes, not `query issue`) and must belong to the configured team and project, and
 the issue must retain its deterministic reciprocal Foundry comment bound to the project,
 ADR, canonical readable issue ID, and exact native issue ID. Its deterministic client ID
 is UUIDv4, as Linear requires.

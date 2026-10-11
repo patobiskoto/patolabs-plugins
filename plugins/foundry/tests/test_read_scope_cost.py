@@ -84,11 +84,13 @@ def _run(wire, function, *args):
 # on this fixture (2 ADRs citing LIN-2, an Epic LIN-1 with child LIN-2 and dependency
 # LIN-3), then updated by the read scope; each value is the sum over all operations.
 # Before the change: issue-plain 9, issue-open-epic 9, issue-closed-epic 12, adrs 7,
-# backlog 4, profile 4.  After the read scope and the listing seed (below).
+# backlog 4, profile 4.  After the read scope and the listing seed (below).  PAT-190
+# then took the ADR-to-issue link validation out of `query issue` only: 6 -> 3, 6 -> 3,
+# 7 -> 4 (see tests/test_adr_index_without_links.py).
 EXPECTED_TOTALS = {
-    "issue-plain": 6,
-    "issue-open-epic": 6,
-    "issue-closed-epic": 7,
+    "issue-plain": 3,
+    "issue-open-epic": 3,
+    "issue-closed-epic": 4,
     "adrs": 5,
     "backlog": 1,
     "profile": 1,

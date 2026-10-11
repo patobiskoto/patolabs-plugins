@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- PAT-190: `query issue` no longer validates the ADR-to-issue links of the ADR index it
+  embeds (Linear): it does not resolve the issues an ADR declares nor read their
+  reciprocal comments. Behaviour change: a broken link (missing reciprocal comment,
+  declared issue absent or inaccessible) is no longer projected as `conflict` or
+  `adr_issue_unavailable` in `query issue`, which returns the plain index; it is still
+  refused, as before, by `query adr`, `query adrs`, `frame` and the ADR writes. Version
+  chain, witness, status and supersession checks stay in `query issue`, and its output is
+  unchanged for a valid ADR graph. On the fake transport a plain `query issue` goes from
+  6 to 3 requests; `docs/linear-request-cost.md` ("After PAT-190"). R5: documented in
+  `docs/linear-tracker.md` and `docs/linear-request-cost.md`; no CLI option or
+  configuration key added.
 - PAT-168: fewer Linear requests for the read-only commands `query issue`, `query adrs`,
   `query backlog` and `query profile`, without changing any output or any write path. A
   read scope, open only during one of those commands and dropped at its end, reads each
