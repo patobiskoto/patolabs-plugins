@@ -6,7 +6,7 @@
   or a file path) reports the Linear HTTP attempts of a process, retries included, on
   exit (`trackers/linear.py`). `query profile <name> --all-pages <DIR>` writes every page
   from one computation of the snapshot, byte-identical to `query profile <name> <n>`, and
-  prints a small manifest; the `intake` skill uses it. No cache between invocations; real
+  prints a small manifest; the directory is checked before the snapshot is computed; the `intake` skill uses it. No cache between invocations; real
   request figures are not measured in this entry.
 - PAT-138: non-blocking remarks of PAT-136 and PAT-139, wording and tests only. The one
   change under `tooling/` is the module docstring of `foundry/edit.py`, which now names

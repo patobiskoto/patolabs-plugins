@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import foundry
@@ -280,20 +281,36 @@ def profile_all_pages(workflow: str, directory: str):
 
     Each file holds exactly what `query profile <workflow> <n>` prints for the same
     tracker state. The agent still reads the pages one at a time; the returned
-    manifest is small (no issue content). The directory must be new or empty, and
-    nothing is kept by the command beyond the files written there.
+    manifest is small (no issue content). The directory must be new or empty; it is
+    created and checked writable before the computation, so an unusable directory
+    fails without spending any tracker request. A write failure in the middle leaves
+    the pages already written (nothing is deleted), prints no manifest and exits with
+    a message naming the directory. Nothing is kept beyond the files written there.
     """
     if workflow not in _PROFILE_LIMITS:
         raise SystemExit("profil inconnu : %s. %s" % (workflow, ", ".join(_PROFILE_LIMITS)))
     target = Path(directory)
     if target.exists() and (not target.is_dir() or any(target.iterdir())):
         raise SystemExit("--all-pages : le dossier doit etre absent ou vide.")
+    # Create and prove the directory writable BEFORE the (quota-costly) computation.
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=str(target)):
+            pass
+    except OSError as exc:
+        raise SystemExit("--all-pages : dossier inutilisable %s (%s)." % (target, exc)) from None
     comp = _profile_computation(workflow)
-    target.mkdir(parents=True, exist_ok=True)
     pages = []
     for n in range(1, comp["page_count"] + 1):
         path = target / ("%s-page-%d.json" % (workflow, n))
-        path.write_text(serialize_stdout(_profile_page(comp, n)), encoding="utf-8")
+        try:
+            path.write_text(serialize_stdout(_profile_page(comp, n)), encoding="utf-8")
+        except OSError as exc:
+            # Pages already written stay (the command deletes nothing); no manifest
+            # is printed, and the directory is no longer empty: use a new one.
+            raise SystemExit("--all-pages : ecriture de la page %d impossible dans %s (%s) ; "
+                             "pages deja ecrites conservees, relancer vers un nouveau dossier."
+                             % (n, target, exc)) from None
         pages.append({"page": n, "path": str(path)})
     return {"contract": PROFILE_ALL_PAGES_CONTRACT_VERSION, "profile": workflow,
             "page_count": comp["page_count"],

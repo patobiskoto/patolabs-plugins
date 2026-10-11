@@ -53,12 +53,22 @@ IDs and their states, milestones, and blocker relations are derived from the uni
 `<name>-page-<n>.json` through the same renderer (`query._profile_page`) that
 `query profile <name> <n>` uses, so each file is byte-identical to the single-page output
 for the same tracker state. `<DIR>` must be absent or empty, otherwise the command
-refuses. Stdout is a small `foundry.query-profile-pages.v1` manifest (`profile`,
+refuses; it is created and proven writable before the snapshot is computed, so an unusable
+directory (non-writable, parent that is a file, dangling symlink) fails with a message
+naming it and no tracker request spent. If a page write fails in the middle, the command
+exits with a message naming the directory and the page, keeps the pages already written
+(it deletes nothing), prints no manifest, and the now non-empty directory must not be
+reused: run it again into a new directory. Stdout is a small `foundry.query-profile-pages.v1` manifest (`profile`,
 `page_count`, `snapshot_identity`, `pages`); pages stay bounded and are meant to be read
 one at a time. Nothing survives the command except these files, and no Foundry command
 reads them back. Documentation status (R5): new CLI option, documented here and in the
-`intake` skill; the other profile skills are unchanged. Not measured here: the request
-saving on a real project.
+`intake` skill; the other profile skills are unchanged. Observed on 2026-10-11 in a Claude Code host session
+(Bash tool, working directory `plugins/foundry`): the command exactly as the `intake` skill
+writes it (`python3 tooling/foundry_cli.py query profile intake --all-pages "$(mktemp -d)"`)
+ran without a permission prompt, printed the manifest (6 pages) with absolute paths under
+the system temporary directory, and the Read tool read a page file there. Not established:
+the same under Codex, or in a Claude Code session with a stricter permission mode. Not
+measured here: the request saving on a real project.
 
 ## Audit measurements
 
