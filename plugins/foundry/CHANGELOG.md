@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-137: 1.1.0 release paperwork, no change under `tooling/`; the frozen 1.1.0 pages
+  (`docs/release-1.1.0.md`, `docs/migration-1.1.0.md`, the 1.1.0 section below) are
+  unchanged. `tests/fixtures/release-history.json` freezes 1.1.0 from the tree of the tag
+  `foundry-v1.1.0`; the new `docs/release-1.1.0-errata.md` (not frozen, and ignored by
+  the frozen-release test through its `-errata.md` suffix) records the corrections of the
+  launcher `--dry-run` sentence, of the twenty-minute bound and of three unwrapped lines,
+  and the return to 1.0.0 as not tried. Both READMEs now say what is observed per host.
+  The `--dry-run` sentence of `docs/qualification/pat-125-haiku-55-promotion.md` is
+  corrected against `claude_profile_trial.py`.
+
 - PAT-145: fewer Linear requests for an intake replay. `FOUNDRY_REQUEST_COUNT` (`stderr`
   or a file path) reports the Linear HTTP attempts of a process, retries included, on
   exit (`trackers/linear.py`). `query profile <name> --all-pages <DIR>` writes every page
