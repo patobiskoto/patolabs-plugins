@@ -26,6 +26,7 @@
   now lives in the PAT-167 entry. The time of the first measure had been corrected by
   PAT-168 already. `query milestones`, which still pays the full replay of closed
   Epics, is out of scope and goes through intake.
+
 - PAT-187: documentation only, no behaviour of any tool changes; settles the
   non-blocking remarks deferred from the reviews of PAT-163 and PAT-164.
   `docs/linear-tracker.md` limits "the same divergence" to the 28 issues completed on
