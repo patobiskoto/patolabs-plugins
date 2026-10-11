@@ -898,10 +898,16 @@ in `_validate_native_state_history`, `linear.py`).
 
 Other issues, observed through the Linear connector on 2026-10-11: the 32 other issues
 named in the commit subjects up to `97b9316` are all natively Done, and 28 of them carry
-a native completion date of 2026-10-04 (27 between 14:50Z and 14:53Z). Deduced: they
-carried the same divergence until they were realigned together on that day, and PAT-72
-and PAT-73 were not part of that pass. Unknown: what ran that pass and why it left these
-two out; no record of it was found.
+a native completion date of 2026-10-04 (27 between 14:50Z and 14:53Z, PAT-52 at 15:46Z).
+Deduced: those 28 carried the same divergence until they were realigned on that day, the
+27 closed between 14:50Z and 14:53Z together, and PAT-72 and PAT-73 were not part of
+that pass. The four others (PAT-12, PAT-21, PAT-24 and PAT-56) were already Done before
+2026-10-04 (PAT-12, PAT-21 and PAT-24 on 2026-09-23, PAT-56 on 2026-09-27), by a
+mechanism that was not checked. Unknown: what ran the pass of 14:50Z to 14:53Z, whether
+PAT-52 was realigned by the same means, and why that pass left PAT-72 and PAT-73 out; no
+record of it was found. Unknown: why the Linear GitHub integration, if it moved PAT-72
+and PAT-73 to In Progress once the PR existed, did not also move them to Done at the
+merge.
 
 Realignment needs no new command. With the tracker forced to Linear, from a checkout
 bound to the repository, run `python3 plugins/foundry/tooling/foundry_cli.py issue merge

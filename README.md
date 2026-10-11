@@ -69,10 +69,14 @@ round, the Foundry skills write to the tracker without asking, in four bounded c
   update loads 1.1.1 (the session reported that the context injected by its start-up
   hook cites the 1.1.1 plugin root). A new interactive session was not observed.
 - **Codex:** Codex CLI 0.155.1, the official manager lists 1.1.1, installed and enabled.
-  A new Codex session was refused before any model turn (model not supported with the
-  account), after the session-start hook ran. Observed again on 2026-10-11 under
-  PAT-164: after the CLI was upgraded to 0.162.1, a new non-interactive session
-  started normally and reported the 1.1.1 plugin root.
+  A new Codex session was refused before any model turn (the service's message: the
+  model is not supported when using Codex with a ChatGPT account), after the
+  session-start hook ran. Observed on 2026-10-11 under PAT-164, separately from the
+  refusal and not a repeat of it: the refused session took its model from the top-level
+  `model` of `~/.codex/config.toml`, not from Foundry's routing; and after the CLI was
+  upgraded to 0.162.1, a new non-interactive session with the same model (`gpt-6.1-sol`)
+  started normally and reported the 1.1.1 plugin root (see the Codex invocation façade
+  section of `plugins/foundry/docs/model-routing.md` for the refusal).
 - **Not verified:** the Foundry 1.1.1 / Ship-iOS 0.3.0 pair on a host, `configure show`,
   `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.1.
   The return to 1.1.0 or 1.0.0 through an official manager is not tried.
