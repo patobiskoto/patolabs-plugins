@@ -544,15 +544,18 @@ other cause of the earlier failure report was verified.
 Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tested in
 `scripts/test_ci_plan.py`), not by workflow expressions:
 
-- `ship-ios` and `catalogue` always run.
+- `ship-ios` and `catalogue` run on every push to `main` and every internal pull request.
+  On a fork pull request none of the four jobs runs, because all four carry the fork guard
+  (`test_required_checks_keep_their_names_and_fork_guard` in `scripts/test_ci_plan.py`;
+  FOUNDRY-ADR-0025).
 - `foundry` is skipped only when the `plan` job outputs `run_foundry=false`, which
   `scripts/ci_plan.py` does only when every changed file is under `plugins/ship-ios/` on a
-  pull request. In every other case it runs: a push to `main`, a pull request that changes
-  a file outside `plugins/ship-ios/`, a release change, any doubt in the script (unknown
-  event, diff unavailable or empty), and a `plan` job that fails (empty output). The
+  pull request. Except for the stale base case below, it runs in every other case: a push
+  to `main`, a pull request that changes a file outside `plugins/ship-ios/`, a release
+  change, any doubt in the script (unknown event, diff unavailable or empty), and a `plan`
+  job that fails (empty output). The
   workflow condition uses `!cancelled()` and `!= 'false'` for that last case, because a job
-  whose `needs` failed is otherwise skipped. A cancelled run does not run `foundry`. On a
-  fork pull request `plan` and `foundry` match no executable job (fork guard). When
+  whose `needs` failed is otherwise skipped. A cancelled run does not run `foundry`. When
   skipped, the required check `foundry` ends as `skipped`, which the merge gate accepts
   next to a real success and refuses alone (FOUNDRY-ADR-0002; `ci_gate` in
   `tooling/foundry/write.py`, tests
@@ -560,6 +563,16 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `test_ci_gate_all_skipped_is_not_proof` in `tests/test_pure.py`). Derived from GitHub
   documentation, not shown by a run: a failed `plan` makes `foundry` run, and the fork
   pull request behaviour.
+- Stale `plan` after a base change. The `ci.yml` workflow triggers on `pull_request` with
+  the default activity types (`opened`, `synchronize`, `reopened`); changing the base of a
+  pull request emits `edited`, which starts no run, so `plan` keeps the decision computed
+  against the old base. Example: a `ship-ios`-only pull request stacked on an unmerged
+  branch that changes Foundry files, then retargeted to `main`, keeps `foundry` skipped. A
+  plain re-run replays the same event payload. Procedure: after changing the base of a
+  pull request, push a commit (or close and reopen it) so that `plan` is computed again
+  before merging. Derived from GitHub documentation, not observed in a run. The push to
+  `main` after the merge still runs everything. Adding the `edited` type was not chosen:
+  it would start a run at every title or description edit.
 - Cancellation: if a run is cancelled while `plan` runs, `foundry` ends `skipped` (the
   `!cancelled()` condition is false; deduced from the condition, not shown by a run). `ci_gate` only tolerates `success`, `neutral` and
   `skipped` conclusions on completed checks; any other conclusion, `cancelled` included,
