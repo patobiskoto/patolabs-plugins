@@ -314,3 +314,6 @@ def test_intake_uses_the_all_pages_route_and_keeps_the_snapshot_identity_rule():
     assert ("restarting means running the `--all-pages` command again into a new "
             "directory (re-reading page 1 of the same files changes nothing)") in text
     assert "with the single-page form, restart at page 1" in text
+    assert "when the intake stops midway" in text
+    assert "remove that directory" in text
+    assert "shutil.rmtree(sys.argv[1])' <DIR>" in text

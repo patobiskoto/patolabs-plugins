@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- PAT-147: the `intake` skill now asks to remove the `--all-pages` directory once the pages
+  are read, including when the intake stops midway; `docs/query-profiles.md` states that
+  cleaning it is the caller's job. Skill text, documentation and one test only; the code of
+  `--all-pages` is unchanged.
 - PAT-145: fewer Linear requests for an intake replay. `FOUNDRY_REQUEST_COUNT` (`stderr`
   or a file path) reports the Linear HTTP attempts of a process, retries included, on
   exit (`trackers/linear.py`). `query profile <name> --all-pages <DIR>` writes every page

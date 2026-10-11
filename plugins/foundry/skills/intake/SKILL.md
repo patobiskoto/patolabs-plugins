@@ -28,7 +28,10 @@ empty); its stdout is only a small manifest (`page_count`, `snapshot_identity`, 
 per page). Read the page files one at a time, never all at once. Each file is byte-identical
 to what `query profile intake <page>` prints for the same tracker state; that single-page
 form remains available. Do not reuse `<DIR>` in a later session: it is a one-shot output,
-not a cache.
+not a cache. Once the pages are read, and also when the intake stops midway (ADR rules,
+rejection, restart, user stop), remove that directory (the parent of the manifest paths; the
+command deletes nothing itself):
+`python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' <DIR>`.
 The ADR payload is an index — load the full text of any ADR whose title touches the
 idea (`query adr <ADR-ID>`) before ruling. If an **accepted** ADR already settles
 this idea → say so, cite the ADR, and stop
