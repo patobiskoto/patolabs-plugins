@@ -58,16 +58,17 @@
   each. `docs/linear-tracker.md` points to it from "Request counter (PAT-145)". Nothing
   is reduced.
 
-- PAT-187: documentation only, no behaviour of any tool changes; settles the non-blocking
-  remarks deferred from the reviews of PAT-163 and PAT-164. `docs/linear-tracker.md`
-  limits "the same divergence" to the 28 issues completed on 2026-10-04, names the four
-  already Done earlier and adds an explicit Unknown on the GitHub integration. Both
-  READMEs now carry the same Codex status of 1.1.1 (the refusal as the service's
-  message, the model source, a separate observation instead of "observed again");
-  `docs/model-routing.md` states the interval between the two cache reads, names
-  `~/.codex/config.toml`, and points the tier table at the operational note. Set aside:
-  a minimum Codex version guard is a new idea, left to `foundry:intake`. R5: the
-  documented artifacts are the pages above; no CLI, option, key or constant changes.
+- PAT-187: documentation only, no behaviour of any tool changes; settles the
+  non-blocking remarks deferred from the reviews of PAT-163 and PAT-164.
+  `docs/linear-tracker.md` limits "the same divergence" to the 28 issues completed on
+  2026-10-04, names the four already Done earlier and adds an explicit Unknown on the
+  GitHub integration. Both READMEs now carry the same Codex status of 1.1.1 (the refusal
+  as the service's message, the model source, a separate observation instead of
+  "observed again"); `docs/model-routing.md` states the interval between the two cache
+  reads, names `~/.codex/config.toml`, and points the tier table at the operational
+  note. Set aside: a minimum Codex version guard is a new idea, left to
+  `foundry:intake`. R5: the documented artifacts are the pages above; no CLI, option,
+  key or constant changes.
 
 - PAT-164: documentation only, no behaviour of any tool changes. Records, as observed on
   2026-10-11, that a new Codex session reported the 1.1.1 plugin root under Codex CLI
