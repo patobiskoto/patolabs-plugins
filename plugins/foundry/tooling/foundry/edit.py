@@ -6,7 +6,7 @@ Exceptions, made without a confirmation: the three writes that the grouped defer
 of the `foundry:merge-pr` skill authorizes in advance (create the companion Epic, create
 an issue in it, add a comment to such an issue); and the writes that a skill orders as a
 step of its own procedure (for example the progress note `comment` of `foundry:open-pr`
-and the `transition` back to review of `foundry:merge-pr`).
+and the `transition` back to `in-progress` of `foundry:merge-pr`).
 
 CLI:
   python3 -m foundry.edit create-issue '<json:{title,body,fields,parent}>'
