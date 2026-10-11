@@ -73,15 +73,13 @@ Setting `FOUNDRY_REQUEST_COUNT` makes a Foundry process that imported
 `foundry.trackers.linear` report, when it exits, the number of HTTP attempts
 `LinearTracker._graphql_once` made (retries included), as one line
 `foundry linear_requests=<N>`. The line is written by any process that imported that
-module, whatever tracker it is bound to. Import sites checked under
-`plugins/foundry/tooling/foundry`: `foundry.tracker()` in `__init__.py` imports it when the
-bound tracker is `linear`; `verify_existing_project` in `registry.py` imports it, with the
-other adapters, on its recovery-probe path whatever the tracker (the `registry update`
-command reaches it through `update_repository_binding(..., verify_provider=True)`, once
-its local preflight checks have passed); `issue.py` imports `LinearQuotaExhaustedError`
-and `LinearTrackerError` at module top level, so every `issue` command registers the
-report. A process bound to another tracker that went through one of the last two then
-writes `foundry linear_requests=0`. A `0` therefore does not prove that the bound tracker is
+module, whatever tracker the checkout is bound to. Import sites found under
+`plugins/foundry/tooling/foundry`: `foundry.tracker()` in `__init__.py`, when the tracker
+name it resolves is `linear` (a name that may be the bound tracker or one passed explicitly
+by its caller); `verify_existing_project` in `registry.py`; and the top level of `issue.py`
+(`LinearQuotaExhaustedError`, `LinearTrackerError`), which every `issue` command executes.
+A process bound to another tracker, or to none, may therefore write the line too, with `0`
+or with the requests it really made: the line does not prove that the bound tracker is
 Linear. The value `stderr` writes it to stderr; any other value is a file path the line is
 appended to. Unset (default), nothing is reported and stdout is never touched. The counter
 is per process; its increment is guarded by a lock, so concurrent threads of one process
