@@ -31,17 +31,25 @@ clean-install and installed-pair readbacks on Claude Code and Codex, and what is
 observed (a public 0.9.0 → 1.0.0 upgrade, a model turn loading the plugins) are in the
 [final report](plugins/foundry/docs/qualification/pat-62-final-report.md).
 
-**Release candidate, not tagged, not verified installed:** Foundry **1.1.0** (both host
+**Released and tagged, installed state observed per host:** Foundry **1.1.0** (both host
 manifests declare it; Ship-iOS stays at **0.3.0**). Its
 [release notes](plugins/foundry/docs/release-1.1.0.md) open with the breaking changes
 (Claude Code 2.1.293 minimum for the default `economy` tier, among others) and its
 [upgrade and rollback guide](plugins/foundry/docs/migration-1.1.0.md) gives the
-update sequence and the rollbacks, each as far as it is established. The catalogues
-name no ref: once the release pull request is merged, an
-official update is expected to deliver manifests saying 1.1.0 even before the tag
-`foundry-v1.1.0` exists. 1.1.0 is therefore effectively distributed from that merge
-(derived from the catalogue, not observed). The tag is the named reference; the last
-tagged version is 1.0.0. "Verified installed" needs the readbacks of the guide.
+update sequence and the rollbacks, each as far as it is established. Both are frozen as
+shipped in the tag; their wording "not tagged, not verified installed" is superseded by
+the statuses below and the [errata](plugins/foundry/docs/release-1.1.0-errata.md).
+Statuses, with their source (the readbacks recorded on the tracker issue PAT-135):
+
+- **Tag:** `foundry-v1.1.0` points at `04af359`, the commit that merged the release pull
+  request.
+- **Claude Code:** observed loaded by a new session of Claude Code 2.1.294.
+- **Codex:** observed listed at 1.1.0 by the manager; a new Codex session has **not** been
+  verified.
+- **Not verified:** the Foundry 1.1.0 / Ship-iOS 0.3.0 pair on a host, `configure show`,
+  `registry selection --require-v1`, and a real Sonnet 5.5 subagent run under 1.1.0.
+- **Return to 1.0.0 through an official manager:** not tried, see the
+  [errata](plugins/foundry/docs/release-1.1.0-errata.md).
 
 ## Public scope
 
