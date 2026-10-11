@@ -183,16 +183,20 @@ deploy, and STOP for explicit validation. Exception: pure refactor (justify in t
 This is the behaviour of the Foundry skills in every repository where the plugin is
 installed (maintainer decision of 2026-10-10); it is recorded as rule R9 in the Foundry
 monorepo's `AGENTS.md` / `CLAUDE.md` and decided by its PAT-ADR-0018, and this skill's
-text is what applies it.
+text is what applies it. The `docs/…` paths in this section are relative to
+`<foundry-root>`.
 After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
 non-blocking remarks are not corrected in the PR. The remarks deferred from the issues
 of an Epic go to a companion Epic, named `Nits` followed by the identifier of the origin
 Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic of an issue is its direct parent Epic:
-an issue under a sub-Epic uses that sub-Epic. Give the two Epics no tracker link: no parent, no
-dependency, no relation. What relates them is that name and a mention in text, nothing
-else. Inside the companion Epic, put the remarks in a follow-up issue, one per batch or
-per theme, never one per PR, and cite that issue in the PR description before the merge.
-Three cases are still corrected before the merge and then fully re-reviewed:
+an issue under a sub-Epic uses that sub-Epic. Give the two Epics no tracker link: no
+parent, no dependency, no relation. What relates them is that name and a mention in text,
+nothing else. Inside the companion Epic, put the remarks in a follow-up issue, one per
+batch or per theme, never one per PR, and cite that issue in the PR description before
+the merge. These three cases are still corrected before the merge and then fully
+re-reviewed; the rest of this section adds three more (the PR of an issue of a companion
+Epic, an issue with no origin Epic, a durable refusal of one of the writes), corrected
+the same way:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -201,15 +205,17 @@ Three cases are still corrected before the merge and then fully re-reviewed:
   repository's contract carries it).
 
 There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
-correct its non-blocking remarks before the merge and re-review in full. Whether a remark
-is rightly classed as deferrable is judged by the reviewer.
+correct its non-blocking remarks before the merge and re-review in full. After a
+validated round it is the coordinator that classes a remark as deferrable or not: no
+reviewer re-reads that classification before the merge, and no gate checks it.
 
 Three writes are authorized in advance by this skill's rule, without human confirmation,
 inside and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every
 repository where the plugin is installed, as an exception to the confirmation
 `foundry:intake` requires before a write:
 
-1. create the companion Epic, the first time: `edit create-issue` (command in
+1. create the companion Epic, the first time: look for an existing one first (see
+   "Commands to look and to read back" below), then `edit create-issue` (command in
    `foundry:intake`, section 3) with the title `Nits <ORIGIN-EPIC-ID>`, the field
    `"Type": "Epic"` and no `parent`;
 2. create a follow-up issue in it: `edit create-issue` with `parent` set to the
@@ -221,6 +227,16 @@ when this PR created it, the follow-up issue ID and the number of deferred remar
 Nothing else is pre-authorized: the companion Epic and its issues are neither
 prioritized nor started without the maintainer (a human verdict under FOUNDRY-ADR-0014),
 and every other intake write keeps its confirmation.
+
+Commands to look and to read back. To find an existing `Nits <ORIGIN-EPIC-ID>` Epic,
+run `query backlog` (the lean list of the project's issues, with `id`, `title`, `type`
+and `state`) and look for an issue whose `type` is `Epic` and whose `title` is exactly
+that name. To read the tracker back after a write, run `query issue <ISSUE-ID>`: its
+`issue` object carries `comments` and `links` (an adapter may return only the most
+recent comments). No command searches by title. No `query` command compares a posted comment
+with the text that was sent: the comparison is made by reading the outputs of
+`query backlog` and `query issue`. (The write `edit comment` may check its own comment,
+depending on the adapter.)
 
 The rule names no tracker. Its writes are operations of the portable contract
 `docs/tracker-contract.md`, whose table "Core journey" marks both rows below `supported`
@@ -250,7 +266,7 @@ before the merge and re-review in full. Inside an Epic campaign the authorizatio
 effect yet. Three things are missing: a channel that carries the remarks to the campaign,
 the code that creates the companion Epic and its issues, and campaigns usable on the
 repository's tracker (`docs/review-rounds.md`, "What is not mechanical and what is not
-coded yet"); they are left to a later issue, PAT-141.
+coded yet"); they are not coded yet, and that page names the issue that carries them.
 
 The PR description carries one line per review round, kept current through
 `foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):

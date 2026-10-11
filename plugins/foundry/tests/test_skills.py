@@ -118,16 +118,30 @@ def _flat(text: str) -> str:
 
 # PAT-136 / AGENTS.md#R9. These tests prove only that the rule text is written in the
 # skills; they do not prove that anyone follows it (that stays a reviewer judgment).
+def _implementer_packet(name: str) -> str:
+    """The part of the skill that is the packet sent to the implementer, not the whole file.
+
+    start-issue gives the packet as a fenced text block; resume-issue describes its
+    `Constraints:` section in prose, up to the sentence that tells the coordinator to wait.
+    """
+    raw = _skill_text(name)
+    if name == "start-issue":
+        start = raw.index("```text\nGoal:")
+        return _flat(raw[start:raw.index("```", start + 3)])
+    start = raw.index("Its `Constraints:` section must")
+    return _flat(raw[start:raw.index("Wait for it", start)])
+
+
 @pytest.mark.parametrize("name", ["start-issue", "resume-issue"])
 def test_implementer_packet_requires_r9_and_the_source_of_each_doc_sentence(name):
-    text = _flat(_skill_text(name))
+    text = _implementer_packet(name)
     assert "AGENTS.md#R9 in a repository that carries it" in text
     assert "six-point checklist" in text
     assert "points 1 to 5" in text
     assert "(constant, file:line, or page)" in text
-    # the six points travel inside the packet, in the order of R9 (a)
+    # the six points travel inside the packet itself, in the order of R9 (a)
     positions = [text.index(f"({n}) ") for n in range(1, 7)]
-    assert positions == sorted(positions)
+    assert all(a < b for a, b in zip(positions, positions[1:]))
     for fragment in ("cites its constant, file or page", "observed, deduced or unknown",
                      "searched for across the repository", "names the compared sets",
                      "run once, on a copy", "no proper name or user name"):
@@ -203,8 +217,11 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_three_standing_write
                   "the code that creates the companion Epic and its issues",
                   "campaigns usable on the repository's tracker"):
         assert piece in text
-    # the later issue: a placeholder until it is created, then its identifier
-    assert re.search(r"left to a later issue(?: under the same Epic)?, PAT-(?:TBD|\d+)", text)
+    # this skill is shipped to every repository: it names no issue of this repository
+    # and says where the page that names it is
+    assert not re.search(r"PAT-\d+", text.replace("PAT-ADR-0018", ""))
+    assert "PAT-TBD" not in text
+    assert "they are not coded yet, and that page names the issue that carries them" in text
 
 
 def test_merge_pr_deferral_names_no_tracker_and_cites_the_portable_contract_rows():
@@ -242,8 +259,40 @@ def test_merge_pr_writes_the_per_round_pr_description_line_format():
 
 def test_open_pr_cites_the_follow_up_issue_in_the_description():
     text = _flat(_skill_text("open-pr"))
-    assert "cites the follow-up issue" in text
+    # the line per review round, as merge-pr defines it, and the follow-up issue
+    assert ("If a review round has already happened, the summary keeps the per-round line "
+            "described in `foundry:merge-pr` and cites the follow-up issue that holds the "
+            "deferred non-blocking remarks") in text
     assert "with the companion Epic when this PR's deferral created it" in text
+    assert "(rule R9 (b))" in text
+    assert "<K> remarks deferred, follow-up <ISSUE-ID|none>" in _skill_text("merge-pr")
+
+
+def test_resume_issue_correction_packet_carries_rule_c_next_to_the_checklist():
+    raw = _skill_text("resume-issue")
+    start = raw.index("When the remaining work is the correction of a review finding")
+    section = _flat(raw[start:raw.index("```bash", start)])
+    assert "R9 (a) and (c)" in section
+    assert ("the `Constraints:` section of the packet carries rule (c) next to the "
+            "six-point checklist") in section
+    assert ("a correction changes as few sentences as possible, and every new sentence is "
+            "re-checked against the code before the work is handed back") in section
+    # the Codex step is its own paragraph and applies to every case above, not only this one
+    assert "\n\nUnder Codex, in every case above, write the same packet" in raw[start:]
+
+
+def test_merge_pr_names_only_existing_commands_to_find_and_read_back():
+    text = _merge_pr_deferral_section()
+    assert "Commands to look and to read back." in text
+    assert "`query backlog`" in text and "`query issue <ISSUE-ID>`" in text
+    # both commands exist in the CLI module list and in query.py
+    cli = open(os.path.join(_SKILLS_DIR, "..", "tooling", "foundry_cli.py")).read()
+    assert '"query"' in cli
+    query = open(os.path.join(_SKILLS_DIR, "..", "tooling", "foundry", "query.py")).read()
+    assert "def backlog(" in query and "def issue(" in query
+    assert "No command searches by title" in text
+    assert "no reviewer re-reads that classification before the merge" in text
+    assert "judged by the reviewer" not in text
 
 
 def test_fix_before_merge_mark_is_output_only_and_leaves_the_verdict_unchanged():

@@ -169,14 +169,39 @@ def _assert_campaign_facts(flat):
     assert "neither seen nor recorded by a campaign today" in flat
     for piece in _THREE_MISSING_PIECES:
         assert piece in flat
-    # the later issue: a placeholder until it is created, then its identifier
-    assert re.search(r"left to a later issue(?: under the same Epic)?, PAT-(?:TBD|\d+)", flat)
+    # the later issue is a real one: a placeholder identifier is no longer accepted
+    assert re.search(r"left to a later issue(?: under the same Epic)?, PAT-\d+", flat)
     for module in sorted(_TOOLING.glob("campaign_*.py")):
         source = module.read_text(encoding="utf-8")
         assert "create_issue" not in source and "create-issue" not in source, module.name
     adapters = [path.name for path in sorted((_TOOLING / "trackers").glob("*.py"))
                 if "epic_subgraph_supported = True" in path.read_text(encoding="utf-8")]
     assert adapters == ["devhub.py"]
+
+
+def test_no_file_under_tooling_or_hooks_contains_the_companion_epic_name():
+    """Pins the sentence "no file under `tooling/` or `hooks/` contains the word `Nits`".
+
+    The name of the companion Epic is the only relation between the two Epics and no
+    code creates or reads it (PAT-141). When that code lands, this test fails and the
+    sentence in `docs/review-rounds.md` has to be rewritten with it.
+    """
+    plugin = REPOSITORY_ROOT / "plugins" / "foundry"
+    scanned = 0
+    offenders = []
+    for folder in ("tooling", "hooks"):
+        for path in sorted((plugin / folder).rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            scanned += 1
+            if "Nits" in text:
+                offenders.append(str(path.relative_to(plugin)))
+    assert scanned > 50
+    assert offenders == []
 
 
 def _r9_deferral_rule() -> str:
@@ -226,6 +251,31 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_three_standing_writ
     assert "the refused retry is the coordinator's reading of those two decisions" in rule
     assert "Both are operating choices of this contract" in rule
     assert "not decisions of PAT-ADR-0018" in rule
+
+
+def test_r9_lists_every_case_that_is_corrected_before_the_merge():
+    """Each case of rule (b) that sends a remark back into the PR is written in AGENTS.md."""
+    rule = _r9_deferral_rule()
+    # the three cases kept from before, then the three that the rule adds
+    assert ("These three cases are still corrected before the merge and then fully "
+            "re-reviewed, as before; the rest of this rule adds three more") in rule
+    assert "Three cases are still corrected" not in rule
+    for case in ('- a remark the reviewer marks "fix before merge";',
+                 "- a remark on a page frozen after publication (release note, migration "
+                 "guide, a CHANGELOG section of a published version);",
+                 "- a missing or generic documentation status under R5 and FOUNDRY-ADR-0018, "
+                 "which is never a deferrable remark."):
+        assert case in rule, case
+    # the three added cases, each stated further in the rule
+    assert ("(the PR of an issue of a companion Epic, an issue with no origin Epic, a "
+            "durable refusal of one of the writes)") in rule
+    assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
+            "companion Epic are corrected before the merge and then fully re-reviewed") in rule
+    assert ("An issue that has no origin Epic gets no deferral: its non-blocking remarks "
+            "are corrected before the merge and then fully re-reviewed") in rule
+    assert ("durable refusal (the project cannot carry the write, for example it has no "
+            "`Epic` type): the coordinator makes no substitute write: the remarks of that "
+            "round are corrected before the merge and then fully re-reviewed") in rule
 
 
 def test_r9_no_longer_states_the_campaign_special_case_anywhere_in_the_repository():
