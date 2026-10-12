@@ -2377,6 +2377,15 @@ def main(
         "--replay-interrupted", action="store_true",
         help="reconstruit sans écriture le claim publié dont la capability n'a pas été reçue",
     )
+    prepare = sub.add_parser("prepare-review", help="write a private bounded reviewer packet")
+    prepare.add_argument("--issue", required=True)
+    prepare.add_argument("--pr", required=True, type=_positive_int)
+    prepare.add_argument("--root", required=True)
+    prepare.add_argument("--base", required=True, help="immutable PR base SHA")
+    prepare.add_argument("--claim-file", required=True, help="private complete claim JSON")
+    prepare.add_argument("--output-dir", required=True, help="new private packet directory")
+    prepare.add_argument("--adr", action="append", default=[], help="selected accepted ADR id")
+    prepare.add_argument("--declarations-file", help="unverified coordinator JSON object")
     recover_review = sub.add_parser(
         "recover-review", help="explicitly replace one abandoned review generation",
     )
@@ -2654,6 +2663,22 @@ def main(
     escalation_technical_claim.add_argument("--root")
     args = parser.parse_args(argv)
     try:
+        if args.command == "prepare-review":
+            from foundry.review_packet import prepare_review_packet
+            # Provider errors and input paths may contain capabilities or prose.
+            # No raw exception, input value or private packet is printed here.
+            try:
+                result = prepare_review_packet(
+                    issue_id=args.issue, pr_number=args.pr, root=args.root,
+                    base=args.base, claim_file=args.claim_file,
+                    output_dir=args.output_dir, adr_ids=args.adr,
+                    declarations_file=args.declarations_file,
+                )
+            except (Exception, SystemExit):
+                print("Préparation du paquet de review refusée.", file=sys.stderr)
+                raise SystemExit(2) from None
+            print(json.dumps(result, indent=2))
+            return
         if args.command == "claim-review":
             EscalationStore.for_root(args.root).active_floor(args.issue, "reviewer")
             review_root, review_base = review_diff_coordinates(args.root, args.base)

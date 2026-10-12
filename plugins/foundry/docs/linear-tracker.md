@@ -1247,11 +1247,18 @@ is read once per command, while the reciprocal comment is still read once per (A
 issue) pair and both identity coordinates of a reference are still read the first time
 it is resolved. `query issue` no longer validates the ADR-to-issue links (PAT-190).
 
+`routing prepare-review` also opens this layer around its tracker project, issue and
+ADR reads (`review_packet.py::prepare_review_packet`, PAT-174), then closes it before
+reading CI and publishing the local packet. It makes no tracker or PR writes; local
+packet-file writes occur after the tracker scope has closed. Its private output and
+snapshot constraints are in `review-packet.md`. No request-count gain is measured for
+this command.
+
 What is not shared: a failed read; anything in a write (while the layer is open,
 `_graphql` refuses any document that is not a pure read, with `LinearReadScopeError`, so
 the first mutation of a write started inside it is refused and never sent, reads issued
-before it are sent, and no command that writes opens the layer); anything between two
-commands (the layer is created empty at the start of the command and dropped when it
+before it are sent, and no command that mutates the tracker opens the layer); anything
+between two commands (the layer is created empty at the start of the command and dropped when it
 ends, so a node changed between two commands is seen by the second). Limit inside one
 command: two snapshots of the same read-only command (two closed Epics sharing a node in
 `backlog`, a closed Epic that is a child of a closed Epic in `query issue`) are served
