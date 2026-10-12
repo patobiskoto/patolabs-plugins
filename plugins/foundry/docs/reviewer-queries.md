@@ -61,6 +61,13 @@ and replace the conflicting diff instruction with its Foundry branch. Load a fre
 role/session before qualifying an actual reviewer invocation. No model or effort is
 set by the template; routing retains those decisions.
 
+For context reads, the template uses available read tools. When no Read tool exists,
+it permits one simple `cat` command for an exact `SKILL.md`, context-packet file,
+`AGENTS.md` or `CLAUDE.md` path named in the packet, without options, globs, shell
+composition, wrappers, substitutions or redirection. This is a prompt-only exception
+for named context files; source searches/listings still require the verified readers,
+and writes/network remain forbidden (`examples/codex-reviewer.toml`).
+
 The template deliberately inherits sandbox configuration. OpenAI's
 [custom agent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 documents `sandbox_mode = "read-only"` and inheritance of omitted keys. Such a native

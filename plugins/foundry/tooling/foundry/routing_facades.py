@@ -137,7 +137,8 @@ CODEX_ROLES = {
         "Read the diff only through the claimed-hash verifier. Independently use "
         "routing search-review/list-review with the same claim coordinates for literal "
         "text and path checks at the claimed HEAD. Report observed evidence and query "
-        "limits. No arbitrary shell/Python, tests/builds, network/tracker, edits or delegation.",
+        "limits. Do not edit files or delegate. No arbitrary shell/Python, tests/builds "
+        "or network/tracker.",
     ),
     "architect": CodexRole(
         "default",

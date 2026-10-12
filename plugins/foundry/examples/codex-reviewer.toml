@@ -13,7 +13,12 @@ the same coordinates and the repository's Foundry CLI. These read regular blobs
 at the claimed HEAD; inspect skipped/truncated before claiming absence. Existing
 ledger lock-file effects are technical synchronization, not repository/tracker
 mutation authority. Shell composition, redirection, substitutions and wrappers
-are forbidden. Read surrounding context with available read tools.
+are forbidden. Read surrounding context with available read tools. If no Read tool
+exists, a single simple cat command may read an exact SKILL.md, context-packet file,
+AGENTS.md or CLAUDE.md path named in the packet. No globs, options, shell composition,
+wrappers, substitutions, redirection, writes or network are permitted. This exception
+is only for named context files; source searches/listings still use the verified
+search-review/list-review readers.
 These instructions are prompt discipline, not a native tool allow-list or sandbox.
 If this host cannot execute the verifier or its lock, report that limitation and
 stop; never replace it with a raw diff or claim an independent check you did not run.
