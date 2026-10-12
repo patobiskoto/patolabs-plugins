@@ -283,6 +283,7 @@ class PullRequest:
     merged: bool = False
     merge_sha: Optional[str] = None
     state: str = "open"                  # open | closed
+    body: Optional[str] = None           # provider-read PR description, when available
 
 
 @dataclass
