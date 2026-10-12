@@ -24,7 +24,7 @@ def is_safe_absolute_root(value: str) -> bool:
 
 
 def allows_verified_diff(command: str) -> bool:
-    """Allow exactly the shared read-review verifier, with no shell composition."""
+    """Allow only the shared claimed readers, with no shell composition."""
     try:
         tokens = shlex.split(command, posix=True)
     except ValueError:
@@ -38,10 +38,11 @@ def allows_verified_diff(command: str) -> bool:
         except (OSError, RuntimeError):
             launcher_matches = False
     return (
-        len(tokens) == 12
+        len(tokens) in (12, 14)
         and tokens[0] == "python3"
         and launcher_matches
-        and tokens[2:4] == ["routing", "read-review"]
+        and tokens[2] == "routing"
+        and tokens[3] in ("read-review", "list-review", "search-review")
         and tokens[4] == "--diff-hash"
         and bool(_SHA256.fullmatch(tokens[5]))
         and tokens[6] == "--claim-id"
@@ -50,6 +51,10 @@ def allows_verified_diff(command: str) -> bool:
         and is_safe_absolute_root(tokens[9])
         and tokens[10] == "--base"
         and bool(_GIT_SHA.fullmatch(tokens[11]))
+        and (len(tokens) == 12 and tokens[3] != "search-review"
+             or len(tokens) == 14 and tokens[3] == "search-review"
+             and tokens[12] == "--text" and 0 < len(tokens[13]) <= 512
+             and not _SHELL_SYNTAX.search(tokens[13]))
     )
 
 
@@ -59,9 +64,9 @@ def decision(agent_type: object, command: object) -> str | None:
     if isinstance(command, str) and allows_verified_diff(command):
         return None
     return (
-        "Cet agent Foundry est read-only : Bash est limité à `routing read-review "
+        "Cet agent Foundry est read-only : Bash est limité à `routing read-review|list-review|search-review "
         "--diff-hash <sha256> --claim-id <claim-id> --root <root-absolue> "
-        "--base <sha-git>`. Utilise Read/Grep/Glob pour le reste."
+        "--base <sha-git>` (search-review ajoute --text <texte-littéral>). Utilise Read/Grep/Glob pour le reste."
     )
 
 

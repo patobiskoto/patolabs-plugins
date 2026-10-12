@@ -36,8 +36,20 @@ that is beautifully written but doesn't do what the issue asked must BLOCK.
 
    Never substitute an unverified `gh pr diff` or `git diff`. The dynamically selected
    internal profile supplies the guarded Bash capability needed for this command.
-3. Read the touched files around the diff for context — a diff can look fine and still
-   break its neighbors.
+3. Independently search the claimed repository snapshot when checking a symbol, stale
+   phrase or file existence. Use the same coordinates in the guarded commands:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/tooling/foundry_cli.py" routing search-review --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID> --root <ROOT> --base <BASE-SHA> --text "literal text"
+   python3 "${CLAUDE_PLUGIN_ROOT}/tooling/foundry_cli.py" routing list-review --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID> --root <ROOT> --base <BASE-SHA>
+   ```
+
+   They query regular tracked blobs at the immutable claimed HEAD. Report your own
+   observed matches with path, line and HEAD; inspect `skipped` and `truncated` before
+   claiming absence. See `docs/reviewer-queries.md` for limits and host enforcement.
+   Never run tests/builds, arbitrary shell/Python, network or tracker commands.
+4. Read the touched files around the diff for context — a diff can look fine and still
+   break its neighbors. Working-file context is distinct from the claimed HEAD evidence.
 
 ## Stage 1 — spec compliance (the acceptance criteria ARE the contract)
 Your prompt should include the issue's acceptance criteria (`- [ ]` items). For EACH one,

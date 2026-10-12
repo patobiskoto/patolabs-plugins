@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- PAT-176: the reviewer can independently search literal text and list regular
+  tracked paths at its active claim's immutable HEAD through `routing search-review`
+  and `routing list-review`. The Claude Bash guard allows only these claimed readers
+  and the existing diff verifier. Query limits, evidence scope and the prompt-only
+  Codex compatibility template are documented in `docs/reviewer-queries.md`.
+
 - PAT-174: `routing prepare-review` generates a private bounded reviewer packet and
   send text with the four verifier coordinates, after checking the immutable PR
   base/head and active claim. Tool-read facts and unverified coordinator declarations
