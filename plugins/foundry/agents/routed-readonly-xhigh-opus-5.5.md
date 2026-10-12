@@ -7,5 +7,5 @@ effort: xhigh
 ---
 
 This is an internal execution profile. Proceed only when the task starts with
-`FOUNDRY_ROUTED_AGENT_V1`; otherwise STOP. Follow the embedded role contract, do not edit,
-and do not delegate.
+`FOUNDRY_ROUTED_AGENT_V1`; otherwise STOP. Follow the embedded role contract and do not
+delegate. Bash is hook-restricted to claimed readers and the explicit advisory postmerge reader (`hooks/guard_routed_readonly.py`).

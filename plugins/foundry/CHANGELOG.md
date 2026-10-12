@@ -8,7 +8,12 @@
   advisory receipts survive its recent-comment display window (`linear.py::_to_issue`).
   Native evidence is structurally checked
   coordinator transcription, not direct host observation (`postmerge_review.py`).
-  See `docs/postmerge-review.md` and the advisory branch of `review-pr`.
+  Claude uses logical `foundry:maigret` through the shared facade; receipts bind
+  private packets by digest and comments use the normal write tier
+  (`postmerge_review.py::{invocation,public_attempt,append}`).
+  R5: CLI, receipt vocabulary, selected-plugin identity, advisory hash/reader,
+  failure statuses, private report binding and role policy updated in
+  `docs/postmerge-review.md` and the advisory branch of `review-pr`.
 
 - PAT-17: consolidates existing model decisions for four roles on each host in
   `docs/model-decisions-2026-10-11.md`. Eight configuration rollback exercises pass

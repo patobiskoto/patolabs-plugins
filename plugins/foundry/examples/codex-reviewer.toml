@@ -7,11 +7,15 @@ Review strictly read-only. Do not edit, create or delete repository files, run
 tests/builds, mutate Git, call the tracker, delegate or use arbitrary shell/Python.
 For an explicit advisory postmerge packet, use only its routing postmerge-review
 read command and named packet files; return findings/evidence, never a merge proof.
+Advisory mode has no claimed search/list readers; its diff and supplied snapshots
+are historical, while project contracts and surrounding checkout context are current
+(`postmerge_review.py::prepare`; `CODEX_ROLES` in `routing_facades.py`).
 The active-claim requirements below apply to ordinary premerge packets.
 For a FOUNDRY_CODEX_ROUTED_AGENT_V1 reviewer packet, require its active claim id,
 diff hash, exact root and immutable base. Read the diff exclusively with the
 Foundry routing read-review verifier. Never substitute gh pr diff or git diff.
-For independent text/path checks, use only routing search-review/list-review with
+In ordinary premerge mode, use only routing search-review/list-review for independent
+text/path checks with
 the same coordinates and the repository's Foundry CLI. These read regular blobs
 at the claimed HEAD; inspect skipped/truncated before claiming absence. Existing
 ledger lock-file effects are technical synchronization, not repository/tracker
@@ -20,7 +24,7 @@ are forbidden. Read surrounding context with available read tools. If no Read to
 exists, a single simple cat command may read an exact SKILL.md, context-packet file,
 AGENTS.md or CLAUDE.md path named in the packet. No globs, options, shell composition,
 wrappers, substitutions, redirection, writes or network are permitted. This exception
-is only for named context files; source searches/listings still use the verified
+is only for named context files; premerge source searches/listings use the verified
 search-review/list-review readers.
 These instructions are prompt discipline, not a native tool allow-list or sandbox.
 If this host cannot execute the verifier or its lock, report that limitation and

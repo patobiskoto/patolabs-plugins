@@ -6,6 +6,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from pathlib import Path
+from foundry import registry
 
 from foundry import postmerge_review as pm
 from foundry.models import Issue, Project, PullRequest
@@ -144,6 +146,7 @@ def record(c, a, e, report):
         root=c.root,
         issue_id=c.issue.id,
         attempt_id=a["attempt_id"],
+        packet_dir=c.args["output_dir"],
         evidence=e,
         report=report,
         tracker_port=c.tr,
@@ -212,15 +215,20 @@ def test_prepare_refuses_before_authorization(case, fault):
         c.args["history"]["issue"]["body"] = ""
     else:
         c.args["output_dir"].mkdir()
-    with pytest.raises(RoutingConfigError):
+    reasons = {"repo": "repository mismatch", "hash": "historical diff unavailable or divergent",
+               "missing-object": "historical Git objects unavailable", "history-empty": "historical identity/version/body/source required",
+               "output-existing": "packet destination must be new"}
+    reason = reasons.get(fault, "exact explicit authorization required" if fault.startswith("auth-") else "merged PR coordinates disagree")
+    with pytest.raises(RoutingConfigError, match=reason):
         prepare(c)
     assert c.issue.comments == []
 
 
+@pytest.mark.parametrize("host", ["codex", "claude"])
 def test_squash_exact_diff_single_attempt_and_no_original_ledger_mutation(
-    case, report, tmp_path
+    case, report, tmp_path, host
 ):
-    ledger = ReviewDeduplicator("fixture/repository", state_dir=tmp_path / "ledger")
+    ledger = ReviewDeduplicator("fixture/repository")
     diff = _git(
         case.root,
         "diff",
@@ -237,7 +245,7 @@ def test_squash_exact_diff_single_attempt_and_no_original_ledger_mutation(
     )
     body = case.args["history"]["issue"]["body"]
     proof_store = AcceptanceProofStore(
-        "fixture/repository", state_dir=tmp_path / "ledger"
+        "fixture/repository"
     )
     proof_store.create(
         issue_id="FIX-2",
@@ -249,23 +257,22 @@ def test_squash_exact_diff_single_attempt_and_no_original_ledger_mutation(
         claim_id=claim.claim_id,
         root=case.root,
         base=case.coords["base"],
-        state_dir=tmp_path / "ledger",
     )
     git(case.root, "checkout", "-q", "--detach", case.coords["merge"])
     before = {
-        str(p): p.read_bytes() for p in (tmp_path / "ledger").rglob("*") if p.is_file()
+        str(p): p.read_bytes() for p in Path(registry.data_dir()).rglob("*") if p.is_file()
     }
-    a = prepare(case)
+    a = prepare(case, host)
     assert (case.args["output_dir"] / "diff.patch").read_bytes() == diff
     assert case.coords["head"] != case.coords["merge"]
     assert pm.receipts(case.tr, case.issue.id)[0]["type"] == "authorized_attempt"
     e = evidence(a, report)
     result = record(case, a, e, report)
     assert result["type"] == "advisory_report"
-    assert result["history"] == case.args["history"]
-    assert result["native_evidence"]["observed"]["model"] is None
+    assert result["history_hash"] == pm.digest(case.args["history"])
+    assert result["native_evidence_hash"] == pm.digest(e)
     assert before == {
-        str(p): p.read_bytes() for p in (tmp_path / "ledger").rglob("*") if p.is_file()
+        str(p): p.read_bytes() for p in Path(registry.data_dir()).rglob("*") if p.is_file()
     }
     assert ledger.claim(diff).should_run is False
     with pytest.raises(RoutingConfigError):
@@ -333,13 +340,17 @@ def test_native_independence_refusals_consume_attempt_without_verdict(
         e["call"]["source"] = ""
     else:
         e["return"]["report_hash"] = "f" * 64
-    with pytest.raises(RoutingConfigError):
+    reason = ("typed bound native evidence required" if fault in {"plan-only", "boolean", "reviewer-assertion", "attempt", "packet", "return-absent"}
+              else "actual routed native call required" if fault in {"tool", "arguments", "history", "resume", "source-absent"}
+              else "new native child identity" if fault in {"child", "correlation"}
+              else "distinct correlated child return required")
+    with pytest.raises(RoutingConfigError, match=reason):
         record(case, a, e, report)
     assert [r["type"] for r in pm.receipts(case.tr, case.issue.id)] == [
         "authorized_attempt",
         "stopped_without_verdict",
     ]
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="attempt absent, ambiguous or terminal"):
         record(case, a, evidence(a, report), report)
 
 
@@ -357,7 +368,7 @@ def test_coordinates_revalidated(case, report, phase):
     if phase == "record":
         a = prepare(case)
         case.pr.merge_sha = "f" * 40
-        with pytest.raises(RoutingConfigError):
+        with pytest.raises(RoutingConfigError, match="merged PR coordinates disagree"):
             record(case, a, evidence(a, report), report)
     else:
         reads = 0
@@ -370,28 +381,33 @@ def test_coordinates_revalidated(case, report, phase):
             return copy.deepcopy(case.pr)
 
         case.ch.get_pr = get_pr
-        with pytest.raises(RoutingConfigError):
+        with pytest.raises(RoutingConfigError, match="merged PR coordinates disagree"):
             prepare(case)
     assert not any(
         r["type"] == "advisory_report" for r in pm.receipts(case.tr, case.issue.id)
     )
+    if phase == "prepare-final":
+        assert case.issue.comments == []
 
 
 def test_merge_and_acceptance_projection_refuse_advisory_record(case, report, tmp_path):
     a = prepare(case)
     advisory = record(case, a, evidence(a, report), report)
     store = AcceptanceProofStore("fixture/repository", state_dir=tmp_path / "proofs")
-    store.directory.mkdir(parents=True)
+    ledger = ReviewDeduplicator("fixture/repository", state_dir=tmp_path / "proofs")
+    diff = _git(case.root, "diff", "--binary", "--no-ext-diff", "--no-textconv", f"{case.coords['base']}...{case.coords['merge']}")
+    claim = ledger.claim_git(hashlib.sha256(diff).hexdigest(), coordinates={"root": str(case.root), "base": case.coords["base"]}, claim_attempt_token="c" * 64)
+    store.create(issue_id=case.issue.id, issue_body="- [ ] Preserve source\n", reviewer_role="reviewer", outcomes=[{**item, "verdict": "pass"} for item in acceptance_criteria("- [ ] Preserve source\n")], quality="mergeable", diff_hash=claim.diff_hash, claim_id=claim.claim_id, root=case.root, base=case.coords["base"], state_dir=tmp_path / "proofs")
     (store.directory / ("a" * 64)).write_text(json.dumps(advisory))
     kwargs = dict(
         issue_id=case.issue.id,
         issue_body="- [ ] Preserve source\n",
         head=case.coords["head"],
         base=case.coords["base"],
-        diff=b"diff",
+        diff=diff,
     )
     for method in (store.current_for_sync, store.valid_for_merge):
-        with pytest.raises(RoutingConfigError):
+        with pytest.raises(RoutingConfigError, match="advisory postmerge"):
             method(**kwargs)
 
 
@@ -440,7 +456,7 @@ def test_guarded_reader_wire_and_both_native_prompts(case):
         case.args["output_dir"] = case.args["output_dir"].parent / host
         case.args["authorization"]["id"] = ("a" if host == "codex" else "b") * 64
         a = prepare(case, host)
-        command = f"python3 {guard.PLUGIN_ROOT}/tooling/foundry_cli.py routing postmerge-review read --root {case.root} --packet-dir {case.args['output_dir']} --attempt-id {a['attempt_id']} --packet-hash {a['packet_hash']}"
+        command = a["arguments"].get("message", a["arguments"].get("prompt", "")).split("Advisory verifier: ", 1)[1].splitlines()[0]
         assert guard.allows_verified_diff(command)
         assert "routing postmerge-review read" in a["arguments"].get(
             "message", a["arguments"].get("prompt", "")
@@ -554,6 +570,8 @@ def test_cli_fixture_procedure(case, report, tmp_path, monkeypatch, capsys):
             case.issue.id,
             "--attempt-id",
             a["attempt_id"],
+            "--packet-dir",
+            str(case.args["output_dir"]),
             "--evidence-file",
             paths["evidence"],
             "--report-file",
@@ -653,6 +671,7 @@ def test_default_factory_resolves_explicit_root_before_issue_read_and_write(
         root=case.root,
         issue_id=case.issue.id,
         attempt_id=a["attempt_id"],
+        packet_dir=case.args["output_dir"],
         evidence=evidence(a, report),
         report=report,
     )
@@ -762,5 +781,236 @@ def test_default_unqualified_provider_refused_before_history_or_write(
     monkeypatch.setattr(foundry, "tracker", lambda **_: case.tr)
     monkeypatch.setattr(foundry, "codehost", lambda **_: case.ch)
     with pytest.raises(RoutingConfigError, match="Linear"):
+        prepare(case)
+    assert case.issue.comments == []
+
+
+def test_public_receipts_keep_private_packet_and_arguments_private(case, report):
+    a = prepare(case)
+    record(case, a, evidence(a, report), report)
+    public = json.dumps(pm.receipts(case.tr, case.issue.id))
+    assert str(case.root) not in public
+    assert str(case.args["output_dir"]) not in public
+    assert "Goal:" not in public
+    assert "retained premerge snapshot" not in public
+    assert "inspected historical diff" not in public
+    assert "arguments_hash" in public and "history_hash" in public
+
+
+def test_claude_descriptor_uses_shared_logical_facade(case):
+    a = prepare(case, "claude")
+    assert a["launch_arguments"]["subagent_type"] == "foundry:maigret"
+    assert "BEGIN ROLE CONTRACT" in a["arguments"]["prompt"]
+    assert a["arguments"]["max_turns"] == 24
+
+
+def test_guard_rejects_naked_newlines_in_emitted_reader(case):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("guard_newline", Path(__file__).parents[1] / "hooks/guard_routed_readonly.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    a = prepare(case)
+    command = a["arguments"]["message"].split("Advisory verifier: ", 1)[1].splitlines()[0]
+    for separator in ("\n", "\r", "\r\n"):
+        assert not guard.allows_verified_diff(command.replace("--root ", "--root" + separator))
+
+
+def test_prepare_collision_is_consumed_and_never_returns_packet(case):
+    original = case.tr.add_comment
+    def collide(issue_id, text):
+        original(issue_id, text)
+        original(issue_id, text)
+    case.tr.add_comment = collide
+    with pytest.raises(RoutingConfigError, match="readback ambiguous"):
+        prepare(case)
+    assert not case.args["output_dir"].exists()
+
+
+def test_record_collision_stops_without_verdict(case, report):
+    a = prepare(case)
+    duplicate = json.loads(case.issue.comments[0]["text"][len(pm.PREFIX):])
+    duplicate["attempt_id"] = "f" * 64
+    case.issue.comments.append({"text": pm.PREFIX + json.dumps(duplicate)})
+    with pytest.raises(RoutingConfigError, match="authorization collision"):
+        record(case, a, evidence(a, report), report)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+def test_advisory_git_is_deterministic_and_disables_lazy_fetch(case, monkeypatch):
+    git(case.root, "config", "diff.noprefix", "true")
+    git(case.root, "config", "diff.mnemonicPrefix", "true")
+    git(case.root, "config", "diff.algorithm", "minimal")
+    a = prepare(case)
+    assert pm.read(root=case.root, packet_dir=case.args["output_dir"], attempt_id=a["attempt_id"], packet_hash=a["packet_hash"])
+    import subprocess
+    real = subprocess.run
+    observed = []
+    def capture(*args, **kwargs):
+        observed.append(kwargs.get("env", {}).get("GIT_NO_LAZY_FETCH"))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", capture)
+    pm.historical_diff(case.root, case.coords, case.ch)
+    assert observed and set(observed) == {"1"}
+
+
+def test_real_linear_comment_requires_project_and_advisory_uses_write_tier(case, monkeypatch):
+    from test_linear_tracker import PROJECT, LinearWire
+    from foundry.trackers.linear import LinearTracker, LinearBindingError
+    wire = LinearWire()
+    tracker = LinearTracker(token="fixture-secret", transport=wire)
+    tracker._activate(PROJECT)
+    with pytest.raises(LinearBindingError, match="mutation_project_required"):
+        tracker.add_comment("LIN-1", "fixture")
+    case.tr = tracker
+    case.args["tracker_port"] = tracker
+    case.args["issue_id"] = "LIN-1"
+    case.args["authorization"]["issue"] = "LIN-1"
+    git(case.root, "config", "remote.origin.url", "https://github.com/acme/widgets.git")
+    calls = []
+    monkeypatch.setattr(tracker, "resolve_checkout_project", lambda *args, **kwargs: PROJECT)
+    monkeypatch.setattr(tracker, "validate_mutation_repository", lambda repo, identity: calls.append((repo, identity)))
+    monkeypatch.setattr(tracker, "validate_mutation_project", lambda project: calls.append(project))
+    a = prepare(case)
+    assert a["issue"] == "LIN-1"
+    assert PROJECT in calls
+    assert any(isinstance(item, tuple) and item[1] == PROJECT.extra["canonical_repo"] for item in calls)
+    assert pm.receipts(tracker, "LIN-1")[0]["type"] == "authorized_attempt"
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_emitted_reader_executes_with_selected_plugin(case, host, monkeypatch, tmp_path):
+    import os
+    import shutil
+    import subprocess
+    plugin = Path(__file__).parents[1]
+    installed = tmp_path / "selected-plugin"
+    shutil.copytree(plugin, installed)
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(installed))
+    a = prepare(case, host)
+    prompt = a["arguments"].get("message", a["arguments"].get("prompt", ""))
+    command = prompt.split("Advisory verifier: ", 1)[1].splitlines()[0]
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("selected_guard", installed / "hooks/guard_routed_readonly.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    if host == "claude":
+        assert guard.allows_verified_diff(command)
+    env = dict(os.environ)
+    if host == "codex":
+        env.pop("CLAUDE_PLUGIN_ROOT", None)
+    output = subprocess.run(command, shell=True, cwd=case.root, env=env, capture_output=True)
+    assert output.returncode == 0, output.stderr
+    assert output.stdout == (case.args["output_dir"] / "diff.patch").read_bytes()
+
+
+@pytest.mark.parametrize("fault,consumed,publication,reason", [
+    ("coordinates", "no", "no", "merged PR coordinates disagree"),
+    ("write-interrupted", "unknown", "unknown", "controlled operation failure"),
+    ("packet-failure", "yes", "yes", "controlled operation failure"),
+])
+def test_cli_safe_reason_and_effect_status(case, monkeypatch, capsys, fault, consumed, publication, reason):
+    from foundry.routing import main
+    def cli(_args):
+        if fault == "coordinates":
+            case.pr.merge_sha = "f" * 40
+        elif fault == "write-interrupted":
+            original = case.tr.add_comment
+            def fail(issue_id, text):
+                original(issue_id, text)
+                raise KeyboardInterrupt("private-path-secret-payload")
+            case.tr.add_comment = fail
+        else:
+            monkeypatch.setattr(pm.os, "open", lambda *a, **k: (_ for _ in ()).throw(OSError("private-path-secret-payload")))
+        return prepare(case)
+    monkeypatch.setattr(pm, "cli", cli)
+    with pytest.raises(SystemExit) as failure:
+        main(["postmerge-review", "prepare", "--root", str(case.root), "--issue", case.issue.id,
+              "--coordinates-file", "fixture", "--authorization-file", "fixture", "--history-file", "fixture",
+              "--output-dir", "fixture", "--host", "codex"])
+    assert failure.value.code == 2
+    text = capsys.readouterr().err
+    assert reason in text
+    assert f"authorization_consumed={consumed}" in text
+    assert f"publication={publication}" in text
+    assert "private-path-secret-payload" not in text
+
+
+def test_prepare_collision_after_verified_write(case):
+    original = case.tr.observe_issue
+    reads = 0
+    def observe(issue_id):
+        nonlocal reads
+        reads += 1
+        result = original(issue_id)
+        if reads == 3:
+            duplicate = json.loads(result.comments[0]["text"][len(pm.PREFIX):])
+            duplicate["attempt_id"] = "f" * 64
+            result.comments.append({"text": pm.PREFIX + json.dumps(duplicate)})
+        return result
+    case.tr.observe_issue = observe
+    with pytest.raises(RoutingConfigError, match="authorization collision"):
+        prepare(case)
+    assert not case.args["output_dir"].exists()
+    assert pm.PUBLICATION.get() == "yes"
+
+
+def test_stopped_submission_is_retained_privately(case, report):
+    a = prepare(case)
+    e = evidence(a, report)
+    e["return"]["status"] = "failed"
+    e["call"]["source"] = str(case.root / "private-native-log")
+    with pytest.raises(RoutingConfigError, match="distinct correlated child return"):
+        record(case, a, e, report)
+    submitted = json.loads((case.args["output_dir"] / "submission.json").read_text())
+    assert submitted == {"evidence": e, "report": report}
+    assert str(case.root) not in json.dumps(pm.receipts(case.tr, case.issue.id))
+
+
+def test_claude_facade_selected_route_overrides_independent_policy_resolution(case, monkeypatch):
+    from foundry import routing_facades as rf
+    from dataclasses import replace
+    original = rf.claude_route_plan
+    def plan(*args, **kwargs):
+        callback = kwargs["_preclaim_validate"]
+        def capture(resolution):
+            resolution = dict(resolution)
+            resolution["route"] = replace(resolution["route"], model="opus-5.5", effort="xhigh")
+            callback(resolution)
+        kwargs["_preclaim_validate"] = capture
+        return original(*args, **kwargs)
+    monkeypatch.setattr(rf, "claude_route_plan", plan)
+    a = prepare(case, "claude")
+    assert a["route"]["model"] == "opus-5.5" and a["route"]["effort"] == "xhigh"
+    assert a["arguments"]["subagent_type"] == "foundry:routed-readonly-xhigh-opus-5.5"
+
+
+def test_advisory_diff_ignores_color_and_rename_configuration(case):
+    git(case.root, "checkout", "-q", "--detach", case.coords["head"])
+    base = case.coords["head"]
+    git(case.root, "mv", "source", "renamed")
+    git(case.root, "commit", "-qm", "rename")
+    head = git(case.root, "rev-parse", "HEAD")
+    case.coords.update(base=base, head=head, merge=head)
+    case.pr.base_sha, case.pr.sha, case.pr.merge_sha = base, head, head
+    git(case.root, "config", "diff.renames", "false")
+    initial = pm.advisory_git(case.root, "diff", "--binary", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--submodule=short", f"{base}...{head}")
+    case.coords["diff_hash"] = hashlib.sha256(initial).hexdigest()
+    git(case.root, "config", "diff.renames", "true")
+    git(case.root, "config", "color.ui", "always")
+    assert pm.historical_diff(case.root, case.coords, case.ch) == initial
+
+
+def test_reused_authorization_diagnostic_is_verified_consumed(case, tmp_path):
+    prepare(case)
+    case.args["output_dir"] = tmp_path / "retry"
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
+        prepare(case)
+    assert pm.PUBLICATION.get() == "yes"
+    assert pm.WRITE_EFFECT.get() == "no"
+
+
+def test_public_history_identities_refuse_paths(case):
+    case.args["history"]["issue"]["version"] = str(case.root / "private-history")
+    with pytest.raises(RoutingConfigError, match="public historical identity/version invalid"):
         prepare(case)
     assert case.issue.comments == []

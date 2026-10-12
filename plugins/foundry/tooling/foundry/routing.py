@@ -2392,7 +2392,7 @@ def main(
             command.add_argument("--host", required=True, choices=("codex", "claude"))
         else:
             command.add_argument("--attempt-id", required=True)
-            for option in (("packet-dir", "packet-hash") if action == "read" else ("evidence-file", "report-file")):
+            for option in (("packet-dir", "packet-hash") if action == "read" else ("packet-dir", "evidence-file", "report-file")):
                 command.add_argument("--" + option, required=True)
     prepare = sub.add_parser("prepare-review", help="write a private bounded reviewer packet")
     prepare.add_argument("--issue", required=True)
@@ -2681,11 +2681,15 @@ def main(
     args = parser.parse_args(argv)
     try:
         if args.command == "postmerge-review":
-            from foundry.postmerge_review import cli
+            from foundry.postmerge_review import cli, PUBLICATION, WRITE_EFFECT, REASONS
+            PUBLICATION.set("no")
+            WRITE_EFFECT.set("no")
             try:
                 result = cli(args)
-            except (Exception, SystemExit):
-                print("Postmerge advisory operation refused.", file=sys.stderr)
+            except (Exception, SystemExit, KeyboardInterrupt) as exc:
+                reason = str(exc).removeprefix("Postmerge review refused: ")
+                reason = reason if isinstance(exc, RoutingConfigError) and reason in REASONS else "controlled operation failure"
+                print(f"Postmerge advisory refused: {reason}; authorization_consumed={PUBLICATION.get()}; publication={WRITE_EFFECT.get()}.", file=sys.stderr)
                 raise SystemExit(2) from None
             if result is not None:
                 print(json.dumps(result, indent=2))

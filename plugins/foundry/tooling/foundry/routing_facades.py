@@ -135,8 +135,8 @@ CODEX_ROLES = {
         16_000,
         "Run the Foundry two-stage review strictly read-only from this blank context. "
         "For an advisory postmerge packet use only its routing postmerge-review read verifier, "
-        "and return an advisory report without a merge proof; otherwise "
-        "read the diff only through the claimed-hash verifier. Independently use "
+        "and return an advisory report without a merge proof. In premerge mode, "
+        "read the diff only through the claimed-hash verifier and independently use "
         "routing search-review/list-review with the same claim coordinates for literal "
         "text and path checks at the claimed HEAD. Report observed evidence and query "
         "limits. Do not edit files or delegate. No arbitrary shell/Python, tests/builds "

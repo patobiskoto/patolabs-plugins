@@ -71,7 +71,7 @@ def validate_state(state: str) -> str:
     return state
 
 
-def mutation_project(tracker):
+def mutation_project(tracker, *, cwd=None):
     """Resolve the current repo binding for adapters that require write isolation."""
     requires_binding = getattr(tracker, "requires_mutation_binding", False)
     if not requires_binding:
@@ -79,12 +79,14 @@ def mutation_project(tracker):
         if callable(legacy_validator):
             legacy_validator()
         return None
-    repo = registry.repo_basename()
+    repo = (registry.repo_basename() if cwd is None
+            else registry.repo_basename(cwd=cwd, use_env=False))
     validator = getattr(tracker, "validate_mutation_repository", None)
     if not callable(validator):
         return tracker.resolve_project(repo)
     try:
-        checkout_identity = registry.checkout_repository_identity()
+        checkout_identity = (registry.checkout_repository_identity() if cwd is None
+                             else registry.checkout_repository_identity(cwd))
     except ValueError as exc:
         raise SystemExit(
             "Binding de mutation refusé : identité du remote origin invalide ou absente."
@@ -214,9 +216,9 @@ def record_delivery_receipt(
     return tracker.record_delivery_receipt(project, receipt)
 
 
-def issue_binding(tracker, *issue_ids):
+def issue_binding(tracker, *issue_ids, cwd=None):
     """Resolve and validate the current project before any issue-derived side effect."""
-    project = mutation_project(tracker)
+    project = mutation_project(tracker) if cwd is None else mutation_project(tracker, cwd=cwd)
     if project is not None:
         tracker.validate_issue_binding(project, *issue_ids)
     return project
@@ -330,10 +332,13 @@ def link(tracker, src_id: str, link_type: str, dst_id: str) -> None:
     tracker.link(src_id, link_type, dst_id, **kwargs)
 
 
-def add_comment(tracker, issue_id: str, text: str) -> None:
+def add_comment(tracker, issue_id: str, text: str, *, cwd=None, _before_write=None) -> None:
     """Append a comment with the current repository binding when required."""
-    binding = issue_binding(tracker, issue_id)
+    binding = (issue_binding(tracker, issue_id) if cwd is None
+               else issue_binding(tracker, issue_id, cwd=cwd))
     kwargs = {"project": binding} if binding is not None else {}
+    if _before_write is not None:
+        _before_write()
     tracker.add_comment(issue_id, text, **kwargs)
 
 

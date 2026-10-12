@@ -20,7 +20,9 @@ never rearm an original claim or call `record-review-proof` for an advisory repo
 After the direct human decision, pass the exact audit ticket, repository, PR,
 base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
 or a previous decision for a different attempt does not suffice (PAT-ADR-0019).
-Run `prepare` once, then launch the exact returned native descriptor in a new child:
+Run `prepare` once, then launch its private `launch_arguments` descriptor in a new
+child; Claude uses logical `foundry:maigret` through `route_tool_input`
+(`postmerge_review.py::invocation`):
 Codex `spawn_agent` with `fork_turns=none`, or Claude `Agent` without `resume`.
 Transcribe actual call arguments, child identity and distinct return into the typed
 native evidence; a prepared plan is insufficient (`native_evidence`). Stop without
@@ -30,7 +32,10 @@ an authenticated transcript or proof of a native sandbox.
 The child reads only through the packet's exact `routing postmerge-review read`
 command and reads the named historical snapshots. Review historical criteria first,
 then quality; return findings and evidence instead of mergeable acceptance proof.
-The coordinator records once through `record`; submit defects to `foundry:intake`
+The coordinator records once through `record --packet-dir <private packet>`; public
+receipts retain bound digests and historical identities/versions, and the full
+descriptor, snapshots and report remain private (`public_attempt`, `record`).
+Submit defects to `foundry:intake`
 without implicit edits, merge, closure, publication or promotion. This branch ends
 here. The normal premerge path below retains its existing claim and deduplication.
 

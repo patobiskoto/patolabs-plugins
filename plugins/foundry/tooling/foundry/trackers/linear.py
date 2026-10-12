@@ -4700,7 +4700,7 @@ class LinearTracker(Tracker):
             raise LinearTrackerError("normalize", None, "invalid_response")
         comments = []
         if "comments" in raw:
-            from foundry.postmerge_review import PREFIX as advisory_prefix
+            from foundry.advisory_schema import PREFIX as advisory_prefix
             native_comments = _connection(raw["comments"], "normalize.comments")
             if any(not isinstance(row.get("body"), str) for row in native_comments):
                 raise LinearTrackerError("normalize", None, "invalid_response")

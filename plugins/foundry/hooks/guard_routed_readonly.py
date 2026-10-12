@@ -25,6 +25,8 @@ def is_safe_absolute_root(value: str) -> bool:
 
 def allows_verified_diff(command: str) -> bool:
     """Allow only the shared claimed readers, with no shell composition."""
+    if "\r" in command or "\n" in command:
+        return False
     try:
         tokens = shlex.split(command, posix=True)
     except ValueError:
