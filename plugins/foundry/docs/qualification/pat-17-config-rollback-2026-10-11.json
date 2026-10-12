@@ -1,0 +1,237 @@
+{
+  "schema": "foundry.pat17-config-rollback.v1",
+  "date": "2026-10-11",
+  "source_head": "91ffa19161d03875ba73cd7493639edfb45808e7",
+  "evidence_kind": "configuration_only",
+  "native_calls": 0,
+  "rows": [
+    {
+      "host": "codex",
+      "role": "scout",
+      "tier": "economy",
+      "current": {
+        "model": "gpt-6-luna",
+        "effort": "low"
+      },
+      "rollback": {
+        "model": "gpt-5.6-luna",
+        "effort": "low"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "low",
+        "agent_type": "explorer",
+        "fork_turns": "none"
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "codex",
+      "role": "implementer",
+      "tier": "balanced",
+      "current": {
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "rollback": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "medium",
+        "agent_type": "worker",
+        "fork_turns": "none"
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "codex",
+      "role": "reviewer",
+      "tier": "frontier",
+      "current": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "high",
+        "agent_type": "reviewer",
+        "fork_turns": "none"
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "codex",
+      "role": "architect",
+      "tier": "apex",
+      "current": {
+        "model": "gpt-6.1-sol",
+        "effort": "max"
+      },
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "max",
+        "agent_type": "default",
+        "fork_turns": "none"
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "claude",
+      "role": "scout",
+      "tier": "economy",
+      "current": {
+        "model": "haiku-5.5",
+        "effort": "medium"
+      },
+      "rollback": {
+        "model": "haiku-4.5",
+        "effort": null
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "profile": "routed-readonly-none-haiku-4.5",
+        "agent_model": null,
+        "transmitted_model": "claude-haiku-4-5",
+        "effort_parameters": {
+          "requested": null,
+          "transmitted": null,
+          "status": "not_applicable",
+          "observed": null
+        }
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "claude",
+      "role": "implementer",
+      "tier": "balanced",
+      "current": {
+        "model": "sonnet-5.5",
+        "effort": "medium"
+      },
+      "rollback": {
+        "model": "sonnet-5",
+        "effort": "medium"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "profile": "routed-worker-medium-sonnet-5",
+        "agent_model": null,
+        "transmitted_model": "claude-sonnet-5",
+        "effort_parameters": {
+          "requested": "medium",
+          "transmitted": "medium",
+          "status": "requested",
+          "observed": null
+        }
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "claude",
+      "role": "reviewer",
+      "tier": "frontier",
+      "current": {
+        "model": "opus-5.5",
+        "effort": "high"
+      },
+      "rollback": {
+        "model": "opus-5",
+        "effort": "high"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "profile": "routed-readonly-high-opus-5",
+        "agent_model": null,
+        "transmitted_model": "claude-opus-5",
+        "effort_parameters": {
+          "requested": "high",
+          "transmitted": "high",
+          "status": "requested",
+          "observed": null
+        }
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    },
+    {
+      "host": "claude",
+      "role": "architect",
+      "tier": "apex",
+      "current": {
+        "model": "opus-5.5",
+        "effort": "high"
+      },
+      "rollback": {
+        "model": "fable-5",
+        "effort": "high"
+      },
+      "cli_resolve": "passed",
+      "constructed_invocation": {
+        "profile": "routed-readonly-high-fable-5",
+        "agent_model": null,
+        "transmitted_model": "claude-fable-5",
+        "effort_parameters": {
+          "requested": "high",
+          "transmitted": "high",
+          "status": "requested",
+          "observed": null
+        }
+      },
+      "unrelated_configuration_preserved": true,
+      "existing_policy_restored_byte_exact": true,
+      "absent_policy_restored_to_absence": true,
+      "native_host_called": false,
+      "executed_identity": null,
+      "backend_availability": "unknown"
+    }
+  ]
+}

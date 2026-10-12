@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- PAT-17: consolidates existing model decisions for four roles on each host in
+  `docs/model-decisions-2026-10-11.md`. Eight configuration rollback exercises pass
+  on disposable policies through CLI resolution and constructed facade plans;
+  native backend acceptance remains unknown. Adds an explicit Claude incumbent
+  mapping and `scripts/check_model_rollback.py --out`, preserves historical reports,
+  and records the observed PAT-164 refusal without changing routing defaults.
+
 - PAT-176: the reviewer can independently search literal text and list regular
   tracked paths at its active claim's immutable HEAD through `routing search-review`
   and `routing list-review`. The Claude Bash guard allows only these claimed readers
