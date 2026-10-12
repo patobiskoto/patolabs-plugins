@@ -9,6 +9,14 @@
   mapping and `scripts/check_model_rollback.py --out`, preserves historical reports,
   and records the observed PAT-164 refusal without changing routing defaults.
 
+- PAT-174: `routing prepare-review` generates a private bounded reviewer packet and
+  send text with the four verifier coordinates, after checking the immutable PR
+  base/head and active claim. Tool-read facts and unverified coordinator declarations
+  are separate; no tracker/PR writes or host/model launches occur. `review-pr` and
+  `merge-pr` use this command. The CodeHost PR model carries an optional description
+  (`body`), read by GitHub `get_pr`. Options, limits and private outputs are documented
+  in `docs/review-packet.md` (R5: updated); gates and claim recovery remain unchanged.
+
 - PAT-194: documentation only; settles deferred PAT-193 remarks. Both README files
   record the observed 1.2.0 tag, installed versions and loaded Codex session version,
   with Claude's loaded session version unknown; sources are in

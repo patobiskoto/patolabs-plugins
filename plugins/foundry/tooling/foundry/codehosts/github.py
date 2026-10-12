@@ -95,12 +95,13 @@ class GitHubCodeHost(CodeHost):
         out = self._gh("api", f"repos/{repo}/pulls/{number}",
                        "--jq", "{number,html_url,head:.head.ref,base:.base.ref,"
                                "base_sha:.base.sha,sha:.head.sha,state,merged,"
-                               "merge_sha:.merge_commit_sha}")
+                               "merge_sha:.merge_commit_sha,body}")
         d = json.loads(out)
         return PullRequest(number=d["number"], url=d["html_url"], head=d["head"],
                            base=d["base"], base_sha=d.get("base_sha"), sha=d["sha"],
                            merged=d["merged"], merge_sha=d.get("merge_sha"),
-                           state=d.get("state", "closed" if d["merged"] else "open"))
+                           state=d.get("state", "closed" if d["merged"] else "open"),
+                           body=d.get("body"))
 
     _PER_PAGE = 100
 

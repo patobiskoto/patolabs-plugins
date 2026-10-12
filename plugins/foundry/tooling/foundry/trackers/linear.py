@@ -4460,8 +4460,9 @@ class LinearTracker(Tracker):
     def read_scope(self):
         """PAT-168: one read-only command reads each issue reference at most once.
 
-        Opened only by the read-only ``query`` commands (``query.py``), for the duration
-        of one command, never nested: opening it while it is already open raises
+        Opened by the read-only ``query`` commands (``query.py``) and PAT-174
+        ``routing prepare-review`` (``review_packet.py``), around their tracker reads,
+        never nested: opening it while it is already open raises
         ``LinearReadScopeError`` instead of replacing the outer scope. A separate layer
         under ``graph_snapshot``: that stack still decides first, and keeps its own
         per-snapshot contract. Only successful issue reads are stored (a failure is read
