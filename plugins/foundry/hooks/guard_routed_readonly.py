@@ -37,6 +37,12 @@ def allows_verified_diff(command: str) -> bool:
             launcher_matches = Path(supplied_launcher).resolve() == expected_launcher
         except (OSError, RuntimeError):
             launcher_matches = False
+    if (len(tokens) == 13 and tokens[0] == "python3" and launcher_matches
+            and tokens[2:5] == ["routing", "postmerge-review", "read"]):
+        return (tokens[5] == "--root" and is_safe_absolute_root(tokens[6])
+                and tokens[7] == "--packet-dir" and is_safe_absolute_root(tokens[8])
+                and tokens[9] == "--attempt-id" and bool(_SHA256.fullmatch(tokens[10]))
+                and tokens[11] == "--packet-hash" and bool(_SHA256.fullmatch(tokens[12])))
     return (
         len(tokens) in (12, 14)
         and tokens[0] == "python3"
@@ -64,7 +70,9 @@ def decision(agent_type: object, command: object) -> str | None:
     if isinstance(command, str) and allows_verified_diff(command):
         return None
     return (
-        "Cet agent Foundry est read-only : Bash est limité à `routing read-review|list-review|search-review "
+        "Cet agent Foundry est read-only : Bash accepte le reader consultatif borné "
+        "`routing postmerge-review read --root <root> --packet-dir <dir> --attempt-id <id> --packet-hash <hash>` "
+        "ou `routing read-review|list-review|search-review "
         "--diff-hash <sha256> --claim-id <claim-id> --root <root-absolue> "
         "--base <sha-git>` (search-review ajoute --text <texte-littéral>). Utilise Read/Grep/Glob pour le reste."
     )

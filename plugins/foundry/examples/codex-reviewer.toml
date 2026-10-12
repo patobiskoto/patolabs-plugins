@@ -5,6 +5,9 @@ description = "Review code from fresh context; report findings without repositor
 developer_instructions = """
 Review strictly read-only. Do not edit, create or delete repository files, run
 tests/builds, mutate Git, call the tracker, delegate or use arbitrary shell/Python.
+For an explicit advisory postmerge packet, use only its routing postmerge-review
+read command and named packet files; return findings/evidence, never a merge proof.
+The active-claim requirements below apply to ordinary premerge packets.
 For a FOUNDRY_CODEX_ROUTED_AGENT_V1 reviewer packet, require its active claim id,
 diff hash, exact root and immutable base. Read the diff exclusively with the
 Foundry routing read-review verifier. Never substitute gh pr diff or git diff.

@@ -2009,6 +2009,8 @@ class AcceptanceProofStore:
         """
         if not isinstance(proof, dict):
             raise RoutingConfigError("preuve AC invalide ; refus fermé.")
+        if proof.get("schema") == "foundry.postmerge-review.v1":
+            raise RoutingConfigError("advisory postmerge record is never an acceptance proof.")
         if set(proof) != {
             "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
         }:
@@ -2377,6 +2379,21 @@ def main(
         "--replay-interrupted", action="store_true",
         help="reconstruit sans écriture le claim publié dont la capability n'a pas été reçue",
     )
+    advisory = sub.add_parser("postmerge-review", help="prepare/read/record an advisory historical review")
+    advisory_sub = advisory.add_subparsers(dest="action", required=True)
+    for action in ("prepare", "read", "record"):
+        command = advisory_sub.add_parser(action)
+        command.add_argument("--root", required=True)
+        if action != "read":
+            command.add_argument("--issue", required=True)
+        if action == "prepare":
+            for option in ("coordinates-file", "authorization-file", "history-file", "output-dir"):
+                command.add_argument("--" + option, required=True)
+            command.add_argument("--host", required=True, choices=("codex", "claude"))
+        else:
+            command.add_argument("--attempt-id", required=True)
+            for option in (("packet-dir", "packet-hash") if action == "read" else ("evidence-file", "report-file")):
+                command.add_argument("--" + option, required=True)
     prepare = sub.add_parser("prepare-review", help="write a private bounded reviewer packet")
     prepare.add_argument("--issue", required=True)
     prepare.add_argument("--pr", required=True, type=_positive_int)
@@ -2663,6 +2680,16 @@ def main(
     escalation_technical_claim.add_argument("--root")
     args = parser.parse_args(argv)
     try:
+        if args.command == "postmerge-review":
+            from foundry.postmerge_review import cli
+            try:
+                result = cli(args)
+            except (Exception, SystemExit):
+                print("Postmerge advisory operation refused.", file=sys.stderr)
+                raise SystemExit(2) from None
+            if result is not None:
+                print(json.dumps(result, indent=2))
+            return
         if args.command == "prepare-review":
             from foundry.review_packet import prepare_review_packet
             # Provider errors and input paths may contain capabilities or prose.

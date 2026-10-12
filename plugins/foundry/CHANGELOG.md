@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- PAT-200: adds advisory `routing postmerge-review prepare|read|record`, exact
+  historical diff checks and append-only tracker attempts/reports, separate from
+  original claims and delivery proofs. Default tracker support is Linear-only;
+  advisory receipts survive its recent-comment display window (`linear.py::_to_issue`).
+  Native evidence is structurally checked
+  coordinator transcription, not direct host observation (`postmerge_review.py`).
+  See `docs/postmerge-review.md` and the advisory branch of `review-pr`.
+
 - PAT-17: consolidates existing model decisions for four roles on each host in
   `docs/model-decisions-2026-10-11.md`. Eight configuration rollback exercises pass
   on disposable policies through CLI resolution and constructed facade plans;
@@ -11,7 +19,7 @@
 
 - PAT-176: the reviewer can independently search literal text and list regular
   tracked paths at its active claim's immutable HEAD through `routing search-review`
-  and `routing list-review`. The Claude Bash guard allows only these claimed readers
+  and `routing list-review`. For premerge, the Claude Bash guard allows these claimed readers
   and the existing diff verifier. Query limits, evidence scope and the prompt-only
   Codex compatibility template are documented in `docs/reviewer-queries.md`.
 

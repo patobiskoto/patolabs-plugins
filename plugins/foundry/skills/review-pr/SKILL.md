@@ -4,14 +4,38 @@ description: >
   Reviews a branch or PR diff at blank context before merge in two stages: acceptance
   criteria compliance, then bugs, regressions, conventions, ADRs, scope, security, and
   tests. Strictly read-only. USE WHEN merge-pr needs its independent review gate or the
-  user asks for a Foundry pre-merge review.
+  user asks for a Foundry pre-merge review or an explicitly authorized advisory postmerge review.
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), Bash(python3:*)
 ---
 
 # review-pr — independent two-stage merge gate
 
-This skill has a caller-side orchestration step followed by the independent review. Never
-launch the reviewer before the claim below.
+## Explicit advisory postmerge mode
+
+For an explicitly authorized postmerge audit, load `docs/postmerge-review.md` first.
+Its CLI/schema/procedure sources are `postmerge_review.py::{prepare,read,record}`
+and `routing.py`'s `postmerge-review` parser. Default ports refuse providers other
+than Linear (`postmerge_review.py::ports`). Use that separate preparation path;
+never rearm an original claim or call `record-review-proof` for an advisory report.
+After the direct human decision, pass the exact audit ticket, repository, PR,
+base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
+or a previous decision for a different attempt does not suffice (PAT-ADR-0019).
+Run `prepare` once, then launch the exact returned native descriptor in a new child:
+Codex `spawn_agent` with `fork_turns=none`, or Claude `Agent` without `resume`.
+Transcribe actual call arguments, child identity and distinct return into the typed
+native evidence; a prepared plan is insufficient (`native_evidence`). Stop without
+verdict on missing correlation, inherited history or `current_context`; keep absent
+model/effort/profile observations unknown. This is coordinator transcription, not
+an authenticated transcript or proof of a native sandbox.
+The child reads only through the packet's exact `routing postmerge-review read`
+command and reads the named historical snapshots. Review historical criteria first,
+then quality; return findings and evidence instead of mergeable acceptance proof.
+The coordinator records once through `record`; submit defects to `foundry:intake`
+without implicit edits, merge, closure, publication or promotion. This branch ends
+here. The normal premerge path below retains its existing claim and deduplication.
+
+This skill has a caller-side orchestration step followed by the independent premerge
+review. Never launch a premerge reviewer before the claim below.
 
 ## Caller-side orchestration — before delegation
 

@@ -969,7 +969,8 @@ Invalid policy or a gate with no eligible model is an explicit, visible denial. 
 hook failures remain fail-open as required by ADR-0005: hooks are discipline, never a
 security boundary. An unrouted logical entrypoint has only `Read` and self-stops without
 the routed marker. Routed read-only profiles omit editing tools; their defense-in-depth
-Bash guard allows only the claimed-diff verifier during normal operation.
+Bash guard allows the claimed readers and the explicit advisory postmerge reader
+(`hooks/guard_routed_readonly.py`; [postmerge-review.md](postmerge-review.md)).
 
 ## Host detector seam
 
@@ -1408,8 +1409,9 @@ Generic aliases remain version dependent; custom full pins without a shipped pro
 are explicitly unsupported. Built-in declarations cannot be weakened by project data.
 
 Every versioned read-only profile retains `routed-readonly-` and the existing Bash
-guard: only the claimed `routing read-review`, `search-review` and `list-review`
-readers are allowed (see [reviewer-queries.md](reviewer-queries.md)). The post-tool
+guard: the claimed `routing read-review`, `search-review` and `list-review`
+readers and the explicit [advisory postmerge reader](postmerge-review.md) are allowed
+(`guard_routed_readonly.py`; see [reviewer-queries.md](reviewer-queries.md)). The post-tool
 observer still consumes its existing correlation once, independent of profile suffix.
 `transmitted_launch` describes selected profile/model/source intent. It is not execution
 metadata. Haiku's omitted frontmatter effort cannot establish observed non-applicability:

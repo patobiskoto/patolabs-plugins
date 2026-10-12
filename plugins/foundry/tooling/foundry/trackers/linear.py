@@ -4700,9 +4700,18 @@ class LinearTracker(Tracker):
             raise LinearTrackerError("normalize", None, "invalid_response")
         comments = []
         if "comments" in raw:
-            for comment in _connection(raw["comments"], "normalize.comments")[-10:]:
-                if not isinstance(comment.get("body"), str):
-                    raise LinearTrackerError("normalize", None, "invalid_response")
+            from foundry.postmerge_review import PREFIX as advisory_prefix
+            native_comments = _connection(raw["comments"], "normalize.comments")
+            if any(not isinstance(row.get("body"), str) for row in native_comments):
+                raise LinearTrackerError("normalize", None, "invalid_response")
+            recent_ordinary = {
+                index for index, row in enumerate(native_comments)
+                if not row["body"].startswith(advisory_prefix)
+            }
+            recent_ordinary = set(sorted(recent_ordinary)[-10:])
+            for index, comment in enumerate(native_comments):
+                if not comment["body"].startswith(advisory_prefix) and index not in recent_ordinary:
+                    continue
                 comments.append(
                     {
                         "text": comment["body"],
