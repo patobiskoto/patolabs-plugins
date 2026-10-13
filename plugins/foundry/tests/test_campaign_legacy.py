@@ -490,6 +490,8 @@ def test_invalid_downstream_f89_evidence_is_rejected_before_locked_directory_or_
         tracker.closure = replace(tracker.closure, closed_parent_version=7)
         expected = "transition de cloture legacy F89 invalide"
 
+    # Settle preparation's deferred SQLite checkpoints before measuring side effects.
+    gc.collect()
     before = _persistent_state(directory)
     sqlite_attempts = 0
     locked_attempts = 0
