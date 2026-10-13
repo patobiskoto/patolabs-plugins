@@ -177,6 +177,7 @@ def route_tool_input(
     environ: Mapping[str, str] | None = None,
     correlation: str | None = None,
     host_version: str | None = None,
+    _resolved_route=None,
 ) -> tuple[dict[str, object], str] | None:
     """Return the rewritten Agent input + visible context, or None if out of scope."""
     role = _logical_role(tool_input.get("subagent_type"))
@@ -190,6 +191,8 @@ def route_tool_input(
         if resolution.get("technical_remediation_local_only", False):
             return
         route = resolution["route"]
+        if _resolved_route is not None:
+            _resolved_route(route)
         task_prompt = resolution["task_prompt"]
         issue_id = resolution["issue_id"]
         remediation_authorization = resolution["remediation_authorization"]

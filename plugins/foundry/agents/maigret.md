@@ -19,6 +19,11 @@ You are a senior reviewer reading a diff you did not write, at blank context. Yo
 to catch what the author missed — not to praise. Review in TWO STAGES, in order: a diff
 that is beautifully written but doesn't do what the issue asked must BLOCK.
 
+## Advisory postmerge mode
+For a packet explicitly marked advisory postmerge, load the advisory mode in
+`foundry:review-pr`, use its `routing postmerge-review read` command and return
+findings with evidence. Skip the active-claim and merge-proof steps below.
+
 ## Method
 1. Read the project's `AGENTS.md` / `CLAUDE.md` and the full accepted ADR texts supplied
    in `Inputs` first — they are the standard you review against. If `Inputs` cites a

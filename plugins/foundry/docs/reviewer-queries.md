@@ -44,8 +44,9 @@ or a deterministic fixture run is not a native reviewer observation.
 ## Host enforcement and reproducible profile compatibility
 
 Claude's routed read-only profiles expose `Read, Grep, Glob, Bash` without edit/write
-or delegation tools. `guard_routed_readonly.py` permits only the three claimed CLI
-readers, with fixed argument ordering; it denies raw diff, tracker commands, arbitrary
+or delegation tools. `guard_routed_readonly.py` permits the three claimed CLI
+readers and the explicit advisory reader described in [postmerge-review.md](postmerge-review.md),
+with fixed argument ordering; it denies raw diff, tracker commands, arbitrary
 shell/Python, tests/builds, redirection, composition and substitution. For Bash search,
 the guard additionally refuses shell metacharacters and control characters in the
 literal text. Use the available Grep tool for such patterns; do not construct a shell
