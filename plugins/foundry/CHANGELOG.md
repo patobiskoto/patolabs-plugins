@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- PAT-202: replaces the advisory contract with observable logical Claude call and
+  correlated hook evidence, complete publishable tracker reports and separate
+  exact-readback confirmations (`postmerge_review.py::{native_evidence,record,append}`).
+  New v2 terminals remain distinct from historical v1 receipts and restore report
+  hashes without private packets (`advisory_schema.py`; `restituted_reports`).
+  Every comment is locally bounded to 12,294 UTF-8 bytes including its prefix;
+  the native maximum remains unknown (`MAX_COMMENT_BYTES`; PAT-202 dated probe).
+  Codex reuses shared packet/profile/floor validation without a premerge claim
+  (`routing_facades.py::codex_spawn_plan`). Preparation refuses implicit Claude
+  plugin selection and unsafe reader paths before consumption, and unreadable
+  packets stop without verdict (`advisory_plugin`, `prepare`, `record`).
+  R5: descriptor/evidence, v2 vocabulary/confirmation/restitution, comment bound,
+  Git prerequisites/attributes, plugin/path selection, Codex profile signals and
+  action effect statuses updated in `docs/postmerge-review.md` and `review-pr`.
+
 - PAT-200: adds advisory `routing postmerge-review prepare|read|record`, exact
   historical diff checks and append-only tracker attempts/reports, separate from
   original claims and delivery proofs. Default tracker support is Linear-only;

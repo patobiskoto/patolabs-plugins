@@ -521,6 +521,7 @@ def codex_spawn_plan(
     technical_remediation: bool = False,
     technical_remediation_id: str | None = None,
     _observe: bool = True,
+    advisory: bool = False,
 ) -> dict:
     """Build the exact, explicit Codex subagent invocation without spawning it.
 
@@ -528,6 +529,8 @@ def codex_spawn_plan(
     pure makes precedence, context isolation, review deduplication, and redaction
     deterministic and testable without a live model call.
     """
+    if type(advisory) is not bool or (advisory and (role != "reviewer" or review_claim is not None or technical_remediation)):
+        raise RoutingConfigError("advisory Codex scope requires reviewer without premerge claim or remediation.")
     if role not in CODEX_ROLES:
         raise RoutingConfigError(
             f"rôle Codex '{role}' inconnu ; attendu : {', '.join(CODEX_ROLES)}."
@@ -559,7 +562,7 @@ def codex_spawn_plan(
         plan_remediation = escalation_status["remediation_authorization"]
         plan_rearm_audit = escalation_status["remediation_rearm_audit"]
         technical_remediation_open = escalation_status["technical_remediation_open"]
-    if role == "reviewer" and not technical_remediation:
+    if role == "reviewer" and not technical_remediation and not advisory:
         diff_hash, should_run, claim_state, claim_id, verifier = _review_claim(review_claim)
         claim_payload = {
             "diff_hash": diff_hash,

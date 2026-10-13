@@ -13,11 +13,11 @@ import shutil
 import subprocess
 from contextvars import ContextVar
 
-from foundry.advisory_schema import SCHEMA, PREFIX
+from foundry.advisory_schema import SCHEMA, PREFIX, TERMINAL_SCHEMA, TERMINAL_PREFIX, MAX_COMMENT_BYTES
 from foundry import write
 
 from foundry.review_packet import MAX_ADRS, MAX_FILE_BYTES, MAX_PACKET_BYTES, _load
-from foundry.routing import RoutingConfigError, RoutingPolicy, acceptance_criteria
+from foundry.routing import RoutingConfigError, acceptance_criteria
 
 PROVENANCE = 'coordinator_transcribed_native_call_return'
 COORDINATES = {'repository', 'pr', 'base', 'head', 'merge', 'diff_hash'}
@@ -27,11 +27,17 @@ REASONS = set()
 
 
 def advisory_git(root, *args):
+    version = subprocess.run(['git', '--version'], cwd=root, capture_output=True,
+                             env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'})
+    match = re.search(rb'git version (\d+)\.(\d+)', version.stdout)
+    require(version.returncode == 0 and match and tuple(map(int, match.groups())) >= (2, 45),
+            'Git 2.45 or later required for --no-lazy-fetch')
     result = subprocess.run(
         ['git', '--no-replace-objects', '--no-lazy-fetch', '-c', 'diff.noprefix=false',
          '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.algorithm=myers',
          '-c', 'diff.indentHeuristic=true', '-c', 'diff.context=3',
-         '-c', 'diff.interHunkContext=0', '-c', 'core.quotePath=true', *args],
+         '-c', 'diff.interHunkContext=0', '-c', 'core.quotePath=true',
+         '-c', 'diff.orderFile=' + os.devnull, '-c', 'diff.suppressBlankEmpty=false', *args],
         cwd=root, capture_output=True, env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'},
     )
     require(result.returncode == 0, 'historical Git objects unavailable')
@@ -46,7 +52,7 @@ def history_identity(history):
 
 def public_attempt(attempt):
     return {key: value for key, value in attempt.items()
-            if key not in {'history', 'arguments', 'launch_arguments', 'route'}}
+            if key not in {'history', 'arguments', 'launch_arguments', 'route', 'hook_context'}}
 
 
 def digest(value):
@@ -63,6 +69,18 @@ def hex_string(value, length):
     return isinstance(value, str) and re.fullmatch('[0-9a-f]{' + str(length) + '}', value) is not None
 
 
+def comment_text(receipt):
+    prefix = (TERMINAL_PREFIX + receipt['attempt_id'] + '\n'
+              if receipt.get('schema') == TERMINAL_SCHEMA else PREFIX)
+    return prefix + json.dumps(receipt, sort_keys=True, ensure_ascii=False)
+
+
+def bounded_comment(receipt):
+    text = comment_text(receipt)
+    require(len(text.encode('utf-8')) <= MAX_COMMENT_BYTES, 'published receipt exceeds qualified bound')
+    return text
+
+
 def receipts(tracker, issue_id):
     issue = tracker.observe_issue(issue_id)
     require(issue.id == issue_id, 'issue mismatch')
@@ -71,31 +89,114 @@ def receipts(tracker, issue_id):
         text = comment.get('text', '')
         if not isinstance(text, str) or not text.startswith(PREFIX):
             continue
+        terminal = text.startswith(TERMINAL_PREFIX)
+        payload = text[len(PREFIX):]
+        attempt_id = None
+        if terminal:
+            header, _, payload = text[len(TERMINAL_PREFIX):].partition('\n')
+            attempt_id = header if hex_string(header, 64) else None
         try:
-            receipt = json.loads(text[len(PREFIX):])
+            receipt = json.loads(payload)
         except (ValueError, TypeError):
-            require(False, 'malformed advisory receipt')
-        require(isinstance(receipt, dict) and receipt.get('schema') == SCHEMA
-                and receipt.get('issue') == issue_id
-                and receipt.get('type') in {'authorized_attempt', 'advisory_report', 'stopped_without_verdict'},
-                'malformed advisory receipt')
+            receipt = None
+        if terminal:
+            valid = (isinstance(receipt, dict) and receipt.get('schema') == TERMINAL_SCHEMA
+                     and receipt.get('issue') == issue_id and receipt.get('attempt_id') == attempt_id
+                     and receipt.get('type') in {'advisory_report', 'advisory_confirmation'}
+                     and comment_text(receipt) == text)
+            if not valid:
+                receipt = {'schema': TERMINAL_SCHEMA, 'type': 'isolated_terminal',
+                           'issue': issue_id, 'attempt_id': attempt_id,
+                           'terminal_hash': hashlib.sha256(text.encode()).hexdigest()}
+        else:
+            require(isinstance(receipt, dict) and receipt.get('schema') == SCHEMA
+                    and receipt.get('issue') == issue_id
+                    and receipt.get('type') in {'authorized_attempt', 'advisory_report', 'stopped_without_verdict'},
+                    'malformed advisory receipt')
+        if receipt['type'] == 'authorized_attempt':
+            authorization = receipt.get('authorization')
+            require(isinstance(authorization, dict) and set(authorization) == {'id', 'issue', 'coordinates'}
+                    and hex_string(authorization.get('id'), 64) and authorization['issue'] == issue_id
+                    and isinstance(authorization['coordinates'], dict)
+                    and set(authorization['coordinates']) == COORDINATES
+                    and authorization['coordinates'] == receipt.get('coordinates')
+                    and hex_string(receipt.get('attempt_id'), 64), 'malformed advisory authorization')
         result.append(receipt)
     return result
 
 
-def append(tracker, issue_id, receipt, root):
-    encoded = json.dumps(receipt, sort_keys=True, ensure_ascii=False)
-    require(len(encoded.encode()) <= MAX_FILE_BYTES, 'receipt exceeds bound')
+def retain_publication_diff(packet_dir, sent, observed):
+    archive = Path(packet_dir) / 'publication-readback.json'
+    archive.write_text(json.dumps({'sent': sent, 'read': [c.get('text') for c in observed.comments
+                                                       if str(c.get('text', '')).startswith(PREFIX)]
+                                  if observed is not None else None}), encoding='utf-8')
+    archive.chmod(0o600)
+
+
+def append(tracker, issue_id, receipt, root, packet_dir=None):
+    text = bounded_comment(receipt)
     def before_write():
         WRITE_EFFECT.set('unknown')
         if receipt['type'] == 'authorized_attempt':
             PUBLICATION.set('unknown')
-    write.add_comment(tracker, issue_id, PREFIX + encoded, cwd=str(root), _before_write=before_write)
-    observed = receipts(tracker, issue_id)
-    if receipt in observed:
+    observed, write_returned = None, False
+    try:
+        write.add_comment(tracker, issue_id, text, cwd=str(root), _before_write=before_write)
+        write_returned = True
+        observed = tracker.observe_issue(issue_id)
+        require(observed.id == issue_id, 'issue mismatch')
+    except BaseException:
+        if packet_dir is not None and WRITE_EFFECT.get() != 'no':
+            if not write_returned:
+                try:
+                    observed = tracker.observe_issue(issue_id)
+                except BaseException:
+                    observed = None
+            try:
+                retain_publication_diff(packet_dir, text, observed)
+            except (OSError, ValueError, TypeError):
+                pass  # Preserve the original transport refusal, never retry the write.
+        raise
+    matches = [c.get('text') for c in observed.comments if c.get('text') == text]
+    if matches:
         WRITE_EFFECT.set('yes')
         PUBLICATION.set('yes')
-    require(observed.count(receipt) == 1, 'receipt readback ambiguous')
+    if len(matches) != 1 and packet_dir is not None:
+        # Private evidence only; no retry or compensating tracker mutation.
+        retain_publication_diff(packet_dir, text, observed)
+    require(len(matches) == 1, 'receipt readback ambiguous')
+
+
+def unbound_terminals(records):
+    authorized = {r.get('attempt_id') for r in records if r['type'] == 'authorized_attempt'}
+    return sorted(r['terminal_hash'] for r in records if r['type'] == 'isolated_terminal'
+                  and r.get('attempt_id') not in authorized)
+
+
+def restituted_reports(tracker, issue_id):
+    records = receipts(tracker, issue_id)
+    result = []
+    for receipt in records:
+        if receipt.get('schema') != TERMINAL_SCHEMA or receipt.get('type') != 'advisory_report':
+            continue
+        attempt_id = receipt['attempt_id']
+        related = [r for r in records if r.get('attempt_id') == attempt_id]
+        attempts = [r for r in related if r['type'] == 'authorized_attempt']
+        confirmations = [r for r in related if r['type'] == 'advisory_confirmation']
+        if len(attempts) != 1 or len(confirmations) != 1 or len(related) != 3:
+            continue
+        attempt, confirmation = attempts[0], confirmations[0]
+        if (sum(r.get('authorization', {}).get('id') == attempt['authorization']['id'] for r in records) != 1
+                or any(h not in attempt.get('terminal_baseline', []) for h in unbound_terminals(records))
+                or receipt.get('coordinates') != attempt.get('coordinates')
+                or receipt.get('packet_hash') != attempt.get('packet_hash')
+                or confirmation.get('receipt_hash') != digest(receipt)
+                or confirmation.get('comment_hash') != hashlib.sha256(comment_text(receipt).encode()).hexdigest()
+                or confirmation.get('report_hash') != receipt.get('report_hash')
+                or digest(receipt.get('report')) != receipt.get('report_hash')):
+            continue
+        result.append(receipt)
+    return result
 
 
 def ports(root, issue_id, tracker_port, codehost_port):
@@ -125,12 +226,23 @@ def historical_diff(root, coordinates, codehost):
     for key in ('base', 'head', 'merge'):
         require(advisory_git(root, 'cat-file', '-t', coordinates[key]).strip() == b'commit',
                 'historical commit unavailable')
+    validate_diff_attributes(root, coordinates)
     data = advisory_git(root, 'diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
                 '--src-prefix=a/', '--dst-prefix=b/', '--no-relative', '--submodule=short',
                 f"{coordinates['base']}...{coordinates['head']}")
     require(len(data) <= MAX_PACKET_BYTES and hashlib.sha256(data).hexdigest() == coordinates['diff_hash'],
             'historical diff unavailable or divergent')
     return data
+
+
+def validate_diff_attributes(root, coordinates):
+    paths = advisory_git(root, 'diff', '--name-only', '-z', '--no-renames',
+                         f"{coordinates['base']}...{coordinates['head']}").split(b'\0')
+    names = [os.fsdecode(path) for path in paths if path]
+    if names:
+        attributes = advisory_git(root, 'check-attr', '-z', 'diff', '--', *names).split(b'\0')
+        require(all(attributes[index] == b'unspecified' for index in range(2, len(attributes) - 1, 3)),
+                'historical diff attributes unsupported in current checkout')
 
 
 def validate_history(history):
@@ -155,7 +267,8 @@ def validate_history(history):
 
 def advisory_plugin(host):
     source = Path(__file__).parents[2].resolve()
-    selected = Path(os.environ.get('CLAUDE_PLUGIN_ROOT', str(source))).resolve() if host == 'claude' else source
+    require(host != 'claude' or bool(os.environ.get('CLAUDE_PLUGIN_ROOT')), 'explicit Claude plugin root required')
+    selected = Path(os.environ['CLAUDE_PLUGIN_ROOT']).resolve() if host == 'claude' else source
     for relative in ('hooks/route_agent.py', 'hooks/guard_routed_readonly.py',
                      'tooling/foundry/postmerge_review.py', 'tooling/foundry/routing_facades.py',
                      'tooling/foundry/advisory_schema.py', 'agents/maigret.md'):
@@ -164,24 +277,15 @@ def advisory_plugin(host):
     return selected
 
 
-def invocation(root, issue_id, host, message):
-    from foundry.escalation import EscalationStore
-    from foundry.routing_facades import (
-        CODEX_ROLES, _codex_execution_name, _codex_message,
-        codex_available_models,
-    )
+def invocation(root, issue_id, host, message, effective_profile=None):
+    from foundry.routing_facades import codex_spawn_plan, codex_available_models
     require(host in {'codex', 'claude'}, 'unsupported host')
     if host == 'codex':
-        policy = RoutingPolicy.load(root)
-        floor = EscalationStore.for_root(root).active_floor(issue_id, 'reviewer')
-        route = policy.resolve('reviewer', host, minimum_tier=floor,
-                               minimum_source=f'escalation:{issue_id}' if floor else None,
-                               available_models=codex_available_models(os.environ))
-        name, _ = _codex_execution_name('reviewer', None)
-        args = {'task_name': name, 'agent_type': CODEX_ROLES['reviewer'].agent_type,
-                'model': route.model, 'reasoning_effort': route.effort, 'fork_turns': 'none',
-                'message': _codex_message('reviewer', message, None, None, None)}
-        return route.to_dict(), 'spawn_agent', args, args
+        plan = codex_spawn_plan('reviewer', message, root=root, issue_id=issue_id,
+                                advisory=True, effective_profile=effective_profile,
+                                available_models=codex_available_models(os.environ), _observe=False)
+        require(plan['mode'] == 'subagent' and plan['independent_context'], 'independent Codex child required')
+        return plan['route'], 'spawn_agent', plan['spawn'], plan['spawn'], None
     import importlib.util
     import sys
     hook = advisory_plugin(host) / 'hooks' / 'route_agent.py'
@@ -197,12 +301,12 @@ def invocation(root, issue_id, host, message):
     # Logical input is launched; the host hook must produce these exact arguments.
     binding = {'profile': args['subagent_type'].removeprefix('foundry:'),
                'host_version': visible['host_version']}
-    return {**resolved[0].to_dict(), 'binding': binding}, 'Agent', args, logical
+    return {**resolved[0].to_dict(), 'binding': binding}, 'Agent', args, logical, visible
 
 
 
 def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, host,
-            tracker_port=None, codehost_port=None):
+            tracker_port=None, codehost_port=None, effective_profile=None):
     PUBLICATION.set('no')
     WRITE_EFFECT.set('no')
     root = Path(root).resolve()
@@ -222,6 +326,11 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
             'authorization already consumed; new authorization required')
     destination = Path(output_dir).absolute()
     require(not destination.exists() and not destination.is_symlink(), 'packet destination must be new')
+    guard_path = advisory_plugin(host) / 'hooks' / 'guard_routed_readonly.py'
+    import runpy
+    guard = runpy.run_path(str(guard_path))
+    require(guard['is_safe_absolute_root'](str(root)) and guard['is_safe_absolute_root'](str(destination)),
+            'reader path refused by read-only guard')
     attempt_id = secrets.token_hex(32)
     packet = {'schema': SCHEMA, 'attempt_id': attempt_id, 'issue': issue_id, 'root': str(root),
               'coordinates': coordinates, 'history': history,
@@ -244,15 +353,16 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
         'No delivery effect; defects go to foundry:intake through the coordinator.\n'
         'Done when:\nReturn JSON with findings and evidence; this is advisory only.\n'
     )
-    route, tool, arguments, logical = invocation(root, issue_id, host, message)
+    route, tool, arguments, logical, hook_context = invocation(root, issue_id, host, message, effective_profile)
     attempt = {'schema': SCHEMA, 'type': 'authorized_attempt', 'issue': issue_id,
                'attempt_id': attempt_id, 'authorization': authorization,
                'authorized_at': datetime.now(timezone.utc).isoformat(),
                'coordinates': coordinates, 'history': history, 'packet_hash': packet_hash,
                'host': host, 'route': route, 'tool': tool, 'arguments': arguments,
-               'launch_arguments': logical, 'arguments_hash': digest(arguments),
+               'terminal_baseline': unbound_terminals(previous),
+               'launch_arguments': logical, 'arguments_hash': digest(logical), 'hook_context': hook_context, 'hook_context_hash': digest(hook_context),
                'history_hash': digest(history), 'historical_identities': history_identity(history),
-               'route_hash': digest(route)}
+               'route_hash': digest(route), 'prepared_arguments_hash': digest(arguments)}
     require(len(json.dumps(attempt).encode()) <= MAX_FILE_BYTES, 'attempt exceeds bound')
     # Revalidate after routing and historical snapshot checks, before tracing authority.
     require(historical_diff(root, coordinates, ch) == data, 'historical coordinates changed')
@@ -273,9 +383,46 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
     return attempt
 
 
+CLAUDE_STABLE_FIELDS = ('role', 'selected_tier', 'model', 'effort_parameters.requested',
+                        'effort_parameters.transmitted', 'transmitted_launch.profile',
+                        'transmitted_launch.transmitted_model', 'gate_floor', 'gate_effort_floor')
+
+
+def stable_hook_route(context):
+    require(isinstance(context, dict), 'observed Claude hook route divergent')
+    values = {}
+    for field in CLAUDE_STABLE_FIELDS:
+        value = context
+        for key in field.split('.'):
+            require(isinstance(value, dict) and key in value, 'observed Claude hook route divergent')
+            value = value[key]
+        values[field] = value
+    return values
+
+
+def publishable_report(report, attempt):
+    serialized = json.dumps(report, ensure_ascii=False)
+    prohibited = [attempt['history']['issue']['body'], *(a['body'] for a in attempt['history']['adrs']),
+                  attempt['launch_arguments'].get('message', attempt['launch_arguments'].get('prompt', ''))]
+    require(not any(value and value in serialized.replace('\\n', '\n') for value in prohibited),
+            'report not publishable: private prompt or historical snapshot')
+    def inspect(value):
+        if isinstance(value, dict):
+            return all(inspect(key) and inspect(child) for key, child in value.items())
+        if isinstance(value, list):
+            return all(inspect(child) for child in value)
+        if isinstance(value, str):
+            return not re.search(r"(?:^|[\s\"'`(])/(?!/)|[A-Za-z]:[\\/]", value) and 'Goal:\n' not in value
+        return True
+    require(inspect(report), 'report not publishable: absolute local path or raw prompt')
+
+
 def native_evidence(attempt, evidence, report):
+    if attempt['host'] == 'claude' and isinstance(evidence, dict) and evidence.get('type') == PROVENANCE:
+        require('hook' in evidence, 'observed Claude hook required')
     require(isinstance(evidence, dict) and set(evidence) ==
-            {'type', 'attempt_id', 'packet_hash', 'call', 'child', 'return', 'observed'}
+            ({'type', 'attempt_id', 'packet_hash', 'call', 'child', 'return', 'observed'}
+             | ({'hook'} if attempt['host'] == 'claude' else set()))
             and evidence['type'] == PROVENANCE
             and evidence['attempt_id'] == attempt['attempt_id']
             and evidence['packet_hash'] == attempt['packet_hash'], 'typed bound native evidence required')
@@ -285,6 +432,13 @@ def native_evidence(attempt, evidence, report):
             and isinstance(call['source'], str) and call['source'].strip()
             and call['tool'] == attempt['tool'] and digest(call['arguments']) == attempt['arguments_hash'],
             'actual routed native call required; no current_context or resumed child')
+    if attempt['host'] == 'claude':
+        hook = evidence['hook']
+        require(isinstance(hook, dict) and set(hook) == {'call_id', 'source', 'context'}
+                and hook['call_id'] == call['id'] and isinstance(hook['source'], str) and hook['source'].strip(),
+                'observed Claude hook call correlation required')
+        require(stable_hook_route(hook['context']) == stable_hook_route(attempt['hook_context']),
+                'observed Claude hook route divergent')
     require(isinstance(child, dict) and set(child) == {'id', 'call_id'}
             and isinstance(child['id'], str) and child['id'] and child['call_id'] == call['id'],
             'new native child identity and call correlation required')
@@ -307,13 +461,20 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
     attempts = [r for r in prior if r.get('attempt_id') == attempt_id and r['type'] == 'authorized_attempt']
     PUBLICATION.set('yes' if attempts else 'no')
     require(len(attempts) == 1 and not any(r.get('attempt_id') == attempt_id
-            and r['type'] != 'authorized_attempt' for r in prior), 'attempt absent, ambiguous or terminal')
+            and r['type'] != 'authorized_attempt' for r in prior)
+            and not any(h not in attempts[0].get('terminal_baseline', []) for h in unbound_terminals(prior)),
+            'attempt absent, ambiguous or terminal')
     attempt = attempts[0]
     PUBLICATION.set('yes')
     try:
-        private = _load(Path(packet_dir) / 'invocation.json')
+        try:
+            private = _load(Path(packet_dir) / 'invocation.json')
+            require(isinstance(private, dict), 'private packet unreadable')
+            read(root=root, packet_dir=packet_dir, attempt_id=attempt_id, packet_hash=attempt['packet_hash'])
+        except (OSError, ValueError, TypeError):
+            require(False, 'private packet unreadable')
+        PUBLICATION.set('yes')
         require(public_attempt(private) == attempt, 'private invocation receipt mismatch')
-        read(root=root, packet_dir=packet_dir, attempt_id=attempt_id, packet_hash=attempt['packet_hash'])
         submitted = {'evidence': evidence, 'report': report}
         encoded = json.dumps(submitted).encode()
         require(len(encoded) <= MAX_FILE_BYTES, 'submission exceeds bound')
@@ -340,11 +501,12 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
                     and isinstance(finding['evidence'], list) and finding['evidence']
                     and all(item in report['evidence'] for item in finding['evidence']),
                     'each finding requires its report evidence')
-        native_evidence(attempt, evidence, report)
+        publishable_report(report, private)
+        native_evidence(private, evidence, report)
         child_hash = digest(evidence['child']['id'])
         require(not any(r.get('child_hash') == child_hash for r in prior),
                 'native child already used by another attempt')
-        receipt = {'schema': SCHEMA, 'type': 'advisory_report', 'issue': issue_id,
+        receipt = {'schema': TERMINAL_SCHEMA, 'type': 'advisory_report', 'issue': issue_id,
                    'attempt_id': attempt_id, 'recorded_at': datetime.now(timezone.utc).isoformat(),
                    'coordinates': attempt['coordinates'], 'history_hash': attempt['history_hash'],
                    'historical_identities': attempt['historical_identities'],
@@ -352,8 +514,19 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
                    'child_hash': child_hash, 'route_hash': attempt['route_hash'],
                    'host': attempt['host'], 'packet_hash': attempt['packet_hash'],
                    'verification': 'structural_only_coordinator_transcription',
-                   'delivery_effect': 'none', 'defect_action': 'foundry:intake'}
-        require(len(json.dumps(receipt).encode()) <= MAX_FILE_BYTES, 'report exceeds bound')
+                   'delivery_effect': 'none', 'defect_action': 'foundry:intake', 'report': report,
+                   'launch_evidence': {'tool': evidence['call']['tool'],
+                       'call_hash': digest(evidence['call']['id']),
+                       'arguments_hash': digest(evidence['call']['arguments']),
+                       'child_hash': child_hash, 'return_status': evidence['return']['status'],
+                       'report_hash': evidence['return']['report_hash'], 'observed': evidence['observed'],
+                       'hook_route': stable_hook_route(evidence['hook']['context']) if attempt['host'] == 'claude' else None}}
+        publishable_report(receipt, private)
+        bounded_comment(receipt)
+        confirmation = {'schema': TERMINAL_SCHEMA, 'type': 'advisory_confirmation', 'issue': issue_id,
+                        'attempt_id': attempt_id, 'receipt_hash': digest(receipt), 'report_hash': digest(report),
+                        'comment_hash': hashlib.sha256(comment_text(receipt).encode()).hexdigest()}
+        bounded_comment(confirmation)
         # Both native validation and report serialization precede the final fresh read.
         historical_diff(root, attempt['coordinates'], ch)
     except RoutingConfigError:
@@ -365,7 +538,9 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
             stopped['child_hash'] = digest(child['id'])
         append(tr, issue_id, stopped, root)
         raise
-    append(tr, issue_id, receipt, root)
+    append(tr, issue_id, receipt, root, packet_dir)
+    append(tr, issue_id, confirmation, root, packet_dir)
+    require(receipt in restituted_reports(tr, issue_id), 'terminal confirmation invalid')
     return receipt
 
 
@@ -381,9 +556,11 @@ def read(*, root, packet_dir, attempt_id, packet_hash):
             and attempt.get('history') == packet.get('history')
             and packet.get('root') == str(Path(root).resolve()), 'prepared packet identity mismatch')
     arguments = attempt.get('arguments', {})
-    require(digest(arguments) == attempt.get('arguments_hash')
+    require(digest(arguments) == attempt.get('prepared_arguments_hash')
+            and digest(attempt.get('launch_arguments')) == attempt.get('arguments_hash')
             and digest(attempt.get('history')) == attempt.get('history_hash')
-            and digest(attempt.get('route')) == attempt.get('route_hash'),
+            and digest(attempt.get('route')) == attempt.get('route_hash')
+            and digest(attempt.get('hook_context')) == attempt.get('hook_context_hash'),
             'private descriptor digest mismatch')
     require(isinstance(arguments, dict) and 'resume' not in arguments
             and (attempt.get('host') == 'codex' and arguments.get('fork_turns') == 'none'
@@ -396,6 +573,7 @@ def read(*, root, packet_dir, attempt_id, packet_hash):
     # tracker access, network, working-file execution or premerge ledger effects.
     for key in ('base', 'head', 'merge'):
         require(advisory_git(root, 'cat-file', '-t', coordinates[key]).strip() == b'commit', 'commit unavailable')
+    validate_diff_attributes(root, coordinates)
     data = advisory_git(root, 'diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
                 '--src-prefix=a/', '--dst-prefix=b/', '--no-relative', '--submodule=short',
                 f"{coordinates['base']}...{coordinates['head']}")
@@ -406,9 +584,15 @@ def read(*, root, packet_dir, attempt_id, packet_hash):
 
 def cli(args):
     if args.action == 'prepare':
+        profile = {}
+        if args.profile_model_active:
+            profile['model'] = True
+        if args.profile_effort_active:
+            profile['model_reasoning_effort'] = True
+        require(args.host == 'codex' or not profile, 'Codex profile signals require Codex host')
         result = prepare(root=args.root, issue_id=args.issue, coordinates=_load(args.coordinates_file),
                          authorization=_load(args.authorization_file), history=_load(args.history_file),
-                         output_dir=args.output_dir, host=args.host)
+                         output_dir=args.output_dir, host=args.host, effective_profile=profile)
         return {'schema': SCHEMA, 'status': 'prepared', 'attempt_id': result['attempt_id']}
     if args.action == 'read':
         import sys
