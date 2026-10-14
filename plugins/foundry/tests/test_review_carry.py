@@ -167,9 +167,13 @@ def test_a_conflicting_integration_is_refused(tmp_path):
     scenario = Scenario(tmp_path)
     scenario.advance_main("a.txt", "main side\n" + "".join(
         f"line {n}\n" for n in range(2, 21)))
-    result = subprocess.run(["git", "merge", "--no-edit", "main"], cwd=scenario.root,
-                            capture_output=True)
+    result = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false", "merge", "--no-edit", "main"],
+        cwd=scenario.root, capture_output=True, text=True,
+    )
     assert result.returncode != 0
+    assert "CONFLICT" in result.stdout, result.stderr + result.stdout
     (scenario.root / "a.txt").write_text("resolved by hand\n", encoding="utf-8")
     _git(scenario.root, "add", "a.txt")
     _git(scenario.root, "commit", "--no-edit")
