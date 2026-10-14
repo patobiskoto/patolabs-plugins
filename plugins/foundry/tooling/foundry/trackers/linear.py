@@ -406,7 +406,7 @@ def _issue_creation_rendering(source: str) -> str:
         # Ambiguous Markdown contexts stay exact. No URL canonicalization, whitespace
         # folding, list rewriting, or interpretation of inline/fenced code.
         was_fenced = fence is not None
-        marker = re.match(r"\s*(`{3,}|~{3,})(.*)$", line.rstrip("\n"))
+        marker = re.match(r" {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\n"))
         if fence is None:
             if marker and not (marker[1][0] == "`" and "`" in marker[2]):
                 fence = (marker[1][0], len(marker[1]))
@@ -415,7 +415,8 @@ def _issue_creation_rendering(source: str) -> str:
             and not marker[2].strip()
         ):
             fence = None
-        if was_fenced or fence or "`" in line or line.startswith((" ", "\t")):
+        if (was_fenced or fence or "`" in line or line.startswith((" ", "\t"))
+                or re.match(r" {0,3}>", line)):
             rendered.append(line)
             continue
         if "<" not in line:  # an autolink `<...>` stays exact

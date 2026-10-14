@@ -75,6 +75,11 @@ def test_real_changes_refused(observed):
     ('<https://example.org/~/a>', '<https://example.org/\\~/a>'),
     ('<a ~/b>', '<a \\~/b>'),
     ('```a``` b\n```\n## H\nx\n```', '```a``` b\n```\n## H\n\nx\n```'),
+    ('```\n    ```\n## H\nx\n```', '```\n    ```\n## H\n\nx\n```'),
+    ('    ```\n```\n## H\nx\n```', '    ```\n```\n## H\n\nx\n```'),
+    ('```\n\t```\n## H\nx\n```', '```\n\t```\n## H\n\nx\n```'),
+    ('> ```\n> voir ~/x\n> ```', '> ```\n> voir \\~/x\n> ```'),
+    ('> https://example.org/a', '> [https://example.org/a](<https://example.org/a>)'),
 ])
 def test_unqualified_normalizations_refused(source, observed):
     assert not linear._issue_creation_body_matches(observed, source)

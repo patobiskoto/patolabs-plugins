@@ -188,7 +188,8 @@ heading when the next line is not empty, wraps a complete bare `https://` token 
 a word, and removes one terminal LF only when it is not preceded by another LF.
 The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
 other URL syntax stays exact. Apart from the terminal LF rule, lines containing
-backticks, indented lines and fenced blocks stay exact; a fence closes only on the same
+backticks, indented lines, block-quote lines and fenced blocks stay exact; a fence opens
+only when indented by at most three spaces and closes only on the same
 character with at least the same length as its opening, and a line containing `<`
 takes no `~/` escape; a body containing CR stays entirely exact. These are observed
 renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
