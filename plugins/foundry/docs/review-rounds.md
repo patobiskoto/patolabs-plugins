@@ -269,9 +269,9 @@ review ledger lock is held. All of them must hold; otherwise the command raises
    (`old base` to `new base`); renames are not followed (`--no-renames`), so both
    paths count.
 6. The diff of the current head against the new base, computed by the same `git_diff`
-   as every review, has the hash `--from-diff-hash`. Conditions 1 to 5 mean the reviewed
-   files are unchanged, so a different hash is treated as a reason to refuse, not as a
-   second case to carry (deduced, not observed on a real repository).
+   as every review, has the hash `--from-diff-hash`. This byte identity of the reviewed
+   diff is checked, not deduced from conditions 1 to 5: they do not imply it when the
+   recorded base is not an ancestor of the reviewed head, so a different hash is refused.
 
 On success the command appends a new proof (`AcceptanceProofStore._write`, never
 overwritten), whose `carried_from` key names the original proof identifier, head, base and
