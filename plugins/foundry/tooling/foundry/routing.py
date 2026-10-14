@@ -1194,14 +1194,13 @@ class ReviewDeduplicator:
         """
         diff_hash = self._validate_hash(diff_hash)
         marker = self.directory / diff_hash
-        with self._locked():
-            if not marker.is_file():
-                return True
-            record = self._read_record(
-                marker, diff_hash, migrate_bare_legacy=False,
-            )
-            self._claimed_head(record)
-            return "coordinates" not in record
+        # Markers are atomically replaced; inspection must not create a ledger
+        # or lock file when route validation subsequently refuses the claim.
+        if not marker.is_file():
+            return True
+        record = self._read_record(marker, diff_hash, migrate_bare_legacy=False)
+        self._claimed_head(record)
+        return "coordinates" not in record
 
     def verdict(self, diff_hash: str) -> ReviewClaim:
         """Return one atomic, capability-free view of an existing claim."""
@@ -2358,6 +2357,14 @@ def main(
     resolve_parser.add_argument("--available-model", action="append", dest="available_models")
     resolve_parser.add_argument("--host-override", action="append", default=[])
     claim = sub.add_parser("claim-review", help="atomically claim one exact diff hash")
+    claim.add_argument("--host", choices=HOSTS, default="claude",
+                       help="review host; legacy omission means claude (hook validation)")
+    claim.add_argument("--tier", choices=LEVELS)
+    claim.add_argument("--model")
+    claim.add_argument("--effort")
+    claim.add_argument("--available-model", action="append", dest="available_models")
+    claim.add_argument("--profile-model-active", action="store_true")
+    claim.add_argument("--profile-effort-active", action="store_true")
     claim.add_argument(
         "--git-diff", action="store_true", required=True,
         help="claim the exact Git base...HEAD diff",
@@ -2721,6 +2728,29 @@ def main(
             expected_hash = review_diff_hash(git_diff(review_root, review_base))
             repository = args.repository or repository_identity(review_root)
             deduplicator = ReviewDeduplicator(repository)
+            if args.host == "claude" and (
+                args.tier is not None or args.model is not None or args.effort is not None
+                or args.available_models is not None or args.profile_model_active
+                or args.profile_effort_active
+            ):
+                raise RoutingConfigError("claim-review : options de route réservées à --host codex.")
+            if args.host == "codex" and (
+                args.replay_interrupted
+                or deduplicator.git_claim_requires_preflight(expected_hash)
+            ):
+                from foundry.routing_facades import codex_available_models, codex_review_preflight
+                profile = {}
+                if args.profile_model_active:
+                    profile["model"] = True
+                if args.profile_effort_active:
+                    profile["model_reasoning_effort"] = True
+                codex_review_preflight(
+                    root=review_root, base=review_base, diff_hash=expected_hash,
+                    issue_id=args.issue, user=_user_request(args),
+                    available_models=(set(args.available_models) if args.available_models is not None
+                                      else codex_available_models()),
+                    effective_profile=profile,
+                )
             def validate_claim():
                 return deduplicator.claim_git(
                     expected_hash,

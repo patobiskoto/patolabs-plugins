@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- PAT-204: `routing claim-review --host codex` validates the reviewer facade before
+  a new reservation or interrupted-publication replay; route refusal leaves the
+  review ledger unchanged (`routing.py::main`; `routing_facades.py::codex_review_preflight`).
+  R5: host compatibility and route/profile inputs documented in `docs/model-routing.md`
+  and the `review-pr` / `merge-pr` caller skills.
+
 - PAT-202: replaces the advisory contract with observable logical Claude call and
   correlated hook evidence, complete publishable tracker reports and separate
   exact-readback confirmations (`postmerge_review.py::{native_evidence,record,append}`).
