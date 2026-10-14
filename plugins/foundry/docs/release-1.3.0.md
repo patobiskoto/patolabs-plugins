@@ -283,6 +283,6 @@ This release preparation changes version metadata and documentation only.
 | `docs/review-packet.md`, `reviewer-queries.md`, `linear-tracker.md`, `model-routing.md`, `model-decisions-2026-10-11.md` | Not necessary: each already documents, since its own issue, the surface this page summarises; this release changes none of them |
 
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or skill
-is changed by this release preparation, and no file under `tooling/`, `hooks/` or
+instruction is changed by this release preparation, and no file under `tooling/`, `hooks/` or
 `agents/` is touched. Outside release metadata and these pages, the only changes are the
 two status sentences above and one comment line in `scripts/ci_plan.py`. The mechanical documentation-status gate is not claimed shipped.
