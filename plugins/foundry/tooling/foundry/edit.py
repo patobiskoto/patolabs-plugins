@@ -1,6 +1,7 @@
 """Single-issue writes for intake / groom fixes.
 
-Every command here is a deterministic write. The DECISION to call it belongs to a
+Except for read-only ``reconcile-create``, commands here are deterministic writes.
+The DECISION to call a write belongs to a
 judgment skill AND to the human confirming it — never auto-invoked from reasoning.
 Exceptions, made without a confirmation: the four writes that the grouped deferral rule
 of the `foundry:merge-pr` skill authorizes in advance (create the companion Epic, create
@@ -13,6 +14,7 @@ four writes of the first group.
 
 CLI:
   python3 -m foundry.edit create-issue '<json:{title,body,fields,parent}>'
+  python3 -m foundry.edit reconcile-create <ISSUE-ID> <creation-spec.json>  (read-only)
   python3 -m foundry.edit set-field <ISSUE-ID> "<Field>" "<value>"
   python3 -m foundry.edit transition <ISSUE-ID> <state> [<expected-state>]
       (Linear: `transition <ISSUE-ID> dropped <expected-state>` abandons the issue,
@@ -30,19 +32,30 @@ from pathlib import Path
 import foundry
 from foundry import write
 from foundry.models import TransitionContext
+from foundry.trackers.base import IssueCreationValidationError
 
 
 def create_issue(spec_json):
     tr = foundry.tracker()
     spec = json.loads(spec_json)
-    it = write.create_issue(
-        tr,
-        spec["title"],
-        spec.get("body", ""),
-        fields=spec.get("fields"),
-        parent=spec.get("parent"),
-    )
+    try:
+        it = write.create_issue(
+            tr, spec["title"], spec.get("body", ""),
+            fields=spec.get("fields"), parent=spec.get("parent"),
+        )
+    except IssueCreationValidationError as exc:
+        print(json.dumps(exc.details, ensure_ascii=False), file=sys.stderr)
+        raise SystemExit(1) from None
     print(f"🆕 {it.id} — {it.title}")
+
+
+def reconcile_create(issue_id, spec_path):
+    spec = json.loads(_body_file(spec_path))
+    result = write.reconcile_issue_creation(
+        foundry.tracker(), issue_id, spec["title"], spec.get("body", ""),
+        fields=spec.get("fields"), parent=spec.get("parent"),
+    )
+    print(json.dumps(result, ensure_ascii=False))
 
 
 def set_field(issue_id, field, value):
@@ -106,5 +119,5 @@ def body(issue_id, expected_path, updated_path):
 
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
-    {"create-issue": create_issue, "set-field": set_field,
+    {"create-issue": create_issue, "reconcile-create": reconcile_create, "set-field": set_field,
      "transition": transition, "link": link, "comment": comment, "body": body}[cmd](*args)

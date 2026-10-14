@@ -56,6 +56,7 @@ from foundry.trackers.base import (
     AdrIssueUnavailableError,
     AdrUnavailableError,
     IssueUnavailableError,
+    IssueCreationValidationError,
     Tracker,
     TrackerBindingError,
     TrackerCapabilityUnavailableError,
@@ -392,6 +393,46 @@ def _header_int(headers, name: str) -> int | None:
         return int(str(value).strip()) if value is not None else None
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _issue_creation_rendering(source: str) -> str:
+    """Qualified issue-only rendering; ADR sources never pass through this function."""
+    if "\r" in source:
+        return source
+    lines = source.splitlines(keepends=True)
+    rendered = []
+    fenced = False
+    for index, line in enumerate(lines):
+        # Ambiguous Markdown contexts stay exact. No URL canonicalization, whitespace
+        # folding, list rewriting, or interpretation of inline/fenced code.
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if fenced or "`" in line or line.startswith((" ", "\t")):
+            rendered.append(line)
+            continue
+        line = re.sub(r"(?<![\w\\])~(?=/)", r"\\~", line)
+        # Only a complete bare https token is wrapped; the label and destination
+        # both retain its exact bytes. Punctuation/Markdown delimiters are excluded.
+        line = re.sub(
+            r"(?<!\S)(https://[A-Za-z0-9][A-Za-z0-9./_%-]*)(?=\s|$)",
+            lambda match: f"[{match[1]}](<{match[1]}>)", line,
+        )
+        rendered.append(line)
+        if (
+            re.fullmatch(r"## [^\n]+\n", line)
+            and index + 1 < len(lines)
+            and lines[index + 1] != "\n"
+        ):
+            rendered.append("\n")
+    result = "".join(rendered)
+    # Qualify one terminal LF only, never arbitrary trailing whitespace.
+    return result[:-1] if result.endswith("\n") and not result.endswith("\n\n") else result
+
+
+def _issue_creation_body_matches(observed: object, source: str) -> bool:
+    if observed is None:
+        return source == ""
+    return isinstance(observed, str) and observed in (source, _issue_creation_rendering(source))
 
 
 class LinearTrackerError(RuntimeError):
@@ -5341,24 +5382,107 @@ class LinearTracker(Tracker):
             parent_raw = self._read_raw(parent)
             self._assert_issue_project(parent_raw, binding)
             input_value["parentId"] = parent_raw["id"]
-        data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "issue.create")
-        payload = self._mutation_payload(data, "issueCreate", "issue.create")
-        created = payload.get("issue")
-        if not isinstance(created, dict) or not isinstance(
-            created.get("identifier"), str
-        ):
-            raise LinearTrackerError("issue.create", None, "invalid_response")
-        raw = self._read_raw(created["identifier"])
+        # The client UUID is not evidence that the provider created anything.
+        # A lost/ambiguous response is resolved only by a fresh read of that UUID.
+        client_id = input_value["id"]
+        created = {}
+        try:
+            data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "issue.create")
+            payload = self._mutation_payload(data, "issueCreate", "issue.create")
+            candidate = payload.get("issue")
+            if isinstance(candidate, dict):
+                created = candidate
+        except LinearTrackerError:
+            pass
+        public_id = created.get("identifier")
+        public_id = public_id if isinstance(public_id, str) and public_id else None
+        native_id = created.get("id")
+        native_id = native_id if isinstance(native_id, str) and native_id else None
+        creation = "created" if public_id or native_id else "unknown"
+        try:
+            raw = self._read_raw(client_id)
+        except (LinearTrackerError, IssueUnavailableError):
+            raise IssueCreationValidationError(
+                client_id=client_id, native_id=native_id, issue_id=public_id,
+                creation=creation,
+            ) from None
+        observed_public = raw.get("identifier")
+        if not public_id and isinstance(observed_public, str) and observed_public:
+            public_id = observed_public
+        if not native_id and raw.get("id") == client_id:
+            native_id = client_id
+        creation = "created" if native_id or public_id else "unknown"
+        expected["parent_id"] = input_value.get("parentId")
+        try:
+            if raw.get("id") != client_id or (created and (
+                (created.get("id") is not None and created.get("id") != client_id)
+                or (created.get("identifier") is not None
+                    and created.get("identifier") != observed_public)
+            )):
+                raise TrackerConflictError("Linear issue identity divergent after create")
+            self._validate_issue_creation(raw, binding, title, body, expected)
+            return self._to_issue(raw, project)
+        except (TrackerConflictError, TrackerBindingError, LinearTrackerError,
+                ValueError, TypeError, AttributeError, KeyError):
+            raise IssueCreationValidationError(
+                client_id=client_id, native_id=native_id, issue_id=public_id,
+                creation=creation, validation="refused",
+            ) from None
+
+    def _validate_issue_creation(self, raw, binding, title, body, expected):
         self._assert_issue_project(raw, binding)
         if (
-            raw.get("title") != title
-            or (raw.get("description") or "") != body
+            not isinstance(raw.get("id"), str) or not raw["id"]
+            or not isinstance(raw.get("identifier"), str) or not raw["identifier"]
+            or raw.get("title") != title
+            or not _issue_creation_body_matches(raw.get("description"), body)
             or not self._raw_matches(raw, expected)
         ):
-            raise TrackerConflictError("Linear issue divergent after create; no retry")
-        if parent and (raw.get("parent") or {}).get("id") != input_value["parentId"]:
-            raise TrackerConflictError("Linear parent divergent after create; no retry")
-        return self._to_issue(raw, project)
+            raise TrackerConflictError("Linear issue creation validation refused; no retry")
+
+    def _read_creation_snapshot(self, issue_id):
+        # Reconciliation must not reuse an earlier command/snapshot-scope read.
+        raw = self._graphql(_ISSUE_QUERY, {"id": issue_id}, "issue.read").get("issue")
+        if raw is None:
+            raise IssueUnavailableError(issue_id)
+        if not isinstance(raw, dict):
+            raise LinearTrackerError("issue.read", None, "invalid_response")
+        return raw
+
+    def reconcile_issue_creation(
+        self, project: Project, issue_id: str, title: str, body: str,
+        fields: dict | None = None, parent: str | None = None,
+    ) -> dict:
+        binding = self._activate(project)
+        if not isinstance(title, str) or not title or not isinstance(body, str):
+            raise ValueError("Linear issue title/body invalid")
+        fields = dict(fields or {})
+        if "GitHub PR" in fields:
+            raise TrackerCapabilityUnavailableError(self.name, "github-pr-projection")
+        raw = self._read_creation_snapshot(issue_id)
+        self._assert_issue_project(raw, binding)
+        # Preserve values outside the requested field scope, including non-type
+        # labels when the spec compares Type only.
+        _, expected = self._desired_update(raw, project, fields) if fields else ({}, {})
+        expected["parent_id"] = None
+        if parent:
+            parent_raw = self._read_creation_snapshot(parent)
+            self._assert_issue_project(parent_raw, binding)
+            expected["parent_id"] = parent_raw["id"]
+        if issue_id not in {raw.get("id"), raw.get("identifier")}:
+            raise TrackerConflictError("Linear reconciliation identity divergent")
+        self._validate_issue_creation(raw, binding, title, body, expected)
+        observed = raw["description"] or ""
+        return {
+            "issue_id": raw["identifier"], "native_id": raw["id"],
+            "creation": "observed-existing", "validation": "accepted",
+            "reconciliation": "validated-read-only", "automatic_retry": False,
+            "comparison": "exact" if observed == body else "qualified-rendering",
+            "source_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "readback_sha256": hashlib.sha256(observed.encode("utf-8")).hexdigest(),
+            "compared": ["project", "team", "identity", "title", "body", "parent"]
+                        + sorted(fields),
+        }
 
     def update_fields(
         self,
