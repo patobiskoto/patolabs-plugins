@@ -363,7 +363,8 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
                               (os.environ.get('HOME') or Path.home(), raw_root, output_dir,
                                os.environ.get('TMPDIR') or tempfile.gettempdir(),
                                os.environ['CLAUDE_PLUGIN_ROOT'] if host == 'claude' else Path(__file__).parents[2])
-                              for form in (str(path), str(Path(path).absolute()), str(Path(path).resolve()))
+                              for form in ((str(path),) if Path(path).is_absolute() else ())
+                              + (str(Path(path).absolute()), str(Path(path).resolve()))
                               if form != Path(form).anchor})
     attempt = {'schema': SCHEMA, 'type': 'authorized_attempt', 'issue': issue_id,
                'attempt_id': attempt_id, 'authorization': authorization,
@@ -423,7 +424,7 @@ def publishable_report(report, attempt):
         if isinstance(value, str):
             require(not any(body and body in value for body in prohibited),
                     'report not publishable: private prompt or historical snapshot')
-            return (not any(re.search(r'(?<![\w.-])' + re.escape(path) + r'(?![\w.-])', value)
+            return (not any(re.search(r'(?<![\w.-])' + re.escape(path) + r'(?![\w-]|\.[\w-])', value)
                             for path in attempt['execution_paths'])
                     and not re.search(r'(?<![a-z0-9+.-])file:/', value, re.IGNORECASE)
                     and not re.search(r'(?<![\w./\\-])\\\\[^\\\s]+\\[^\\\s]+', value)

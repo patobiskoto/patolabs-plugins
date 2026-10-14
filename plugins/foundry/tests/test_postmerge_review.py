@@ -1676,8 +1676,9 @@ def test_generic_home_root_does_not_refuse_all_slashes(case, report, text, monke
 
 
 @pytest.mark.parametrize("kind", ["home", "root", "packet", "tmp", "plugin"])
+@pytest.mark.parametrize("raw_absolute", [False, True])
 @pytest.mark.parametrize("form", ["raw", "absolute", "resolved"])
-def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_path, kind, form):
+def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_path, kind, form, raw_absolute):
     monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
     monkeypatch.chdir(tmp_path)
     target = Path(pm.__file__).parents[2] if kind == "plugin" else tmp_path / "target"
@@ -1688,6 +1689,8 @@ def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_
     alias = tmp_path / "alias"
     alias.symlink_to(target, target_is_directory=True)
     raw = "alias/packet" if kind == "packet" else "alias"
+    if raw_absolute:
+        raw = str(Path(raw).absolute())
     if kind == "home":
         monkeypatch.setenv("HOME", raw)
     elif kind == "tmp":
@@ -1700,10 +1703,53 @@ def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", raw)
     a = prepare(case, "claude" if kind == "plugin" else "codex")
     paths = {"raw": raw, "absolute": str(Path(raw).absolute()), "resolved": str(Path(raw).resolve())}
-    assert set(paths.values()) <= set(a["execution_paths"])
+    retained = {paths["absolute"], paths["resolved"]}
+    assert retained <= set(a["execution_paths"])
+    assert (raw in a["execution_paths"]) is raw_absolute
     assert a["execution_paths_hash"] == pm.digest(a["execution_paths"])
     assert "execution_paths" not in pm.public_attempt(a)
     report["evidence"][0]["detail"] = "--path=" + paths[form] + "/child"
+    if form == "raw" and not raw_absolute:
+        assert record(case, a, evidence(a, report), report)["report"] == report
+    else:
+        with pytest.raises(RoutingConfigError, match="absolute local path"):
+            record(case, a, evidence(a, report), report)
+        assert not any(path in json.dumps(case.issue.comments) for path in retained)
+
+
+@pytest.mark.parametrize(("suffix", "refused"), [
+    (".", True), ("...", True), ("/x.json", True), ("parentheses", True),
+    (":12", True), (".bak", False), ("-2", False),
+])
+def test_packet_execution_path_terminal_punctuation(case, report, monkeypatch, tmp_path, suffix, refused):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    path = str(case.args["output_dir"])
+    report["evidence"][0]["detail"] = "(" + path + ")." if suffix == "parentheses" else path + suffix
+    if refused:
+        with pytest.raises(RoutingConfigError, match="absolute local path"):
+            record(case, a, evidence(a, report), report)
+    else:
+        assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+def test_home_execution_path_terminal_period(case, report, monkeypatch, tmp_path):
+    home = tmp_path / "private-home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    report["evidence"][0]["detail"] = str(home) + "."
     with pytest.raises(RoutingConfigError, match="absolute local path"):
         record(case, a, evidence(a, report), report)
-    assert not any(path in json.dumps(case.issue.comments) for path in paths.values())
+
+
+@pytest.mark.parametrize(("kind", "text"), [
+    ("root", "see ./docs/page.md"), ("packet", "checked out the base"),
+])
+def test_raw_relative_execution_paths_do_not_refuse_prose(case, report, monkeypatch, kind, text):
+    monkeypatch.chdir(case.root)
+    case.args["root" if kind == "root" else "output_dir"] = "." if kind == "root" else "out"
+    a = prepare(case)
+    assert all(Path(path).is_absolute() for path in a["execution_paths"])
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
