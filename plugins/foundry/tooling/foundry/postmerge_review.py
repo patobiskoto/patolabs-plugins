@@ -187,7 +187,6 @@ def restituted_reports(tracker, issue_id):
             continue
         attempt, confirmation = attempts[0], confirmations[0]
         if (sum(r.get('authorization', {}).get('id') == attempt['authorization']['id'] for r in records) != 1
-                or any(h not in attempt.get('terminal_baseline', []) for h in unbound_terminals(records))
                 or receipt.get('coordinates') != attempt.get('coordinates')
                 or receipt.get('packet_hash') != attempt.get('packet_hash')
                 or confirmation.get('receipt_hash') != digest(receipt)
@@ -271,6 +270,7 @@ def advisory_plugin(host):
     selected = Path(os.environ['CLAUDE_PLUGIN_ROOT']).resolve() if host == 'claude' else source
     for relative in ('hooks/route_agent.py', 'hooks/guard_routed_readonly.py',
                      'tooling/foundry/postmerge_review.py', 'tooling/foundry/routing_facades.py',
+                     'tooling/foundry/routing.py', 'tooling/foundry/effort_policy.py',
                      'tooling/foundry/advisory_schema.py', 'agents/maigret.md'):
         require((selected / relative).is_file() and (selected / relative).read_bytes() == (source / relative).read_bytes(),
                 'selected plugin advisory implementation incompatible')
@@ -401,18 +401,17 @@ def stable_hook_route(context):
 
 
 def publishable_report(report, attempt):
-    serialized = json.dumps(report, ensure_ascii=False)
     prohibited = [attempt['history']['issue']['body'], *(a['body'] for a in attempt['history']['adrs']),
                   attempt['launch_arguments'].get('message', attempt['launch_arguments'].get('prompt', ''))]
-    require(not any(value and value in serialized.replace('\\n', '\n') for value in prohibited),
-            'report not publishable: private prompt or historical snapshot')
     def inspect(value):
         if isinstance(value, dict):
             return all(inspect(key) and inspect(child) for key, child in value.items())
         if isinstance(value, list):
             return all(inspect(child) for child in value)
         if isinstance(value, str):
-            return not re.search(r"(?:^|[\s\"'`(])/(?!/)|[A-Za-z]:[\\/]", value) and 'Goal:\n' not in value
+            require(not any(body and body in value for body in prohibited),
+                    'report not publishable: private prompt or historical snapshot')
+            return not re.search(r"(?:^|[\s\"'`(])/(?!/)[^\s\"'`()]+|(?<![A-Za-z0-9_])[A-Za-z]:[\\/]", value) and 'Goal:\n' not in value
         return True
     require(inspect(report), 'report not publishable: absolute local path or raw prompt')
 
@@ -480,7 +479,11 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
         require(len(encoded) <= MAX_FILE_BYTES, 'submission exceeds bound')
         archive = Path(packet_dir) / 'submission.json'
         if archive.exists():
-            require(_load(archive) == submitted, 'private submission divergent')
+            try:
+                saved = _load(archive)
+            except (OSError, ValueError, TypeError):
+                require(False, 'private submission unreadable')
+            require(saved == submitted, 'private submission divergent')
         else:
             fd = os.open(archive, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(fd, 'wb') as handle:
@@ -599,6 +602,7 @@ def cli(args):
         sys.stdout.buffer.write(read(root=args.root, packet_dir=args.packet_dir,
                                     attempt_id=args.attempt_id, packet_hash=args.packet_hash))
         return None
+    PUBLICATION.set('unknown')
     result = record(root=args.root, issue_id=args.issue, attempt_id=args.attempt_id,
                     packet_dir=args.packet_dir, evidence=_load(args.evidence_file), report=_load(args.report_file))
     return {'schema': SCHEMA, 'status': result['type'], 'attempt_id': result['attempt_id']}

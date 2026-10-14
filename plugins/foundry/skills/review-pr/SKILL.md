@@ -19,9 +19,11 @@ than Linear (`postmerge_review.py::ports`). Use that separate preparation path;
 never rearm an original claim or call `record-review-proof` for an advisory report.
 After the direct human decision, pass the exact audit ticket, repository, PR,
 base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
-or a previous decision for a different attempt does not suffice (PAT-ADR-0019).
+or a previous decision for a different attempt does not suffice (PAT-ADR-0020,
+Human authorization; taking effect at this issue's merge).
 Documentation status for PAT-202: updated advisory descriptor, native evidence,
-publication and reader restrictions; sources are `docs/postmerge-review.md` and
+publication, input failures, publishable strings, legacy isolation and reader restrictions;
+sources are `docs/postmerge-review.md` and
 `postmerge_review.py::{prepare,native_evidence,record,restituted_reports}`.
 PAT-ADR-0020 is the proposed replacement at this issue's merge; PAT-ADR-0019
 remains accepted until then (PAT-ADR-0020, Decision).

@@ -1,7 +1,8 @@
 # Advisory postmerge review
 
 Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
-publication bound, native evidence, plugin selection, guarded paths and restitution.
+publication bound, native evidence, plugin selection, guarded paths and restitution;
+round-two corrections cover input failures, publishable strings and legacy isolation.
 PAT-ADR-0020 is proposed and will replace PAT-ADR-0019 at this issue's merge;
 PAT-ADR-0019 remains accepted until then. The earlier implementation conforms to
 PAT-ADR-0019; this delivery is a replacement (PAT-ADR-0020, Context and Decision).
@@ -110,7 +111,8 @@ The calculated rewritten arguments and context are preparation, not observations
 
 Claude requires explicit `CLAUDE_PLUGIN_ROOT` before consumption; no source-copy
 fallback is inferred (`advisory_plugin`). The selected copy's implementation and
-role bytes must equal the emitting source for the files listed in `advisory_plugin`.
+role bytes must equal the emitting source for the files listed in `advisory_plugin`,
+including `routing.py` and `effort_policy.py` (`advisory_plugin`).
 This explicit selection does not prove which plugin or profile the host loaded;
 an incompatible selection refuses before authorization (`advisory_plugin`).
 Codex uses the source copy's reader (`advisory_plugin`, `prepare`). Root and packet
@@ -151,7 +153,8 @@ No native sandbox qualification is inferred (PAT-196).
 those entries (`record`). Its
 canonical JSON SHA-256 is the return's `report_hash` (`digest`, `native_evidence`).
 `record` revalidates merged coordinates, validates each finding's evidence, and
-archives the bounded submission privately (`record`). Unreadable packet files,
+archives the bounded submission privately (`record`). An unreadable or malformed
+existing `submission.json` produces a controlled stop without replacing it (`record`). Unreadable packet files,
 invalid JSON and non-object invocation data produce a controlled stop after the
 consumed attempt; packet validation can stop before submission archiving
 (`record`, `read`). Other evidence or coordinate refusals also append a
@@ -161,7 +164,9 @@ The v2 terminal report retains the complete publishable report and all its
 structured evidence, immutable coordinates, historical identities and launch
 metadata; raw arguments and sources, prompt and snapshot bodies remain private
 (`record`; `public_attempt`). Absolute local paths, raw task prompts and duplicate
-snapshot bodies refuse publication, and an overbound full comment refuses before
+snapshot bodies refuse publication; duplication is checked against decoded strings,
+while HTTPS links, isolated `/` prose and relative repository references remain
+permitted (`publishable_report`). An overbound full comment refuses before
 its write (`publishable_report`, `bounded_comment`). No finding is silently removed
 or truncated (`record`). Launch metadata includes correlated call/child hashes,
 argument hash, tool, return status, report hash, stable hook route and explicit
@@ -180,13 +185,18 @@ observation is recorded as null and a retention I/O failure preserves the origin
 exception (`append`, `retain_publication_diff`). Authorization remains
 consumed; the authorization receipt and absent valid confirmation carry the
 without-verdict state (PAT-ADR-0020, Altered terminal receipt).
-Terminal envelopes permit isolation even when their JSON is malformed; an old
+V2 terminal envelopes permit isolation even when their JSON is malformed; an old
 authorization still cannot be reused and duplicate authorization stays refused
 (`receipts`, `prepare`, `record`). Malformed authorization identity or scope remains
-fatal; terminal isolation never relaxes that check (`receipts`). Unidentifiable
-terminal envelopes block existing attempts; a newly authorized attempt records
+fatal; terminal isolation never relaxes that check (`receipts`). Malformed v1
+receipts remain fatal for the ticket (`receipts`); the authorization ambiguity is
+deduced from their shared envelope, which cannot identify a terminal independently
+of its JSON (`SCHEMA`, `PREFIX`, `receipts`). V2 terminal envelopes have a distinct
+prefix and can be isolated independently (`TERMINAL_PREFIX`, `receipts`). Unidentifiable
+v2 terminal envelopes block recording existing attempts, while previously confirmed
+reports remain restorable (`record`, `restituted_reports`); a newly authorized attempt records
 the preexisting isolated hashes and remains bound to its own unique authorization
-(`unbound_terminals`, `prepare`, `record`, `restituted_reports`).
+(`unbound_terminals`, `prepare`, `record`).
 A distinct authorization can start another
 attempt on the same ticket (`prepare`).
 
@@ -217,7 +227,8 @@ reports consumption `no`, a consumed identifier
 reports `yes`, and an interrupted authorization write reports `unknown`
 (`prepare`, `append`). For `record`, a uniquely located authorization reports `yes`
 even after terminal failure; absent attempts report `no`, and unavailable history
-reports `unknown` (`record`). The local `read` action reports consumption `unknown`.
+reports `unknown` (`record`); unreadable evidence or report inputs also report
+`unknown` before any authorization read (`cli`). The local `read` action reports consumption `unknown`.
 This uncertainty is deduced from its lack of tracker authority (`read`); it reports publication `no` and writes
 nothing, including after a consumed preparation (`routing.py` dispatch; `read`).
 Publication describes the current operation's writes: `no` before mutation, `yes`
