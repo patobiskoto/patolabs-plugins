@@ -108,14 +108,14 @@ before any reservation; the reviewer gains `routing search-review` and `list-rev
 and its Bash guard widens; `routing postmerge-review prepare|read|record` adds a
 separate advisory post-merge review; Linear issue creation admits only qualified
 renderings, reports partial effects as typed details and adds `edit reconcile-create`;
-`scripts/check_model_rollback.py` gains `--out`, with no routing default changed. They
+the new `scripts/check_model_rollback.py` takes a required `--out`, with no routing default changed. They
 claim no gain. The guide gives the upgrade from 1.2.0 on both hosts and what is known
 and unknown about returning to 1.2.0 (an untried procedure, PAT-162). Both pages are
 frozen from the release pull request on, so they state no tag and no installation. Not
 done by that pull request, and not claimed here: the tag `foundry-v1.3.0`, the update
 of the installed plugin on Claude Code and on Codex, and the readback of the version a
-host actually loads; they come after the merge, the tag on the maintainer's explicit
-agreement on the content of the release notes, and this paragraph is updated when they
+host actually loads; they come after the merge, the tag on the maintainer's authorization,
+recorded on PAT-199, and this paragraph is updated when they
 exist. Not verified: the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
 provenance of the Codex reviewer profile (PAT-196), the native availability of the eight
 rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294 bytes

@@ -20,7 +20,7 @@ never rearm an original claim or call `record-review-proof` for an advisory repo
 After the direct human decision, pass the exact audit ticket, repository, PR,
 base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
 or a previous decision for a different attempt does not suffice (PAT-ADR-0020,
-Human authorization; taking effect at this issue's merge).
+Human authorization; accepted, supersedes PAT-ADR-0019).
 Documentation status for PAT-202: updated advisory descriptor, native evidence,
 publication, input failures, publishable strings, legacy isolation and reader restrictions;
 sources are `docs/postmerge-review.md` and

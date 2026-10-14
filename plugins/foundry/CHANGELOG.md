@@ -7,8 +7,8 @@
 Minor release. Entries below change behaviour. New CLI surfaces: `routing
 prepare-review` (PAT-174), `routing search-review` and `routing list-review`
 (PAT-176), `routing postmerge-review prepare|read|record` (PAT-200, PAT-202) and
-`edit reconcile-create` (PAT-197); `scripts/check_model_rollback.py` gains `--out`
-(PAT-17). `routing claim-review` gains `--host` and, for `--host codex`, route options
+`edit reconcile-create` (PAT-197); it adds `scripts/check_model_rollback.py`
+(required `--out`, PAT-17). `routing claim-review` gains `--host` and, for `--host codex`, route options
 that are checked before any reservation (PAT-204); the `review-pr` and `merge-pr`
 skills now reserve the diff with `routing claim-review` on both hosts before preparing
 the reviewer packet. The routed read-only Claude Bash guard accepts the claimed readers

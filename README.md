@@ -120,11 +120,13 @@ because it adds CLI verbs (`routing prepare-review`, `search-review`, `list-revi
 and claim no gain. Statuses:
 
 - **Done by the release pull request:** the manifests, the CHANGELOG section, the two
-  pages and the freeze entry. The two pages are frozen from that pull request on.
+  pages and the freeze entry, with the status sentences of `docs/postmerge-review.md`
+  and `skills/review-pr/SKILL.md` (PAT-ADR-0020 accepted, supersedes PAT-ADR-0019) and
+  one comment line of `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
 - **Not done by it, and not claimed here:** the tag `foundry-v1.3.0`, the update of the
   installed plugin on Claude Code and on Codex, and the readback of the version a host
-  actually loads. They come after the merge, the tag on the maintainer's explicit
-  agreement on the content of the release notes. This list is updated when they exist.
+  actually loads. They come after the merge, the tag on the maintainer's authorization,
+  recorded on PAT-199. This list is updated when they exist.
 - **Not verified:** the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
   provenance of the Codex reviewer profile (PAT-196), the native availability of the
   eight rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294

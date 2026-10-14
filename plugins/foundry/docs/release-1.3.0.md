@@ -28,8 +28,9 @@ far as one is established.
 before the reviewer packet exists, then `routing prepare-review` (PAT-174, PAT-204). The
 steps and options are in the two skills; the packet, its bounds and its private output
 are in [review-packet.md](review-packet.md). Under Codex the skills now hand the
-generated send file and the existing claim to `routing codex-plan reviewer`, where the
-façade used to perform the claim itself.
+generated send file and the existing claim to `routing codex-plan reviewer`
+(`--diff-hash`, `--claim-id`). Without them that command still accepts `--git-diff`, and
+`routing_facades.py::codex_review_plan` claims by itself with `claim_git`.
 
 - **`routing claim-review --host`:** `codex` or `claude`. Omitting it keeps the
   historical `claude` path, and the Codex route options (`--tier`, `--model`,
@@ -45,9 +46,11 @@ façade used to perform the claim itself.
   or PR state ([review-packet.md](review-packet.md)). Its output directory must not
   exist; it is private (modes in that page).
 - **Remedy:** a Codex caller of the review skills must pass `--host codex` and the same
-  route inputs it will give `codex-plan`; a script that called `codex-plan` for a
-  first claim must claim first (deduced from the text of the two skills, not run).
-  Nothing is done automatically for a custom script.
+  route inputs it will give `codex-plan`. A script that calls `codex-plan reviewer
+  --git-diff` without `--diff-hash` and `--claim-id` keeps working (`routing.py` accepts
+  it, `codex_review_plan` calls `deduplicator.claim_git`); it only does not follow the
+  path the two skills now describe (read in the code, not run). Nothing is done
+  automatically for a custom script.
 
 ### 2. The reviewer can search and list the claimed snapshot; its Bash guard widens
 
@@ -126,8 +129,8 @@ the body exactly (the removed condition `(raw.get("description") or "") != body`
 
 PAT-17 adds [model-decisions-2026-10-11.md](model-decisions-2026-10-11.md), the
 qualification record `pat-17-config-rollback-2026-10-11.json`, the example
-`examples/claude-pre-promotion-rollback.json` and the option `--out` of
-`scripts/check_model_rollback.py`. The eight configuration rollbacks passed on
+`examples/claude-pre-promotion-rollback.json` and the script
+`scripts/check_model_rollback.py` (required `--out`). The eight configuration rollbacks passed on
 disposable policies through CLI resolution and constructed plans; no host model was
 launched, so native backend acceptance of those eight profiles is **unknown** (PAT-198).
 `DEFAULT_MAPPINGS` and the role defaults are unchanged.
@@ -186,8 +189,9 @@ release pull request: 87 files, of which 13 under `plugins/foundry/tooling/`, 2 
 - **Closure of issues that carry no code change: not settled by this release**
   (PAT-206, open; nothing in this repository describes it).
 - **Reservation before route check, Claude side:** PAT-204 closes this order defect for
-  Codex only. A Claude analogue is suspected (the brief of this release calls it
-  proposed): it is not a ticket and was not investigated here.
+  Codex only. An intake proposal for a Claude analogue exists, not yet a ticket.
+  Deduced, not run: `skills/review-pr/SKILL.md` has `claim-review` reserve the diff
+  before the reviewer launch, and `hooks/route_agent.py` can refuse that launch after it.
 - **Real reconciliation of two creations** (PAT-195, PAT-196) remains pending delivery
   ([linear-tracker.md](linear-tracker.md)).
 - **Rollback to an earlier plugin version is an untried procedure** (PAT-162), see the
@@ -229,8 +233,8 @@ was not run. No bridge run against 1.3.0 is claimed, and the Foundry 1.3.0 and S
    exists. This is derived and **not observed**; whether a manager refreshes a package
    whose version does not change is **unknown**, as for 1.2.0.
 3. **The tag is the named reference, not the delivery.** `foundry-v1.3.0` is to be placed
-   on the exact merged commit, after the maintainer's explicit agreement on the content
-   of this note. This page does not say that it exists.
+   on the exact merged commit, on the maintainer's authorization, recorded on PAT-199
+   (advance authorization of 2026-10-14). This page does not say that it exists.
 4. **Verified installed, after the merge, the tag and an official update:** update
    through each host's official manager, without editing any cache; reload or start a
    new session; read back the version actually loaded, each host separately. The result
@@ -271,11 +275,14 @@ This release preparation changes version metadata and documentation only.
 | Release note and migration guide | New: this page and migration-1.3.0.md |
 | `tests/fixtures/release-history.json` | Updated: the `1.3.0` entry, with the digests of the changelog section and of the two pages |
 | Root and Foundry README | Updated: pointers to these two pages, the statement that the tag, the installation and the loaded-version readback are not done here, the migration list, and the Release rule's version list |
+| `docs/postmerge-review.md` status sentence | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019 |
+| `skills/review-pr/SKILL.md` status sentence | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019; no instruction changed |
 | `scripts/ci_plan.py` comment | Updated: its list of release versions includes 1.3.0; no behaviour changes |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed and its version does not move |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes, and no rule of the contract states a Foundry version |
-| `docs/review-packet.md`, `reviewer-queries.md`, `postmerge-review.md`, `linear-tracker.md`, `model-routing.md`, `model-decisions-2026-10-11.md` | Not necessary: each already documents, since its own issue, the surface this page summarises; this release changes none of them |
+| `docs/review-packet.md`, `reviewer-queries.md`, `linear-tracker.md`, `model-routing.md`, `model-decisions-2026-10-11.md` | Not necessary: each already documents, since its own issue, the surface this page summarises; this release changes none of them |
 
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or skill
-is changed by this release preparation, and no file under `tooling/`, `hooks/`, `skills/`
-or `agents/` is touched. The mechanical documentation-status gate is not claimed shipped.
+is changed by this release preparation, and no file under `tooling/`, `hooks/` or
+`agents/` is touched. Outside release metadata and these pages, the only changes are the
+two status sentences above and one comment line in `scripts/ci_plan.py`. The mechanical documentation-status gate is not claimed shipped.

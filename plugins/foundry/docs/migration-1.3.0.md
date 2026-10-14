@@ -28,9 +28,11 @@ Four checks, for what the release note announces. None of them edits a cache.
 1. **Callers of the review skills under Codex.** The skills now claim with
    `routing claim-review --host codex` and the route options, then build the packet
    with `routing prepare-review`, then call `routing codex-plan reviewer` with the
-   generated send file (item 1 of the release note). A script of your own that called
-   `codex-plan` for its first claim must be changed to claim first (deduced from the
-   text of the two skills; no custom script was run).
+   generated send file (item 1 of the release note). A script of your own that calls
+   `codex-plan reviewer --git-diff` without `--diff-hash` and `--claim-id` keeps
+   working (`routing.py` accepts it and `routing_facades.py::codex_review_plan` calls
+   `deduplicator.claim_git`); it only does not follow the path the two skills now
+   describe (read in the code, not run).
 2. **A customised Codex reviewer role.** If it mandates `gh pr diff`, compare it with
    `examples/codex-reviewer.toml` as [reviewer-queries.md](reviewer-queries.md)
    describes (item 2).
@@ -51,7 +53,10 @@ read was added by `git diff foundry-v1.2.0..HEAD -- tooling hooks` apart from `H
 `TMPDIR` and a `GIT_NO_LAZY_FETCH` set for child processes, all three in
 `postmerge_review.py`, and a call `codex_available_models(os.environ)` there, whose own
 reads are not among the added lines (result of a text search of the added lines, not a
-proof).
+proof). The variable `FOUNDRY_CODEX_AVAILABLE_MODELS` is not new: `routing claim-review
+--host codex` now also reads it through `codex_available_models()` when no
+`--available-model` is given (`routing.py`, `claim-review` branch;
+`routing_facades.py::codex_available_models`).
 
 Retain a private snapshot of the non-secret configuration, the registry, the repository
 marker and the routing policy (including its absence) before replacing the package, as
