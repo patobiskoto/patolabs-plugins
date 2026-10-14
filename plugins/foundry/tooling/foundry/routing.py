@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, TypeVar
 
 from foundry import registry
+from foundry.advisory_schema import SCHEMA as ADVISORY_SCHEMA, TERMINAL_SCHEMA
 from foundry.effort_policy import (
     DEFAULT_EFFORT_SCOPES,
     EffortScope,
@@ -2009,7 +2010,7 @@ class AcceptanceProofStore:
         """
         if not isinstance(proof, dict):
             raise RoutingConfigError("preuve AC invalide ; refus fermé.")
-        if proof.get("schema") == "foundry.postmerge-review.v1":
+        if proof.get("schema") in {ADVISORY_SCHEMA, TERMINAL_SCHEMA}:
             raise RoutingConfigError("advisory postmerge record is never an acceptance proof.")
         if set(proof) != {
             "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
@@ -2390,6 +2391,8 @@ def main(
             for option in ("coordinates-file", "authorization-file", "history-file", "output-dir"):
                 command.add_argument("--" + option, required=True)
             command.add_argument("--host", required=True, choices=("codex", "claude"))
+            command.add_argument("--profile-model-active", action="store_true")
+            command.add_argument("--profile-effort-active", action="store_true")
         else:
             command.add_argument("--attempt-id", required=True)
             for option in (("packet-dir", "packet-hash") if action == "read" else ("packet-dir", "evidence-file", "report-file")):
@@ -2682,7 +2685,7 @@ def main(
     try:
         if args.command == "postmerge-review":
             from foundry.postmerge_review import cli, PUBLICATION, WRITE_EFFECT, REASONS
-            PUBLICATION.set("no")
+            PUBLICATION.set("unknown" if args.action == "read" else "no")
             WRITE_EFFECT.set("no")
             try:
                 result = cli(args)

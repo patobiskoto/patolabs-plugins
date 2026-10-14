@@ -19,22 +19,37 @@ than Linear (`postmerge_review.py::ports`). Use that separate preparation path;
 never rearm an original claim or call `record-review-proof` for an advisory report.
 After the direct human decision, pass the exact audit ticket, repository, PR,
 base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
-or a previous decision for a different attempt does not suffice (PAT-ADR-0019).
-Run `prepare` once, then launch its private `launch_arguments` descriptor in a new
-child; Claude uses logical `foundry:maigret` through `route_tool_input`
-(`postmerge_review.py::invocation`):
-Codex `spawn_agent` with `fork_turns=none`, or Claude `Agent` without `resume`.
-Transcribe actual call arguments, child identity and distinct return into the typed
-native evidence; a prepared plan is insufficient (`native_evidence`). Stop without
-verdict on missing correlation, inherited history or `current_context`; keep absent
-model/effort/profile observations unknown. This is coordinator transcription, not
-an authenticated transcript or proof of a native sandbox.
-The child reads only through the packet's exact `routing postmerge-review read`
-command and reads the named historical snapshots. Review historical criteria first,
-then quality; return findings and evidence instead of mergeable acceptance proof.
-The coordinator records once through `record --packet-dir <private packet>`; public
-receipts retain bound digests and historical identities/versions, and the full
-descriptor, snapshots and report remain private (`public_attempt`, `record`).
+or a previous decision for a different attempt does not suffice (PAT-ADR-0020,
+Human authorization; taking effect at this issue's merge).
+Documentation status for PAT-202: updated advisory descriptor, native evidence,
+publication, input failures, publishable strings, legacy isolation and reader restrictions;
+sources are `docs/postmerge-review.md` and
+`postmerge_review.py::{prepare,native_evidence,record,restituted_reports}`.
+PAT-ADR-0020 is the proposed replacement at this issue's merge; PAT-ADR-0019
+remains accepted until then (PAT-ADR-0020, Decision).
+Run `prepare` once, then launch the private `invocation.json`'s `launch_arguments`
+with its `tool` in a new child (`postmerge_review.py::prepare`): Codex uses
+`spawn_agent` with `fork_turns=none`; Claude uses logical `foundry:maigret` through
+`Agent` and its actual routing hook, without `resume` (`invocation`).
+Claude preparation requires explicit compatible `CLAUDE_PLUGIN_ROOT` and safe
+root/packet paths before consumption (`advisory_plugin`, `prepare`).
+Transcribe actual logical call arguments, correlated Claude hook context when
+applicable, child identity and distinct return; the stable route comparison has
+exactly the nine fields documented in the page (`native_evidence`, `CLAUDE_STABLE_FIELDS`).
+A prepared plan is insufficient, and absent native model/effort/profile provenance
+remains unknown (PAT-ADR-0020, Independence).
+The child reads through the packet's exact `routing postmerge-review read`
+command; all guarded Bash readers reject CR/LF, including the premerge readers
+(`prepare`; `guard_routed_readonly.py::allows_verified_diff`). Review historical
+criteria then quality and return findings/evidence (PAT-ADR-0020, Separation).
+The coordinator records once through `record --packet-dir <private packet>`;
+the tracker retains the complete publishable report, structured evidence and
+metadata, followed by a distinct exact-readback confirmation (`record`).
+An altered terminal stops without retry or compensation and leaves authority
+consumed without verdict; a new authorization is required (PAT-ADR-0020, Altered
+terminal receipt). Tracker-only restitution checks the report and confirmation
+hashes (`restituted_reports`); private files retain raw native sources and snapshots
+(`record`, `prepare`).
 Submit defects to `foundry:intake`
 without implicit edits, merge, closure, publication or promotion. This branch ends
 here. The normal premerge path below retains its existing claim and deduplication.

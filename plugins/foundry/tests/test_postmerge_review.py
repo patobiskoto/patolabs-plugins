@@ -22,7 +22,8 @@ from test_review_packet import git
 
 
 @pytest.fixture
-def case(tmp_path):
+def case(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(Path(__file__).parents[1]))
     root = tmp_path / "checkout"
     root.mkdir()
     git(root, "init", "-q")
@@ -119,14 +120,14 @@ def prepare(c, host="codex"):
 
 
 def evidence(attempt, report):
-    return {
+    result = {
         "type": "coordinator_transcribed_native_call_return",
         "attempt_id": attempt["attempt_id"],
         "packet_hash": attempt["packet_hash"],
         "call": {
             "id": "native-call-1",
             "tool": attempt["tool"],
-            "arguments": copy.deepcopy(attempt["arguments"]),
+            "arguments": copy.deepcopy(attempt["launch_arguments"]),
             "source": "actual host tool invocation",
         },
         "child": {"id": "native-child-1", "call_id": "native-call-1"},
@@ -139,6 +140,11 @@ def evidence(attempt, report):
         },
         "observed": {"model": None, "effort": None, "profile_provenance": None},
     }
+
+    if attempt['host'] == 'claude':
+        result['hook'] = {'call_id': result['call']['id'], 'source': 'actual hook context',
+                          'context': copy.deepcopy(attempt.get('hook_context', {}))}
+    return result
 
 
 def record(c, a, e, report):
@@ -275,10 +281,10 @@ def test_squash_exact_diff_single_attempt_and_no_original_ledger_mutation(
         str(p): p.read_bytes() for p in Path(registry.data_dir()).rglob("*") if p.is_file()
     }
     assert ledger.claim(diff).should_run is False
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="attempt absent, ambiguous or terminal"):
         record(case, a, e, report)
     case.args["output_dir"] = tmp_path / "retry"
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
         prepare(case)
     case.args["authorization"]["id"] = "b" * 64
     assert prepare(case)["attempt_id"] != a["attempt_id"]
@@ -431,6 +437,7 @@ def test_advisory_local_reader_refusals(case, fault):
             value["history"]["issue"]["body"] = "- [ ] tampered"
         elif fault == "route":
             value["arguments"]["fork_turns"] = "all"
+            value["prepared_arguments_hash" if "prepared_arguments_hash" in value else "arguments_hash"] = pm.digest(value["arguments"])
         else:
             value["type"] = "advisory_report"
         path.write_text(json.dumps(value))
@@ -440,7 +447,7 @@ def test_advisory_local_reader_refusals(case, fault):
         args["packet_hash"] = "f" * 64
     else:
         (case.root / ".git" / "objects").rename(case.root / ".git" / "removed-objects")
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="prepared native invocation divergent" if fault == "route" else "historical Git objects unavailable" if fault == "git" else "prepared packet identity mismatch"):
         pm.read(**args)
 
 
@@ -482,7 +489,7 @@ def test_reused_child_refused_and_new_authorization_required(case, report, tmp_p
     case.args["authorization"]["id"] = "b" * 64
     case.args["output_dir"] = tmp_path / "second"
     second = prepare(case)
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="native child already used"):
         record(case, second, evidence(second, report), report)
 
 
@@ -492,7 +499,7 @@ def test_local_reader_root_binding(case, tmp_path):
     a = prepare(case)
     other = tmp_path / "other-checkout"
     shutil.copytree(case.root, other)
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="prepared packet identity mismatch"):
         pm.read(
             root=other,
             packet_dir=case.args["output_dir"],
@@ -507,6 +514,10 @@ def test_cli_fixture_procedure(case, report, tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(foundry, "tracker", lambda **_: case.tr)
     monkeypatch.setattr(foundry, "codehost", lambda **_: case.ch)
+    exact = pm.advisory_git(case.root, 'diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-color',
+                            '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--no-relative',
+                            '--submodule=short', f"{case.coords['base']}...{case.coords['head']}")
+    assert hashlib.sha256(exact).hexdigest() == case.coords['diff_hash']
     paths = {}
     for key, value in [
         ("coordinates", case.coords),
@@ -594,7 +605,7 @@ def test_report_evidence_and_failed_return_stop_without_verdict(case, report, fa
     e = evidence(a, report)
     if fault == "failed-native-return":
         e["return"]["status"] = "failed"
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="each finding requires" if fault == "finding-without-proof" else "report evidence requires" if fault == "evidence-without-source" else "distinct correlated child return"):
         record(case, a, e, report)
     assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
 
@@ -603,12 +614,12 @@ def test_stopped_attempt_child_cannot_be_resumed(case, report, tmp_path):
     a = prepare(case)
     failed = evidence(a, report)
     failed["return"]["status"] = "failed"
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="distinct correlated child return"):
         record(case, a, failed, report)
     case.args["authorization"]["id"] = "b" * 64
     case.args["output_dir"] = tmp_path / "new-attempt"
     second = prepare(case)
-    with pytest.raises(RoutingConfigError):
+    with pytest.raises(RoutingConfigError, match="native child already used"):
         record(case, second, evidence(second, report), report)
 
 
@@ -755,6 +766,7 @@ def test_linear_old_attempt_and_terminal_survive_recent_comment_window(
     assert [r["type"] for r in pm.receipts(c.tr, c.issue.id)] == [
         "authorized_attempt",
         "advisory_report",
+        "advisory_confirmation",
     ]
     with pytest.raises(RoutingConfigError, match="terminal"):
         record(c, a, evidence(a, report), report)
@@ -793,7 +805,7 @@ def test_public_receipts_keep_private_packet_and_arguments_private(case, report)
     assert str(case.args["output_dir"]) not in public
     assert "Goal:" not in public
     assert "retained premerge snapshot" not in public
-    assert "inspected historical diff" not in public
+    assert "inspected historical diff" in public
     assert "arguments_hash" in public and "history_hash" in public
 
 
@@ -1014,3 +1026,730 @@ def test_public_history_identities_refuse_paths(case):
     with pytest.raises(RoutingConfigError, match="public historical identity/version invalid"):
         prepare(case)
     assert case.issue.comments == []
+
+
+@pytest.mark.parametrize("fault", ["missing", "json", "object", "oserror"])
+def test_unreadable_packet_records_controlled_stop(case, report, fault, monkeypatch):
+    a = prepare(case)
+    path = case.args["output_dir"] / "invocation.json"
+    if fault == "missing":
+        path.unlink()
+    elif fault == "json":
+        path.write_text("{")
+    elif fault == "object":
+        path.write_text("[]")
+    else:
+        monkeypatch.setattr(pm, "_load", lambda _: (_ for _ in ()).throw(OSError("private")))
+    with pytest.raises(RoutingConfigError, match="private packet unreadable"):
+        record(case, a, evidence(a, report), report)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+    assert pm.PUBLICATION.get() == "yes"
+
+
+@pytest.mark.parametrize("host", ["claude", "codex"])
+@pytest.mark.parametrize("suffix", [";unsafe", "\nunsafe", "$unsafe", "[unsafe]", "#unsafe"])
+def test_unsafe_packet_path_refused_before_effect(case, host, suffix):
+    case.args["output_dir"] = case.args["output_dir"].with_name("packet" + suffix)
+    with pytest.raises(RoutingConfigError, match="reader path refused by read-only guard"):
+        prepare(case, host)
+    assert not case.issue.comments
+
+
+def test_claude_copy_selection_requires_explicit_root_before_effect(case, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
+    with pytest.raises(RoutingConfigError, match="explicit Claude plugin root required"):
+        prepare(case, "claude")
+    assert not case.issue.comments
+
+
+@pytest.mark.parametrize("field", ["role", "selected_tier", "model", "effort_parameters.requested",
+                                  "effort_parameters.transmitted", "transmitted_launch.profile",
+                                  "transmitted_launch.transmitted_model", "gate_floor", "gate_effort_floor"])
+@pytest.mark.parametrize("mutation", ["missing", "different"])
+def test_claude_stable_hook_fields_refuse(case, report, field, mutation):
+    a = prepare(case, "claude")
+    e = evidence(a, report)
+    context = copy.deepcopy(a.get("hook_context", {}))
+    keys = field.split(".")
+    container = context
+    for key in keys[:-1]:
+        container = container.setdefault(key, {})
+    if mutation == "missing":
+        container.pop(keys[-1], None)
+    else:
+        container[keys[-1]] = "divergent"
+    e["hook"] = {"call_id": e["call"]["id"], "source": "actual hook context", "context": context}
+    with pytest.raises(RoutingConfigError, match="observed Claude hook route divergent"):
+        record(case, a, e, report)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+@pytest.mark.parametrize("fault", ["absent", "uncorrelated", "no-source", "route-copy"])
+def test_claude_hook_requires_correlated_observation(case, report, fault):
+    a = prepare(case, "claude")
+    e = evidence(a, report)
+    e["hook"] = {"call_id": e["call"]["id"], "source": "actual hook context", "context": a.get("hook_context", {})}
+    if fault == "absent":
+        e.pop("hook")
+    elif fault == "uncorrelated":
+        e["hook"]["call_id"] = "other"
+    elif fault == "no-source":
+        e["hook"]["source"] = ""
+    else:
+        e["hook"]["context"] = a["route"]
+    with pytest.raises(RoutingConfigError, match="observed Claude hook"):
+        record(case, a, e, report)
+
+
+def test_codex_advisory_shared_facade_packet_and_override_refusals(case):
+    from foundry.routing_facades import codex_spawn_plan
+    with pytest.raises(RoutingConfigError, match="task packet"):
+        codex_spawn_plan("reviewer", "incomplete", root=case.root, advisory=True, _observe=False)
+    with pytest.raises(RoutingConfigError, match="profil Codex résolu"):
+        codex_spawn_plan("reviewer", "Goal:\nx\nInputs:\nx\nConstraints:\nx\nDone when:\nx", root=case.root,
+                         advisory=True, effective_profile=[], _observe=False)
+
+
+@pytest.mark.parametrize("fault", ["prompt", "absolute", "history"])
+def test_report_unpublishable_refused_before_terminal_write(case, report, fault):
+    a = prepare(case)
+    if fault == "prompt":
+        report["evidence"][0]["detail"] = a["arguments"]["message"]
+    elif fault == "absolute":
+        report["evidence"][0]["source"] = str(case.root / "source")
+    else:
+        report["evidence"][0]["detail"] = case.args["history"]["issue"]["body"]
+    with pytest.raises(RoutingConfigError, match="report not publishable"):
+        record(case, a, evidence(a, report), report)
+    assert not any(r["type"] == "advisory_report" for r in pm.receipts(case.tr, case.issue.id))
+
+
+def test_report_publication_bound_counts_utf8_and_prefix(case, report):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = "é" * 6200
+    with pytest.raises(RoutingConfigError, match="published receipt exceeds qualified bound"):
+        record(case, a, evidence(a, report), report)
+    assert [r["type"] for r in pm.receipts(case.tr, case.issue.id)] == ["authorized_attempt", "stopped_without_verdict"]
+
+
+@pytest.mark.parametrize("kind", ["authorized_attempt", "stopped_without_verdict", "advisory_confirmation"])
+def test_every_overbound_comment_refused_before_transport(case, kind):
+    before = copy.deepcopy(case.issue.comments)
+    with pytest.raises(RoutingConfigError, match="published receipt exceeds qualified bound"):
+        pm.append(case.tr, case.issue.id, {"schema": pm.TERMINAL_SCHEMA if kind == "advisory_confirmation" else pm.SCHEMA,
+                                         "attempt_id": "a" * 64, "type": kind, "issue": case.issue.id,
+                                         "padding": "é" * 6200}, case.root)
+    assert case.issue.comments == before
+
+
+@pytest.mark.parametrize("mutation", ["changed", "malformed", "wrong-type"])
+def test_terminal_written_read_different_no_retry_and_new_authorization(case, report, tmp_path, mutation):
+    a = prepare(case)
+    original = case.tr.add_comment
+    writes = []
+    def alter(issue_id, text):
+        writes.append(text)
+        if '"type": "advisory_report"' in text:
+            value = json.loads(text.split("\n", 2)[2])
+            prefix = text[:text.index("\n", len(pm.PREFIX)) + 1]
+            if mutation == "changed":
+                value["report_hash"] = "f" * 64
+                text = prefix + json.dumps(value)
+            elif mutation == "malformed":
+                text = prefix + "{broken"
+            else:
+                value["type"] = "unexpected"
+                text = prefix + json.dumps(value)
+        original(issue_id, text)
+    case.tr.add_comment = alter
+    with pytest.raises(RoutingConfigError, match="receipt readback ambiguous"):
+        record(case, a, evidence(a, report), report)
+    assert len(writes) == 1  # No retry, confirmation or compensating stop.
+    assert pm.PUBLICATION.get() == "yes"
+    assert not pm.restituted_reports(case.tr, case.issue.id)
+    assert (case.args["output_dir"] / "publication-readback.json").is_file()
+    case.tr.add_comment = original
+    case.args["output_dir"] = tmp_path / "new"
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
+        prepare(case)
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    e = evidence(second, report)
+    e["child"]["id"] = e["return"]["child_id"] = "native-child-2"
+    record(case, second, e, report)
+    assert len(pm.restituted_reports(case.tr, case.issue.id)) == 1
+
+
+def test_reader_consumption_is_unknown_even_after_consumed_prepare(case, capsys):
+    from foundry.routing import main
+    a = prepare(case)
+    with pytest.raises(SystemExit):
+        main(["postmerge-review", "read", "--root", str(case.root), "--packet-dir", str(case.args["output_dir"]),
+              "--attempt-id", a["attempt_id"], "--packet-hash", "f" * 64])
+    assert "authorization_consumed=unknown; publication=no" in capsys.readouterr().err
+    assert len(case.issue.comments) == 1
+
+
+def test_unsupported_git_lazy_fetch_refused_explicitly(case, monkeypatch):
+    import subprocess
+    real = subprocess.run
+    def old_git(args, **kwargs):
+        if args[:2] == ["git", "--version"]:
+            return SimpleNamespace(returncode=0, stdout=b"git version 2.44.0", stderr=b"")
+        return real(args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", old_git)
+    with pytest.raises(RoutingConfigError, match="Git 2.45 or later required"):
+        prepare(case)
+    assert not case.issue.comments
+
+
+def changed_diff_case(case):
+    git(case.root, "checkout", "-q", "--detach", case.coords["head"])
+    (case.root / "source").write_text("head\n\ncontext\n")
+    git(case.root, "commit", "-qam", "blank context base")
+    base = git(case.root, "rev-parse", "HEAD")
+    case.coords["base"] = case.pr.base_sha = base
+    (case.root / "source").write_text("changed\n\ncontext\n")
+    (case.root / "zzz").write_text("extra\n")
+    git(case.root, "add", "source", "zzz")
+    git(case.root, "commit", "-qm", "extended fixture")
+    head = git(case.root, "rev-parse", "HEAD")
+    case.coords.update(head=head, merge=head)
+    case.pr.sha = case.pr.merge_sha = head
+    spec = f"{case.coords['base']}...{head}"
+    initial = pm.advisory_git(case.root, "diff", "--binary", "--no-ext-diff", "--no-textconv", spec)
+    case.coords["diff_hash"] = hashlib.sha256(initial).hexdigest()
+    return spec, initial
+
+
+@pytest.mark.parametrize("config", ["diff.orderFile", "diff.suppressBlankEmpty"])
+def test_current_diff_config_influence_exercised_then_neutralized(case, config):
+    spec, initial = changed_diff_case(case)
+    if config == "diff.orderFile":
+        order = case.root / "order"
+        order.write_text("zzz\nsource\n")
+        git(case.root, "config", config, str(order))
+    else:
+        git(case.root, "config", config, "true")
+    assert _git(case.root, "diff", "--binary", "--no-ext-diff", "--no-textconv", spec) != initial
+    assert pm.historical_diff(case.root, case.coords, case.ch) == initial
+
+
+@pytest.mark.parametrize("attribute", ["diff=fixture", "-diff"])
+def test_current_diff_attributes_influence_exercised_and_refused(case, attribute):
+    spec, initial = changed_diff_case(case)
+    (case.root / ".gitattributes").write_text("source " + attribute + "\n")
+    git(case.root, "config", "diff.fixture.xfuncname", "head")
+    git(case.root, "config", "diff.fixture.binary", "true")
+    assert _git(case.root, "diff", "--binary", "--no-ext-diff", "--no-textconv", spec) != initial
+    with pytest.raises(RoutingConfigError, match="historical diff attributes unsupported"):
+        prepare(case)
+    assert not case.issue.comments
+
+
+@pytest.mark.parametrize("reader", ["read-review", "list-review", "search-review"])
+@pytest.mark.parametrize("separator", ["\n", "\r", "\r\n"])
+def test_premerge_readers_refuse_all_newlines(reader, separator):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("guard_premerge", Path(__file__).parents[1] / "hooks/guard_routed_readonly.py")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    command = f'python3 ${{CLAUDE_PLUGIN_ROOT}}/tooling/foundry_cli.py routing {reader} --diff-hash {"a" * 64} --claim-id {"b" * 64} --root /fixture --base {"c" * 40}'
+    if reader == "search-review":
+        command += " --text source"
+    assert guard.allows_verified_diff(command)
+    assert not guard.allows_verified_diff(command.replace("--root ", "--root" + separator))
+
+
+def test_claude_volatile_hook_fields_do_not_change_closed_equality(case, report):
+    a = prepare(case, "claude")
+    e = evidence(a, report)
+    for key in ("escalation", "host_version", "warnings", "availability_probed", "extra"):
+        e["hook"]["context"][key] = "different volatile observation"
+    assert record(case, a, e, report)["type"] == "advisory_report"
+    assert pm.restituted_reports(case.tr, case.issue.id)[0]["report"] == report
+
+
+def test_tracker_only_restitution_survives_private_packet_loss(case, report):
+    import shutil
+    report["findings"] = [{"summary": "Finding retained", "evidence": copy.deepcopy(report["evidence"])}]
+    a = prepare(case)
+    expected = record(case, a, evidence(a, report), report)
+    shutil.rmtree(case.args["output_dir"])
+    [restored] = pm.restituted_reports(case.tr, case.issue.id)
+    assert restored == expected
+    assert restored["report"] == report
+    assert pm.digest(restored["report"]) == restored["report_hash"]
+    public = json.dumps(restored)
+    assert "Goal:" not in public and str(case.root) not in public
+
+
+def test_codex_advisory_detects_supplied_profile_and_creates_no_claim(case):
+    case.args["effective_profile"] = {"model": True, "model_reasoning_effort": True}
+    before = {str(p): p.read_bytes() for p in Path(registry.data_dir()).rglob("*") if p.is_file()}
+    a = prepare(case)
+    assert len(a["route"]["warnings"]) >= 2
+    assert before == {str(p): p.read_bytes() for p in Path(registry.data_dir()).rglob("*") if p.is_file()}
+    assert a["arguments"]["fork_turns"] == "none"
+
+
+def test_historical_v1_reports_are_retained_without_requalification(case, report):
+    a = prepare(case)
+    historical = {"schema": pm.SCHEMA, "type": "advisory_report", "issue": case.issue.id,
+                  "attempt_id": a["attempt_id"], "report_hash": pm.digest(report)}
+    case.issue.comments.append({"text": pm.comment_text(historical)})
+    assert historical in pm.receipts(case.tr, case.issue.id)
+    assert pm.restituted_reports(case.tr, case.issue.id) == []
+
+
+def test_linear_retains_malformed_terminal_outside_recent_window(linear_normalized_case, report):
+    c = linear_normalized_case
+    a = prepare(c)
+    c.add_comment(c.issue.id, pm.TERMINAL_PREFIX + a["attempt_id"] + "\n{altered")
+    later_ordinary_comments(c)
+    assert pm.receipts(c.tr, c.issue.id)[-1]["type"] == "isolated_terminal"
+    assert not pm.restituted_reports(c.tr, c.issue.id)
+
+
+def test_malformed_terminal_envelope_isolates_prior_authority_only(case, report, tmp_path):
+    a = prepare(case)
+    case.issue.comments.append({"text": pm.TERMINAL_PREFIX + "altered-envelope\n{broken"})
+    with pytest.raises(RoutingConfigError, match="attempt absent, ambiguous or terminal"):
+        record(case, a, evidence(a, report), report)
+    case.args["output_dir"] = tmp_path / "new-after-broken-envelope"
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
+        prepare(case)
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    e = evidence(second, report)
+    e["child"]["id"] = e["return"]["child_id"] = "native-child-2"
+    assert record(case, second, e, report)["type"] == "advisory_report"
+
+
+@pytest.mark.parametrize("mutation", ["missing", "generic", "duplicate"])
+def test_terminal_isolation_never_relaxes_consumption(case, report, mutation):
+    a = prepare(case)
+    case.issue.comments.append({"text": pm.TERMINAL_PREFIX + a["attempt_id"] + "\n{altered"})
+    receipt = json.loads(case.issue.comments[0]["text"][len(pm.PREFIX):])
+    if mutation == "missing":
+        receipt.pop("authorization")
+        case.issue.comments[0]["text"] = pm.comment_text(receipt)
+    elif mutation == "generic":
+        receipt["authorization"]["coordinates"] = "*"
+        case.issue.comments[0]["text"] = pm.comment_text(receipt)
+    else:
+        case.issue.comments.append(copy.deepcopy(case.issue.comments[0]))
+    before = copy.deepcopy(case.issue.comments)
+    with pytest.raises(RoutingConfigError, match="malformed advisory authorization" if mutation != "duplicate" else "authorization already consumed"):
+        prepare(case)
+    assert case.issue.comments == before
+
+
+@pytest.mark.parametrize("phase", ["create", "readback"])
+def test_real_linear_transport_exception_after_terminal_write_saves_local_diff(case, report, monkeypatch, phase):
+    from test_linear_tracker import PROJECT, LinearWire
+    from foundry.trackers.linear import LinearTracker, LinearTrackerError
+    from foundry.trackers.base import TrackerConflictError
+    class AlteredWire(LinearWire):
+        def __call__(self, document, variables):
+            result = super().__call__(document, variables)
+            if "FoundryLinearCommentCreate" in document and '"type": "advisory_report"' in variables['input']['body']:
+                comment = result['data']['commentCreate']['comment']
+                altered = comment['body'] + ' altered'
+                self.comments[comment['id']]['body'] = altered
+                self.issues['LIN-1']['comments']['nodes'][-1]['body'] = altered
+                if phase == 'create':
+                    comment['body'] = altered
+            return result
+    wire = AlteredWire()
+    tracker = LinearTracker(token="fixture-secret", transport=wire)
+    tracker._activate(PROJECT)
+    case.tr = tracker
+    case.args['tracker_port'] = tracker
+    case.args['issue_id'] = case.issue.id = case.args['authorization']['issue'] = 'LIN-1'
+    git(case.root, 'config', 'remote.origin.url', 'https://github.com/acme/widgets.git')
+    monkeypatch.setattr(tracker, 'resolve_checkout_project', lambda *a, **k: PROJECT)
+    monkeypatch.setattr(tracker, 'validate_mutation_repository', lambda *a, **k: None)
+    monkeypatch.setattr(tracker, 'validate_mutation_project', lambda *a, **k: None)
+    a = prepare(case)
+    error = LinearTrackerError if phase == 'create' else TrackerConflictError
+    with pytest.raises(error, match='invalid_response' if phase == 'create' else 'divergent after write'):
+        record(case, a, evidence(a, report), report)
+    assert len(wire.comments) == 2  # Authorization and terminal only, no compensating stop.
+    assert not pm.restituted_reports(tracker, case.issue.id)
+    assert pm.PUBLICATION.get() == 'yes'
+    diff = json.loads((case.args['output_dir'] / 'publication-readback.json').read_text())
+    assert diff['sent'] != diff['read'][-1]
+    assert diff['read'][-1].endswith(' altered')
+    terminal_writes = [variables['input']['body'] for document, variables in wire.calls
+                       if 'FoundryLinearCommentCreate' in document and '"type": "advisory_report"' in variables['input']['body']]
+    assert terminal_writes == [diff['sent']]
+
+
+@pytest.mark.parametrize("input_kind", ["evidence", "report"])
+@pytest.mark.parametrize("fault", ["missing", "malformed", "unreadable"])
+def test_record_cli_input_failure_keeps_consumption_unknown(case, report, tmp_path, monkeypatch, capsys, input_kind, fault):
+    import foundry
+    from foundry.routing import main
+    a = prepare(case)
+    monkeypatch.setattr(foundry, "tracker", lambda **_: case.tr)
+    monkeypatch.setattr(foundry, "codehost", lambda **_: case.ch)
+    paths = {}
+    for kind, value in (("evidence", evidence(a, report)), ("report", report)):
+        path = tmp_path / (kind + ".json")
+        path.write_text(json.dumps(value))
+        paths[kind] = path
+    broken = paths[input_kind]
+    if fault == "missing":
+        broken.unlink()
+    elif fault == "malformed":
+        broken.write_text("{")
+    else:
+        load = pm._load
+        def refuse(path):
+            if Path(path) == broken:
+                raise OSError("private input")
+            return load(path)
+        monkeypatch.setattr(pm, "_load", refuse)
+    with pytest.raises(SystemExit) as error:
+        main(["postmerge-review", "record", "--root", str(case.root), "--issue", case.issue.id,
+              "--attempt-id", a["attempt_id"], "--packet-dir", str(case.args["output_dir"]),
+              "--evidence-file", str(paths["evidence"]), "--report-file", str(paths["report"])])
+    assert error.value.code == 2
+    assert "authorization_consumed=unknown; publication=no" in capsys.readouterr().err
+    assert len(case.issue.comments) == 1
+
+
+@pytest.mark.parametrize("text", ["https://github.com/example/repository/pull/141", "choice / alternative", "docs/page.md"])
+def test_public_report_url_and_relative_reference_allowed(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("text", ["file:///Users/x", r"\\server\share"])
+def test_public_report_absolute_reference_refused(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+@pytest.mark.parametrize("body", ['Historical "quoted" constraint', r"Historical \ constraint", "Historical\tconstraint"])
+@pytest.mark.parametrize("snapshot", ["issue", "adr"])
+def test_escaped_snapshot_duplication_refused(case, report, body, snapshot):
+    item = case.args["history"]["issue"] if snapshot == "issue" else case.args["history"]["adrs"][0]
+    item["body"] = "- [ ] " + body if snapshot == "issue" else body
+    a = prepare(case)
+    report["evidence"][0]["detail"] = "Quoted snapshot: " + item["body"]
+    with pytest.raises(RoutingConfigError, match="private prompt or historical snapshot"):
+        record(case, a, evidence(a, report), report)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+@pytest.mark.parametrize("fault", ["malformed", "unreadable"])
+def test_existing_submission_unreadable_records_controlled_stop(case, report, monkeypatch, fault):
+    a = prepare(case)
+    path = case.args["output_dir"] / "submission.json"
+    path.write_text("{")
+    original = path.read_bytes()
+    if fault == "unreadable":
+        load = pm._load
+        def refuse(candidate):
+            if Path(candidate) == path:
+                raise OSError("private submission")
+            return load(candidate)
+        monkeypatch.setattr(pm, "_load", refuse)
+    with pytest.raises(RoutingConfigError, match="private submission unreadable"):
+        record(case, a, evidence(a, report), report)
+    assert path.read_bytes() == original
+    assert pm.PUBLICATION.get() == "yes"
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+def test_unbound_terminal_preserves_previously_confirmed_report(case, report):
+    a = prepare(case)
+    confirmed = record(case, a, evidence(a, report), report)
+    before = copy.deepcopy(case.issue.comments)
+    case.issue.comments.append({"text": pm.TERMINAL_PREFIX + "unidentifiable\n{broken"})
+    assert pm.restituted_reports(case.tr, case.issue.id) == [confirmed]
+    assert case.issue.comments[:-1] == before
+
+
+@pytest.mark.parametrize("body", ["{broken", "[]", '{"schema":"foundry.postmerge-review.v1","type":"unexpected"}'])
+def test_unidentifiable_v1_receipt_fatal_before_consumption_read(case, body, tmp_path):
+    prepare(case)
+    case.issue.comments.append({"text": pm.PREFIX + body})
+    before = copy.deepcopy(case.issue.comments)
+    case.args["output_dir"] = tmp_path / "distinct-packet"
+    case.args["authorization"]["id"] = "b" * 64
+    with pytest.raises(RoutingConfigError, match="malformed advisory receipt"):
+        prepare(case)
+    assert case.issue.comments == before
+    assert not case.args["output_dir"].exists()
+
+
+@pytest.mark.parametrize("relative", ["tooling/foundry/routing.py", "tooling/foundry/effort_policy.py"])
+def test_selected_plugin_policy_divergence_refused_before_consumption(case, tmp_path, monkeypatch, relative):
+    import shutil
+    source = Path(pm.__file__).parents[2]
+    selected = tmp_path / "selected-plugin"
+    shutil.copytree(source, selected)
+    path = selected / relative
+    path.write_bytes(path.read_bytes() + b"\n# divergent fixture\n")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(selected))
+    with pytest.raises(RoutingConfigError, match="selected plugin advisory implementation incompatible"):
+        prepare(case, "claude")
+    assert case.issue.comments == []
+    assert pm.PUBLICATION.get() == "no"
+
+
+def test_prefix_alone_pushes_terminal_above_publication_bound(case):
+    receipt = {"schema": pm.TERMINAL_SCHEMA, "type": "advisory_confirmation", "issue": case.issue.id,
+               "attempt_id": "a" * 64, "padding": ""}
+    size = len(json.dumps(receipt, sort_keys=True, ensure_ascii=False).encode())
+    receipt["padding"] = "x" * (pm.MAX_COMMENT_BYTES - size - 1)
+    assert len(json.dumps(receipt, sort_keys=True, ensure_ascii=False).encode()) == pm.MAX_COMMENT_BYTES - 1
+    assert pm.comment_text(receipt).startswith(pm.TERMINAL_PREFIX)
+    with pytest.raises(RoutingConfigError, match="published receipt exceeds qualified bound"):
+        pm.append(case.tr, case.issue.id, receipt, case.root)
+    assert case.issue.comments == []
+
+
+def test_actual_claude_hook_main_output_accepts_logical_proof(case, report, monkeypatch, capsys):
+    import importlib.util
+    import io
+    import sys
+    a = prepare(case, "claude")
+    hook = Path(pm.__file__).parents[2] / "hooks/route_agent.py"
+    spec = importlib.util.spec_from_file_location("advisory_actual_hook_fixture", hook)
+    facade = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, facade)
+    spec.loader.exec_module(facade)
+    payload = {"cwd": str(case.root), "tool_name": "Agent", "tool_use_id": "native-call-1",
+               "tool_input": copy.deepcopy(a["launch_arguments"])}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    facade.main()
+    output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert output["permissionDecision"] == "allow"
+    context = json.loads(output["additionalContext"].removeprefix("Foundry Claude route: "))
+    assert pm.stable_hook_route(context) == pm.stable_hook_route(a["hook_context"])
+    e = evidence(a, report)
+    e["hook"]["context"] = context
+    e["hook"]["source"] = "fixture route_agent.main emitted additionalContext"
+    emitted = output["updatedInput"]
+    assert emitted["subagent_type"] == "foundry:" + context["transmitted_launch"]["profile"]
+    assert emitted == a["arguments"]
+    assert emitted != payload["tool_input"]
+    assert record(case, a, e, report)["type"] == "advisory_report"
+
+
+@pytest.mark.parametrize("text", ["--root=/Users/x", "root:/Users/x", "[/Users/x]", "</tmp/x>", ",/home/x", "run /foundry:open-pr", "ratio 3 /4"])
+def test_nonexecution_path_strings_publishable(case, report, text, monkeypatch, tmp_path):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("kind", ["home", "root", "packet", "tmp", "plugin"])
+def test_concrete_execution_paths_private_even_inside_json(case, report, monkeypatch, tmp_path, kind):
+    home = tmp_path / "private-home"
+    temporary = tmp_path / "private-tmp"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("TMPDIR", str(temporary))
+    a = prepare(case)
+    paths = {"home": home, "root": case.root, "packet": case.args["output_dir"],
+             "tmp": temporary, "plugin": Path(pm.__file__).parents[2]}
+    text = json.dumps({"embedded": "--root=" + str(paths[kind].resolve()) + "/child"})
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+    assert text not in json.dumps(case.issue.comments)
+    assert str(home) not in json.dumps(case.issue.comments)
+
+
+@pytest.mark.parametrize("altered", [False, True])
+def test_new_stop_terminal_isolates_and_allows_distinct_authorization(case, report, tmp_path, altered):
+    a = prepare(case)
+    with pytest.raises(RoutingConfigError):
+        record(case, a, {}, report)
+    stop = pm.receipts(case.tr, case.issue.id)[-1]
+    assert stop["schema"] == pm.TERMINAL_SCHEMA
+    assert case.issue.comments[-1]["text"].startswith(pm.TERMINAL_PREFIX + a["attempt_id"] + "\n")
+    if altered:
+        case.issue.comments[-1]["text"] = pm.TERMINAL_PREFIX + a["attempt_id"] + "\n{broken"
+        assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "isolated_terminal"
+    else:
+        assert stop["type"] == "stopped_without_verdict"
+    before = copy.deepcopy(case.issue.comments)
+    case.args["output_dir"] = tmp_path / "second-packet"
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
+        prepare(case)
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    assert case.issue.comments[:len(before)] == before
+    assert record(case, second, evidence(second, report), report)["type"] == "advisory_report"
+
+
+def test_record_missing_git_reports_historical_process_failure(case, report, monkeypatch):
+    a = prepare(case)
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError("private executable path")
+    monkeypatch.setattr(pm.subprocess, "run", unavailable)
+    with pytest.raises(RoutingConfigError, match="historical Git process unavailable") as error:
+        record(case, a, evidence(a, report), report)
+    assert "private executable path" not in str(error.value)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+def test_legacy_intact_v1_stop_remains_readable_without_rewrite(case, report, tmp_path):
+    a = prepare(case)
+    legacy = {"schema": pm.SCHEMA, "type": "stopped_without_verdict", "issue": case.issue.id,
+              "attempt_id": a["attempt_id"], "submitted_evidence_hash": pm.digest({})}
+    case.issue.comments.append({"text": pm.comment_text(legacy)})
+    before = copy.deepcopy(case.issue.comments)
+    assert pm.receipts(case.tr, case.issue.id)[-1] == legacy
+    case.args["output_dir"] = tmp_path / "new-after-legacy-stop"
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    assert record(case, second, evidence(second, report), report)["type"] == "advisory_report"
+    assert case.issue.comments[:len(before)] == before
+
+
+def test_private_execution_path_binding_cannot_be_removed(case, report):
+    a = prepare(case)
+    path = case.args["output_dir"] / "invocation.json"
+    altered = json.loads(path.read_text())
+    altered["execution_paths"] = []
+    path.write_text(json.dumps(altered))
+    with pytest.raises(RoutingConfigError, match="private execution paths digest mismatch"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", [
+    "Makefile:12", "Dockerfile:3", "profile: x", "postmerge_review.py:423",
+    "file:line", r"regex: src/\\.py", r"regex: \\.", "https://example.invalid/reference",
+    "1file:/reference", "prefix+file:/reference", "prefix.file:/reference", "prefix-file:/reference",
+])
+def test_path_filter_reference_syntax_allowed(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("text", ["file:///Users/x", "voir file:/tmp/x", r"voir \\server\share"])
+def test_path_filter_local_reference_syntax_refused(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", ["src/tmpl.py", "/Users/xavier", "prefix/Users/x", "/tmpfile"])
+def test_execution_path_component_boundaries(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/x")
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("text", ["/Users/x", "--root=/Users/x/child", "[/Users/x]", "/tmp/child", "/tmp:12", "/prefix//Users/x", r"\/Users/x"])
+def test_execution_path_delimiters_refused(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/x")
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", ["docs/page.md", "ratio 3 /4", "https://example.invalid/reference"])
+def test_generic_home_root_does_not_refuse_all_slashes(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/")
+    a = prepare(case)
+    assert "/" not in a["execution_paths"]
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("kind", ["home", "root", "packet", "tmp", "plugin"])
+@pytest.mark.parametrize("raw_absolute", [False, True])
+@pytest.mark.parametrize("form", ["raw", "absolute", "resolved"])
+def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_path, kind, form, raw_absolute):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    monkeypatch.chdir(tmp_path)
+    target = Path(pm.__file__).parents[2] if kind == "plugin" else tmp_path / "target"
+    if kind == "root":
+        target = case.root
+    elif kind != "plugin":
+        target.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    raw = "alias/packet" if kind == "packet" else "alias"
+    if raw_absolute:
+        raw = str(Path(raw).absolute())
+    if kind == "home":
+        monkeypatch.setenv("HOME", raw)
+    elif kind == "tmp":
+        monkeypatch.setenv("TMPDIR", raw)
+    elif kind == "root":
+        case.args["root"] = raw
+    elif kind == "packet":
+        case.args["output_dir"] = raw
+    else:
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", raw)
+    a = prepare(case, "claude" if kind == "plugin" else "codex")
+    paths = {"raw": raw, "absolute": str(Path(raw).absolute()), "resolved": str(Path(raw).resolve())}
+    retained = {paths["absolute"], paths["resolved"]}
+    assert retained <= set(a["execution_paths"])
+    assert (raw in a["execution_paths"]) is raw_absolute
+    assert a["execution_paths_hash"] == pm.digest(a["execution_paths"])
+    assert "execution_paths" not in pm.public_attempt(a)
+    report["evidence"][0]["detail"] = "--path=" + paths[form] + "/child"
+    if form == "raw" and not raw_absolute:
+        assert record(case, a, evidence(a, report), report)["report"] == report
+    else:
+        with pytest.raises(RoutingConfigError, match="absolute local path"):
+            record(case, a, evidence(a, report), report)
+        assert not any(path in json.dumps(case.issue.comments) for path in retained)
+
+
+@pytest.mark.parametrize(("suffix", "refused"), [
+    (".", True), ("...", True), ("/x.json", True), ("parentheses", True),
+    (":12", True), (".bak", False), ("-2", False),
+])
+def test_packet_execution_path_terminal_punctuation(case, report, monkeypatch, tmp_path, suffix, refused):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    path = str(case.args["output_dir"])
+    report["evidence"][0]["detail"] = "(" + path + ")." if suffix == "parentheses" else path + suffix
+    if refused:
+        with pytest.raises(RoutingConfigError, match="absolute local path"):
+            record(case, a, evidence(a, report), report)
+    else:
+        assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+def test_home_execution_path_terminal_period(case, report, monkeypatch, tmp_path):
+    home = tmp_path / "private-home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    report["evidence"][0]["detail"] = str(home) + "."
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize(("kind", "text"), [
+    ("root", "see ./docs/page.md"), ("packet", "checked out the base"),
+])
+def test_raw_relative_execution_paths_do_not_refuse_prose(case, report, monkeypatch, kind, text):
+    monkeypatch.chdir(case.root)
+    case.args["root" if kind == "root" else "output_dir"] = "." if kind == "root" else "out"
+    a = prepare(case)
+    assert all(Path(path).is_absolute() for path in a["execution_paths"])
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report

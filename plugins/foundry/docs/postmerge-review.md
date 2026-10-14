@@ -1,13 +1,22 @@
 # Advisory postmerge review
 
-Documentation status: added for PAT-200. This implements PAT-ADR-0019; it does not
-repair the original review, authorize PAT-195, or replace a delivery gate.
+Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
+publication bound, native evidence, plugin selection, guarded paths and restitution;
+follow-up corrections cover concrete execution paths, terminal stops and reader diagnostics.
+PAT-ADR-0020 is proposed and will replace PAT-ADR-0019 at this issue's merge;
+PAT-ADR-0019 remains accepted until then. The earlier implementation conforms to
+PAT-ADR-0019; this delivery is a replacement (PAT-ADR-0020, Context and Decision).
 
 `routing postmerge-review` has three actions: `prepare`, `read`, and `record`
 (`tooling/foundry/routing.py`, parser and dispatch; `postmerge_review.py::cli`).
-Receipts use `foundry.postmerge-review.v1` and the `Foundry postmerge advisory receipt`
-comment prefix (`SCHEMA`, `PREFIX` in the neutral `advisory_schema.py`).
-The coordinator prepares and records; the reviewer uses the local reader only.
+Authorization receipts retain `foundry.postmerge-review.v1`; new stops, reports
+and confirmations use `foundry.postmerge-review.v2`, while intact legacy v1 stops
+remain readable without rewriting (`SCHEMA`, `TERMINAL_SCHEMA`, `record`, `receipts`). Terminal comments use the existing prefix followed by
+`terminal <attempt-id>` and a newline (`TERMINAL_PREFIX`; `comment_text`); retention
+of malformed terminals is deduced from the prefix check (`LinearTracker._to_issue`).
+Historical v1 reports remain historical and are not requalified by restitution
+(`restituted_reports`).
+The coordinator prepares and records; the reviewer uses the local reader only (`cli`, `read`).
 Coordinator operations resolve the checkout project from explicit `--root` and
 validate the canonical audit issue binding before issue reads (`ports`;
 `Tracker.resolve_checkout_project`, `Tracker.validate_issue_binding`).
@@ -22,9 +31,16 @@ connection; `hasNextPage` still refuses history reads (`LinearTracker._to_issue`
 are the 8 MiB `_MAX_RESPONSE_BYTES` transport cap and `comments(first: 100)`
 query with incomplete connections refused by `_connection`; they do not establish
 a native maximum comment size (`linear.py`). That native maximum remains unknown.
-One authorized 430-byte comment probe was observed identical on creation, readback
-and independent reread; it does not establish larger receipt fidelity or a size limit. Injected fixture ports model complete
-history; they do not qualify another native provider.
+The authorized synthetic probe on 2026-10-14 was observed byte-identical on write
+and readback for 12,294 UTF-8 bytes including its prefix (PAT-202 maintainer decision
+and probe result, SHA-256 `1e4d6dc62d25595d90b48a94b1f60571c07ed26cf198af0773df94f89fbb6d82`).
+Every full serialized comment, including its prefix, is bounded by
+`MAX_COMMENT_BYTES=12294` before mutation (`bounded_comment`, `append`).
+The serializer is `json.dumps(sort_keys=True, ensure_ascii=False)` with default
+separators and no final newline (`comment_text`); private-file bounds do not
+qualify publication. The native maximum remains unknown; this dated observation
+does not qualify every content or size (PAT-ADR-0020, Qualification).
+Injected fixture ports model complete history; they do not qualify another native provider.
 
 `prepare` requires a merged, closed PR and exact JSON coordinates with keys
 `repository`, `pr`, `base`, `head`, `merge`, `diff_hash`. The SHAs are full lowercase
@@ -34,10 +50,20 @@ rename detection disabled, explicit prefixes and short submodule output,
 including when `merge` differs from `head` after squash. Provider coordinates are
 read again before the authorization receipt (`historical_diff`, `prepare`, and
 `advisory_git`). Missing objects, coordinate drift and hash divergence
-refuse preparation; `--no-lazy-fetch` and `GIT_NO_LAZY_FETCH=1` disable lazy fetching
-(`advisory_git`). This advisory hash uses its own fixed diff configuration for
+refuse preparation (`historical_diff`). Git 2.45 or later is required and older or
+unreadable versions are refused before authorization (`advisory_git`); the option's
+introduction is recorded in the [Git 2.45 release notes](https://github.com/git/git/blob/v2.45.0/Documentation/RelNotes/2.45.0.txt).
+`--no-lazy-fetch` and `GIT_NO_LAZY_FETCH=1` disable lazy fetching (`advisory_git`). This advisory hash uses its own fixed diff configuration for
 algorithm, context, indent heuristic, inter-hunk context and path quoting; it is not
 the premerge claim hash contract (`advisory_git`; `routing.py::git_diff`).
+Ordering is reset to the empty order file and blank context retains its prefix
+(`advisory_git`: `diff.orderFile`, `diff.suppressBlankEmpty=false`).
+Any effective `diff` attribute on a changed historical path, including a driver,
+set or unset value, refuses preparation and reading in the current checkout
+(`validate_diff_attributes`); the advisory path does not rewrite attributes.
+The influence of both settings and attribute drivers was observed in disposable
+fixtures (`test_current_diff_config_influence_exercised_then_neutralized`,
+`test_current_diff_attributes_influence_exercised_and_refused`).
 
 Authorization JSON contains exactly `id` (a new lowercase 64-hex identifier),
 `issue` (the authorized audit ticket), and `coordinates` (the exact object above).
@@ -62,60 +88,137 @@ stay in the existing private packet; the public
 receipt binds their digest and issue/ADR identities and versions (`history_identity`,
 `public_attempt`, `prepare`). Their historical authenticity is coordinator-supplied.
 
-`prepare` uses the existing reviewer resolver and escalation floor. Codex receives
-`agent_type`, `model`, `reasoning_effort`, and `fork_turns=none`; Claude receives a
-logical `foundry:maigret` `Agent` invocation without `resume`, routed through
-`route_tool_input` with the role contract, task bounds, turn cap and host checks
-(`invocation`; `hooks/route_agent.py::route_tool_input`). The private descriptor
-contains logical `launch_arguments` and the exact expected rewritten `arguments`;
-only the former are launched, and the actual rewritten call must match the latter
-(`invocation`, `native_evidence`). The Claude route comes from the facade callback,
-including its host overrides and escalation floor (`invocation`; `claude_route_plan`).
-The current native schema is not re-qualified by these fixture tests. Execute the exact
-returned launch descriptor once. A prepared plan is not launch evidence.
-For Claude, `CLAUDE_PLUGIN_ROOT` selects the equipped plugin copy, defaulting to the
-source copy; code and role bytes checked by `advisory_plugin` must agree before
-preparation. Its absolute reader matches that copy's guard (`advisory_plugin`,
-`prepare`; `guard_routed_readonly.py::allows_verified_diff`). An older installed
-plugin is not qualified by checkout tests and requires a separately authorized
-installation; preparation does not copy or modify it. Codex uses the emitting
-source copy's absolute reader without a Claude environment variable (`prepare`).
-All 43 `agents/routed-readonly-*.md` profiles carry the same advisory Bash policy
-(`claude_pin_profile_text`; profile inventory).
+`prepare` uses the shared reviewer façade and escalation floor (`invocation`).
+Codex uses `codex_spawn_plan(advisory=True, _observe=False)`: packet validation,
+profile override detection and policy resolution remain shared, while no premerge
+claim is supplied or created (`routing_facades.py::codex_spawn_plan`).
+The coordinator supplies known effective-profile override signals through
+`--profile-model-active` and `--profile-effort-active`; these Codex-only inputs
+are passed to the façade (`routing.py` parser; `postmerge_review.py::cli`).
+An absent signal is not an observation of the effective profile; provenance and
+sandbox qualification remain unknown (PAT-196; `detect_codex_overrides`).
+
+The private `invocation.json` contains `tool`, `launch_arguments`, expected
+rewritten `arguments`, their separate hashes, the expected route, and Claude
+`hook_context` with its hash (`prepare`). For Codex, `tool=spawn_agent` and
+`launch_arguments` contain `agent_type`, `model`, `reasoning_effort`,
+`fork_turns=none`, `task_name` and the bounded `message` (`codex_spawn_plan`).
+For Claude, `tool=Agent` and `launch_arguments` contain the logical
+`subagent_type=foundry:maigret`, description and prompt; no `resume` is emitted
+(`invocation`). Launch only `launch_arguments`, once, in a new native child;
+the actual Claude hook controls rewriting (`invocation`; `route_agent.py::route_tool_input`).
+The calculated rewritten arguments and context are preparation, not observations.
+
+Claude requires explicit `CLAUDE_PLUGIN_ROOT` before consumption; no source-copy
+fallback is inferred (`advisory_plugin`). The selected copy's implementation and
+role bytes must equal the emitting source for the files listed in `advisory_plugin`,
+including `routing.py` and `effort_policy.py` (`advisory_plugin`).
+This explicit selection does not prove which plugin or profile the host loaded;
+an incompatible selection refuses before authorization (`advisory_plugin`).
+Codex uses the source copy's reader (`advisory_plugin`, `prepare`). Root and packet
+paths must pass the exact guard's `is_safe_absolute_root` before consumption;
+control characters and shell metacharacters refuse preparation (`prepare`;
+`guard_routed_readonly.py::_SHELL_SYNTAX`). The guard rejects CR and LF anywhere
+in every Bash reader, including `read-review`, `list-review` and `search-review`
+(`guard_routed_readonly.py::allows_verified_diff`).
 
 For `record`, `--packet-dir` must bind the private invocation to its public receipt
 and packet digest (`record`, `read`, `public_attempt`). `--evidence-file` has type
 `coordinator_transcribed_native_call_return`, the attempt ID and packet hash,
 `call={id,tool,arguments,source}`, `child={id,call_id}`,
 `return={child_id,call_id,status,report_hash,source}`, and
-`observed={model,effort,profile_provenance}` (`native_evidence`). Transcribe the
-actual tool call, arguments, new child identity and distinct return from the host;
-a plan, boolean or reviewer assertion is insufficient. Foundry checks exact routed
-arguments, identities and correlation structurally; it does not directly observe
-the host or authenticate a native transcript. Missing observations remain null,
-meaning unknown; requested/transmitted routing and observed values stay separate.
-No profile provenance or native sandbox qualification is inferred (PAT-196).
+`observed={model,effort,profile_provenance}` (`native_evidence`). Claude additionally
+requires `hook={call_id,source,context}` naming the same logical call and the
+observed Foundry Claude route context (`native_evidence`). Transcribe the actual
+logical call, hook context, new child identity and distinct return from the host;
+a plan, boolean or reviewer assertion is insufficient (PAT-ADR-0020, Independence).
+The equality is the closed set `CLAUDE_STABLE_FIELDS`: `role`, `selected_tier`,
+`model`, `effort_parameters.requested`, `effort_parameters.transmitted`,
+`transmitted_launch.profile`, `transmitted_launch.transmitted_model`, `gate_floor`,
+`gate_effort_floor` (`stable_hook_route`; ADR source `route_agent.py::_warning_context`).
+Missing or different stable fields and insufficient correlation refuse recording
+(`native_evidence`). Other context fields, including escalation, host version,
+warnings and availability, are retained privately without equality checks
+(`record`; `stable_hook_route`). Visibility of the additional hook context was
+reported on three Claude launches on 2026-10-12 and 2026-10-13; `updatedInput`
+visibility was reported absent (PAT-ADR-0020, Context). This is a dated observation,
+not a durable host guarantee. A transmitted profile does not prove loading, and
+native model/effort remain unknown when not exposed (PAT-ADR-0020, Independence).
+Foundry checks transcription structurally, not transcript authenticity
+(`native_evidence`); missing observations remain null, meaning unknown.
+No native sandbox qualification is inferred (PAT-196).
 
 `--report-file` has `findings` and nonempty `evidence` lists. Evidence entries have
 `source` and `detail`; findings have `summary` and nonempty `evidence` drawn from
 those entries (`record`). Its
-canonical JSON SHA-256 is the return's `report_hash`. `record` revalidates merged PR
-coordinates before appending a distinct `advisory_report`; insufficient evidence or
-drift appends `stopped_without_verdict` and consumes the attempt (`record`, `digest`).
-A stop publishes only the submitted evidence digest and hashed child identity;
-for a verified packet, its bounded submission is written privately before native
-validation (`record`). A divergent or unreadable packet can stop without archiving
-the new submission (`record`, `read`).
-Public attempt fields are schema/type, issue, attempt, authorization, timestamp,
-immutable coordinates, host/tool, packet/history/argument/route hashes and historical
-identities/versions; reports add report/native-evidence/child hashes and control
-statuses (`public_attempt`, `record`). They bind authority, immutable inputs, routing,
-correlation and outcome without publishing prompts, source paths or historical bodies.
-Full descriptors, snapshots, native evidence and reports are private packet files,
-not an approval store; authority remains the tracker receipt (`prepare`, `record`).
-Defects are submitted to `foundry:intake`; this grants no correction, merge, closure,
-publication or model promotion authority. `AcceptanceProofStore._validated_proof`
-explicitly refuses the advisory schema for both merge and criteria projection.
+canonical JSON SHA-256 is the return's `report_hash` (`digest`, `native_evidence`).
+`record` revalidates merged coordinates, validates each finding's evidence, and
+archives the bounded submission privately (`record`). An unreadable or malformed
+existing `submission.json` produces a controlled stop without replacing it (`record`). Unreadable packet files,
+invalid JSON and non-object invocation data produce a controlled stop after the
+consumed attempt; packet validation can stop before submission archiving
+(`record`, `read`). Historical Git process I/O failures produce the nonsecret
+`historical Git process unavailable` reason (`advisory_git`). Other evidence or coordinate refusals also append a
+`stopped_without_verdict` digest receipt (`record`).
+
+The v2 terminal report retains the complete publishable report and all its
+structured evidence, immutable coordinates, historical identities and launch
+metadata; raw arguments and sources, prompt and snapshot bodies remain private
+(`record`; `public_attempt`). Strings containing execution paths (home,
+repository, output/packet directory, temporary directory and selected plugin) in
+raw form only when absolute, or after `absolute()` or `resolve()`, delimited `file:/` URIs or token-initial UNC paths,
+raw task prompts and duplicate snapshot bodies refuse
+publication; the private execution-path list is bound by its public digest
+(`prepare`, `public_attempt`, `read`, `publishable_report`). Matches require start or a delimiter before a path
+(`(?<![\w.-])`) and use `(?![\w-]|\.[\w-])` after it: a terminal period
+delimits a path, while `.bak` and `-2` extend its filename; generic filesystem
+roots, including `HOME=/`, are discarded (`prepare`,
+`publishable_report`). Other-machine paths
+that do not match these concrete values, slash prose and repository references
+remain permitted; prompt and snapshot duplication uses decoded strings
+(`publishable_report`). An overbound full comment refuses before
+its write (`publishable_report`, `bounded_comment`). No finding is silently removed
+or truncated (`record`). Launch metadata includes correlated call/child hashes,
+argument hash, tool, return status, report hash, stable hook route and explicit
+observations (`record`: `launch_evidence`).
+
+Report deposition and verdict confirmation are separate writes (`record`).
+After exact report-text readback, `advisory_confirmation` binds the attempt,
+report hash, canonical receipt hash and full comment hash (`append`, `record`).
+A missing, altered or ambiguous confirmation produces no usable verdict
+(`restituted_reports`). If report or confirmation readback differs, recording stops
+without retry or compensating tracker write; `publication-readback.json` retains
+the sent and observed texts privately (`append`, `retain_publication_diff`).
+An adapter exception after mutation also triggers one read-only observation and
+attempted private retention before the original exception is re-raised; an unavailable
+observation is recorded as null and a retention I/O failure preserves the original
+exception (`append`, `retain_publication_diff`). Authorization remains
+consumed; the authorization receipt and absent valid confirmation carry the
+without-verdict state (PAT-ADR-0020, Altered terminal receipt).
+V2 terminal envelopes permit isolation even when their JSON is malformed; an old
+authorization still cannot be reused and duplicate authorization stays refused
+(`receipts`, `prepare`, `record`). Malformed authorization identity or scope remains
+fatal; terminal isolation never relaxes that check (`receipts`; PAT-ADR-0020:
+“Cette isolation ne permet ni de réutiliser l’ancienne autorisation ni d’ignorer une ambiguïté sur sa consommation.”). Malformed v1
+receipts remain fatal for the ticket (`receipts`); the authorization ambiguity is
+deduced from their shared envelope, which cannot identify a terminal independently
+of its JSON (`SCHEMA`, `PREFIX`, `receipts`). V2 terminal envelopes have a distinct
+prefix and can be isolated independently (`TERMINAL_PREFIX`, `receipts`). Unidentifiable
+v2 terminal envelopes block recording existing attempts, while previously confirmed
+reports remain restorable (`record`, `restituted_reports`); a newly authorized attempt records
+the preexisting isolated hashes and remains bound to its own unique authorization
+(`unbound_terminals`, `prepare`, `record`).
+A distinct authorization can start another
+attempt on the same ticket (`prepare`).
+
+`restituted_reports(tracker, issue_id)` recovers only confirmed v2 reports from
+tracker comments, checks their report and confirmation hashes and unique
+consumption, and needs no private packet (`restituted_reports`). It reconstructs
+reports and structured evidence, not raw native sources or snapshot bodies
+(PAT-ADR-0020, Conservation). Defects go through `foundry:intake`; the advisory
+path grants no delivery authority (PAT-ADR-0020, Qualification).
+`AcceptanceProofStore._validate_proof` refuses both advisory schemas for merge
+and criteria projection (`routing.py`; `advisory_schema.py`).
 
 The reviewer command is exactly `routing postmerge-review read --root <ROOT>
 --packet-dir <PACKET> --attempt-id <ID> --packet-hash <HASH>`. It checks packet
@@ -130,9 +233,17 @@ Input JSON is bounded by `review_packet.py::MAX_FILE_BYTES`; the diff by
 
 CLI failures expose a controlled reason, `authorization_consumed=no|yes|unknown`
 and `publication=no|yes|unknown`, never arbitrary exception text (`require`,
-`PUBLICATION`, `WRITE_EFFECT`; `routing.py` dispatch). Prewrite refusal has no effect;
-verified authorization publication consumes the attempt, while an interrupted or
-failed write without verified readback leaves publication unknown (`append`).
+`PUBLICATION`, `WRITE_EFFECT`; `routing.py` dispatch). For `prepare`, prewrite refusal
+reports consumption `no`, a consumed identifier
+reports `yes`, and an interrupted authorization write reports `unknown`
+(`prepare`, `append`). For `record`, a uniquely located authorization reports `yes`
+even after terminal failure; absent attempts report `no`, and unavailable history
+reports `unknown` (`record`); unreadable evidence or report inputs also report
+`unknown` before any authorization read (`cli`). The local `read` action reports consumption `unknown`.
+This uncertainty is deduced from its lack of tracker authority (`read`); it reports publication `no` and writes
+nothing, including after a consumed preparation (`routing.py` dispatch; `read`).
+Publication describes the current operation's writes: `no` before mutation, `yes`
+after faithful readback, `unknown` after a write without faithful readback (`append`).
 A failed terminal write does not unconsume an already verified authorization.
 
 Fixture-only procedure, run on a disposable Git copy by
@@ -141,3 +252,14 @@ Fixture-only procedure, run on a disposable Git copy by
 --host`; execute the exact local `read` command above; transcribe the fixture tool
 call/child return; invoke `record` with `--root --issue --attempt-id --evidence-file
 --report-file --packet-dir`. This verifies CLI wiring, not a native reviewer launch.
+
+Exact advisory `diff_hash` procedure, run on a disposable checkout by
+`test_cli_fixture_procedure`: construct exact coordinate JSON, call
+`advisory_git(root, 'diff', '--binary', '--no-ext-diff', '--no-textconv', '--no-color',
+'--no-renames', '--src-prefix=a/', '--dst-prefix=b/', '--no-relative',
+'--submodule=short', f'{base}...{head}')`, then use
+`hashlib.sha256(data).hexdigest()` for `diff_hash` (`advisory_git`, `historical_diff`).
+Use the historical immutable base/head, not the squash commit or a mutable branch
+(`historical_diff`). A separate fixture restores the confirmed report
+from tracker comments after deleting the private packet
+(`test_tracker_only_restitution_survives_private_packet_loss`).
