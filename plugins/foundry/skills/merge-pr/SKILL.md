@@ -244,10 +244,10 @@ nothing else. Inside the companion Epic, put the remarks in a single follow-up i
 which gathers all the deferred remarks of the origin Epic, and cite that issue in the PR
 description before the merge. If that issue is already started or closed, create a new
 follow-up issue: never add a remark to a started or closed issue (maintainer decision of
-2026-10-11). These three cases are still corrected before the merge and then fully
-re-reviewed; the rest of this section adds three more (the PR of an issue of a companion
-Epic, an issue with no origin Epic, a durable refusal of one of the writes), corrected
-the same way, except that the re-review of the first is limited as stated below:
+2026-10-11). These three cases are still corrected before the merge; the rest of this
+section adds three more (the PR of an issue of a companion Epic, an issue with no origin
+Epic, a durable refusal of one of the writes), corrected the same way. The review that
+follows is limited as stated below:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -256,15 +256,23 @@ the same way, except that the re-review of the first is limited as stated below:
   repository's contract carries it).
 
 There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
-correct its non-blocking remarks before the merge. The review that follows covers what
-changed since the previous round, not the whole diff; after a blocking round it stays
-full. This holds for every non-blocking remark of such a PR, the three cases above
-included. When AC are unchecked (step 1 above), and also when they are all checked on a
+correct its non-blocking remarks before the merge. On every pull request, the review that
+follows the correction of the non-blocking remarks of a validated round (every criterion
+`pass` and quality `mergeable`, even with remarks marked "fix before merge") covers what
+changed since that round, not the whole diff (PAT-ADR-0022). It stays full after a
+blocking round, when the change since the previous round goes beyond correcting the
+remarks it carried, and when the reviewer asks for it with a reason. This holds for every
+non-blocking remark, the three cases above included. The partial-review packet gives the
+reviewer the previous round's verdict and remarks, the commit range since that round, and
+the full diff through the shared verifier (`foundry:review-pr`); the reviewer checks that
+each correction settles its remark without a new defect and that nothing else changed,
+and returns a verdict on all criteria for the exact diff. When AC are unchecked (step 1 above), and also when they are all checked on a
 tracker whose adapter sets `delivery_receipt_supported` if the issue has a binding
 (`valid_for_merge`, called twice by `merge` in `<foundry-root>/tooling/foundry/issue.py`),
 the merge gate asks for a review proof covering all criteria for the exact diff, so
 after such a partial review that proof relies on the previous round for the unchanged
-parts; the merge gate is not modified. After a validated round the reviewer's mark "fix
+parts, and the PR description says so; no mechanical check distinguishes a partial from
+a full review, and the merge gate and the proof format are not modified. After a validated round the reviewer's mark "fix
 before merge" decides the first case and the coordinator applies the two other cases (a
 frozen page, a missing or generic documentation status): no reviewer re-reads that second
 step before the merge, and no gate checks it. This is an accepted risk (maintainer
@@ -316,18 +324,18 @@ When one of the four writes does not go through, tell two cases apart:
 
 - durable refusal (the project cannot carry the write, for example it has no `Epic`
   type): make no substitute write: correct the remarks of that round before the merge,
-  re-review in full, and report the refusal in the PR description;
+  re-review as stated above, and report the refusal in the PR description;
 - transient failure (request quota exhausted, network failure): wait and retry the write
   before the merge; the merge waits for it. Do not correct the remarks instead and do not
   merge first. When the failure leaves the effect of the write unknown (a network
   failure), first read the tracker to see whether the write happened, and retry only if
   it did not, so that a retry creates no duplicate. If the adapter itself refuses the
   retry (it cannot replay the write safely), treat the case as a durable refusal:
-  correct the remarks of that round before the merge, re-review in full, and report the
+  correct the remarks of that round before the merge, re-review as stated above, and report the
   refusal in the PR description.
 
 An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
-before the merge and re-review in full; that includes an issue whose direct parent is not
+before the merge and re-review as stated above; that includes an issue whose direct parent is not
 an Epic, the chain of parents not being walked up (maintainer decision of 2026-10-11).
 Inside an Epic campaign the authorization has no
 effect yet. Three things are missing: a channel that carries the remarks to the campaign,

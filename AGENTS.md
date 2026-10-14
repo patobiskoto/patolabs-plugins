@@ -250,11 +250,10 @@ the remarks are held by a single follow-up issue, which gathers all the deferred
 of the origin Epic. If that issue is already started or closed, a new follow-up issue is
 created: no remark is added to a started or closed issue (maintainer decision of
 2026-10-11). The follow-up issue that receives the remarks of a PR is cited in that PR's
-description before the merge. These three cases are still corrected before the merge and
-then fully re-reviewed, as before; the rest of this rule adds three more (the PR of an
-issue of a companion Epic, an issue with no origin Epic, a durable refusal of one of the
-writes), corrected the same way, except that the re-review of the first is limited as
-stated below:
+description before the merge. These three cases are still corrected before the merge; the
+rest of this rule adds three more (the PR of an issue of a companion Epic, an issue with
+no origin Epic, a durable refusal of one of the writes), corrected the same way. The
+review that follows is limited as stated below:
 
 - a remark the reviewer marks "fix before merge";
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -263,17 +262,25 @@ stated below:
   a deferrable remark.
 
 There is no second-level deferral: the non-blocking remarks left by the PR of an issue
-that belongs to a companion Epic are corrected before the merge. The review that follows
-covers what changed since the previous round, not the whole diff; after a blocking round
-it stays full (maintainer decision of 2026-10-11). This holds for every non-blocking
-remark of such a PR, the three cases above included. When the criteria of the issue are
+that belongs to a companion Epic are corrected before the merge. On every pull request,
+the review that follows the correction of the non-blocking remarks of a validated round
+(every criterion `pass` and quality `mergeable`, even with remarks marked "fix before
+merge") covers what changed since that round, not the whole diff (PAT-ADR-0022). It stays
+full after a blocking round, when the change since the previous round goes beyond
+correcting the remarks it carried, and when the reviewer asks for it with a reason. This
+holds for every non-blocking remark, the three cases above included. The partial-review
+packet gives the reviewer the previous round's verdict and remarks, the commit range
+since that round, and the full diff through the shared verifier; the reviewer checks that
+each correction settles its remark without a new defect and that nothing else changed,
+and returns a verdict on all criteria for the exact diff. When the criteria of the issue are
 not all checked in the tracker, and also when they are all checked on a tracker whose
 adapter sets `delivery_receipt_supported` if the issue has a binding
 (`write.issue_binding`), the merge gate asks for a review proof covering all criteria for
 the exact diff (`valid_for_merge`, called twice by `merge` in
 `plugins/foundry/tooling/foundry/issue.py`), so after such a partial review that proof
-relies on the previous round for the unchanged parts; the merge gate is not modified
-(PAT-ADR-0018).
+relies on the previous round for the unchanged parts, and the PR description says so;
+no mechanical check distinguishes a partial from a full review, and the merge gate and
+the proof format are not modified (PAT-ADR-0018, PAT-ADR-0022).
 
 Four writes are authorized in advance, without human confirmation, inside and outside
 an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every repository where the
@@ -309,8 +316,8 @@ When one of the four writes does not go through, two cases are told apart:
 
 - durable refusal (the project cannot carry the write, for example it has no `Epic`
   type): the coordinator makes no substitute write: the remarks of that round are
-  corrected before the merge and then fully re-reviewed, and the refusal is reported in
-  the PR description;
+  corrected before the merge and then re-reviewed as stated above, and the refusal is
+  reported in the PR description;
 - transient failure (request quota exhausted, network failure): the coordinator waits
   and retries the write before the merge, and the merge waits for it. It does not correct
   the remarks instead and does not merge first. When the failure leaves the effect of the
@@ -318,15 +325,15 @@ When one of the four writes does not go through, two cases are told apart:
   happened, and retries only if it did not, so that a retry creates no duplicate. If
   the adapter itself refuses the retry (it cannot replay the write safely), the case is
   treated as a durable refusal: the remarks of that round are corrected before the merge
-  and then fully re-reviewed, and the refusal is reported in the PR description.
+  and then re-reviewed as stated above, and the refusal is reported in the PR description.
 
 Both are operating choices of this contract (maintainer decision of 2026-10-10; the
 refused retry is the coordinator's reading of those two decisions), not decisions of
 PAT-ADR-0018.
 
 PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
-its non-blocking remarks are corrected before the merge and then fully re-reviewed
-(maintainer decision of 2026-10-10). That includes an issue whose direct parent is not an
+its non-blocking remarks are corrected before the merge and then re-reviewed as stated
+above (maintainer decision of 2026-10-10). That includes an issue whose direct parent is not an
 Epic: the chain of parents is not walked up (maintainer decision of 2026-10-11).
 
 The Foundry skills apply this grouped deferral and this standing authorization in every
@@ -357,7 +364,7 @@ by the reviewer, not a gate. In the same way no gate checks that the companion E
 (b) exists, that it has no tracker link with the origin Epic, or that a PR of a companion
 Epic deferred nothing: this is judged in review. Nothing checks either that the fourth
 write was made when needed, that the companion Epic has a single follow-up issue, or that
-the review after a correction on a companion Epic was limited to what changed.
+the review after the correction of a validated round was limited to what changed.
 
 **What is not coded yet.** The four writes of (b) are made by the coordinator that
 applies the skills. An Epic campaign does not receive the reviewer's prose: its review

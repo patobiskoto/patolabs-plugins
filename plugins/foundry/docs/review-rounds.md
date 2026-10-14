@@ -172,6 +172,29 @@ decides, in either of these cases:
   divided by the number of origin issues is not below 3.2, the figure of the baseline
   (maintainer decision of 2026-10-11).
 
+## Partial review on every pull request (PAT-172, PAT-ADR-0022)
+
+Until PAT-172, only the PR of an issue of a companion Epic had a partial review after the
+correction of non-blocking remarks (maintainer decision of 2026-10-11; PR 121, which
+merged that amendment, is cited in the observation window above); every other PR had a full re-review. The
+history above and in "Return to the previous practice" is kept as measured under that
+rule. Now, on every pull request, the review that follows the correction of the
+non-blocking remarks of a validated round covers what changed since that round, not the
+whole diff. A validated round is one where every criterion is `pass` and quality is
+`mergeable`, even with remarks marked "fix before merge". The review stays full after a
+blocking round, when the change since the previous round goes beyond correcting the
+remarks it carried, and when the reviewer asks for it with a reason. The packet gives the
+reviewer the previous round's verdict and remarks, the commit range since that round, and
+the full diff through the shared verifier; the reviewer checks that each correction
+settles its remark without a new defect and that nothing else changed, and returns a
+verdict on all criteria for the exact diff. The proof has the same form as a full one,
+relies on the previous round for the unchanged parts, and the PR description says so. No
+mechanical check distinguishes a partial from a full review; the merge gate and the proof
+format are unchanged. The rule is in `AGENTS.md#R9` (b), `skills/merge-pr/SKILL.md` and
+`skills/review-pr/SKILL.md`. The partial and full review times quoted above are one
+observation each; the effect of this extension on the number of rounds is unknown and is
+not counted on this page.
+
 ## Limits
 
 - The deferral moves part of the rounds to the follow-up issue instead of removing them;
@@ -329,7 +352,8 @@ provider covers a project where the `Epic` type is not available:
 
 What the coordinator does when the `Epic` type is missing (the table above) is in
 `AGENTS.md#R9` (b): this is a durable refusal, so no substitute write, the remarks are
-corrected before the merge and fully re-reviewed, and the refusal is reported in the PR
+corrected before the merge and re-reviewed as stated in "Partial review on every pull
+request", and the refusal is reported in the PR
 description.
 
 This paragraph is about another failure, not about the missing `Epic` type. On YouTrack,

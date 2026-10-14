@@ -121,6 +121,22 @@ The provenance, bounds, file permissions and error output are documented in
 `docs/review-packet.md`. Packet generation makes no tracker or PR writes and grants no
 authority to bypass the independent review or the merge gates.
 
+Partial review (PAT-ADR-0022; rule R9 of the repository's contract where it carries it,
+and `foundry:merge-pr`). On every pull request, the review that follows the correction of
+the non-blocking remarks of a validated round (every criterion `pass` and quality
+`mergeable`, even with remarks marked "fix before merge") covers what changed since that
+round, not the whole diff. It stays full after a blocking round, when the change since
+the previous round goes beyond correcting the remarks it carried, and when the reviewer
+asks for it with a reason. The partial-review packet gives the reviewer the previous
+round's verdict and remarks, the commit range since that round (the coordinator supplies
+both as `--declarations-file` assertions, kept in `coordinator-declarations.json` with
+`verified_by_tool=false`: `docs/review-packet.md`), and the full diff through the shared
+verifier above. The reviewer checks that each correction settles its remark
+without a new defect and that nothing else changed, and returns a verdict on all criteria
+for the exact diff, in the same Output form and JSON object as a full review. That proof
+relies on the previous round for the unchanged parts and the PR description says so; no
+mechanical check distinguishes a partial from a full review.
+
 Under Codex, supply the generated send file to the façade with the already active claim:
 
 ```bash
