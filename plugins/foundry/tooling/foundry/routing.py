@@ -748,19 +748,53 @@ def repository_identity(root: str | os.PathLike | None = None) -> str:
     return result.stdout.strip() or str(project_root)
 
 
-def git_diff(root: str | os.PathLike | None = None, base: str | None = None) -> bytes:
-    """Exact local PR diff bytes used by both review input and its dedup key."""
+def git_diff(
+    root: str | os.PathLike | None = None,
+    base: str | None = None,
+    head: str = "HEAD",
+) -> bytes:
+    """Exact local PR diff bytes used by both review input and its dedup key.
+
+    ``head`` is only ever overridden to recompute a historical reviewed diff with the
+    very same command (PAT-173), so both hashes stay comparable.
+    """
     project_root, base = review_diff_coordinates(root, base)
+    if not isinstance(head, str) or not head or head.startswith("-"):
+        raise RoutingConfigError("tête Git invalide pour le diff de review.")
     result = subprocess.run(
-        ["git", "diff", "--binary", "--no-ext-diff", f"{base}...HEAD"],
+        ["git", "diff", "--binary", "--no-ext-diff", f"{base}...{head}"],
         cwd=project_root, capture_output=True,
     )
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise RoutingConfigError(
-            f"impossible de calculer le diff {base}...HEAD : {detail or 'git diff a échoué'}."
+            f"impossible de calculer le diff {base}...{head} : {detail or 'git diff a échoué'}."
         )
     return result.stdout
+
+
+def _git_run(root: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=_project_root(root), capture_output=True, text=True,
+    )
+
+
+def _git_is_ancestor(root: str | os.PathLike, ancestor: str, descendant: str) -> bool:
+    result = _git_run(root, "merge-base", "--is-ancestor", ancestor, descendant)
+    if result.returncode not in (0, 1):
+        raise RoutingConfigError(
+            f"ascendance Git illisible : {result.stderr.strip() or 'git a échoué'}."
+        )
+    return result.returncode == 0
+
+
+def _git_changed_paths(root: str | os.PathLike, *revisions: str) -> set[str]:
+    result = _git_run(root, "diff", "--name-only", "-z", "--no-renames", *revisions)
+    if result.returncode != 0:
+        raise RoutingConfigError(
+            f"fichiers modifiés illisibles : {result.stderr.strip() or 'git a échoué'}."
+        )
+    return {path for path in result.stdout.split("\0") if path}
 
 
 def review_diff_coordinates(
@@ -2011,10 +2045,21 @@ class AcceptanceProofStore:
             raise RoutingConfigError("preuve AC invalide ; refus fermé.")
         if proof.get("schema") in {ADVISORY_SCHEMA, TERMINAL_SCHEMA}:
             raise RoutingConfigError("advisory postmerge record is never an acceptance proof.")
-        if set(proof) != {
+        required_keys = {
             "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
-        }:
+        }
+        # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
+        if set(proof) not in (required_keys, required_keys | {"carried_from"}):
             raise RoutingConfigError("preuve AC legacy ou incomplète ; refus fermé.")
+        carried = proof.get("carried_from")
+        if "carried_from" in proof and (
+                not isinstance(carried, dict) or
+                set(carried) != {"proof_id", "head", "base", "diff_hash"} or
+                not cls._is_lower_hex(carried.get("proof_id"), 64) or
+                not cls._is_lower_hex(carried.get("head"), 40) or
+                not cls._is_lower_hex(carried.get("base"), 40) or
+                not cls._is_lower_hex(carried.get("diff_hash"), 64)):
+            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
         if (proof.get("schema_version") != 1 or
                 not cls._is_lower_hex(proof.get("proof_id"), 64)):
             raise RoutingConfigError("preuve AC malformée ; refus fermé.")
@@ -2166,6 +2211,175 @@ class AcceptanceProofStore:
                 raise
         return {"proof_id": proof["proof_id"], "issue": proof["issue"]["id"],
                 "diff_hash": proof["coordinates"]["diff_hash"], "generation": record["generation"]}
+
+    def carry(
+        self, *, issue_id: str, issue_body: str, root: str | os.PathLike,
+        base: str, from_base: str, from_diff_hash: str,
+    ) -> dict:
+        """Carry a terminal proof across a clean integration of the main branch.
+
+        PAT-ADR-0021: every condition is checked here, at carry time; any failure
+        refuses and a full review stays required.  The original proof file, the
+        escalation state and the merge gate are never touched.  A new append-only
+        proof bound to the new exact head/base/diff is written, and the review
+        deduplication ledger entry of that diff hash is rebound to the new
+        coordinates (the previous ones are kept in ``carried``).  The reviewed
+        content is the PR's own files, so with every condition below holding the diff
+        bytes are identical; a different diff hash is therefore refused, not carried.
+        """
+        for name, value in (("base", base), ("base d'origine", from_base)):
+            if not self._is_lower_hex(value, 40):
+                raise RoutingConfigError(
+                    f"report de preuve AC : SHA de {name} Git exact sur 40 hex requis ; "
+                    "refus fermé."
+                )
+        ledger = ReviewDeduplicator(self._repository, self.__state_dir)
+        from_diff_hash = ledger._validate_hash(from_diff_hash)
+        if not isinstance(issue_id, str) or not issue_id.strip():
+            raise RoutingConfigError("preuve AC : identifiant d'issue requis.")
+        issue_id = issue_id.strip()
+        expected = acceptance_criteria(issue_body)
+        # Terminal, same issue, mergeable, every criterion pass (raises otherwise).
+        binding = ledger.validated_completed_proof_binding(issue_id, from_diff_hash)
+        if binding is None:
+            raise RoutingConfigError("report de preuve AC : aucune preuve terminale d'origine.")
+        original = self._validated_proof(self.directory / str(binding["proof_id"]))
+        if (original["issue"]["ac_digest"] != acceptance_digest(expected) or
+                [{"id": c["id"], "digest": c["digest"]} for c in original["issue"]["criteria"]]
+                != expected):
+            raise RoutingConfigError(
+                "report de preuve AC : les critères de l'issue ont changé depuis la preuve ; "
+                "relecture complète requise."
+            )
+        project_root = Path(root).resolve()
+        coordinates = ReviewDeduplicator._validate_coordinates({
+            "root": str(project_root), "base": base,
+        })
+        old_head = original["coordinates"]["head"]
+        with ledger._locked():
+            new_head = git_head(project_root)
+            new_hash = from_diff_hash
+            if original.get("carried_from") is not None and (
+                    original["coordinates"] == {
+                        "head": new_head, "diff_hash": from_diff_hash, "base": base}):
+                # Replay of a rebinding already done: nothing to write, but the diff
+                # must still be the reviewed bytes.
+                if review_diff_hash(git_diff(project_root, base)) != from_diff_hash:
+                    raise RoutingConfigError(
+                        "report de preuve AC : le diff a changé ; relecture complète requise."
+                    )
+                record = ledger._read_record(
+                    ledger.directory / new_hash, new_hash, migrate_bare_legacy=False,
+                )
+                if record.get("coordinates") != coordinates:
+                    raise RoutingConfigError(
+                        "report de preuve AC : le ledger de review porte d'autres "
+                        "coordonnées ; refus fermé."
+                    )
+                return {
+                    "proof_id": original["proof_id"], "issue": issue_id,
+                    "diff_hash": new_hash, "carried_from": original["carried_from"]["proof_id"],
+                    "carried": False,
+                }
+            if original["coordinates"]["base"] != from_base:
+                raise RoutingConfigError(
+                    "report de preuve AC : la base d'origine ne correspond pas à la preuve."
+                )
+            if review_diff_hash(git_diff(project_root, from_base, old_head)) != from_diff_hash:
+                raise RoutingConfigError(
+                    "report de preuve AC : le diff d'origine ne se recalcule pas à l'identique."
+                )
+            if new_head == old_head and base == from_base:
+                raise RoutingConfigError("report de preuve AC : rien à reporter.")
+            if not _git_is_ancestor(project_root, from_base, base):
+                raise RoutingConfigError(
+                    "report de preuve AC : l'ancienne base n'est pas ancêtre de la nouvelle."
+                )
+            if not _git_is_ancestor(project_root, base, new_head):
+                raise RoutingConfigError(
+                    "report de preuve AC : la nouvelle base n'est pas ancêtre de HEAD."
+                )
+            merged = _git_run(
+                project_root, "merge-tree", "--write-tree", "--no-messages",
+                old_head, base,
+            )
+            if merged.returncode == 1:
+                raise RoutingConfigError(
+                    "report de preuve AC : l'intégration automatique est en conflit ; "
+                    "relecture complète requise."
+                )
+            if merged.returncode != 0:
+                raise RoutingConfigError(
+                    f"report de preuve AC : merge-tree a échoué : {merged.stderr.strip()}."
+                )
+            head_tree = _git_run(project_root, "rev-parse", f"{new_head}^{{tree}}")
+            if (head_tree.returncode != 0 or
+                    merged.stdout.strip() != head_tree.stdout.strip()):
+                raise RoutingConfigError(
+                    "report de preuve AC : l'arbre de HEAD n'est pas celui de la fusion "
+                    "automatique ; relecture complète requise."
+                )
+            shared = (
+                _git_changed_paths(project_root, f"{from_base}...{old_head}")
+                & _git_changed_paths(project_root, from_base, base)
+            )
+            if shared:
+                raise RoutingConfigError(
+                    "report de preuve AC : la branche principale modifie des fichiers de la "
+                    "PR ; relecture complète requise."
+                )
+            if review_diff_hash(git_diff(project_root, base)) != from_diff_hash:
+                raise RoutingConfigError(
+                    "report de preuve AC : le diff a changé ; relecture complète requise."
+                )
+            marker = ledger.directory / new_hash
+            record = ledger._read_record(marker, new_hash, migrate_bare_legacy=False)
+            if record.get("acceptance_proof_id") != original["proof_id"]:
+                raise RoutingConfigError(
+                    "report de preuve AC : le ledger ne nomme pas la preuve d'origine ; "
+                    "refus fermé."
+                )
+            proof = {
+                "schema_version": 1,
+                "issue": original["issue"],
+                "review": original["review"],
+                "coordinates": {"head": new_head, "diff_hash": new_hash, "base": base},
+                "quality": "mergeable",
+                "carried_from": {
+                    "proof_id": original["proof_id"], "head": old_head,
+                    "base": from_base, "diff_hash": from_diff_hash,
+                },
+            }
+            proof["proof_id"] = hashlib.sha256(
+                json.dumps(proof, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            result = {
+                "proof_id": proof["proof_id"], "issue": issue_id, "diff_hash": new_hash,
+                "carried_from": original["proof_id"],
+            }
+            updated = {
+                **record,
+                "coordinates": coordinates,
+                "head": new_head,
+                "acceptance_proof_id": proof["proof_id"],
+                "carried": [*record.get("carried", []), {
+                    "from_proof_id": original["proof_id"],
+                    "from_coordinates": record["coordinates"],
+                    "from_head": record["head"],
+                    "carried_at": _utc_now(),
+                }],
+            }
+            persisted, created = self._reuse_or_write_canonical(proof)
+            try:
+                ledger._atomic_write(marker, updated)
+            except Exception:
+                if created:
+                    try:
+                        persisted.unlink()
+                    except FileNotFoundError:
+                        pass
+                raise
+        return {**result, "carried": True}
 
     @property
     def _repository(self) -> str:
@@ -2447,6 +2661,16 @@ def main(
     record_proof.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
     record_proof.add_argument("--repository", help="repo namespace; defaults to origin URL")
     record_proof.add_argument("--root", required=True, help="exact Git worktree root")
+    carry_proof = sub.add_parser(
+        "carry-review-proof",
+        help="carry a terminal mergeable proof across a clean integration of the main branch",
+    )
+    carry_proof.add_argument("--issue", required=True)
+    carry_proof.add_argument("--base", required=True, help="new 40-hex Git base SHA")
+    carry_proof.add_argument("--from-base", required=True, help="base SHA of the original review")
+    carry_proof.add_argument("--from-diff-hash", required=True, help="diff hash of the original proof")
+    carry_proof.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    carry_proof.add_argument("--root", required=True, help="exact Git worktree root")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -2840,6 +3064,19 @@ def main(
                 issue_id=current.id, issue_body=current.body, reviewer_role="reviewer",
                 outcomes=submitted["outcomes"], quality=submitted["quality"],
                 diff_hash=args.diff_hash, claim_id=args.claim_id, root=args.root, base=args.base,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if args.command == "carry-review-proof":
+            from foundry import tracker
+            active_tracker = tracker(cwd=args.root)
+            active_tracker.resolve_checkout_project(args.root)
+            current = active_tracker.observe_issue(args.issue)
+            repository = args.repository or repository_identity(args.root)
+            result = AcceptanceProofStore(repository).carry(
+                issue_id=current.id, issue_body=current.body, root=args.root,
+                base=args.base, from_base=args.from_base,
+                from_diff_hash=args.from_diff_hash,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return

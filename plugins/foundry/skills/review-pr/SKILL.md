@@ -258,6 +258,12 @@ Completion by an old owner after recovery is refused. A completed hash remains
 deduplicated forever. `complete-review` is deprecated and fails closed without terminalizing
 anything; `record-review-proof` is the only terminal path.
 
+After a terminal `mergeable` verdict, if the PR branch later only integrates the main
+branch, the caller tries `routing carry-review-proof` before claiming a new review; the
+conditions and the refusal behaviour are in `docs/review-rounds.md` ("Carrying a
+terminal proof across an integration of main", PAT-ADR-0021), and the command is shown in
+`foundry:merge-pr` step 2b. A refused carry means a full review of the new diff.
+
 After the read-only reviewer returns, the caller records a blocking verdict (never the
 reviewer itself) through `routing escalation failure <ISSUE-ID> <CORRECTION-ROLE>
 --kind review_blocking --current-tier <SELECTED-TIER> --idempotency-key <STABLE-REVIEW-EFFECT-ID>`.

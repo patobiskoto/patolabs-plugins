@@ -207,6 +207,23 @@ failure classification, do not fabricate a proof or mark the claim completed, an
 the human recovery protocol if work later resumes. Do not run a second reviewer workflow
 on the same diff.
 
+### 2b. After integrating the main branch into the PR (PAT-173)
+
+If the only change since a terminal `mergeable` review is an integration (merge) of the
+main branch, do not start a new review round yet: try to carry the proof, with the
+base SHA and diff hash of the review being carried.
+
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing carry-review-proof --root <ROOT> --issue <ISSUE-ID> --base <NEW-BASE-SHA> --from-base <OLD-BASE-SHA> --from-diff-hash <OLD-DIFF-HASH>
+```
+
+The command checks mechanically, and refuses unless all hold, the conditions listed in
+`docs/review-rounds.md` ("Carrying a terminal proof across an integration of main",
+PAT-ADR-0021). On a refusal, a full review of the new diff stays required: claim and
+review it as above. A conflict resolution or any other edit of the reviewed content is
+never carried. On success it prints the new proof identifier; `merge` then finds a proof
+for the exact diff as usual.
+
 ### 3. Human test — recommended
 For any UI/runtime surface: derive a 3-5 step test procedure from the diff, rebuild/
 deploy, and STOP for explicit validation. Exception: pure refactor (justify in the merge).
