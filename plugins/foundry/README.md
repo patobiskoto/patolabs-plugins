@@ -97,6 +97,30 @@ Not verified: the Foundry 1.2.0 / Ship-iOS 0.3.0
 pair on a host, and a Linear request count on 1.2.0 itself. The return to 1.1.1 through
 an official manager is not tried.
 
+**1.3.0 is a minor release, prepared by its release pull request.** That pull request
+sets both host manifests to 1.3.0 and carries the dated `1.3.0` section of the
+[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.3.0.md), the
+[upgrade and rollback guide](docs/migration-1.3.0.md) and the freeze entry of
+`tests/fixtures/release-history.json`. The release notes open with the behaviour
+changes: the review skills claim the diff with `routing claim-review --host` before
+`routing prepare-review` builds the private packet, with the Codex route checked
+before any reservation; the reviewer gains `routing search-review` and `list-review`
+and its Bash guard widens; `routing postmerge-review prepare|read|record` adds a
+separate advisory post-merge review; Linear issue creation admits only qualified
+renderings, reports partial effects as typed details and adds `edit reconcile-create`;
+the new `scripts/check_model_rollback.py` takes a required `--out`, with no routing default changed. They
+claim no gain. The guide gives the upgrade from 1.2.0 on both hosts and what is known
+and unknown about returning to 1.2.0 (an untried procedure, PAT-162). Both pages are
+frozen from the release pull request on, so they state no tag and no installation. Not
+done by that pull request, and not claimed here: the tag `foundry-v1.3.0`, the update
+of the installed plugin on Claude Code and on Codex, and the readback of the version a
+host actually loads; they come after the merge, the tag on the maintainer's authorization,
+recorded on PAT-199, and this paragraph is updated when they
+exist. Not verified: the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
+provenance of the Codex reviewer profile (PAT-196), the native availability of the eight
+rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294 bytes
+probed) and a Linear request count on 1.3.0.
+
 ## Why
 
 The skills this replaces were *too binary*: they sorted and counted, they didn't reason —
@@ -170,7 +194,8 @@ verification, and rollback constraints) is in
 [`docs/migration-1.0.0.md`](docs/migration-1.0.0.md); the upgrade from 1.0.0 to
 1.1.0 and its rollbacks are in
 [`docs/migration-1.1.0.md`](docs/migration-1.1.0.md); the upgrade from 1.1.1 to 1.2.0
-is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md). The former
+is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2.0 to
+1.3.0 is in [`docs/migration-1.3.0.md`](docs/migration-1.3.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -647,7 +672,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1 and 1.2.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0 and 1.3.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in

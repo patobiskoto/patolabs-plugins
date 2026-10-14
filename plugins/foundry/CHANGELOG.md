@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 1.3.0 — 2026-10-15
+
+Minor release. Entries below change behaviour. New CLI surfaces: `routing
+prepare-review` (PAT-174), `routing search-review` and `routing list-review`
+(PAT-176), `routing postmerge-review prepare|read|record` (PAT-200, PAT-202) and
+`edit reconcile-create` (PAT-197); it adds `scripts/check_model_rollback.py`
+(required `--out`, PAT-17). `routing claim-review` gains `--host` and, for `--host codex`, route options
+that are checked before any reservation (PAT-204); the `review-pr` and `merge-pr`
+skills now reserve the diff with `routing claim-review` on both hosts before preparing
+the reviewer packet. The routed read-only Claude Bash guard accepts the claimed readers
+and the advisory reader and refuses any command containing CR or LF
+(`hooks/guard_routed_readonly.py`). On Linear, issue creation admits only an exact or
+qualified-rendering body, `edit create-issue` exits nonzero with typed partial-effect
+details on standard error, a quota error on the creation request stays typed and one on
+the read-back is reported as a partial effect (PAT-197); advisory comments
+survive the ten-comment display window (PAT-200). The Tracker port gains
+`reconcile_issue_creation`, which refuses by default, and the CodeHost pull request
+model gains an optional `body` (PAT-197, PAT-174). No routing default, model or effort
+changes (PAT-17). Release note: `docs/release-1.3.0.md`; upgrade guide:
+`docs/migration-1.3.0.md`. This dated section is not a claim that 1.3.0 is already
+tagged or installed. The entries below are those merged after `foundry-v1.2.0`, kept as
+written.
+
 - PAT-197: qualified issue-body rendering and typed partial creation effects
   (`linear.py::create_issue`, `_issue_creation_rendering`); explicit read-only
   `edit reconcile-create` validates an existing issue without recreation or overwrite

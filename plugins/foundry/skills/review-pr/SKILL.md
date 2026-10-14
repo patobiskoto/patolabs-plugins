@@ -20,13 +20,12 @@ never rearm an original claim or call `record-review-proof` for an advisory repo
 After the direct human decision, pass the exact audit ticket, repository, PR,
 base/head/merge SHAs and diff hash through `--authorization-file`; generic authority
 or a previous decision for a different attempt does not suffice (PAT-ADR-0020,
-Human authorization; taking effect at this issue's merge).
+Human authorization; accepted, supersedes PAT-ADR-0019).
 Documentation status for PAT-202: updated advisory descriptor, native evidence,
 publication, input failures, publishable strings, legacy isolation and reader restrictions;
 sources are `docs/postmerge-review.md` and
 `postmerge_review.py::{prepare,native_evidence,record,restituted_reports}`.
-PAT-ADR-0020 is the proposed replacement at this issue's merge; PAT-ADR-0019
-remains accepted until then (PAT-ADR-0020, Decision).
+PAT-ADR-0020 is accepted and supersedes PAT-ADR-0019 (PAT-ADR-0020, Decision).
 Run `prepare` once, then launch the private `invocation.json`'s `launch_arguments`
 with its `tool` in a new child (`postmerge_review.py::prepare`): Codex uses
 `spawn_agent` with `fork_turns=none`; Claude uses logical `foundry:maigret` through

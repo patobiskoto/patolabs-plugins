@@ -108,6 +108,31 @@ Statuses:
   request count on 1.2.0 itself (the counts quoted were measured before the last change
   to the Linear adapter). The return to 1.1.1 through an official manager is not tried.
 
+**Release 1.3.0, prepared by its release pull request:** that pull request sets both
+Foundry host manifests to **1.3.0** (Ship-iOS stays at **0.3.0**) and carries the dated
+`1.3.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), the
+[release notes](plugins/foundry/docs/release-1.3.0.md), the
+[upgrade and rollback guide](plugins/foundry/docs/migration-1.3.0.md) and the freeze
+entry of `plugins/foundry/tests/fixtures/release-history.json`. It is a minor version
+because it adds CLI verbs (`routing prepare-review`, `search-review`, `list-review`,
+`postmerge-review`, `edit reconcile-create`) and changes the review path of the
+`review-pr` and `merge-pr` skills; the release notes open with these behaviour changes
+and claim no gain. Statuses:
+
+- **Done by the release pull request:** the manifests, the CHANGELOG section, the two
+  pages and the freeze entry, with the status sentences of `docs/postmerge-review.md`
+  and `skills/review-pr/SKILL.md` (PAT-ADR-0020 accepted, supersedes PAT-ADR-0019) and
+  one comment line of `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
+- **Not done by it, and not claimed here:** the tag `foundry-v1.3.0`, the update of the
+  installed plugin on Claude Code and on Codex, and the readback of the version a host
+  actually loads. They come after the merge, the tag on the maintainer's authorization,
+  recorded on PAT-199. This list is updated when they exist.
+- **Not verified:** the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
+  provenance of the Codex reviewer profile (PAT-196), the native availability of the
+  eight rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294
+  bytes probed), and a Linear request count on 1.3.0. The return to 1.2.0 through an
+  official manager is not tried (PAT-162).
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -141,7 +166,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.2.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.3.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
