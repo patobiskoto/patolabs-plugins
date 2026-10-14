@@ -81,6 +81,23 @@ class TrackerConflictError(RuntimeError):
     """A provider version/body changed before a bounded tracker mutation."""
 
 
+class IssueCreationValidationError(TrackerConflictError):
+    """A create effect or its validation needs explicit reconciliation."""
+
+    def __init__(self, *, client_id, native_id=None, issue_id=None,
+                 creation="unknown", validation="unknown"):
+        self.details = {
+            "client_id": client_id, "native_id": native_id, "issue_id": issue_id,
+            "creation": creation, "validation": validation,
+            "reconciliation": "required", "automatic_retry": False,
+        }
+        super().__init__(
+            f"issue creation={creation}, validation={validation}; "
+            f"issue_id={issue_id}, native_id={native_id}, client_id={client_id}; "
+            "explicit reconciliation required; no retry"
+        )
+
+
 def migration_source_only_issue_refs(value: object) -> list[str]:
     """Validate exact issue coordinates retained without a migrated target issue."""
     if (
@@ -479,6 +496,13 @@ class Tracker(ABC):
         parent: str | None = None,
     ) -> Issue:
         """Create an issue; optionally link it as a subtask of `parent`."""
+
+    def reconcile_issue_creation(
+        self, project: Project, issue_id: str, title: str, body: str,
+        fields: dict | None = None, parent: str | None = None,
+    ) -> dict:
+        """Read and validate an existing creation; never recreate or overwrite it."""
+        raise TrackerCapabilityUnavailableError(self.name, "issue-creation-reconciliation")
 
     @abstractmethod
     def update_fields(

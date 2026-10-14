@@ -248,6 +248,17 @@ def create_issue(
     )
 
 
+def reconcile_issue_creation(
+    tracker, issue_id: str, title: str, body: str = "",
+    fields: dict | None = None, parent: str | None = None,
+) -> dict:
+    """Read-only validation of the identified existing issue in this repository."""
+    project = issue_binding(tracker, issue_id, *([parent] if parent else []))
+    if project is None:
+        project = tracker.resolve_project(registry.repo_basename())
+    return tracker.reconcile_issue_creation(project, issue_id, title, body, fields, parent)
+
+
 def adr_binding(tracker, *adr_ids):
     """Resolve and validate the current project before an ADR mutation."""
     project = mutation_project(tracker)

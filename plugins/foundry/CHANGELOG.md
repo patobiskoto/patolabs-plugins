@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- PAT-197: qualified issue-body rendering and typed partial creation effects
+  (`linear.py::create_issue`, `_issue_creation_rendering`); explicit read-only
+  `edit reconcile-create` validates an existing issue without recreation or overwrite
+  (`write.reconcile_issue_creation`, `LinearTracker.reconcile_issue_creation`).
+  R5: comparison bounds, effect vocabulary, portable port and CLI documented in
+  `docs/linear-tracker.md`; intake caller updated in `skills/intake/SKILL.md`.
+
 - PAT-204: `routing claim-review --host codex` validates the reviewer facade before
   a new reservation or interrupted-publication replay; route refusal leaves the
   review ledger unchanged (`routing.py::main`; `routing_facades.py::codex_review_preflight`).

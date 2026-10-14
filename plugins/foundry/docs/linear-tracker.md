@@ -157,8 +157,9 @@ and comments. These supported writes round-trip only through the normalized rela
 above; duplicate/similar writes are not exposed.
 
 These writes have deliberately narrow delivery semantics. Creation sends one
-`issueCreate` with a fresh client UUID and then reads the returned issue; retrying the
-command creates a new request and can duplicate the issue. A relation call validates and
+`issueCreate` with a fresh client UUID and then reads that native UUID, including after
+an ambiguous response (`LinearTracker.create_issue`); retrying the creation command
+creates a new request and can duplicate the issue. A relation call validates and
 snapshots both endpoints, then sends one `issueRelationCreate` at a deterministic UUIDv4
 derived from the canonical project, relation kind, source and target. Linear's qualified
 schema defines that optional UUIDv4 as the relation identifier and exposes
@@ -175,6 +176,68 @@ relation port, not general provider idempotence, CAS, or exclusion; the residual
 race still exists. A comment call sends one `commentCreate` and reads back that returned
 comment ID; retry after an ambiguous outcome can duplicate the comment. None of these
 operations is advertised as generally exactly-once.
+
+### Issue creation validation and explicit reconciliation (PAT-197)
+
+`linear.py::_issue_creation_body_matches` accepts exact body bytes or the complete
+forward rendering produced by `_issue_creation_rendering`; partial combinations are
+refused; a null provider description retains the existing empty-body contract.
+The qualified rendering inserts one empty line after an unindented `## `
+heading when the next line is not empty, wraps a complete bare `https://` token as
+`[URL](<URL>)` with identical label and destination, escapes an unescaped `~/` outside
+a word, and removes one terminal LF only when it is not preceded by another LF.
+The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
+other URL syntax stays exact. Apart from the terminal LF rule, lines containing
+backticks, indented lines, block-quote lines and fenced blocks stay exact; a fence opens
+only when indented by at most three spaces and closes only on the same
+character with at least the same length as its opening, and a line containing `<`
+takes no `~/` escape; a body containing CR stays entirely exact. These are observed
+renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
+text changes, URL destination changes, other tilde escapes and whitespace folding
+remain refused (`_issue_creation_rendering`; `test_linear_issue_creation.py`).
+Source bytes remain caller-owned; this comparator stores no source and changes no
+ADR source, witness, acceptance proof or lifecycle authority (`create_issue`,
+`reconcile_issue_creation`).
+
+After an unvalidated creation, `edit create-issue` exits nonzero and emits the typed
+`IssueCreationValidationError.details` JSON on stderr: `creation` is `created` or
+`unknown`, `validation` is `refused` or `unknown`, and `reconciliation` is `required`.
+`client_id` names the submitted UUID; `native_id` and public `issue_id` remain null
+until observed in a successful response or read. An unresolved response stays unknown;
+a known created public identifier survives a failed read. A `LinearQuotaExhaustedError`
+on the create call is not turned into that unknown state: it propagates with its
+`reset_at`, no read follows, and its message names the `client_id` to reconcile later.
+No create retry occurs (`LinearTracker.create_issue`; `edit.create_issue`).
+
+Preserve the original submitted JSON separately. On a disposable copy of an existing
+issue, run the following read-only procedure with its expected title, exact source
+body, requested normalized fields and expected parent in `creation-spec.json`:
+
+```text
+python3 <plugin-root>/tooling/foundry_cli.py edit reconcile-create LIN-3 creation-spec.json
+python3 <plugin-root>/tooling/foundry_cli.py edit reconcile-create LIN-3 creation-spec.json
+```
+
+`edit.reconcile_create` reads that file without rewriting it; the portable
+`write.reconcile_issue_creation` validates the repository/issue/parent binding and the
+Linear implementation freshly reads the identified record. Title, source-body rendering,
+parent (including absent parent), team/project and identity must match; only fields
+explicitly included in the spec are compared. If a state or parent changed after
+creation, the original spec fails closed: a separate reconciliation spec may explicitly
+limit its fields and declare the intended current parent; retain the original source
+and record that narrower comparison scope. The JSON result names `compared`, both body
+SHA-256 hashes, `exact` or `qualified-rendering`, and `validated-read-only`; it is a
+bounded observation, not a receipt or a lifecycle/AC validation. Repeating this procedure
+performs reads only and creates no duplicate; disagreement fails without overwriting
+anything (`LinearTracker.reconcile_issue_creation`; `test_linear_issue_creation.py`).
+Other providers refuse this new port by default (`Tracker.reconcile_issue_creation`).
+
+Documentation status (R5): creation comparison bounds, partial-effect vocabulary,
+`edit reconcile-create` and the portable reconciliation port are documented here;
+the intake caller points here. The exact sent and read-back bodies of PAT-195, PAT-196
+and PAT-202 are the fixtures `tests/fixtures/linear_issue_creation_pairs.json`, with one
+repository path replaced by the same token on both sides; real reconciliation of PAT-195
+and PAT-196 remains pending delivery (`test_linear_issue_creation.py`; PAT-197).
 
 Native `related` is symmetric. For that kind only, Foundry sorts the two native endpoint
 IDs before deriving the UUID and before sending `issueId`/`relatedIssueId`. Therefore

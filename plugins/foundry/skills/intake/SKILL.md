@@ -68,6 +68,13 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit body <ID> /path/to/body-read.md /path/to/amended-body.md
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" adr create "<title>" < /path/to/body.md
 ```
+For a Linear creation refusal, preserve the original spec and the structured partial-effect
+error; never rerun `create-issue` automatically. Use the read-only
+`edit reconcile-create <ID> <spec.json>` procedure and its comparison limits in
+[`docs/linear-tracker.md`](../../docs/linear-tracker.md#issue-creation-validation-and-explicit-reconciliation-pat-197)
+(`edit.create_issue`, `edit.reconcile_create`); an unresolved response is not a successful
+creation validation.
+
 Confirm before writing, except for the four writes that the grouped-deferral rule of
 `foundry:merge-pr` authorizes in advance, inside and outside an Epic campaign, in every
 repository where the plugin is installed: creating the companion Epic of an origin Epic
