@@ -115,8 +115,11 @@ the body exactly (the removed condition `(raw.get("description") or "") != body`
   `IssueCreationValidationError` (`trackers/base.py`), and `edit create-issue` exits
   nonzero printing its `details` as JSON on standard error, with no retry. A script that
   read only the exit code and the text of standard output must be checked.
-- **A quota error stays typed:** it propagates with its `reset_at` and names the
-  `client_id`; no read follows (`LinearTracker.create_issue`).
+- **A quota error on the creation request stays typed:** it propagates with its
+  `reset_at` and names the `client_id`; no read follows. A quota error on the read-back
+  that follows a creation is reported as an `IssueCreationValidationError` partial effect,
+  without `reset_at`; in 1.2.0 it stayed typed (`LinearTracker.create_issue`; read in the
+  code, not run; tracked by PAT-205).
 - **`edit reconcile-create <ISSUE-ID> <creation-spec.json>`** is read-only: it validates
   an existing issue against the original spec, without recreation or overwrite.
 - **Port:** `Tracker.reconcile_issue_creation` refuses by default
@@ -275,8 +278,8 @@ This release preparation changes version metadata and documentation only.
 | Release note and migration guide | New: this page and migration-1.3.0.md |
 | `tests/fixtures/release-history.json` | Updated: the `1.3.0` entry, with the digests of the changelog section and of the two pages |
 | Root and Foundry README | Updated: pointers to these two pages, the statement that the tag, the installation and the loaded-version readback are not done here, the migration list, and the Release rule's version list |
-| `docs/postmerge-review.md` status sentence | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019 |
-| `skills/review-pr/SKILL.md` status sentence | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019; no instruction changed |
+| `docs/postmerge-review.md` ADR status wording | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019 |
+| `skills/review-pr/SKILL.md` ADR status wording | Updated: PAT-ADR-0020 accepted and supersedes PAT-ADR-0019, in the status sentence and in the ADR citation that closes the authorization instruction; no directive changed |
 | `scripts/ci_plan.py` comment | Updated: its list of release versions includes 1.3.0; no behaviour changes |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed and its version does not move |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes, and no rule of the contract states a Foundry version |
@@ -285,4 +288,4 @@ This release preparation changes version metadata and documentation only.
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or skill
 instruction is changed by this release preparation, and no file under `tooling/`, `hooks/` or
 `agents/` is touched. Outside release metadata and these pages, the only changes are the
-two status sentences above and one comment line in `scripts/ci_plan.py`. The mechanical documentation-status gate is not claimed shipped.
+ADR status wording of the two files above and one comment line in `scripts/ci_plan.py`. The mechanical documentation-status gate is not claimed shipped.

@@ -15,7 +15,8 @@ the reviewer packet. The routed read-only Claude Bash guard accepts the claimed 
 and the advisory reader and refuses any command containing CR or LF
 (`hooks/guard_routed_readonly.py`). On Linear, issue creation admits only an exact or
 qualified-rendering body, `edit create-issue` exits nonzero with typed partial-effect
-details on standard error and a quota error stays typed (PAT-197); advisory comments
+details on standard error, a quota error on the creation request stays typed and one on
+the read-back is reported as a partial effect (PAT-197); advisory comments
 survive the ten-comment display window (PAT-200). The Tracker port gains
 `reconcile_issue_creation`, which refuses by default, and the CodeHost pull request
 model gains an optional `body` (PAT-197, PAT-174). No routing default, model or effort
