@@ -2,16 +2,16 @@
 
 Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
 publication bound, native evidence, plugin selection, guarded paths and restitution;
-round-two corrections cover input failures, publishable strings and legacy isolation.
+follow-up corrections cover concrete execution paths, terminal stops and reader diagnostics.
 PAT-ADR-0020 is proposed and will replace PAT-ADR-0019 at this issue's merge;
 PAT-ADR-0019 remains accepted until then. The earlier implementation conforms to
 PAT-ADR-0019; this delivery is a replacement (PAT-ADR-0020, Context and Decision).
 
 `routing postmerge-review` has three actions: `prepare`, `read`, and `record`
 (`tooling/foundry/routing.py`, parser and dispatch; `postmerge_review.py::cli`).
-Authorization and stop receipts retain `foundry.postmerge-review.v1`; new reports
-and confirmations use `foundry.postmerge-review.v2` (`advisory_schema.py::SCHEMA`,
-`TERMINAL_SCHEMA`). Terminal comments use the existing prefix followed by
+Authorization receipts retain `foundry.postmerge-review.v1`; new stops, reports
+and confirmations use `foundry.postmerge-review.v2`, while intact legacy v1 stops
+remain readable without rewriting (`SCHEMA`, `TERMINAL_SCHEMA`, `record`, `receipts`). Terminal comments use the existing prefix followed by
 `terminal <attempt-id>` and a newline (`TERMINAL_PREFIX`; `comment_text`); retention
 of malformed terminals is deduced from the prefix check (`LinearTracker._to_issue`).
 Historical v1 reports remain historical and are not requalified by restitution
@@ -157,16 +157,21 @@ archives the bounded submission privately (`record`). An unreadable or malformed
 existing `submission.json` produces a controlled stop without replacing it (`record`). Unreadable packet files,
 invalid JSON and non-object invocation data produce a controlled stop after the
 consumed attempt; packet validation can stop before submission archiving
-(`record`, `read`). Other evidence or coordinate refusals also append a
+(`record`, `read`). Historical Git process I/O failures produce the nonsecret
+`historical Git process unavailable` reason (`advisory_git`). Other evidence or coordinate refusals also append a
 `stopped_without_verdict` digest receipt (`record`).
 
 The v2 terminal report retains the complete publishable report and all its
 structured evidence, immutable coordinates, historical identities and launch
 metadata; raw arguments and sources, prompt and snapshot bodies remain private
-(`record`; `public_attempt`). Absolute local paths, raw task prompts and duplicate
-snapshot bodies refuse publication; duplication is checked against decoded strings,
-while HTTPS links, isolated `/` prose and relative repository references remain
-permitted (`publishable_report`). An overbound full comment refuses before
+(`record`; `public_attempt`). Strings containing resolved execution paths (home,
+repository, output/packet directory, temporary directory and selected plugin),
+`file:` or UNC paths, raw task prompts and duplicate snapshot bodies refuse
+publication; the private execution-path list is bound by its public digest
+(`prepare`, `public_attempt`, `read`, `publishable_report`). Other-machine paths
+that do not contain these concrete values, slash prose and repository references
+remain permitted; prompt and snapshot duplication uses decoded strings
+(`publishable_report`). An overbound full comment refuses before
 its write (`publishable_report`, `bounded_comment`). No finding is silently removed
 or truncated (`record`). Launch metadata includes correlated call/child hashes,
 argument hash, tool, return status, report hash, stable hook route and explicit
@@ -188,7 +193,8 @@ without-verdict state (PAT-ADR-0020, Altered terminal receipt).
 V2 terminal envelopes permit isolation even when their JSON is malformed; an old
 authorization still cannot be reused and duplicate authorization stays refused
 (`receipts`, `prepare`, `record`). Malformed authorization identity or scope remains
-fatal; terminal isolation never relaxes that check (`receipts`). Malformed v1
+fatal; terminal isolation never relaxes that check (`receipts`; PAT-ADR-0020:
+“Cette isolation ne permet ni de réutiliser l’ancienne autorisation ni d’ignorer une ambiguïté sur sa consommation.”). Malformed v1
 receipts remain fatal for the ticket (`receipts`); the authorization ambiguity is
 deduced from their shared envelope, which cannot identify a terminal independently
 of its JSON (`SCHEMA`, `PREFIX`, `receipts`). V2 terminal envelopes have a distinct

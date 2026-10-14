@@ -1427,7 +1427,7 @@ def test_public_report_url_and_relative_reference_allowed(case, report, text):
     assert record(case, a, evidence(a, report), report)["report"] == report
 
 
-@pytest.mark.parametrize("text", ["/private/source", "see /private/source", "C:/private/source", r"C:\private\source"])
+@pytest.mark.parametrize("text", ["file:///Users/x", r"\\server\share"])
 def test_public_report_absolute_reference_refused(case, report, text):
     a = prepare(case)
     report["evidence"][0]["detail"] = text
@@ -1538,5 +1538,91 @@ def test_actual_claude_hook_main_output_accepts_logical_proof(case, report, monk
     e = evidence(a, report)
     e["hook"]["context"] = context
     e["hook"]["source"] = "fixture route_agent.main emitted additionalContext"
-    assert e["call"]["arguments"] == payload["tool_input"]
+    emitted = output["updatedInput"]
+    assert emitted["subagent_type"] == "foundry:" + context["transmitted_launch"]["profile"]
+    assert emitted == a["arguments"]
+    assert emitted != payload["tool_input"]
     assert record(case, a, e, report)["type"] == "advisory_report"
+
+
+@pytest.mark.parametrize("text", ["--root=/Users/x", "root:/Users/x", "[/Users/x]", "</tmp/x>", ",/home/x", "run /foundry:open-pr", "ratio 3 /4"])
+def test_nonexecution_path_strings_publishable(case, report, text, monkeypatch, tmp_path):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("kind", ["home", "root", "packet", "tmp", "plugin"])
+def test_concrete_execution_paths_private_even_inside_json(case, report, monkeypatch, tmp_path, kind):
+    home = tmp_path / "private-home"
+    temporary = tmp_path / "private-tmp"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("TMPDIR", str(temporary))
+    a = prepare(case)
+    paths = {"home": home, "root": case.root, "packet": case.args["output_dir"],
+             "tmp": temporary, "plugin": Path(pm.__file__).parents[2]}
+    text = json.dumps({"embedded": "--root=" + str(paths[kind].resolve()) + "/child"})
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+    assert text not in json.dumps(case.issue.comments)
+    assert str(home) not in json.dumps(case.issue.comments)
+
+
+@pytest.mark.parametrize("altered", [False, True])
+def test_new_stop_terminal_isolates_and_allows_distinct_authorization(case, report, tmp_path, altered):
+    a = prepare(case)
+    with pytest.raises(RoutingConfigError):
+        record(case, a, {}, report)
+    stop = pm.receipts(case.tr, case.issue.id)[-1]
+    assert stop["schema"] == pm.TERMINAL_SCHEMA
+    assert case.issue.comments[-1]["text"].startswith(pm.TERMINAL_PREFIX + a["attempt_id"] + "\n")
+    if altered:
+        case.issue.comments[-1]["text"] = pm.TERMINAL_PREFIX + a["attempt_id"] + "\n{broken"
+        assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "isolated_terminal"
+    else:
+        assert stop["type"] == "stopped_without_verdict"
+    before = copy.deepcopy(case.issue.comments)
+    case.args["output_dir"] = tmp_path / "second-packet"
+    with pytest.raises(RoutingConfigError, match="authorization already consumed"):
+        prepare(case)
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    assert case.issue.comments[:len(before)] == before
+    assert record(case, second, evidence(second, report), report)["type"] == "advisory_report"
+
+
+def test_record_missing_git_reports_historical_process_failure(case, report, monkeypatch):
+    a = prepare(case)
+    def unavailable(*args, **kwargs):
+        raise FileNotFoundError("private executable path")
+    monkeypatch.setattr(pm.subprocess, "run", unavailable)
+    with pytest.raises(RoutingConfigError, match="historical Git process unavailable") as error:
+        record(case, a, evidence(a, report), report)
+    assert "private executable path" not in str(error.value)
+    assert pm.receipts(case.tr, case.issue.id)[-1]["type"] == "stopped_without_verdict"
+
+
+def test_legacy_intact_v1_stop_remains_readable_without_rewrite(case, report, tmp_path):
+    a = prepare(case)
+    legacy = {"schema": pm.SCHEMA, "type": "stopped_without_verdict", "issue": case.issue.id,
+              "attempt_id": a["attempt_id"], "submitted_evidence_hash": pm.digest({})}
+    case.issue.comments.append({"text": pm.comment_text(legacy)})
+    before = copy.deepcopy(case.issue.comments)
+    assert pm.receipts(case.tr, case.issue.id)[-1] == legacy
+    case.args["output_dir"] = tmp_path / "new-after-legacy-stop"
+    case.args["authorization"]["id"] = "b" * 64
+    second = prepare(case)
+    assert record(case, second, evidence(second, report), report)["type"] == "advisory_report"
+    assert case.issue.comments[:len(before)] == before
+
+
+def test_private_execution_path_binding_cannot_be_removed(case, report):
+    a = prepare(case)
+    path = case.args["output_dir"] / "invocation.json"
+    altered = json.loads(path.read_text())
+    altered["execution_paths"] = []
+    path.write_text(json.dumps(altered))
+    with pytest.raises(RoutingConfigError, match="private execution paths digest mismatch"):
+        record(case, a, evidence(a, report), report)

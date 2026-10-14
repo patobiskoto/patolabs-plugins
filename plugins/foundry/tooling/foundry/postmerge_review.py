@@ -11,6 +11,7 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import tempfile
 from contextvars import ContextVar
 
 from foundry.advisory_schema import SCHEMA, PREFIX, TERMINAL_SCHEMA, TERMINAL_PREFIX, MAX_COMMENT_BYTES
@@ -27,21 +28,24 @@ REASONS = set()
 
 
 def advisory_git(root, *args):
-    version = subprocess.run(['git', '--version'], cwd=root, capture_output=True,
-                             env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'})
-    match = re.search(rb'git version (\d+)\.(\d+)', version.stdout)
-    require(version.returncode == 0 and match and tuple(map(int, match.groups())) >= (2, 45),
-            'Git 2.45 or later required for --no-lazy-fetch')
-    result = subprocess.run(
-        ['git', '--no-replace-objects', '--no-lazy-fetch', '-c', 'diff.noprefix=false',
-         '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.algorithm=myers',
-         '-c', 'diff.indentHeuristic=true', '-c', 'diff.context=3',
-         '-c', 'diff.interHunkContext=0', '-c', 'core.quotePath=true',
-         '-c', 'diff.orderFile=' + os.devnull, '-c', 'diff.suppressBlankEmpty=false', *args],
-        cwd=root, capture_output=True, env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'},
-    )
-    require(result.returncode == 0, 'historical Git objects unavailable')
-    return result.stdout
+    try:
+        version = subprocess.run(['git', '--version'], cwd=root, capture_output=True,
+                                 env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'})
+        match = re.search(rb'git version (\d+)\.(\d+)', version.stdout)
+        require(version.returncode == 0 and match and tuple(map(int, match.groups())) >= (2, 45),
+                'Git 2.45 or later required for --no-lazy-fetch')
+        result = subprocess.run(
+            ['git', '--no-replace-objects', '--no-lazy-fetch', '-c', 'diff.noprefix=false',
+             '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.algorithm=myers',
+             '-c', 'diff.indentHeuristic=true', '-c', 'diff.context=3',
+             '-c', 'diff.interHunkContext=0', '-c', 'core.quotePath=true',
+             '-c', 'diff.orderFile=' + os.devnull, '-c', 'diff.suppressBlankEmpty=false', *args],
+            cwd=root, capture_output=True, env={**os.environ, 'GIT_NO_LAZY_FETCH': '1'},
+        )
+        require(result.returncode == 0, 'historical Git objects unavailable')
+        return result.stdout
+    except OSError:
+        require(False, 'historical Git process unavailable')
 
 
 def history_identity(history):
@@ -52,7 +56,7 @@ def history_identity(history):
 
 def public_attempt(attempt):
     return {key: value for key, value in attempt.items()
-            if key not in {'history', 'arguments', 'launch_arguments', 'route', 'hook_context'}}
+            if key not in {'history', 'arguments', 'launch_arguments', 'route', 'hook_context', 'execution_paths'}}
 
 
 def digest(value):
@@ -102,7 +106,7 @@ def receipts(tracker, issue_id):
         if terminal:
             valid = (isinstance(receipt, dict) and receipt.get('schema') == TERMINAL_SCHEMA
                      and receipt.get('issue') == issue_id and receipt.get('attempt_id') == attempt_id
-                     and receipt.get('type') in {'advisory_report', 'advisory_confirmation'}
+                     and receipt.get('type') in {'advisory_report', 'advisory_confirmation', 'stopped_without_verdict'}
                      and comment_text(receipt) == text)
             if not valid:
                 receipt = {'schema': TERMINAL_SCHEMA, 'type': 'isolated_terminal',
@@ -354,11 +358,15 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
         'Done when:\nReturn JSON with findings and evidence; this is advisory only.\n'
     )
     route, tool, arguments, logical, hook_context = invocation(root, issue_id, host, message, effective_profile)
+    execution_paths = sorted({str(Path(path).resolve()) for path in
+                              (Path.home(), root, destination, os.environ.get('TMPDIR') or tempfile.gettempdir(),
+                               advisory_plugin(host))})
     attempt = {'schema': SCHEMA, 'type': 'authorized_attempt', 'issue': issue_id,
                'attempt_id': attempt_id, 'authorization': authorization,
                'authorized_at': datetime.now(timezone.utc).isoformat(),
                'coordinates': coordinates, 'history': history, 'packet_hash': packet_hash,
                'host': host, 'route': route, 'tool': tool, 'arguments': arguments,
+               'execution_paths': execution_paths, 'execution_paths_hash': digest(execution_paths),
                'terminal_baseline': unbound_terminals(previous),
                'launch_arguments': logical, 'arguments_hash': digest(logical), 'hook_context': hook_context, 'hook_context_hash': digest(hook_context),
                'history_hash': digest(history), 'historical_identities': history_identity(history),
@@ -411,7 +419,8 @@ def publishable_report(report, attempt):
         if isinstance(value, str):
             require(not any(body and body in value for body in prohibited),
                     'report not publishable: private prompt or historical snapshot')
-            return not re.search(r"(?:^|[\s\"'`(])/(?!/)[^\s\"'`()]+|(?<![A-Za-z0-9_])[A-Za-z]:[\\/]", value) and 'Goal:\n' not in value
+            return (not any(path in value for path in attempt['execution_paths'])
+                    and 'file:' not in value.lower() and '\\\\' not in value and 'Goal:\n' not in value)
         return True
     require(inspect(report), 'report not publishable: absolute local path or raw prompt')
 
@@ -469,9 +478,9 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
         try:
             private = _load(Path(packet_dir) / 'invocation.json')
             require(isinstance(private, dict), 'private packet unreadable')
-            read(root=root, packet_dir=packet_dir, attempt_id=attempt_id, packet_hash=attempt['packet_hash'])
         except (OSError, ValueError, TypeError):
             require(False, 'private packet unreadable')
+        read(root=root, packet_dir=packet_dir, attempt_id=attempt_id, packet_hash=attempt['packet_hash'])
         PUBLICATION.set('yes')
         require(public_attempt(private) == attempt, 'private invocation receipt mismatch')
         submitted = {'evidence': evidence, 'report': report}
@@ -533,7 +542,7 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
         # Both native validation and report serialization precede the final fresh read.
         historical_diff(root, attempt['coordinates'], ch)
     except RoutingConfigError:
-        stopped = {'schema': SCHEMA, 'type': 'stopped_without_verdict', 'issue': issue_id,
+        stopped = {'schema': TERMINAL_SCHEMA, 'type': 'stopped_without_verdict', 'issue': issue_id,
                    'attempt_id': attempt_id, 'recorded_at': datetime.now(timezone.utc).isoformat(),
                    'submitted_evidence_hash': digest(evidence)}
         child = evidence.get('child') if isinstance(evidence, dict) else None
@@ -548,8 +557,11 @@ def record(*, root, issue_id, attempt_id, packet_dir, evidence, report, tracker_
 
 
 def read(*, root, packet_dir, attempt_id, packet_hash):
-    packet = _load(Path(packet_dir) / 'packet.json')
-    attempt = _load(Path(packet_dir) / 'invocation.json')
+    try:
+        packet = _load(Path(packet_dir) / 'packet.json')
+        attempt = _load(Path(packet_dir) / 'invocation.json')
+    except (OSError, ValueError, TypeError):
+        require(False, 'private packet unreadable')
     require(isinstance(packet, dict) and isinstance(attempt, dict)
             and attempt.get('schema') == SCHEMA and attempt.get('type') == 'authorized_attempt'
             and packet.get('schema') == SCHEMA and hex_string(attempt_id, 64)
@@ -558,6 +570,10 @@ def read(*, root, packet_dir, attempt_id, packet_hash):
             and attempt.get('coordinates') == packet.get('coordinates')
             and attempt.get('history') == packet.get('history')
             and packet.get('root') == str(Path(root).resolve()), 'prepared packet identity mismatch')
+    require(isinstance(attempt.get('execution_paths'), list)
+            and all(isinstance(path, str) and path for path in attempt['execution_paths'])
+            and digest(attempt['execution_paths']) == attempt.get('execution_paths_hash'),
+            'private execution paths digest mismatch')
     arguments = attempt.get('arguments', {})
     require(digest(arguments) == attempt.get('prepared_arguments_hash')
             and digest(attempt.get('launch_arguments')) == attempt.get('arguments_hash')
