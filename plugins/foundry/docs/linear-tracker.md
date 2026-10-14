@@ -188,8 +188,9 @@ heading when the next line is not empty, wraps a complete bare `https://` token 
 a word, and removes one terminal LF only when it is not preceded by another LF.
 The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
 other URL syntax stays exact. Apart from the terminal LF rule, lines containing
-backticks, indented lines and fenced blocks stay exact; a body containing CR stays
-entirely exact. These are observed
+backticks, indented lines and fenced blocks stay exact; a fence closes only on the same
+character with at least the same length as its opening, and a line containing `<`
+takes no `~/` escape; a body containing CR stays entirely exact. These are observed
 renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
 text changes, URL destination changes, other tilde escapes and whitespace folding
 remain refused (`_issue_creation_rendering`; `test_linear_issue_creation.py`).
@@ -202,8 +203,10 @@ After an unvalidated creation, `edit create-issue` exits nonzero and emits the t
 `unknown`, `validation` is `refused` or `unknown`, and `reconciliation` is `required`.
 `client_id` names the submitted UUID; `native_id` and public `issue_id` remain null
 until observed in a successful response or read. An unresolved response stays unknown;
-a known created public identifier survives a failed read. No create retry occurs
-(`LinearTracker.create_issue`; `edit.create_issue`).
+a known created public identifier survives a failed read. A `LinearQuotaExhaustedError`
+on the create call is not turned into that unknown state: it propagates with its
+`reset_at`, no read follows, and its message names the `client_id` to reconcile later.
+No create retry occurs (`LinearTracker.create_issue`; `edit.create_issue`).
 
 Preserve the original submitted JSON separately. On a disposable copy of an existing
 issue, run the following read-only procedure with its expected title, exact source
@@ -230,9 +233,10 @@ Other providers refuse this new port by default (`Tracker.reconcile_issue_creati
 
 Documentation status (R5): creation comparison bounds, partial-effect vocabulary,
 `edit reconcile-create` and the portable reconciliation port are documented here;
-the intake caller points here. Private exact historical qualification and anonymized
-CI fixtures are separate evidence sets; real reconciliation of PAT-195 and PAT-196
-remains pending delivery (`test_linear_issue_creation.py`; PAT-197).
+the intake caller points here. The exact sent and read-back bodies of PAT-195, PAT-196
+and PAT-202 are the fixtures `tests/fixtures/linear_issue_creation_pairs.json`, with one
+repository path replaced by the same token on both sides; real reconciliation of PAT-195
+and PAT-196 remains pending delivery (`test_linear_issue_creation.py`; PAT-197).
 
 Native `related` is symmetric. For that kind only, Foundry sorts the two native endpoint
 IDs before deriving the UUID and before sending `issueId`/`relatedIssueId`. Therefore

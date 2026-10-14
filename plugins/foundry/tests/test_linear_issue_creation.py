@@ -1,5 +1,6 @@
-"""Anonymized controlled creation tests; exact private captures are qualified separately."""
+"""Controlled creation tests on exact captured bodies (names neutralized) and synthetic cases."""
 import copy
+import difflib
 import json
 import runpy
 import sys
@@ -14,12 +15,34 @@ from test_linear_tracker import PROJECT
 pytest_plugins = ["test_linear_tracker"]
 
 
-SOURCE = '## Objet et origine\nTexte\n\nRéférence : https://example.org/change/138\n'
-RENDERED = '## Objet et origine\n\nTexte\n\nRéférence : [https://example.org/change/138](<https://example.org/change/138>)'
+# Exact bodies sent to / read back from Linear for PAT-195, PAT-196 and PAT-202, with the
+# owner/repository path of one URL replaced by the same neutral token on both sides.
+PAIRS = {
+    pair['name']: pair
+    for pair in json.loads(
+        (Path(__file__).parent / 'fixtures' / 'linear_issue_creation_pairs.json')
+        .read_text(encoding='utf-8')
+    )
+}
+SOURCE = PAIRS['pat-195']['source']
+RENDERED = PAIRS['pat-195']['readback']
+
+
+@pytest.mark.parametrize('name', sorted(PAIRS))
+def test_exact_captures_are_admitted_with_exactly_the_observed_difference(name):
+    pair = PAIRS[name]
+    source, observed = pair['source'], pair['readback']
+    assert len(source.encode()) == pair['source_bytes']
+    assert len(observed.encode()) == pair['readback_bytes']
+    assert source != observed
+    diff = list(difflib.unified_diff(
+        source.splitlines(keepends=True), observed.splitlines(keepends=True), n=0,
+    ))[2:]
+    assert diff == pair['observed_diff']
+    assert linear._issue_creation_body_matches(observed, source)
 
 
 @pytest.mark.parametrize(('source', 'observed'), [
-    (SOURCE, RENDERED),
     ('texte ~/.codex ici', 'texte \\~/.codex ici'),
     ('texte\n', 'texte'),
     ('## Cadre\n\ntexte', '## Cadre\n\ntexte'),
@@ -30,10 +53,10 @@ def test_qualified_renderings(source, observed):
 
 
 @pytest.mark.parametrize('observed', [
-    RENDERED.replace('Texte', 'texte'),
-    RENDERED.replace('example.org/change/138>)', 'example.org/change/139>)'),
+    RENDERED.replace('Autorisation', 'autorisation'),
+    RENDERED.replace('pull/138>)', 'pull/139>)'),
     RENDERED + '\n\n',
-    RENDERED.replace('\n\nTexte', '\n\n\nTexte'),
+    RENDERED.replace('## Objet et origine\n\n', '## Objet et origine\n\n\n'),
     RENDERED.replace('https://', 'http://'),
 ])
 def test_real_changes_refused(observed):
@@ -47,6 +70,11 @@ def test_real_changes_refused(observed):
     ('`~/.codex`', '`\\~/.codex`'),
     ('```\n## Cadre\ntexte ~/.codex\n```', '```\n## Cadre\n\ntexte \\~/.codex\n```'),
     ('[lien](https://example.org)', '[autre](https://example.org)'),
+    ('````\n```\n## H\nx\n```\n````', '````\n```\n## H\n\nx\n```\n````'),
+    ('~~~~\n~~~\n## H\nx\n~~~\n~~~~', '~~~~\n~~~\n## H\n\nx\n~~~\n~~~~'),
+    ('<https://example.org/~/a>', '<https://example.org/\\~/a>'),
+    ('<a ~/b>', '<a \\~/b>'),
+    ('```a``` b\n```\n## H\nx\n```', '```a``` b\n```\n## H\n\nx\n```'),
 ])
 def test_unqualified_normalizations_refused(source, observed):
     assert not linear._issue_creation_body_matches(observed, source)
@@ -217,6 +245,29 @@ def test_lost_response_after_effect_resolves(tracker, monkeypatch):
     monkeypatch.setattr(instance, '_graphql', graphql)
     assert instance.create_issue(PROJECT, 'Task', 'source').id == 'LIN-3'
     assert sum('FoundryLinearIssueCreate' in doc for doc, _ in wire.calls) == 1
+
+
+def test_quota_exhaustion_propagates_typed_without_extra_read(tracker, monkeypatch):
+    instance, wire = tracker
+    original = instance._graphql
+
+    def graphql(document, variables, operation):
+        if operation == 'issue.create':
+            raise linear.LinearQuotaExhaustedError(
+                operation, 400, 0, 1_700_000_000_000, scope='requests',
+            )
+        return original(document, variables, operation)
+
+    monkeypatch.setattr(instance, '_graphql', graphql)
+    count = len(wire.calls)
+    with pytest.raises(linear.LinearQuotaExhaustedError) as caught:
+        instance.create_issue(PROJECT, 'Task', 'source')
+    assert caught.value.reset_at == '2023-11-14T22:13:20Z'
+    client_id = caught.value.client_id
+    assert client_id and client_id in str(caught.value)
+    assert not any('mutation ' in document for document, _ in wire.calls[count:])
+    assert not any(client_id in json.dumps(variables) for _, variables in wire.calls[count:])
+    assert len(wire.issues) == 2
 
 
 def test_reconciliation_checks_requested_fields_and_parent(tracker):

@@ -401,16 +401,25 @@ def _issue_creation_rendering(source: str) -> str:
         return source
     lines = source.splitlines(keepends=True)
     rendered = []
-    fenced = False
+    fence = None  # (character, length) of the open fence; it closes only on the same pair
     for index, line in enumerate(lines):
         # Ambiguous Markdown contexts stay exact. No URL canonicalization, whitespace
         # folding, list rewriting, or interpretation of inline/fenced code.
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-        if fenced or "`" in line or line.startswith((" ", "\t")):
+        was_fenced = fence is not None
+        marker = re.match(r"\s*(`{3,}|~{3,})(.*)$", line.rstrip("\n"))
+        if fence is None:
+            if marker and not (marker[1][0] == "`" and "`" in marker[2]):
+                fence = (marker[1][0], len(marker[1]))
+        elif (
+            marker and marker[1][0] == fence[0] and len(marker[1]) >= fence[1]
+            and not marker[2].strip()
+        ):
+            fence = None
+        if was_fenced or fence or "`" in line or line.startswith((" ", "\t")):
             rendered.append(line)
             continue
-        line = re.sub(r"(?<![\w\\])~(?=/)", r"\\~", line)
+        if "<" not in line:  # an autolink `<...>` stays exact
+            line = re.sub(r"(?<![\w\\])~(?=/)", r"\\~", line)
         # Only a complete bare https token is wrapped; the label and destination
         # both retain its exact bytes. Punctuation/Markdown delimiters are excluded.
         line = re.sub(
@@ -5392,6 +5401,11 @@ class LinearTracker(Tracker):
             candidate = payload.get("issue")
             if isinstance(candidate, dict):
                 created = candidate
+        except LinearQuotaExhaustedError as error:
+            # Quota is a typed, dated condition, not an unknown effect: no extra read.
+            error.client_id = client_id
+            error.args = (f"{error} client_id={client_id} creation=unknown",)
+            raise
         except LinearTrackerError:
             pass
         public_id = created.get("identifier")
