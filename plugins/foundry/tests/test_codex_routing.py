@@ -1408,3 +1408,149 @@ def test_foundry_skills_execute_codex_plans_and_disclose_fallback():
         assert "model" in texts[name]
         assert "reasoning_effort" in texts[name]
         assert "fork_turns=none" in texts[name]
+
+
+# PAT-204: claim-review must validate the executable route before publication.
+def _pat204_claim_args(tmp_path, *options):
+    return [
+        "claim-review", "--host", "codex", "--issue", "FOUNDRY-204",
+        "--repository", "owner/preflight", "--git-diff", "--root", str(tmp_path),
+        "--base", BASE_SHA, "--claim-attempt-token", CLAIM_ATTEMPT_TOKEN, *options,
+    ]
+
+
+def _pat204_snapshot(state):
+    return {str(path.relative_to(state)): path.read_bytes()
+            for path in state.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("options,configuration,error", [
+    (["--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
+    (["--model", "missing-model"], None, RoutingConfigError),
+    (["--effort", "invalid"], None, RoutingConfigError),
+    (["--profile-model-active", "--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
+    (["--profile-effort-active", "--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
+    ([], {"mappings": {"codex": {"frontier": {"model": "", "effort": "high"}}}}, RoutingConfigError),
+    ([], {"mappings": {"codex": {"frontier": {"model": "gpt-6-sol", "effort": "invalid"}}}}, RoutingConfigError),
+])
+@pytest.mark.parametrize("existing_ledger", [False, True])
+def test_pat204_claim_refusals_preserve_ledger(
+    monkeypatch, tmp_path, options, configuration, error, existing_ledger,
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"new diff")
+    if existing_ledger:
+        ReviewDeduplicator("owner/preflight", state).claim(b"unrelated owner")
+    if configuration is not None:
+        config = tmp_path / ".foundry" / "model-routing.json"
+        config.parent.mkdir()
+        config.write_text(json.dumps(configuration))
+    before = _pat204_snapshot(state)
+    with pytest.raises(error):
+        main(_pat204_claim_args(tmp_path, *options), handle_config_errors=False)
+    assert _pat204_snapshot(state) == before
+    assert ReviewDeduplicator("owner/preflight", state).is_claimed(review_diff_hash(b"new diff")) is False
+
+
+def test_pat204_claim_uses_available_models_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_CODEX_AVAILABLE_MODELS", "gpt-6-luna")
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"new diff")
+    with pytest.raises(RoutingUnavailableError):
+        main(_pat204_claim_args(tmp_path), handle_config_errors=False)
+    assert _pat204_snapshot(tmp_path / "state") == {}
+
+
+def test_pat204_stranded_claim_recovers_and_deduplicates(monkeypatch, tmp_path, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    diff = b"previously stranded route refusal"
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: diff)
+    ledger = ReviewDeduplicator("owner/preflight", state)
+    # Reproduce the old publication-before-route-validation ordering.
+    stranded = ledger.claim_git(review_diff_hash(diff),
+        coordinates={"root": str(tmp_path), "base": BASE_SHA},
+        claim_attempt_token=CLAIM_ATTEMPT_TOKEN)
+    before = _pat204_snapshot(state)
+    main(_pat204_claim_args(tmp_path, "--available-model", "gpt-6-luna"))
+    duplicate = json.loads(capsys.readouterr().out)
+    assert duplicate["should_run"] is False
+    assert "claim_id" not in duplicate
+    assert _pat204_snapshot(state) == before
+    recovery = ["recover-review", "--repository", "owner/preflight",
+        "--diff-hash", stranded.diff_hash, "--generation", "1", "--claim-id", stranded.claim_id,
+        "--root", str(tmp_path), "--base", BASE_SHA, "--reason", "human confirms abandoned route"]
+    with pytest.raises(RoutingConfigError):
+        main([*recovery[:8], "0" * 64, *recovery[9:]], handle_config_errors=False)
+    assert _pat204_snapshot(state) == before
+    with pytest.raises(RoutingConfigError):
+        main([*recovery[:-1], ""], handle_config_errors=False)
+    assert _pat204_snapshot(state) == before
+    main(recovery)
+    recovered = json.loads(capsys.readouterr().out)
+    assert recovered["generation"] == 2
+    assert recovered["claim_id"] != stranded.claim_id
+    assert recovered["diff_hash"] == stranded.diff_hash
+    monkeypatch.setattr("foundry.routing_facades.repository_identity", lambda _root: "owner/preflight")
+    plan = codex_review_plan(_packet(), root=tmp_path, base=BASE_SHA,
+        issue_id="FOUNDRY-204", state_dir=state,
+        recovered_diff_hash=stranded.diff_hash, recovered_claim_id=recovered["claim_id"])
+    assert plan["spawn"] is not None
+    assert plan["review_claim"]["claim_id"] == recovered["claim_id"]
+    assert ledger.active_git_claim(stranded.diff_hash, recovered["claim_id"],
+        coordinates={"root": str(tmp_path), "base": BASE_SHA}).generation == 2
+
+
+def test_pat204_claude_claim_ignores_codex_unavailability(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setenv("FOUNDRY_CODEX_AVAILABLE_MODELS", "gpt-6-luna")
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"claude diff")
+    args = _pat204_claim_args(tmp_path)
+    args[2] = "claude"
+    main(args)
+    assert json.loads(capsys.readouterr().out)["should_run"] is True
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_pat204_coordinated_duplicate_skips_unavailable_route(
+    monkeypatch, tmp_path, capsys, terminal,
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    diff = b"already reviewed coordinates"
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: diff)
+    ledger = ReviewDeduplicator("owner/preflight", state)
+    owner = ledger.claim_git(review_diff_hash(diff),
+        coordinates={"root": str(tmp_path), "base": BASE_SHA},
+        claim_attempt_token=CLAIM_ATTEMPT_TOKEN)
+    if terminal:
+        # Represent an already completed coordinated record without granting a proof.
+        marker = ledger.directory / owner.diff_hash
+        record = json.loads(marker.read_text())
+        record["state"] = "completed"
+        record["completed_at"] = "2026-01-01T00:00:00Z"
+        ledger._atomic_write(marker, record)
+    before = _pat204_snapshot(state)
+    main(_pat204_claim_args(tmp_path, "--available-model", "gpt-6-luna"))
+    result = json.loads(capsys.readouterr().out)
+    assert result["should_run"] is False
+    assert result["state"] == ("completed" if terminal else "in_progress")
+    assert "claim_id" not in result
+    assert _pat204_snapshot(state) == before
+
+
+def test_pat204_interrupted_replay_refusal_is_read_only(monkeypatch, tmp_path, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"interrupted publication")
+    main(_pat204_claim_args(tmp_path))
+    owner = json.loads(capsys.readouterr().out)
+    before = _pat204_snapshot(state)
+    with pytest.raises(RoutingUnavailableError):
+        main(_pat204_claim_args(tmp_path, "--available-model", "gpt-6-luna", "--replay-interrupted"),
+             handle_config_errors=False)
+    assert _pat204_snapshot(state) == before
+    main(_pat204_claim_args(tmp_path, "--replay-interrupted"))
+    assert json.loads(capsys.readouterr().out) == owner
+    assert _pat204_snapshot(state) == before

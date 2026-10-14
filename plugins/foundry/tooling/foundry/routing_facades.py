@@ -752,6 +752,31 @@ def codex_review_claim(
     ).to_dict()
 
 
+def codex_review_preflight(
+    *, root, base, diff_hash, issue_id, user=None, available_models=None,
+    effective_profile=None, state_dir=None, task_packet=None,
+    task_name=None, subagent_available=True, recovered_claim_id=None,
+) -> None:
+    """Validate the executable reviewer facade without publishing a claim."""
+    codex_spawn_plan(
+        "reviewer",
+        task_packet if task_packet is not None else (
+            "Goal:\nValidate reviewer route before reservation.\n"
+            "Inputs:\nExact review coordinates.\n"
+            "Constraints:\nPreflight only.\nDone when:\nRoute is executable."
+        ),
+        root=root, user=user, available_models=available_models,
+        effective_profile=effective_profile, task_name=task_name,
+        subagent_available=subagent_available,
+        review_claim={
+            "diff_hash": diff_hash, "should_run": True, "state": "in_progress",
+            "generation": 1, "claim_id": recovered_claim_id or "0" * 64,
+            "root": str(root), "base": base,
+        },
+        issue_id=issue_id, escalation_state_dir=state_dir, _observe=False,
+    )
+
+
 def codex_review_plan(
     task_packet: str,
     *,
@@ -804,30 +829,18 @@ def codex_review_plan(
                 f"actuel {expected_hash}. Réservez le nouveau diff avant de relancer "
                 "un reviewer."
             )
-    preflight_claim = {
-        "diff_hash": expected_hash, "should_run": True, "state": "in_progress",
-        "generation": 1,
-        "claim_id": recovered_claim_id or "0" * 64,
-        **verifier,
-    }
     if (
         recovered_diff_hash is not None
         or replay_interrupted
         or deduplicator.git_claim_requires_preflight(expected_hash)
     ):
-        codex_spawn_plan(
-            "reviewer",
-            task_packet,
-            root=review_root,
-            user=user,
-            available_models=available_models,
-            effective_profile=effective_profile,
-            task_name=task_name,
+        codex_review_preflight(
+            root=review_root, base=review_base, diff_hash=expected_hash,
+            issue_id=issue_id, user=user, available_models=available_models,
+            effective_profile=effective_profile, state_dir=state_dir,
+            task_packet=task_packet, task_name=task_name,
             subagent_available=subagent_available,
-            review_claim=preflight_claim,
-            issue_id=issue_id,
-            escalation_state_dir=state_dir,
-            _observe=False,
+            recovered_claim_id=recovered_claim_id,
         )
     def validate_claim():
         if recovered_diff_hash is not None:

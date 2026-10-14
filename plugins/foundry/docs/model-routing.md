@@ -743,7 +743,7 @@ Before the first claim, the caller generates and privately retains a fresh 256-b
 attempt token (`secrets.token_hex(32)`). The shared CLI entrypoint is:
 
 ```bash
-python3 tooling/foundry_cli.py routing claim-review --issue FOUNDRY-42 --git-diff --root <root> --base <base-sha> --claim-attempt-token <claim-attempt-token>
+python3 tooling/foundry_cli.py routing claim-review --host <codex|claude> --issue FOUNDRY-42 --git-diff --root <root> --base <base-sha> --claim-attempt-token <claim-attempt-token>
 ```
 
 It returns `should_run=true` once with `generation` and a private `claim_id`, then
@@ -751,6 +751,30 @@ It returns `should_run=true` once with `generation` and a private `claim_id`, th
 defaults to the Git origin URL and is persisted only as a hash. The issue reviewer route
 is preflighted before the diff is claimed. File-supplied diffs are rejected by the
 parser before any preflight, claim, authorization binding, or ledger write.
+
+
+`claim-review --host codex` preflights the executable reviewer route before a new
+reservation, legacy migration or interrupted-publication replay through
+`routing_facades.py::codex_review_preflight`, which reuses `codex_spawn_plan` without
+observation; refusal leaves the review ledger unchanged (`routing.py::main`,
+`ReviewDeduplicator.git_claim_requires_preflight`).
+Its `--tier`, `--model`, `--effort`, repeated `--available-model`,
+`--profile-model-active` and `--profile-effort-active` inputs carry the same route
+request and value-free profile signals as `codex-plan`; absent explicit availability,
+it uses `codex_available_models()` (`routing.py::main`).
+Effective profile keys remain warnings under `detect_codex_overrides` and
+`host_override_warnings`; they do not themselves refuse a route.
+Omitting `--host` preserves the historical `claude` path, whose model invocation is
+validated by the routing hook; Codex callers must supply `--host codex`, and explicit
+Codex route options are refused on the Claude path (`routing.py::main`; see
+`hooks/route_agent.py::route_tool_input`).
+Already coordinated active or completed duplicates retain their route-validation
+short circuit; an existing abandoned owner still requires the explicit authenticated
+`recover-review` procedure below (`git_claim_requires_preflight`, `claim_git`,
+`ReviewDeduplicator.recover` in `routing.py`).
+This read-only preflight inspects atomically replaced markers; `claim_git` revalidates
+coordinates, legacy eligibility, HEAD and diff under its ledger lock before publication
+(`routing.py::{git_claim_requires_preflight,_atomic_write,claim_git}`).
 
 If the process is interrupted after the fresh marker is durably published but before
 the JSON result reaches the caller, the exact command may be replayed with the same

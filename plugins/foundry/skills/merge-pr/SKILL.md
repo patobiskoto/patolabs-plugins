@@ -68,8 +68,17 @@ On both hosts, atomically claim the exact `<BASE-SHA>...HEAD` diff in the shared
 cross-host ledger:
 
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --host <HOST> --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
+
+
+Use `codex` or `claude` for `<HOST>`; before the claim on Codex, pass the same
+explicit `--tier`, `--model`, `--effort`, repeated `--available-model` observations,
+and value-free `--profile-model-active` / `--profile-effort-active` signals that
+apply to the later `codex-plan` call (`routing.py::main`; `docs/model-routing.md`,
+"Cross-host review deduplication").
+The Codex preflight, historical omission of `--host`, and profile warning semantics
+are documented in `docs/model-routing.md` at that same section.
 
 If that process is interrupted after publication but before returning any JSON, replay
 the exact command with the same `<CLAIM-ATTEMPT-TOKEN>` and append
