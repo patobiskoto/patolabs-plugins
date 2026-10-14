@@ -1626,3 +1626,84 @@ def test_private_execution_path_binding_cannot_be_removed(case, report):
     path.write_text(json.dumps(altered))
     with pytest.raises(RoutingConfigError, match="private execution paths digest mismatch"):
         record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", [
+    "Makefile:12", "Dockerfile:3", "profile: x", "postmerge_review.py:423",
+    "file:line", r"regex: src/\\.py", r"regex: \\.", "https://example.invalid/reference",
+    "1file:/reference", "prefix+file:/reference", "prefix.file:/reference", "prefix-file:/reference",
+])
+def test_path_filter_reference_syntax_allowed(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("text", ["file:///Users/x", "voir file:/tmp/x", r"voir \\server\share"])
+def test_path_filter_local_reference_syntax_refused(case, report, text):
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", ["src/tmpl.py", "/Users/xavier", "prefix/Users/x", "/tmpfile"])
+def test_execution_path_component_boundaries(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/x")
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("text", ["/Users/x", "--root=/Users/x/child", "[/Users/x]", "/tmp/child", "/tmp:12", "/prefix//Users/x", r"\/Users/x"])
+def test_execution_path_delimiters_refused(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/Users/x")
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    a = prepare(case)
+    report["evidence"][0]["detail"] = text
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+
+
+@pytest.mark.parametrize("text", ["docs/page.md", "ratio 3 /4", "https://example.invalid/reference"])
+def test_generic_home_root_does_not_refuse_all_slashes(case, report, text, monkeypatch):
+    monkeypatch.setenv("HOME", "/")
+    a = prepare(case)
+    assert "/" not in a["execution_paths"]
+    report["evidence"][0]["detail"] = text
+    assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("kind", ["home", "root", "packet", "tmp", "plugin"])
+@pytest.mark.parametrize("form", ["raw", "absolute", "resolved"])
+def test_execution_path_aliases_retained_private(case, report, monkeypatch, tmp_path, kind, form):
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "private-temp"))
+    monkeypatch.chdir(tmp_path)
+    target = Path(pm.__file__).parents[2] if kind == "plugin" else tmp_path / "target"
+    if kind == "root":
+        target = case.root
+    elif kind != "plugin":
+        target.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    raw = "alias/packet" if kind == "packet" else "alias"
+    if kind == "home":
+        monkeypatch.setenv("HOME", raw)
+    elif kind == "tmp":
+        monkeypatch.setenv("TMPDIR", raw)
+    elif kind == "root":
+        case.args["root"] = raw
+    elif kind == "packet":
+        case.args["output_dir"] = raw
+    else:
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", raw)
+    a = prepare(case, "claude" if kind == "plugin" else "codex")
+    paths = {"raw": raw, "absolute": str(Path(raw).absolute()), "resolved": str(Path(raw).resolve())}
+    assert set(paths.values()) <= set(a["execution_paths"])
+    assert a["execution_paths_hash"] == pm.digest(a["execution_paths"])
+    assert "execution_paths" not in pm.public_attempt(a)
+    report["evidence"][0]["detail"] = "--path=" + paths[form] + "/child"
+    with pytest.raises(RoutingConfigError, match="absolute local path"):
+        record(case, a, evidence(a, report), report)
+    assert not any(path in json.dumps(case.issue.comments) for path in paths.values())

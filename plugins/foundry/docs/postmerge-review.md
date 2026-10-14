@@ -164,12 +164,17 @@ consumed attempt; packet validation can stop before submission archiving
 The v2 terminal report retains the complete publishable report and all its
 structured evidence, immutable coordinates, historical identities and launch
 metadata; raw arguments and sources, prompt and snapshot bodies remain private
-(`record`; `public_attempt`). Strings containing resolved execution paths (home,
-repository, output/packet directory, temporary directory and selected plugin),
-`file:` or UNC paths, raw task prompts and duplicate snapshot bodies refuse
+(`record`; `public_attempt`). Strings containing execution paths (home,
+repository, output/packet directory, temporary directory and selected plugin) in
+raw, absolute or resolved form, delimited `file:/` URIs or token-initial UNC paths,
+raw task prompts and duplicate snapshot bodies refuse
 publication; the private execution-path list is bound by its public digest
-(`prepare`, `public_attempt`, `read`, `publishable_report`). Other-machine paths
-that do not contain these concrete values, slash prose and repository references
+(`prepare`, `public_attempt`, `read`, `publishable_report`). Matches use `\w`, dot and
+hyphen as filename characters: they require start or a delimiter before a path and
+a separator, end or a character outside that class after it; generic filesystem
+roots, including `HOME=/`, are discarded (`prepare`,
+`publishable_report`). Other-machine paths
+that do not match these concrete values, slash prose and repository references
 remain permitted; prompt and snapshot duplication uses decoded strings
 (`publishable_report`). An overbound full comment refuses before
 its write (`publishable_report`, `bounded_comment`). No finding is silently removed
