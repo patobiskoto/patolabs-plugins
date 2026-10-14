@@ -81,6 +81,20 @@ def test_every_skill_is_linted():
     assert len(_SKILL_FILES) >= 12, _SKILL_FILES
 
 
+def test_review_pr_describes_the_partial_review_on_every_pr():
+    """PAT-172 / PAT-ADR-0022: partial after a validated round, full after a blocking one."""
+    text = _flat(_skill_text("review-pr"))
+    assert ("On every pull request, the review that follows the correction of the "
+            "non-blocking remarks of a validated round") in text
+    assert "covers what changed since that round, not the whole diff" in text
+    assert ("It stays full after a blocking round, when the change since the previous "
+            "round goes beyond correcting the remarks it carried, and when the reviewer "
+            "asks for it with a reason") in text
+    assert ("The partial-review packet gives the reviewer the previous round's verdict "
+            "and remarks, the commit range since that round") in text
+    assert "no mechanical check distinguishes a partial from a full review" in text
+
+
 def test_review_pr_requires_claim_capability_before_diff_access():
     """The reviewer has an authoritative, semantic gate before it may read a diff."""
     review_pr = os.path.join(_SKILLS_DIR, "review-pr", "SKILL.md")
@@ -198,11 +212,19 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert "every other intake write keeps its confirmation" in text
     # no second-level deferral
     assert ("when the PR belongs to an issue of a companion Epic, correct its non-blocking "
-            "remarks before the merge. The review that follows covers what changed since "
-            "the previous round, not the whole diff; after a blocking round it stays full"
-            ) in text
+            "remarks before the merge. On every pull request, the review that follows the "
+            "correction of the non-blocking remarks of a validated round") in text
+    assert ("covers what changed since that round, not the whole diff (PAT-ADR-0022). It "
+            "stays full after a blocking round, when the change since the previous round "
+            "goes beyond correcting the remarks it carried, and when the reviewer asks for "
+            "it with a reason") in text
+    assert ("The partial-review packet gives the reviewer the previous round's verdict and "
+            "remarks, the commit range since that round, and the full diff through the "
+            "shared verifier") in text
     assert ("after such a partial review that proof relies on the previous round for the "
-            "unchanged parts; the merge gate is not modified") in text
+            "unchanged parts, and the PR description says so; no mechanical check "
+            "distinguishes a partial from a full review, and the merge gate and the proof "
+            "format are not modified") in text
     assert "the reviewer's mark \"fix before merge\" decides the first case" in text
     assert "This is an accepted risk" in text
     # the campaign special case of PAT-136 is gone
@@ -212,7 +234,7 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert ("The origin Epic of an issue is its direct parent Epic: an issue under a "
             "sub-Epic uses that sub-Epic") in text
     assert ("An issue that has no origin Epic gets no deferral: correct its non-blocking "
-            "remarks before the merge and re-review in full") in text
+            "remarks before the merge and re-review as stated above") in text
     assert ("that includes an issue whose direct parent is not an Epic, the chain of "
             "parents not being walked up") in text
     assert "stays with the maintainer" not in text
@@ -225,7 +247,7 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
             "it did not") in text
     assert ("If the adapter itself refuses the retry (it cannot replay the write safely), "
             "treat the case as a durable refusal: correct the remarks of that round before "
-            "the merge, re-review in full, and report the refusal in the PR description") in text
+            "the merge, re-review as stated above, and report the refusal in the PR description") in text
     # inside a campaign: three missing pieces, left to a later issue
     for piece in ("a channel that carries the remarks to the campaign",
                   "the code that creates the companion Epic and its issues",

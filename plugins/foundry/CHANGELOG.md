@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-172: the review that follows the correction of the non-blocking remarks of a
+  validated round (every criterion `pass`, quality `mergeable`) is now partial on every
+  pull request, not only on those of a companion Epic (PAT-ADR-0022). It stays full after
+  a blocking round, when the change goes beyond correcting the remarks, and when the
+  reviewer asks for it with a reason. Process contract and documentation only: no tooling,
+  merge gate or proof format change, and no mechanical check tells a partial review from a
+  full one. Documentation status (R5): updated `AGENTS.md`/`CLAUDE.md` R9 (b),
+  `skills/merge-pr/SKILL.md`, `skills/review-pr/SKILL.md` and `docs/review-rounds.md`
+  (new section); no CLI verb, configuration key or public constant changed, so none to
+  document; PAT-ADR-0018's deferral writes unchanged.
 - PAT-173: `routing carry-review-proof` carries a terminal `mergeable` all-pass review
   proof across a conflict-free integration of the main branch that touches no file of the
   PR, without a new review round (PAT-ADR-0021; `AcceptanceProofStore.carry`,
