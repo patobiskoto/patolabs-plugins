@@ -245,6 +245,50 @@ Not coded yet:
   companion Epic and its issues, and campaigns usable on the repository's tracker. They
   are left to a later issue under the same Epic, PAT-141.
 
+## Carrying a terminal proof across an integration of main (PAT-173)
+
+Decision: PAT-ADR-0021 (read it with `foundry_cli.py query adr PAT-ADR-0021`). Command:
+`routing carry-review-proof --issue <ID> --root <ROOT> --base <NEW-BASE-SHA> --from-base
+<OLD-BASE-SHA> --from-diff-hash <OLD-DIFF-HASH>` (`main`, `tooling/foundry/routing.py`);
+the checks are `AcceptanceProofStore.carry` in that file and run at carry time, while the
+review ledger lock is held. All of them must hold; otherwise the command raises
+`RoutingConfigError` and writes nothing, and a full review stays required:
+
+1. The original proof is terminal in the ledger, for the same issue, `quality=mergeable`
+   and every criterion `pass` (`ReviewDeduplicator.validated_completed_proof_binding`),
+   and the digest of the criteria of the issue as it is now is equal to the digest the
+   proof covers (compared: `acceptance_criteria(issue body)` against the `id`/`digest`
+   pairs of the proof).
+2. `--from-base` is the base recorded in the original proof, and the diff recomputed
+   from that base to the head recorded in the proof has the hash `--from-diff-hash`.
+3. The old base is an ancestor of the new base, and the new base is an ancestor of the
+   current head.
+4. The tree of the current head is exactly the tree printed by `git merge-tree
+   --write-tree` of the old reviewed head with the new base, which must be conflict free.
+5. No path changed by the PR (`old base...old head`) is changed by the main branch
+   (`old base` to `new base`); renames are not followed (`--no-renames`), so both
+   paths count.
+6. The diff of the current head against the new base, computed by the same `git_diff`
+   as every review, has the hash `--from-diff-hash`. Conditions 1 to 5 mean the reviewed
+   files are unchanged, so a different hash is treated as a reason to refuse, not as a
+   second case to carry (deduced, not observed on a real repository).
+
+On success the command appends a new proof (`AcceptanceProofStore._write`, never
+overwritten), whose `carried_from` key names the original proof identifier, head, base and
+diff hash, and whose `coordinates` hold the new head and base; it keeps the original
+review generation and claim digest. It then rebinds the ledger entry of the diff hash to
+the new root, base, head and proof, keeping the previous coordinates and the original
+proof identifier in that entry's `carried` list (`ReviewDeduplicator` record,
+`review-dedup/` state). Because the proof is bound to the new exact coordinates,
+`valid_for_merge` accepts it through its existing checks, and a later `claim-review` of
+that hash with the new coordinates is deduplicated. The command touches neither the
+original proof file, nor the escalation state, nor the merge gate. Repeating the same
+command writes nothing and prints `"carried": false`.
+
+What this does not cover: a conflict resolution, an edit after the integration, a
+change of the issue criteria, or a main branch change to a file of the PR. Tests:
+`tests/test_review_carry.py`.
+
 ## Portability of the three writes (PAT-139)
 
 The first three writes of `AGENTS.md#R9` (b) are `create_issue` with the field

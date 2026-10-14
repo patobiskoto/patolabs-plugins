@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-173: `routing carry-review-proof` carries a terminal `mergeable` all-pass review
+  proof across a conflict-free integration of the main branch that touches no file of the
+  PR, without a new review round (PAT-ADR-0021; `AcceptanceProofStore.carry`,
+  `tooling/foundry/routing.py`; `git_diff` gains an optional `head`; a proof may carry an
+  optional `carried_from` key). Any other case is refused and a full review stays required.
+  Documentation status (R5): updated `docs/review-rounds.md` (new section),
+  `skills/merge-pr/SKILL.md` step 2b, `skills/review-pr/SKILL.md`; the new CLI verb is
+  documented there. `AGENTS.md`/`CLAUDE.md` unchanged: R9 does not contradict the new
+  behaviour. Merge gate and escalation unchanged.
+
 ## 1.3.0 — 2026-10-15
 
 Minor release. Entries below change behaviour. New CLI surfaces: `routing
