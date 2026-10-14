@@ -3,9 +3,9 @@
 Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
 publication bound, native evidence, plugin selection, guarded paths and restitution;
 follow-up corrections cover concrete execution paths, terminal stops and reader diagnostics.
-PAT-ADR-0020 is proposed and will replace PAT-ADR-0019 at this issue's merge;
-PAT-ADR-0019 remains accepted until then. The earlier implementation conforms to
-PAT-ADR-0019; this delivery is a replacement (PAT-ADR-0020, Context and Decision).
+PAT-ADR-0020 is accepted and supersedes PAT-ADR-0019, by the maintainer's explicit
+decision recorded on PAT-202 after its merge. The earlier implementation conformed to
+PAT-ADR-0019; this delivery is its replacement (PAT-ADR-0020, Context and Decision).
 
 `routing postmerge-review` has three actions: `prepare`, `read`, and `record`
 (`tooling/foundry/routing.py`, parser and dispatch; `postmerge_review.py::cli`).
