@@ -3,7 +3,7 @@
 **This page is written for the release pull request and is frozen from it.** It says
 what the version contains and what an upgrade can change. It states nothing about a
 tag, an installation or a version loaded by a host: those states come after the merge
-and are recorded on the release ticket (`skills/release/SKILL.md`, steps 7 to 9), not
+and are recorded on the release ticket (`skills/release/SKILL.md`, step 9), not
 here. Both host manifests (Claude Code and Codex) declare
 `1.4.0`. Ship-iOS retains its independent `0.3.0` version. The versionless marketplace
 catalogues continue to point at `./plugins/foundry` and `./plugins/ship-ios`.
@@ -68,8 +68,9 @@ of an issue at native `backlog` and the accepted risks are in
 - **Per-round line (PAT-207).** The per-round line of the PR description gains
   `review <full|partial>` (`skills/merge-pr/SKILL.md`); a line written before this field
   has none and reads as unknown. A caller that parses that line must accept the new field.
-- **Remedy:** a caller of the review or merge skills follows the updated skills; a
-  documented count "by hand" in older material is superseded by the page above.
+- **Remedy:** a caller of the review or merge skills follows the updated skills; the per-issue
+  total comes from `routing review-rounds`; the baseline and window tables and the split
+  by round kind are still counted by hand (`docs/review-rounds.md`).
 
 ### 3. Epic closure: a closed child Epic and a benign native update
 

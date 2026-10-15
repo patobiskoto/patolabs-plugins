@@ -3,7 +3,7 @@
 **This guide is written for the release pull request and is frozen from it.** It says
 how to upgrade from 1.3.0 and what is known about going back. It states nothing about
 a tag, an installation or a version loaded by a host: those states come after the
-merge and are recorded on the release ticket (`skills/release/SKILL.md`, steps 7 to 9),
+merge and are recorded on the release ticket (`skills/release/SKILL.md`, step 9),
 not here. Both Foundry manifests must report `1.4.0`; Ship-iOS remains independently `0.3.0`.
 The catalogues have no version key. See [release-1.4.0.md](release-1.4.0.md) for what
 the version contains and for its behaviour changes. A first installation and a first
@@ -59,8 +59,7 @@ Seven checks, for what the release note announces. None of them edits a cache.
    PAT-207). A parser must accept both.
 
 No project data, routing policy, credential or configuration key needs to change. The
-changelog entries name new CLI verbs, options and one skill only, not a configuration
-key. No environment read was searched for in the code for this guide; the release note
+changelog entries name no configuration key. No environment read was searched for in the code for this guide; the release note
 claims none.
 
 Retain a private snapshot of the non-secret configuration, the registry, the repository
@@ -145,7 +144,7 @@ After reload or a new task, verify and retain for each host:
 
 Nothing is "installed" until these readbacks exist. They are made after the merge, the
 tag and an official update, and recorded on the release ticket, not here
-(`skills/release/SKILL.md`, steps 7 to 9).
+(`skills/release/SKILL.md`, step 9).
 
 ## Rollbacks
 
@@ -167,7 +166,8 @@ qualified.
 What is known:
 
 - The tag `foundry-v1.3.0` exists in this repository (`git tag`, read when this guide
-  was written); this guide does not establish which commit it points at.
+  was written); `git ls-remote --tags origin 'foundry-v1.3.0^{}'` lists commit `0c38fe0`, the merge commit
+  of PR #145.
 - No manager command that installs a named tag of this marketplace is established in
   this repository; whether either manager accepts a tag was not exercised
   ([migration-1.3.0.md](migration-1.3.0.md), "Return to 1.2.0").

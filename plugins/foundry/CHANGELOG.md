@@ -4,7 +4,7 @@
 
 ## 1.4.0 — 2026-10-15
 
-Minor release. Entries below change behaviour. New CLI surfaces: `routing
+Minor release. Most entries below change behaviour. New CLI surfaces: `routing
 carry-review-proof` (PAT-173), `routing review-rounds` (PAT-175) and the target
 `backlog` of `edit transition <ISSUE-ID> backlog <expected-state>` on Linear (PAT-165,
 with PAT-ADR-0024); it adds the skill `foundry:release` and the read-only helpers
