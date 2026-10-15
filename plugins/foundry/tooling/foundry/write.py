@@ -599,10 +599,12 @@ def _closure_node_unchanged(recorded: EpicClosureChild, current: EpicClosureChil
     """PAT-ADR-0023: one node equals its audit coordinate or only moved forward.
 
     Same id, state, AC counters and acceptance status/source/coordinates; the
-    native version may be equal or newer.  A dropped or override node stays bound
-    exactly, version included (PAT-ADR-0017, PAT-ADR-0014).
+    native version may be equal or newer.  A node under an ``override`` waiver stays
+    bound exactly, version included (PAT-ADR-0014: its coordinates carry no body
+    digest).  A ``dropped`` node follows the accepted-node rule: its state is
+    compared and exact version protects nothing (PAT-ADR-0017).
     """
-    if recorded.state == "dropped" or recorded.acceptance_status == "override":
+    if recorded.acceptance_status == "override":
         return recorded == current
     return (
         type(current.version) is int and type(recorded.version) is int

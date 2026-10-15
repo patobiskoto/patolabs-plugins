@@ -1293,18 +1293,20 @@ their order must be equal, and each node (children and dependency targets) must 
 same id, state, AC counters, acceptance status, acceptance source and acceptance
 coordinates as recorded, with a native version equal or newer. A node whose version goes
 back, or any of those fields that differs, a link added or removed, still refuses with
-the same "divergent au rejeu" error. A `dropped` node and a node under an `override`
-waiver stay bound exactly, version included. The same helper serves the YouTrack
-(`youtrack.py`) and GitHub Projects (`ghprojects.py`) reads. What the audit guarantees
+the same "divergent au rejeu" error. A `dropped` node follows the same rule (its state is
+compared, so its exact version protects nothing); a node under an `override` waiver stays
+bound exactly, version included, because its acceptance coordinates carry no body digest.
+The same helper serves the YouTrack read (`youtrack.py`). GitHub Projects keeps the exact
+comparison (`ghprojects.py`): its node version is an opaque digest of the node snapshot,
+not a time order, and excludes the update timestamp. What the audit guarantees
 after such an update: the graph shape and every compared field are those the human
 accepted; it no longer guarantees that no native write touched a node since (observed:
 a version advance on a dependency made reading a closed Epic fail; deduced cause: the
 provider bumps the version on any native update). Accepted risk: a native update that
-alters nothing in the compared fields, for example a title, a comment or a label, goes
-unnoticed. The write path (new audit, pre-write and post-write checks, pending-audit
+alters nothing in the compared fields, for example a title, a comment, a label or a
+non-graph link (`relates`), goes unnoticed. The write path (new audit, pre-write and post-write checks, pending-audit
 resume) keeps the exact comparison on current versions. Proved with the Linear GraphQL and
-YouTrack doubles (`tests/test_epic_closure_transports.py`); GitHub Projects shares the
-helper and has no dedicated double for this case.
+YouTrack doubles (`tests/test_epic_closure_transports.py`).
 
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while

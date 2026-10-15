@@ -1234,7 +1234,13 @@ def test_closure_graph_comparison_helper_contract():
               (D("A", C("B", 6, "done")),))
     assert not eq(same, (dep,), same, ())
     assert not eq(same, (dep,), same, (D("C", dep.target),))
-    # Dropped nodes stay bound exactly (PAT-ADR-0017).
+    # Dropped nodes: same rule as accepted ones (state is compared, version is not bound).
     dropped = C("D", 3, "dropped")
     assert eq((dropped,), (), (dropped,), ())
-    assert not eq((dropped,), (), (replace(dropped, version=4),), ())
+    assert eq((dropped,), (), (replace(dropped, version=4),), ())
+    assert not eq((dropped,), (), (replace(dropped, version=2),), ())
+    assert not eq((dropped,), (), (replace(dropped, version=4, state="done"),), ())
+    # Override nodes stay bound exactly (their coordinates carry no body digest).
+    override = C("O", 3, "done", 1, 1, "override", "receipt", "coords")
+    assert eq((override,), (), (override,), ())
+    assert not eq((override,), (), (replace(override, version=4),), ())
