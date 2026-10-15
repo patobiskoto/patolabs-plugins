@@ -35,9 +35,10 @@ Every step except step 4 is read-only on local files and launches no model.
    `agents` exist, without their values. Proves: whether `config.toml` declares a reviewer
    role or an explicit profile file. Does not prove: that the host honours the declaration, nor
    which source wins when both a declaration and a file exist.
-3. **Effective instruction source.** Not exposed as a field. The host version, the
-   Foundry version and the instructions can only be inferred from what a session wrote
-   (step 5). Anything the rollout does not show stays `unknown`.
+3. **Effective instruction source.** Not exposed as a field. Method: deduction by
+   elimination from step 2 (no declaration in the user configuration file) and step 5
+   (the profile file's text is in the session). Other sources (a project `.codex/` layer of
+   the checkout, `-c` overrides, configuration profiles) are not examined: `unknown`.
 4. **New session.** One native Codex session started after step 1, run by the coordinator
    under a specific prior authorisation (the maintainer authorised one session for PAT-196 on
    2026-10-15). Command: see "Native command". It asks the session to spawn the `reviewer`
@@ -117,10 +118,11 @@ its rollout, not from these flags.
 
 ## Rollback
 
-Described, not executed by this page. The procedure changes nothing under the Codex home.
+Described, not executed by this page. The procedure writes nothing under the Codex home except the session rollouts the host
+itself records for step 4 (`~/.codex/sessions`, read back in step 5).
 If a profile was installed from the example during qualification: restore the saved copy of
-the previous custom reviewer file in the profile directory, or remove the file to return to
-the host's built-in role, then start a new session and repeat steps 1 and 5 to see the
+the previous custom reviewer file in the profile directory, or remove the file (whether the host then has a built-in `reviewer` role is unknown here;
+steps 1 and 5 observe the effect), then start a new session and repeat steps 1 and 5 to see the
 effect. The prior file must be backed up first (`reviewer-queries.md`).
 
 ## Observed run
@@ -143,8 +145,8 @@ two rollouts newer than the marker (hashes and field values only):
 
 Profile `developer_instructions` SHA-256 `2cf9ff55…dd4d`; example `e42dd0cb…8d4`; equal: `false`
 (the installed profile is the maintainer's current reviewer patch). `config.toml` declares no
-`[agents.reviewer]` key (`agents` keys: `max_concurrent_threads_per_session`): the profile is
-loaded by file discovery. Deduced from the equal `turn_context` values: the child inherited the
+`[agents.reviewer]` key (`agents` keys: `max_concurrent_threads_per_session`): deduced, by
+elimination, that the profile is loaded by file discovery (step 3 names the sources not examined). Deduced from the equal `turn_context` values: the child inherited the
 parent's model, effort and sandbox; the profile itself sets none of them (its keys are
 `description`, `developer_instructions`, `name`). The loaded profile is established for this
 host version and this session only; another host version or a session started differently is
