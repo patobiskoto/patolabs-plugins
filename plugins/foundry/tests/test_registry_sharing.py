@@ -637,6 +637,48 @@ def test_load_refuses_non_object_provider_or_entry(monkeypatch, tmp_path, conten
     assert str(tmp_path / "registry.json") in str(error.value)
 
 
+def test_load_reads_the_registry_as_utf8_whatever_the_locale(monkeypatch, tmp_path):
+    """PAT-205: the classification of an invalid encoding must not depend on the locale."""
+    import builtins
+
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    (tmp_path / "registry.json").write_text('{"linear": {}}', encoding="utf-8")
+    seen = []
+    real_open = builtins.open
+
+    def spy(file, *args, **kwargs):
+        if str(file).endswith("registry.json"):
+            seen.append(kwargs.get("encoding"))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", spy)
+    assert registry.load() == {"linear": {}}
+    assert seen == ["utf-8"]
+
+
+@pytest.mark.parametrize("name", [None, "linear"])
+def test_invalid_registry_is_not_reported_as_a_repository_binding(monkeypatch, name):
+    """PAT-205: other callers of ``foundry.tracker()`` name the real cause too."""
+    import foundry
+
+    def invalid(_cwd=None):
+        raise registry.RegistryFileError("registre Foundry invalide : racine (/p/registry.json)")
+
+    monkeypatch.setattr(registry, "repository_tracker_binding", invalid)
+    with pytest.raises(SystemExit) as caught:
+        foundry.tracker(name)
+    assert str(caught.value).startswith("registre Foundry invalide")
+    assert "Binding tracker du dépôt invalide" not in str(caught.value)
+
+    def broken(_cwd=None):
+        raise ValueError("marqueur dérivé")
+
+    monkeypatch.setattr(registry, "repository_tracker_binding", broken)
+    with pytest.raises(SystemExit) as caught:
+        foundry.tracker(name)
+    assert str(caught.value) == "Binding tracker du dépôt invalide : marqueur dérivé"
+
+
 _MANIFEST_DIGEST = "sha256:" + "a" * 64
 
 

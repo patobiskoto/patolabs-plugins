@@ -199,11 +199,15 @@ def _sanitize_canonical_repositories(data: dict) -> dict:
 
 
 def load() -> dict:
-    """The whole registry as a credential-free, read-only snapshot."""
+    """The whole registry as a credential-free, read-only snapshot.
+
+    Raises ``RegistryFileError`` when the file is not valid UTF-8 JSON or does not have the
+    registry shape (an ``OSError`` on reading propagates).
+    """
     registry_path = path()
     if os.path.exists(registry_path):
         try:
-            with open(registry_path) as f:
+            with open(registry_path, encoding="utf-8") as f:
                 data = json.load(f)
         except ValueError:  # JSON syntax or non-UTF-8 content; OSError propagates
             raise RegistryFileError(
@@ -1297,11 +1301,8 @@ def bootstrap_repository_binding(
                     raise ValueError(
                         "binding legacy existant : utilisez 'registry upgrade'"
                     )
+                # ``load()`` guarantees that each provider and entry is an object.
                 entries = data.setdefault(tracker, {})
-                if not isinstance(entries, dict):
-                    raise ValueError("registre Foundry invalide")
-                if repo in entries and not isinstance(entries[repo], dict):
-                    raise ValueError("registre Foundry invalide")
                 storage_key = (
                     repo if repo not in entries
                     else _disambiguated_registry_key(repo, repository)

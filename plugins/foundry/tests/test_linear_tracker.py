@@ -10701,15 +10701,22 @@ def test_pat201_create_link_and_replay_keep_the_source_bytes(tracker, adr):
 
 
 @pytest.mark.parametrize("adr", ["0002", "0018"])
-def test_pat201_interrupted_link_resumes_only_the_exact_target(tracker, adr):
+@pytest.mark.parametrize("stop", ["document", "witness"])
+def test_pat201_interrupted_link_resumes_only_the_exact_target(tracker, adr, stop):
     instance, wire = tracker
     created = instance.create_adr(PROJECT, f"Historical {adr}", PAT201_SOURCES[adr])
     original = wire.__call__
+    # ``document``: stop after the link comment, before the version-1 Document;
+    # ``witness``: stop after the version-1 Document, before its witness.
+    prefix = {
+        "document": f"{linear_module._ADR_DOCUMENT_PREFIX}{created.id} / v0001",
+        "witness": f"[Foundry ADR witness] {created.id} / v0001",
+    }[stop]
 
     def interrupt_witness(document, variables):
         title = variables.get("input", {}).get("title", "")
-        if title.startswith(f"[Foundry ADR witness] {created.id} / v0001"):
-            raise OSError("link witness interrupted")
+        if title.startswith(prefix):
+            raise OSError("link write interrupted")
         return original(document, variables)
 
     instance._transport = interrupt_witness
@@ -10717,15 +10724,34 @@ def test_pat201_interrupted_link_resumes_only_the_exact_target(tracker, adr):
         instance.link_adr_issue(created, "LIN-2", project=PROJECT)
     instance._transport = original
 
-    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
-    with pytest.raises(TrackerConflictError, match="version slot diverged"):
-        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
-    assert (wire.documents, wire.comments) == before
+    assert len(wire.comments) == 1
+    if stop == "witness":
+        # Only the version-1 Document exists once the witness stop is reached, so a
+        # different target finds a diverged slot.  After the ``document`` stop only
+        # the link comment exists: no version slot is occupied yet.
+        before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+        with pytest.raises(TrackerConflictError, match="version slot diverged"):
+            instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+        assert (wire.documents, wire.comments) == before
 
     recovered = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
     assert recovered.body.endswith(PAT201_SOURCES[adr])
     assert len(wire.documents) == 4
     assert len(wire.comments) == 1
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_link_refuses_a_stored_body_the_model_does_not_prove(tracker, adr, monkeypatch):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, f"Historical {adr}", PAT201_SOURCES[adr])
+    # Fixture and storage diverge: the stored bytes are no longer proven by the model.
+    monkeypatch.setattr(linear_module, "_is_stored_adr_body", lambda *_a, **_kw: False)
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="differs from the qualified PAT-201"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert (wire.documents, wire.comments) == before
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
 
 
 @pytest.mark.parametrize("adr", ["0002", "0018"])

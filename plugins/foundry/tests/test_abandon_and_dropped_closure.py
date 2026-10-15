@@ -805,6 +805,30 @@ def test_node_cancelled_after_the_closure_makes_the_replay_diverge(monkeypatch):
         )
 
 
+def test_version_advance_of_a_dropped_node_keeps_the_closed_epic_readable(monkeypatch):
+    # PAT-205 / PAT-ADR-0023, end to end: a dropped node follows the accepted-node rule.
+    tracker, wire, project = _graph(monkeypatch)
+    _add(wire, 5, state="dropped")
+    _close(tracker, dropped=("LIN-5",))
+    wire.issues["LIN-5"]["updatedAt"] = "2026-09-20T10:09:00Z"
+    before = len(wire.calls)
+    outcome = tracker.get_epic_closure(project, "LIN-1")
+    replay = write.close_epic(
+        tracker, "LIN-1", human_verdict="accepted", accept_dropped=("LIN-5",),
+    )
+    assert write.epic_receipt_dropped(outcome.receipt) == ("LIN-5",)
+    assert replay.replayed is True and not _writes(wire, before)
+
+
+def test_version_advance_of_a_node_under_override_refuses_the_closed_epic(monkeypatch):
+    # PAT-205 / PAT-ADR-0014: a node under an override waiver stays bound exactly.
+    tracker, wire, project = _graph(monkeypatch, acceptance="override", dependency=True)
+    _close(tracker, overrides=("LIN-2",))
+    wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T10:09:00Z"
+    with pytest.raises(TrackerConflictError, match="divergent au rejeu"):
+        tracker.get_epic_closure(project, "LIN-1")
+
+
 # --- AC 5 : what stays refused, even with a legitimate --accept-dropped set ---
 
 def _with_dropped(monkeypatch, **kwargs):

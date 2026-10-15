@@ -75,7 +75,6 @@ review. Never launch a premerge reviewer before the claim below.
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --host <HOST> --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
-
 Use `codex` or `claude` for `<HOST>`; before the claim on Codex, pass the same
 explicit `--tier`, `--model`, `--effort`, repeated `--available-model` observations,
 and value-free `--profile-model-active` / `--profile-effort-active` signals that
@@ -149,6 +148,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 This uses the same common ledger and validates the existing owner, without making a
 second claim. Append the value-free `--profile-model-active` / `--profile-effort-active`
 flags when host-supplied effective profile metadata reports those keys.
+
+Repeat on `codex-plan` the same `--tier`, `--model`, `--effort` and `--available-model` given to
+`claim-review`: the two commands read the route separately. A refusal by `codex-plan` after the
+reservation leaves the claim active (deduced from `routing_facades.py::codex_review_plan`, which runs
+`codex_review_preflight` before `active_git_claim`; not run): fix the route inputs and rerun with the
+kept `--claim-id`.
 
 3. Only now, if a subagent is available, launch a fresh one. On Codex pass every field
    of `spawn` unchanged, including explicit `model`, `reasoning_effort`, and

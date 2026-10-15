@@ -1424,18 +1424,21 @@ def _pat204_snapshot(state):
             for path in state.rglob("*") if path.is_file()}
 
 
-@pytest.mark.parametrize("options,configuration,error", [
-    (["--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
-    (["--model", "missing-model"], None, RoutingConfigError),
-    (["--effort", "invalid"], None, RoutingConfigError),
-    (["--profile-model-active", "--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
-    (["--profile-effort-active", "--available-model", "gpt-6-luna"], None, RoutingUnavailableError),
-    ([], {"mappings": {"codex": {"frontier": {"model": "", "effort": "high"}}}}, RoutingConfigError),
-    ([], {"mappings": {"codex": {"frontier": {"model": "gpt-6-sol", "effort": "invalid"}}}}, RoutingConfigError),
+# Each case names the cause that refuses the route; ``match`` pins it so a case cannot
+# pass on another cause (PAT-205).
+@pytest.mark.parametrize("options,configuration,error,match", [
+    (["--available-model", "gpt-6-luna"], None, RoutingUnavailableError, None),
+    # ``reviewer`` is a gate role: a direct ``--model`` is refused as such, not as an
+    # unknown model (an unknown model on a non-gate role is not reachable from this command).
+    (["--model", "missing-model"], None, RoutingConfigError, "gate"),
+    (["--effort", "invalid"], None, RoutingConfigError, None),
+    ([], {"mappings": {"codex": {"frontier": {"model": "", "effort": "high"}}}}, RoutingConfigError, None),
+    ([], {"mappings": {"codex": {"frontier": {"model": "gpt-6-sol", "effort": "invalid"}}}},
+     RoutingConfigError, None),
 ])
 @pytest.mark.parametrize("existing_ledger", [False, True])
 def test_pat204_claim_refusals_preserve_ledger(
-    monkeypatch, tmp_path, options, configuration, error, existing_ledger,
+    monkeypatch, tmp_path, options, configuration, error, match, existing_ledger,
 ):
     state = tmp_path / "state"
     monkeypatch.setenv("FOUNDRY_DATA", str(state))
@@ -1447,10 +1450,48 @@ def test_pat204_claim_refusals_preserve_ledger(
         config.parent.mkdir()
         config.write_text(json.dumps(configuration))
     before = _pat204_snapshot(state)
-    with pytest.raises(error):
+    with pytest.raises(error, match=match):
         main(_pat204_claim_args(tmp_path, *options), handle_config_errors=False)
     assert _pat204_snapshot(state) == before
     assert ReviewDeduplicator("owner/preflight", state).is_claimed(review_diff_hash(b"new diff")) is False
+
+
+@pytest.mark.parametrize("flag", ["--profile-model-active", "--profile-effort-active"])
+def test_pat204_profile_signals_alone_do_not_refuse_the_claim(monkeypatch, tmp_path, capsys, flag):
+    # Effective profile keys are warnings, not refusals (docs/model-routing.md,
+    # "Cross-host review deduplication"): the claim goes through when the route is available.
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"profile diff")
+    main(_pat204_claim_args(tmp_path, flag))
+    assert json.loads(capsys.readouterr().out)["should_run"] is True
+
+
+@pytest.mark.parametrize("flag", ["--profile-model-active", "--profile-effort-active"])
+def test_pat204_profile_signal_with_unavailable_route_is_refused_for_availability(
+    monkeypatch, tmp_path, flag,
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"new diff")
+    with pytest.raises(RoutingUnavailableError):
+        main(_pat204_claim_args(tmp_path, flag, "--available-model", "gpt-6-luna"),
+             handle_config_errors=False)
+    assert _pat204_snapshot(state) == {}
+
+
+def test_pat204_claim_refusal_precedes_legacy_migration(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    diff = b"legacy marker awaiting route validation"
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: diff)
+    ledger = ReviewDeduplicator("owner/preflight", state)
+    ledger.claim(diff)  # legacy, coordinate-less marker
+    before = _pat204_snapshot(state)
+    with pytest.raises(RoutingUnavailableError):
+        main(_pat204_claim_args(tmp_path, "--available-model", "gpt-6-luna"),
+             handle_config_errors=False)
+    assert _pat204_snapshot(state) == before
+    assert not (ledger.directory / "legacy-quarantine").exists()
 
 
 def test_pat204_claim_uses_available_models_environment(monkeypatch, tmp_path):
@@ -1554,3 +1595,24 @@ def test_pat204_interrupted_replay_refusal_is_read_only(monkeypatch, tmp_path, c
     main(_pat204_claim_args(tmp_path, "--replay-interrupted"))
     assert json.loads(capsys.readouterr().out) == owner
     assert _pat204_snapshot(state) == before
+
+
+@pytest.mark.parametrize("host", [None, "claude", "codex"])
+def test_pat205_claim_review_warns_on_stderr_only_when_host_is_omitted(
+    monkeypatch, tmp_path, capsys, host,
+):
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "state"))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"warn diff")
+    args = _pat204_claim_args(tmp_path)
+    if host is None:
+        del args[1:3]
+    else:
+        args[2] = host
+    main(args)
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["should_run"] is True
+    if host is None:
+        assert captured.err.count("\n") == 1
+        assert "defaulting to claude" in captured.err and "--host codex" in captured.err
+    else:
+        assert captured.err == ""

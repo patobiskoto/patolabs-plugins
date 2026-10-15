@@ -71,7 +71,6 @@ cross-host ledger:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --host <HOST> --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
-
 Use `codex` or `claude` for `<HOST>`; before the claim on Codex, pass the same
 explicit `--tier`, `--model`, `--effort`, repeated `--available-model` observations,
 and value-free `--profile-model-active` / `--profile-effort-active` signals that
@@ -86,7 +85,6 @@ the exact command with the same `<CLAIM-ATTEMPT-TOKEN>` and append
 ledger write, so another interruption can be replayed again identically. Never use the
 replay flag after a complete result; a normal retry without it remains a capability-free
 duplicate.
-
 
 Build the packet with the read-only command after a successful claim. Keep the complete
 claim JSON in a private file (use `umask 077` before redirecting claim output there).
@@ -117,7 +115,6 @@ pass it the returned `diff_hash`, `generation`, and `claim_id`; invoke the logic
 read-only profile. Precede its packet with
 `FOUNDRY_ROUTE_REQUEST={"issue":"<ISSUE-ID>"}` so an escalated reviewer floor persists.
 
-
 Under Codex, pass the generated send file and the existing claim to the façade, which
 validates that owner and resolves the actual frontier-or-higher invocation:
 
@@ -127,6 +124,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 Append `--profile-model-active` / `--profile-effort-active` when host-supplied effective
 profile metadata reports those keys; the façade warns without receiving their values.
+
+Repeat on `codex-plan` the same `--tier`, `--model`, `--effort` and `--available-model` given to
+`claim-review`: the two commands read the route separately. A refusal by `codex-plan` after the
+reservation leaves the claim active (deduced from `routing_facades.py::codex_review_plan`, which runs
+`codex_review_preflight` before `active_git_claim`; not run): fix the route inputs and rerun with the
+kept `--claim-id`.
 
 For `mode=subagent`, pass every `spawn` field unchanged to the host subagent tool and
 instruct it to load `<foundry-root>/skills/review-pr/SKILL.md`; the explicit
@@ -292,6 +295,11 @@ repository where the plugin is installed, as an exception to the confirmation
 3. add deferred remarks to such an issue: `edit comment` (command in `foundry:open-pr`);
 4. attach to the companion Epic a follow-up issue whose creation succeeded but whose
    parent link was not set: `edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`.
+
+If `edit create-issue` (writes 1 and 2) exits nonzero with a partial-effect error on stderr, do
+not rerun it: read the effect with `edit reconcile-create` (procedure in `foundry:intake` and
+`docs/linear-tracker.md`, "Issue creation validation and explicit reconciliation") before any
+retry.
 
 Perform them without asking and report them in the PR description: the companion Epic
 when this PR created it, the follow-up issue ID and the number of deferred remarks.

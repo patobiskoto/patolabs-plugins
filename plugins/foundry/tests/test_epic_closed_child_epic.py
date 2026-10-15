@@ -126,3 +126,94 @@ def test_a_tracker_without_epic_closure_audit_keeps_the_child_epic_unknown():
     )
     with pytest.raises(SystemExit, match="capacité"):
         write._bounded_epic_node(issue, role="enfant", tracker=Bare())
+
+
+# --- PAT-205: the refusal codes of ``write._closed_child_epic`` and the remaining paths ---
+
+@pytest.mark.parametrize("change,cause", [
+    (lambda outcome: {"receipt": {"parent_id": "LIN-9"}}, "audit de clôture ambigu ou sans verdict humain"),
+    (lambda outcome: {"receipt": {"human_verdict": "rejected"}}, "audit de clôture ambigu ou sans verdict humain"),
+    (lambda outcome: {"audit_id": "not a safe audit id"}, "audit de clôture ambigu ou sans verdict humain"),
+    (lambda outcome: {"audit_id": None}, "audit de clôture ambigu ou sans verdict humain"),
+])
+def test_closed_child_epic_audit_with_a_wrong_parent_verdict_or_id_shape_is_refused(
+    monkeypatch, change, cause,
+):
+    import dataclasses
+
+    tracker, _wire, project = _two_levels(monkeypatch)
+    real = tracker.get_epic_closure(project, "LIN-1")
+    patch = change(real)
+    altered = dataclasses.replace(
+        real,
+        **({"audit_id": patch["audit_id"]} if "audit_id" in patch else {}),
+        **({"receipt": dataclasses.replace(real.receipt, **patch["receipt"])}
+           if "receipt" in patch else {}),
+    )
+    monkeypatch.setattr(tracker, "get_epic_closure", lambda *_a, **_k: altered)
+    issue = tracker.get_issue("LIN-1")
+    assert write._closed_child_epic(issue, tracker, project) == (None, cause)
+    # The valid audit is the control: the same call accepts it.
+    monkeypatch.undo()
+    assert write._closed_child_epic(issue, tracker, project)[0] == real.audit_id
+
+
+def test_a_closed_child_epic_named_in_accept_override_keeps_the_historical_refusal(monkeypatch):
+    tracker, wire, _project = _two_levels(monkeypatch)
+    with pytest.raises((SystemExit, TrackerConflictError), match="LIN-1"):
+        _close_outer(tracker, accept_overrides=("LIN-1",))
+    _assert_not_closed(wire)
+
+
+def test_a_closed_child_epic_named_in_accept_dropped_is_refused(monkeypatch):
+    tracker, wire, _project = _two_levels(monkeypatch)
+    with pytest.raises((SystemExit, TrackerConflictError), match="LIN-1"):
+        _close_outer(tracker, accept_dropped=("LIN-1",))
+    _assert_not_closed(wire)
+
+
+def test_a_closed_epic_two_levels_down_serves_through_its_own_audit(monkeypatch):
+    """LIN-6 -> LIN-5 (closed under its audit) -> LIN-1 (closed under its audit)."""
+    tracker, wire, project = _two_levels(monkeypatch)
+    _close_outer(tracker)
+    top = copy.deepcopy(wire.issues["LIN-5"])
+    top.update({
+        "id": "00000000-0000-4000-8000-000000000006",
+        "identifier": "LIN-6",
+        "state": {"id": STATE_IDS["in-progress"], "name": "In progress"},
+        "updatedAt": "2026-09-20T10:01:45Z",
+        "comments": connection([]),
+        "children": connection([{
+            "id": wire.issues["LIN-5"]["id"], "identifier": "LIN-5",
+        }]),
+        "description": "- [ ] Top validation",
+    })
+    wire.issues["LIN-6"] = top
+    outcome = write.close_epic(
+        tracker, "LIN-6", human_verdict="accepted",
+        issued_at=1_800_000_000_002, nonce="nonce_top_1234567890abcd",
+    )
+    (child,) = outcome.receipt.children
+    assert (child.id, child.acceptance_status) == ("LIN-5", "epic-closed")
+    assert write.close_epic(tracker, "LIN-6", human_verdict="accepted").replayed
+
+
+def test_the_parent_replay_refuses_after_the_child_graph_was_modified(monkeypatch):
+    tracker, wire, _project = _two_levels(monkeypatch)
+    _close_outer(tracker)
+    assert write.close_epic(tracker, "LIN-5", human_verdict="accepted").replayed
+    # A version that goes back in the child Epic's graph (PAT-ADR-0023).
+    wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T09:00:00Z"
+    with pytest.raises((SystemExit, TrackerConflictError)):
+        write.close_epic(tracker, "LIN-5", human_verdict="accepted")
+
+
+def test_the_diagnostic_reports_a_closed_child_epic_named_in_accept_override(monkeypatch):
+    tracker, _wire, project = _two_levels(monkeypatch)
+    parent = tracker.get_issue("LIN-5")
+    assert write.epic_graph_diagnostic(tracker, project, parent) == []
+    (item,) = write.epic_graph_diagnostic(
+        tracker, project, parent, accept=frozenset({"LIN-1"}),
+    )
+    assert (item["id"], item["code"], item["named"]) == ("LIN-1", "unknown", True)
+    assert "--accept-override" in item["cause"]

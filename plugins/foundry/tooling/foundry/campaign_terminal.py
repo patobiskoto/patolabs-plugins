@@ -182,6 +182,9 @@ def _current_closure_coordinate(
             raise TerminalCampaignReconciliationError(
                 "enfant terminal actuel indisponible"
             ) from None
+        # PAT-205: exact version on purpose, unlike ``write.epic_closure_graph_unchanged``
+        # (PAT-ADR-0023): the coordinate below carries ``receipt_child.version`` and DevHub
+        # repeats the version check atomically (see the comment at the mutation step).
         if (getattr(current, "id", None) != receipt_child.id
                 or getattr(current, "version", None) != receipt_child.version
                 or getattr(current, "state", None) != receipt_child.state

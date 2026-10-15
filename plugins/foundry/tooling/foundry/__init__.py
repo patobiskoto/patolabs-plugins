@@ -12,6 +12,15 @@ from foundry.codehosts.base import CodeHost
 from foundry.trackers.base import Tracker
 
 
+def _binding_error_message(exc: ValueError) -> str:
+    """Name the real source: an invalid global registry is not a repository binding."""
+    from foundry import registry
+
+    if isinstance(exc, registry.RegistryFileError):
+        return str(exc)
+    return f"Binding tracker du dépôt invalide : {exc}"
+
+
 def _effective_tracker_selection(cwd: str | None = None):
     """Return the implicit provider name and any strict repository binding."""
     from foundry import registry
@@ -19,7 +28,7 @@ def _effective_tracker_selection(cwd: str | None = None):
     try:
         binding = registry.repository_tracker_binding(cwd)
     except ValueError as exc:
-        raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
+        raise SystemExit(_binding_error_message(exc)) from None
     if binding is not None:
         return binding.tracker, binding
     try:
@@ -53,7 +62,7 @@ def tracker(name: str | None = None, cwd: str | None = None) -> Tracker:
         try:
             binding = registry.repository_tracker_binding(cwd)
         except ValueError as exc:
-            raise SystemExit(f"Binding tracker du dépôt invalide : {exc}") from None
+            raise SystemExit(_binding_error_message(exc)) from None
     if binding is not None and name != binding.tracker:
         raise SystemExit(
             f"Binding tracker refusé : '{binding.repository}' est actif sur "

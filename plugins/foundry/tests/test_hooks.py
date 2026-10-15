@@ -433,8 +433,8 @@ def test_broken_repo_binding_is_named_as_binding_not_registry(monkeypatch, tmp_p
 
 
 def test_non_utf8_config_file_is_not_read_by_the_guard(monkeypatch, tmp_path):
-    """Observed (PAT-63): the guard path (`entry_for(use_env=False)`) never reads
-    config.env/$FOUNDRY_CONFIG, so a non-UTF-8 config file in an unregistered repo
+    """Deduced from the code (PAT-63), pinned here: the guard path
+    (`entry_for(use_env=False)`) never reads config.env/$FOUNDRY_CONFIG, so a non-UTF-8 config file in an unregistered repo
     changes nothing: the guard stays a no-op there (fail-open, not a refusal)."""
     _clear_data_env(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -451,11 +451,11 @@ def test_registry_oserror_still_fails_open(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = _make_repo(tmp_path)
     target = _write_registry(tmp_path, "{}")
-    target.chmod(0)
-    try:
-        assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
-    finally:
-        target.chmod(0o600)
+    # A directory in place of the file makes ``open`` raise an OSError whatever the user
+    # (a ``chmod 0`` file is still readable by root and would prove nothing there).
+    target.unlink()
+    target.mkdir()
+    assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
 
 
 def test_registry_error_reason_pure_decision():
