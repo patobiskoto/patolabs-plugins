@@ -376,11 +376,17 @@ def test_pat205_unqualified_renderings_refused(source, observed):
     assert not linear._issue_creation_body_matches(observed, source)
 
 
-@pytest.mark.parametrize('source', [
-    '`a\n~/b\nc`', '<!--\n~/b\n-->', '## Portée de `edit`\ntexte', 'a\x0c## H\nx',
+@pytest.mark.parametrize(('source', 'rendered'), [
+    ('`a\n~/b\nc`', '`a\n\\~/b\nc`'),
+    ('<!--\n~/b\n-->', '<!--\n\\~/b\n-->'),
+    ('## Portée de `edit`\ntexte', '## Portée de `edit`\n\ntexte'),
+    ('a\x0c## H\nx', 'a\x0c## H\n\nx'),
 ])
-def test_pat205_exact_context_sources_are_admitted_exactly(source):
+def test_pat205_exact_context_sources_refuse_the_rendering(source, rendered):
+    # The rendering rules would change these sources (tilde escape, inserted empty
+    # line); in these contexts only the exact bytes are admitted.
     assert linear._issue_creation_body_matches(source, source)
+    assert not linear._issue_creation_body_matches(rendered, source)
 
 
 def test_pat205_rendering_resumes_after_a_closed_span_and_comment():

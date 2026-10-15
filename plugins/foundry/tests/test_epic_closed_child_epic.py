@@ -160,14 +160,18 @@ def test_closed_child_epic_audit_with_a_wrong_parent_verdict_or_id_shape_is_refu
 
 def test_a_closed_child_epic_named_in_accept_override_keeps_the_historical_refusal(monkeypatch):
     tracker, wire, _project = _two_levels(monkeypatch)
-    with pytest.raises((SystemExit, TrackerConflictError), match="LIN-1"):
+    with pytest.raises(
+        (SystemExit, TrackerConflictError), match="--accept-override LIN-1 .*inacceptable",
+    ):
         _close_outer(tracker, accept_overrides=("LIN-1",))
     _assert_not_closed(wire)
 
 
 def test_a_closed_child_epic_named_in_accept_dropped_is_refused(monkeypatch):
     tracker, wire, _project = _two_levels(monkeypatch)
-    with pytest.raises((SystemExit, TrackerConflictError), match="LIN-1"):
+    with pytest.raises(
+        (SystemExit, TrackerConflictError), match="--accept-dropped .*pas des nœuds abandonnés.*LIN-1",
+    ):
         _close_outer(tracker, accept_dropped=("LIN-1",))
     _assert_not_closed(wire)
 
@@ -204,7 +208,7 @@ def test_the_parent_replay_refuses_after_the_child_graph_was_modified(monkeypatc
     assert write.close_epic(tracker, "LIN-5", human_verdict="accepted").replayed
     # A version that goes back in the child Epic's graph (PAT-ADR-0023).
     wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T09:00:00Z"
-    with pytest.raises((SystemExit, TrackerConflictError)):
+    with pytest.raises(TrackerConflictError, match="graphe Epic Linear divergent au rejeu"):
         write.close_epic(tracker, "LIN-5", human_verdict="accepted")
 
 

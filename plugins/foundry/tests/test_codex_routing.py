@@ -1429,12 +1429,16 @@ def _pat204_snapshot(state):
 @pytest.mark.parametrize("options,configuration,error,match", [
     (["--available-model", "gpt-6-luna"], None, RoutingUnavailableError, None),
     # ``reviewer`` is a gate role: a direct ``--model`` is refused as such, not as an
-    # unknown model (an unknown model on a non-gate role is not reachable from this command).
+    # unknown model. An unknown model reaches the route through a project mapping and is then
+    # refused for availability (RoutingUnavailableError), observed with an availability list.
     (["--model", "missing-model"], None, RoutingConfigError, "gate"),
     (["--effort", "invalid"], None, RoutingConfigError, None),
     ([], {"mappings": {"codex": {"frontier": {"model": "", "effort": "high"}}}}, RoutingConfigError, None),
     ([], {"mappings": {"codex": {"frontier": {"model": "gpt-6-sol", "effort": "invalid"}}}},
      RoutingConfigError, None),
+    (["--available-model", "gpt-6-luna"],
+     {"mappings": {"codex": {"frontier": {"model": "gpt-9-unknown", "effort": "high"}}}},
+     RoutingUnavailableError, "Aucun modèle disponible"),
 ])
 @pytest.mark.parametrize("existing_ledger", [False, True])
 def test_pat204_claim_refusals_preserve_ledger(

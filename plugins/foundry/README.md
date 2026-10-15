@@ -725,14 +725,14 @@ outside registered repos" means a well-formed registry with no entry for the che
 registry that cannot be read at all (an OS error), any other unexpected failure, and any
 command the cheap `_is_candidate` prefilter does not flag, still fails open —
 non-candidate commands never read the registry at all. Logical entrypoints have a
-minimal `Read` capability and self-stop if routing did not attach its marker. Codex discovers the same
-`hooks/hooks.json`; users must still approve/trust hooks according to their local Codex
-policy. In Codex linked worktrees, `start-issue` creates the issue branch from the
-default branch without trying to check that default branch out in the worktree, and
-`merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for pushes made
-outside either agent: a `git` pre-push hook ships in `.githooks/` — enable it with
-`git config core.hooksPath .githooks`. `foundry.doctor`'s local-hook check (PAT-45)
-accepts either `.githooks` (a consumer repo, where this hook is copied) or
+minimal `Read` capability and self-stop if routing did not attach its marker. Codex
+discovers the same `hooks/hooks.json`; users must still approve/trust hooks according to
+their local Codex policy. In Codex linked worktrees, `start-issue` creates the issue
+branch from the default branch without trying to check that default branch out in the
+worktree, and `merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for
+pushes made outside either agent: a `git` pre-push hook ships in `.githooks/` — enable
+it with `git config core.hooksPath .githooks`. `foundry.doctor`'s local-hook check
+(PAT-45) accepts either `.githooks` (a consumer repo, where this hook is copied) or
 `plugins/foundry/.githooks` (this monorepo itself, per AGENTS.md#R1) as healthy — but
 only when the configured path resolves, relative to the repo, to a directory that
 actually holds an executable `pre-push`; any other configured value, or a candidate

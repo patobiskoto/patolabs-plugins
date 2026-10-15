@@ -34,8 +34,8 @@ path never reads `config.env`/`$FOUNDRY_CONFIG`, so a non-UTF-8 config file
 changes nothing here. A registry that cannot be read at all (OSError) and any
 OTHER unexpected failure keep failing OPEN; "no-op outside registered repos"
 means a well-formed registry with no entry for the checkout. The pure
-`deny_reason()` is what the tests pin. This is a discipline tool, not a sandbox: `bash -c '…'`
-indirection is out of scope by design.
+`deny_reason()` is what the tests pin. This is a discipline tool, not a sandbox:
+`bash -c '…'` indirection is out of scope by design.
 """
 import json
 import os

@@ -152,7 +152,8 @@ git push origin refs/tags/foundry-v<version>
 git ls-remote --tags origin 'foundry-v<version>' 'foundry-v<version>^{}'
 ```
 `allowed-tools` lists exact `git` prefixes and neither `git tag` nor `git push`, so the host's
-own permission prompt applies to the tag and to its push, on top of this STOP (deduced from the
+own permission prompt applies to the tag and to its push unless the user's own permission settings
+already allow it (for example a global `Bash(git:*)` rule), on top of this STOP (deduced from the
 prefix rule, not run; the `PreToolUse` Bash guard lets a tag push through, `hooks/guard_bash.py`).
 `git fetch origin` first, so the merge commit is present locally. For an annotated tag, `refs/tags/foundry-v<version>` lists the tag object and
 `refs/tags/foundry-v<version>^{}` lists the commit: record the `^{}` value as the tagged

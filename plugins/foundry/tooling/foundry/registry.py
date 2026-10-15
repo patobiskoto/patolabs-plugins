@@ -1276,11 +1276,8 @@ def bootstrap_repository_binding(
             legacy_matches = [
                 (provider, name, entry)
                 for provider, entries in data.items()
-                if isinstance(entries, dict)
                 for name, entry in entries.items()
-                if name == repo
-                and isinstance(entry, dict)
-                and "canonical_repo" not in entry
+                if name == repo and "canonical_repo" not in entry
             ]
             if activation_kind == "upgrade":
                 if (

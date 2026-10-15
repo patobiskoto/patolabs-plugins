@@ -186,20 +186,26 @@ The qualified rendering inserts one empty line after an unindented `## `
 heading that contains no backtick when the next line is not empty, wraps a complete bare
 `https://` token as `[URL](<URL>)` with identical label and destination, wraps the reference
 `(AGENTS.md#R<n>)` as `([AGENTS.md#R<n>](<http://AGENTS.md#R<n>>))` (observed on PAT-209, where
-Linear returned that form), escapes an unescaped `~/` outside a word, and removes one terminal
+Linear returned that form; only this form is qualified: the bare `AGENTS.md#R<n>`, `CLAUDE.md#R<n>`
+and `(AGENTS.md#R9(b))`, which Linear probably autolinks too, stay refused, behaviour unknown),
+escapes an unescaped `~/` outside a word, and removes one terminal
 LF only when it is not preceded by another LF.
 The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
 other URL syntax stays exact; a URL followed by `.` is wrapped with that dot (deduced from the
 alphabet, not observed: a GFM autolink would exclude it, so Linear may differ). Lines are cut on LF
 only. Apart from the terminal LF rule, lines containing backticks (a `## ` heading with a backtick
-therefore gets no empty line), the lines of an inline code span left open by a previous line of the
-same paragraph, HTML-comment lines (from a line holding `<!--` without backtick to the line holding
-`-->`), indented lines, lines that start a block quote and fenced blocks stay exact; a lazy
+therefore gets no empty line), the lines that follow a line holding a backtick run until a run of the same length closes it or an
+empty line ends it (`span` in `_issue_creation_rendering`; deduced conservatively, not observed:
+CommonMark reads an unmatched run as literal text, not a code span, and the code keeps those lines
+exact anyway), HTML-comment lines (from a line holding `<!--` without backtick to the line holding
+`-->`; a comment opened on a line that also holds a backtick is not tracked, so its following
+lines still receive the rendering: residual limit; the comment rule is deduced from CommonMark too,
+not observed), indented lines, lines that start a block quote and fenced blocks stay exact; a lazy
 continuation line of a quote does not start with `>` and receives the rendering; a fence opens
 only when indented by at most three spaces and closes only on the same
 character with at least the same length as its opening, and a line containing `<`
-takes no `~/` escape; a body containing CR stays entirely exact. These are observed
-renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
+takes no `~/` escape; a body containing CR stays entirely exact. Apart from the rules marked
+deduced above, these are observed renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
 text changes, URL destination changes, other tilde escapes and whitespace folding
 remain refused (`_issue_creation_rendering`; `test_linear_issue_creation.py`).
 Source bytes remain caller-owned; this comparator stores no source and changes no
