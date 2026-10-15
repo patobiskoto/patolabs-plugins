@@ -378,6 +378,32 @@ def test_a_ledger_record_without_head_or_coordinates_is_a_closed_refusal(tmp_pat
     assert scenario.snapshot() == before
 
 
+@pytest.mark.parametrize("key", ["head", "coordinates"])
+def test_a_record_losing_head_or_coordinates_after_the_binding_read_is_a_closed_refusal(
+        tmp_path, monkeypatch, key):
+    # The binding read passed; the key disappears before the ledger re-read under the lock.
+    from foundry import routing
+    scenario = _clean_integration(tmp_path)
+    marker = ReviewDeduplicator(REPOSITORY, scenario.state).directory / scenario.old_hash
+    real = routing.review_diff_hash
+
+    def strip_after_diff_check(diff):
+        result = real(diff)
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        record.pop(key, None)
+        marker.write_text(json.dumps(record), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(routing, "review_diff_hash", strip_after_diff_check)
+    proofs = scenario.snapshot()
+    with pytest.raises(RoutingConfigError):
+        scenario.carry()
+    # Nothing was written besides the test's own edit of the ledger entry.
+    after = scenario.snapshot()
+    assert {k: v for k, v in after.items() if not k.endswith(scenario.old_hash)} == {
+        k: v for k, v in proofs.items() if not k.endswith(scenario.old_hash)}
+
+
 def test_replay_is_idempotent_and_preserves_every_existing_byte(tmp_path):
     scenario = _clean_integration(tmp_path)
     before = scenario.snapshot()

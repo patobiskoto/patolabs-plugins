@@ -242,6 +242,12 @@ def review_receipt(
     ) or ("carried_from" in proof and (
         not isinstance(proof["carried_from"], Mapping)
         or set(proof["carried_from"]) != {"proof_id", "head", "base", "diff_hash"}
+        or not all(
+            isinstance(proof["carried_from"][key], str)
+            and (_SHA if key in {"head", "base"} else _DIGEST).fullmatch(
+                proof["carried_from"][key]) is not None
+            for key in ("proof_id", "head", "base", "diff_hash")
+        )
     )):
         raise ReceiptStoreError("incomplete_review_proof")
     proof_id = proof.get("proof_id")

@@ -46,7 +46,7 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 
 ## 2. Release branch
-Start the release ticket through `foundry:start-issue`, then in the working tree. Order
+Start the release ticket through `foundry:start-issue`, then work in its worktree. Order
 of operations: bump the manifests; assemble and paste the CHANGELOG section; `git rm` the
 fragments; write the release note and the migration guide (minor); update the READMEs;
 compute the freeze entry last.

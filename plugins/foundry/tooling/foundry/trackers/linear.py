@@ -3703,6 +3703,11 @@ class LinearTracker(Tracker):
         if "carried_from" in proof and (
             not isinstance(carried, dict)
             or set(carried) != {"proof_id", "head", "base", "diff_hash"}
+            or not all(
+                isinstance(carried[key], str)
+                and (_SHA if key in {"head", "base"} else _DIGEST).fullmatch(carried[key])
+                for key in ("proof_id", "head", "base", "diff_hash")
+            )
         ):
             raise TrackerConflictError("Linear acceptance proof malformed")
         canonical_proof = dict(proof)

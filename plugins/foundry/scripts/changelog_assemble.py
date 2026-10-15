@@ -16,8 +16,8 @@ PLUGIN = Path(__file__).resolve().parents[1]
 FRAGMENTS = PLUGIN / "changelog.d"
 NAME = re.compile(r"^([A-Za-z]+)-(\d+)\.md$")
 # The published heading shape of tests/test_release_contract.py (PUBLISHED_HEADING).
-VERSION = re.compile(r"^\d+\.\d+\.\d+$")
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def fragment_paths(directory=FRAGMENTS):
@@ -33,10 +33,10 @@ def fragment_paths(directory=FRAGMENTS):
 
 
 def _check_heading(version, date):
-    if not VERSION.match(version):
+    if not VERSION.fullmatch(version):
         raise ValueError(f"version must be X.Y.Z: {version}")
     try:
-        if not DATE.match(date):
+        if not DATE.fullmatch(date):
             raise ValueError
         datetime.date.fromisoformat(date)
     except ValueError:

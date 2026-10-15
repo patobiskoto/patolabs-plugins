@@ -18,10 +18,6 @@ derive `<foundry-root>` from this skill's absolute path by removing
 `/skills/merge-pr/SKILL.md`. Never pass the placeholder literally.
 
 ### 1. Acceptance criteria
-In a repository that keeps `changelog.d/`, check before merging that a PR other than a
-release PR carries its fragment `changelog.d/<ISSUE-ID>.md` and did not edit
-`## Unreleased` (PAT-210; `plugins/foundry/changelog.d/README.md`).
-
 Load the issue; if AC are unchecked, the mechanical merge gate accepts them only with a
 current structured AC proof. It revalidates the current issue AC digest, local `HEAD`,
 exact diff, and immutable PR base SHA. For a tracker with an atomic acceptance-sync
@@ -228,7 +224,8 @@ The command checks mechanically, and refuses unless all hold, the conditions lis
 `docs/review-rounds.md` ("Carrying a terminal proof across an integration of main",
 PAT-ADR-0021). On a refusal, a full review of the new diff stays required: claim and
 review it as above. A conflict resolution or any other edit of the reviewed content is
-never carried. On success it prints the new proof identifier; `merge` then finds a proof
+never carried. A rebase onto the new base that leaves the tree identical is carried too
+(`test_a_rebase_onto_the_new_base_with_the_same_tree_is_carried`). On success it prints the new proof identifier; `merge` then finds a proof
 for the exact diff as usual.
 
 ### 3. Human test — recommended
@@ -367,6 +364,10 @@ written before this field existed have none: read it as unknown.
 Baseline, observation window and return triggers: `docs/review-rounds.md`.
 
 ### 4. Merge (CI gate enforced in code)
+In a repository that keeps `changelog.d/`, check before merging that a PR other than a
+release PR carries its fragment `changelog.d/<ISSUE-ID>.md` and did not edit
+`## Unreleased` (PAT-210; `plugins/foundry/changelog.d/README.md`).
+
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue merge <ISSUE-ID> <PR-NUMBER>
 ```

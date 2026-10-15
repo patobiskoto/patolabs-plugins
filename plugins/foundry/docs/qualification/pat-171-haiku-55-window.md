@@ -13,7 +13,7 @@ regression trigger does not fire under any reading (difference at most +1, thres
 immediate trigger is unknown, not absent: no launch evidence was recorded in this window. No
 gain in quality, cost or quota is claimed. No code or mapping changes.
 
-The delegation of 2026-10-14 has no trace in this repository: it is recorded only in the
+The delegation of 2026-10-14 has no trace in this repository: it is recorded in the
 coordinator's local session memory, outside the repository, and nothing here quotes the
 maintainer's words. Consulting the tracker for a comment that records it was not done
 (unknown whether one exists).

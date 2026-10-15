@@ -255,11 +255,17 @@ def test_a_carried_review_proof_projects_a_receipt_and_a_malformed_one_is_refuse
         "github", REPOSITORY, open_pr(), proof, observed_at=OBSERVED_AT,
     )
     assert observation.receipt["review_id"] == proof["proof_id"]
-    with pytest.raises(receipts.ReceiptStoreError, match="incomplete_review_proof"):
-        receipts.review_receipt(
-            "github", REPOSITORY, open_pr(), _carried({"proof_id": "9" * 64}),
-            observed_at=OBSERVED_AT,
-        )
+    for bad in (
+        {"proof_id": "9" * 64},
+        {**carried, "head": "F" * 40},
+        {**carried, "base": "7" * 41},
+        {**carried, "diff_hash": "z" * 64},
+        {**carried, "proof_id": "9" * 63 + "\n"},
+    ):
+        with pytest.raises(receipts.ReceiptStoreError, match="incomplete_review_proof"):
+            receipts.review_receipt(
+                "github", REPOSITORY, open_pr(), _carried(bad), observed_at=OBSERVED_AT,
+            )
 
 
 @pytest.mark.parametrize(

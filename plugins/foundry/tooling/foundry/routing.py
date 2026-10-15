@@ -2352,6 +2352,11 @@ class AcceptanceProofStore:
                     "report de preuve AC : le ledger ne nomme pas la preuve d'origine ; "
                     "refus fermé."
                 )
+            if "coordinates" not in record or "head" not in record:
+                raise RoutingConfigError(
+                    "report de preuve AC : l'entrée du ledger n'a plus ses coordonnées ; "
+                    "refus fermé."
+                )
             proof = {
                 "schema_version": 1,
                 "issue": original["issue"],

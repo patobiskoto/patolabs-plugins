@@ -52,7 +52,8 @@ def test_assembly_refuses_several_list_items_in_one_fragment(tmp_path):
 
 @pytest.mark.parametrize("version, date", [
     ("9.9", "2030-01-01"), ("v9.9.9", "2030-01-01"), ("9.9.9", "2030-1-1"),
-    ("9.9.9", "2030-13-01"), ("9.9.9", "2030-02-30"), ("9.9.9", "01/01/2030"),
+    ("9.9.9\n", "2030-01-01"), ("९.९.९", "2030-01-01"), ("9.9.9", "2030-01-01\n"),
+    ("9.9.9", "२०३०-01-01"), ("9.9.9", "2030-13-01"), ("9.9.9", "2030-02-30"), ("9.9.9", "01/01/2030"),
 ])
 def test_assembly_refuses_a_heading_the_release_contract_would_not_parse(tmp_path, version, date):
     _write(tmp_path, "PAT-1.md", "- PAT-1: one\n")
