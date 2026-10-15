@@ -11,6 +11,15 @@
   scope). Census and limits: `docs/qualification/pat-201-historical-adr-links.md`.
   Documentation status (R5): that page and `docs/linear-tracker.md` updated; no CLI verb,
   option or configuration key changed.
+- PAT-175: new read-only verb `routing review-rounds <ISSUE-ID>` (`tooling/foundry/review_rounds.py`)
+  reports, for an issue, its review rounds and outcome from the local proof store, the
+  duration from the review ledger timestamps and, for the session logs passed with
+  `--session` / `--codex-session`, tokens per class (Claude only split between coordinator and
+  sub-agents, Codex is `codex_unclassified`; full totals of the logs passed, not filtered by
+  issue); with no proof in the local data directory and repository namespace the round counts are
+  `unknown`; anything unreadable is `unknown`. Documentation status (R5): new section
+  "Per-issue report" in `docs/review-rounds.md`, whose "counted by hand" statements were
+  corrected for issues delivered since; no other CLI verb, key or constant changed.
 - PAT-63: the R1 guard (`hooks/guard_bash.py`) now names the real cause of a fail-closed
   denial. A malformed global registry (invalid JSON or encoding, non-object root, invalid
   `canonical_repo`, and now a provider or an entry that is not an object, which was silently

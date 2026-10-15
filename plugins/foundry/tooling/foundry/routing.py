@@ -2671,6 +2671,18 @@ def main(
     carry_proof.add_argument("--from-diff-hash", required=True, help="diff hash of the original proof")
     carry_proof.add_argument("--repository", help="repo namespace; defaults to origin URL")
     carry_proof.add_argument("--root", required=True, help="exact Git worktree root")
+    rounds_report = sub.add_parser(
+        "review-rounds",
+        help="read-only per-issue report of review rounds, duration and tokens (PAT-175)",
+    )
+    rounds_report.add_argument("issue")
+    rounds_report.add_argument("--session", action="append", default=[],
+                               help="Claude main session log; its subagents/ logs are included")
+    rounds_report.add_argument("--codex-session", action="append", default=[],
+                               help="Codex rollout log (coordinator/sub-agent split unknown)")
+    rounds_report.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    rounds_report.add_argument("--root")
+    rounds_report.add_argument("--json", action="store_true")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3092,6 +3104,16 @@ def main(
                 root=args.root, base=args.base, text=getattr(args, "text", None),
                 consume=emit_query,
             )
+            return
+        if args.command == "review-rounds":
+            from foundry import review_rounds
+
+            result = review_rounds.report(
+                args.issue, args.repository or repository_identity(args.root),
+                claude_sessions=args.session, codex_sessions=args.codex_session,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
+                  else review_rounds.render(result))
             return
         if args.command == "read-review":
             repository = args.repository or repository_identity(args.root)
