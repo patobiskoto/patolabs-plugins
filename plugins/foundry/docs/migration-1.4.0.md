@@ -3,8 +3,8 @@
 **This guide is written for the release pull request and is frozen from it.** It says
 how to upgrade from 1.3.0 and what is known about going back. It states nothing about
 a tag, an installation or a version loaded by a host: those states come after the
-merge and are recorded in the root `README.md` and in `plugins/foundry/README.md`.
-Both Foundry manifests must report `1.4.0`; Ship-iOS remains independently `0.3.0`.
+merge and are recorded on the release ticket (`skills/release/SKILL.md`, steps 7 to 9),
+not here. Both Foundry manifests must report `1.4.0`; Ship-iOS remains independently `0.3.0`.
 The catalogues have no version key. See [release-1.4.0.md](release-1.4.0.md) for what
 the version contains and for its behaviour changes. A first installation and a first
 repository are unchanged: follow [migration-1.0.0.md](migration-1.0.0.md). An upgrade
@@ -20,14 +20,15 @@ label (derived, not observed).
 
 ## Before upgrading from 1.3.0
 
-Five checks, for what the release note announces. None of them edits a cache.
+Seven checks, for what the release note announces. None of them edits a cache.
 
 1. **A hand-edited global registry.** `registry.load()` now raises
    `registry.RegistryFileError` for a provider or an entry that is not a JSON object;
    it was treated as unregistered before (release note, item 6; changelog entry of
    PAT-63). Check the registry under `~/.config/foundry` (or `FOUNDRY_DATA`) with the
    installed CLI after the upgrade (`registry selection --require-v1`, below). An
-   unreadable registry still fails open at the R1 guard.
+   unreadable registry still fails open at the R1 guard. The registry is now read as UTF-8
+   (changelog entry of PAT-205).
 2. **Scripts that read the Linear status projection.** An issue at native `backlog`
    over a valid non-terminal chain now reads `backlog` / `aligned` instead of
    `disagreement` (release note, item 1). A script that matched the old reading must be
@@ -43,7 +44,19 @@ Five checks, for what the release note announces. None of them edits a cache.
 5. **Contributors.** A pull request adds `plugins/foundry/changelog.d/<ISSUE-ID>.md`
    (format in `plugins/foundry/changelog.d/README.md`) and never edits `## Unreleased`
    in `CHANGELOG.md`. The `1.4.0` section is ordered by issue number descending, not in
-   merge order (item 7).
+   merge order (item 7). The helper `scripts/changelog_assemble.py` now refuses a fragment
+   with several list items and a malformed version or date (item 7).
+6. **Callers of `routing claim-review` and `edit create-issue`.** `routing claim-review`
+   without `--host` still defaults to `claude` and now writes one line to standard error
+   naming the default and the skipped Codex precheck; a script that treats any standard
+   error output as a failure must be adapted (release note, item 10; changelog entry of
+   PAT-205). The issue-creation validation of `edit create-issue` also qualifies the
+   `(AGENTS.md#R<n>)` form that Linear autolinks (same entry); its real Linear rendering
+   was not observed.
+7. **Parsers of review output.** The per-round line of the PR description gains
+   `review <full|partial>` (`skills/merge-pr/SKILL.md`), and `routing review-rounds` gains a
+   `tokens.scope` key in its JSON (release note, items 2 and 10; changelog entry of
+   PAT-207). A parser must accept both.
 
 No project data, routing policy, credential or configuration key needs to change. The
 changelog entries name new CLI verbs, options and one skill only, not a configuration
@@ -131,8 +144,8 @@ After reload or a new task, verify and retain for each host:
 - The installed CLI readbacks above, never this repository's source CLI in their place.
 
 Nothing is "installed" until these readbacks exist. They are made after the merge, the
-tag and an official update, and recorded on the release ticket and in the READMEs, not
-here (`skills/release/SKILL.md`, steps 7 to 9).
+tag and an official update, and recorded on the release ticket, not here
+(`skills/release/SKILL.md`, steps 7 to 9).
 
 ## Rollbacks
 
@@ -159,7 +172,9 @@ What is known:
   this repository; whether either manager accepts a tag was not exercised
   ([migration-1.3.0.md](migration-1.3.0.md), "Return to 1.2.0").
 - Under a restored 1.3.0, `routing carry-review-proof`, `routing review-rounds`, the
-  `backlog` target of `edit transition` and the skill `foundry:release` do not exist
+  `backlog` target of `edit transition`, the skill `foundry:release` and the helpers
+  `scripts/changelog_assemble.py`, `scripts/release_freeze_entry.py` and
+  `scripts/codex_profile_provenance.py` do not exist
   (deduced from the changelog entries, not tested as a downgrade).
 - Records written under 1.4.0 are not removed by a package change: a `proof` carried by
   `carry-review-proof` may hold an optional `carried_from` key (changelog entry of
@@ -181,11 +196,17 @@ bindings.
 
 ## Known unknowns carried by this release
 
-- **PAT-196:** native provenance of the Codex reviewer profile: unknown.
+- **PAT-196:** the Codex reviewer profile loaded was observed for one session only (host
+  `0.162.1`, [qualification/pat-196-codex-reviewer-provenance.md](qualification/pat-196-codex-reviewer-provenance.md));
+  another host version or session is not covered, and whether a read-only native sandbox
+  allows the Foundry ledger lock is unknown. Remarks deferred from PAT-196: PAT-212.
 - **PAT-198:** native availability of the rollback profiles of PAT-17: unknown.
 - **PAT-162:** plugin rollback: untried, see above.
 - **PAT-206:** closure of issues that carry no code change: not settled, so PAT-195
   stays open.
 - **PAT-209:** three historical ADR links remain.
 - **PAT-201:** the real Linear version-1 rendering after a link is deduced, not observed.
-- **PAT-205, PAT-207:** deferred non-blocking remarks, not corrected by this release.
+- **PAT-205:** the real Linear rendering of the `(AGENTS.md#R<n>)` qualification is not
+  observed, as for PAT-201.
+- **PAT-205, PAT-207:** settled earlier deferred remarks (release note, item 10); the
+  remarks deferred from PAT-196 (PAT-212) are not corrected by this release.

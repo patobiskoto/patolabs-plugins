@@ -123,10 +123,10 @@ and claim no gain. Statuses:
   pages and the freeze entry, with the status sentences of `docs/postmerge-review.md`
   and `skills/review-pr/SKILL.md` (PAT-ADR-0020 accepted, supersedes PAT-ADR-0019) and
   one comment line of `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
-- **Not done by it, and not claimed here:** the tag `foundry-v1.3.0`, the update of the
-  installed plugin on Claude Code and on Codex, and the readback of the version a host
-  actually loads. They come after the merge, the tag on the maintainer's authorization,
-  recorded on PAT-199. This list is updated when they exist.
+- **Not done by it, and not claimed here:** the tag, the update of the installed plugin
+  on Claude Code and on Codex, and the readback of the version a host actually loads. Now
+  known: the tag `foundry-v1.3.0` exists on `origin` (`git ls-remote --tags origin 'foundry-v1.3.0^{}'`, read 2026-10-15; commit `0c38fe0cb51d0c29b311550f4cd33163fbb0d0b8`, the squash commit of PR #145, an ancestor of this branch). The installation and the loaded-version readback are not stated
+  here; they are recorded on PAT-199.
 - **Not verified:** the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
   provenance of the Codex reviewer profile (PAT-196), the native availability of the
   eight rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294
@@ -135,7 +135,7 @@ and claim no gain. Statuses:
 
 **Release 1.4.0, prepared by its release pull request:** that pull request sets both
 Foundry host manifests to **1.4.0** (Ship-iOS stays at **0.3.0**) and carries the dated
-`1.4.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the twelve
+`1.4.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the fifteen
 fragments of `plugins/foundry/changelog.d/` (which it deletes), the
 [release notes](plugins/foundry/docs/release-1.4.0.md), the
 [upgrade and rollback guide](plugins/foundry/docs/migration-1.4.0.md) and the freeze
@@ -151,10 +151,12 @@ Statuses:
 - **Not done by it, and not claimed here:** the tag `foundry-v1.4.0`, the update of the
   installed plugin on Claude Code and on Codex, and the readback of the version a host
   actually loads. They come after the merge, each on the maintainer's explicit
-  authorization (`skills/release/SKILL.md`). This list is updated when they exist.
-- **Not verified:** the Foundry 1.4.0 / Ship-iOS 0.3.0 pair on a host, the native
-  provenance of the Codex reviewer profile (PAT-196), the native availability of the
-  rollback profiles (PAT-198), the Linear rendering of PAT-201's links. The return to
+  authorization, and are recorded on the release ticket (`skills/release/SKILL.md`,
+  steps 7 to 9).
+- **Not verified:** the Foundry 1.4.0 / Ship-iOS 0.3.0 pair on a host, the Codex
+  reviewer profile provenance beyond the one session recorded by PAT-196 (host `0.162.1`),
+  the native availability of the rollback profiles (PAT-198), the Linear rendering of
+  PAT-201's links and of the PAT-205 `(AGENTS.md#R<n>)` qualification. The return to
   1.3.0 through an official manager is not tried (PAT-162).
 
 ## Public scope
