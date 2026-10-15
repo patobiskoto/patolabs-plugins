@@ -8,8 +8,9 @@
   `tooling/foundry/write.py`, via `get_epic_closure`). A child Epic that is not closed, or
   whose audit is absent, invalid or divergent from its current graph, is still refused.
   Decision recorded in `docs/linear-tracker.md` under PAT-ADR-0014 and PAT-ADR-0017, no new
-  ADR. Documentation status (R5): updated `docs/linear-tracker.md` (new paragraph) and
-  `skills/close-epic/SKILL.md`; no CLI verb or option, configuration key changed; new
+  ADR. Documentation status (R5): updated `docs/linear-tracker.md` (new paragraph),
+  `skills/close-epic/SKILL.md`, and the Epic closure rows of `docs/tracker-contract.md` and
+  `docs/tracker-contract.v1.json` for the three bounded providers; no CLI verb or option, configuration key changed; new
   internal constants `_EPIC_CLOSED_STATUS`/`_EPIC_CLOSED_SOURCE` are covered by the
   `docs/linear-tracker.md` paragraph.
 - PAT-172: the review that follows the correction of the non-blocking remarks of a

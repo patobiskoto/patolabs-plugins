@@ -1275,7 +1275,9 @@ version, the child's own AC counters, `acceptance_status: epic-closed`,
 `_EPIC_CLOSED_SOURCE` in `tooling/foundry/write.py`); the parent's replay re-reads the
 child's audit. A child Epic that is not `done`, or whose audit is absent, invalid,
 ambiguous or divergent from its current graph, stays refused: the refusal names the
-child and the cause, and the diagnostic lists it as `unknown`. The graph below a closed
+child and the cause, and the diagnostic lists it as `unknown`, or as `read-error` when
+the provider's own issue read already refuses the child (on Linear, a tampered audit or
+a diverged graph refuses in `get_issue`). The graph below a closed
 child Epic is not walked by the parent beyond what `get_epic_closure` itself reads.
 A tracker without `bounded_epic_closure_supported` and `get_epic_closure` keeps the
 child `unknown` with the missing capability named. Observed with the Linear GraphQL
