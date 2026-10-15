@@ -1284,7 +1284,7 @@ child `unknown` with the missing capability named. Observed with the Linear Grap
 double only (`tests/test_epic_closed_child_epic.py`); YouTrack and GitHub Projects share
 the code path but are unverified for this case.
 
-**Closed Epic read after a native update that changes nothing of substance (PAT-208; PAT-ADR-0023, proposed).**
+**Closed Epic read after a native update that changes nothing of substance (PAT-208; PAT-ADR-0023, accepted).**
 The audit keeps recording each node's native version; its format does not change. When a
 closed Epic is read (`get_epic_closure`, and so the done replay of `close-epic` and the
 PAT-185 child-Epic path), the current bounded graph is compared with the recorded one by

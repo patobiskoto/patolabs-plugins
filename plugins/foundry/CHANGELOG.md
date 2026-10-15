@@ -3,7 +3,7 @@
 ## Unreleased
 
 - PAT-208: a closed Epic stays readable after a native update of one of its nodes that
-  changes nothing of substance (PAT-ADR-0023, proposed). The audit still records the native
+  changes nothing of substance (PAT-ADR-0023, accepted). The audit still records the native
   version; on read and on done replay, `write.epic_closure_graph_unchanged` accepts a node
   whose version is equal or newer when id, state, AC counters, acceptance status, source and
   coordinates are unchanged, and the graph shape is equal (Linear and YouTrack; GitHub
