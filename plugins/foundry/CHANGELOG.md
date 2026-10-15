@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- PAT-175: new read-only verb `routing review-rounds <ISSUE-ID>` (`tooling/foundry/review_rounds.py`)
+  reports, for an issue, its review rounds and outcome from the local proof store, the
+  duration from the review ledger timestamps and, for the session logs passed with
+  `--session` / `--codex-session`, tokens per class split between coordinator and
+  sub-agents; anything unreadable is `unknown`. Documentation status (R5): new section
+  "Per-issue report" in `docs/review-rounds.md`, whose "counted by hand" statements were
+  corrected for issues delivered since; no other CLI verb, key or constant changed.
+
 - PAT-165: Foundry can put a started or in-review issue back to the backlog:
   `edit transition <ISSUE-ID> backlog <expected-state>` (Linear), a new target of the
   guarded transition of PAT-ADR-0017 under PAT-ADR-0006, with its read rule decided by
