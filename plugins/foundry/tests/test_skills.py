@@ -71,8 +71,9 @@ def test_skill_form(path):
             assert first in allowed, \
                 f"'{first}' not in allowed-tools {sorted(allowed)}: {line}"
             # foundry tooling goes through the launcher
+            # (one read-only helper script of the release skill, PAT-166, is the exception)
             if "foundry" in line and first == "python3":
-                assert "foundry_cli.py" in line, \
+                assert "foundry_cli.py" in line or "/scripts/release_freeze_entry.py" in line, \
                     f"foundry invocations go through foundry_cli.py: {line}"
 
 
@@ -362,3 +363,69 @@ def test_intake_uses_the_all_pages_route_and_keeps_the_snapshot_identity_rule():
     assert "When `--all-pages` fails with a message naming a directory, remove that directory" in text
     assert "do not try another path: report it" in text
     assert "rmtree" not in text
+
+
+def test_release_skill_names_every_step_and_every_stop():
+    """PAT-166: the release skill names each step and each STOP, and never tags or
+    updates a host without agreement. Proves the text, not that anyone follows it."""
+    raw = _skill_text("release")
+    text = _flat(raw)
+    for heading in (
+        "## 1. Scope", "## 2. Release branch", "## 3. Writing rules for frozen pages",
+        "## 4. Pull request and review", "## 5. STOP — merge", "## 6. STOP — tag",
+        "## 7. STOP — host update", "## 8. Loaded version",
+        "## 9. Record on the release ticket",
+    ):
+        assert heading in raw
+    for token in (
+        "foundry:start-issue", "foundry:open-pr", "foundry:review-pr", "foundry:merge-pr",
+        "release_kind", "release_requirements", "freeze_entry", "release_freeze_entry.py",
+        "--allow-incomplete-ac --ac-override-reason=<code>", "Europe/Paris",
+        "foundry-v<version>", "git ls-remote", "refs/tags/foundry-v<version>",
+        "claude plugin marketplace update <marketplace>",
+        "claude plugin update foundry@<marketplace> -y", "claude plugin list --json",
+        "codex plugin marketplace upgrade <marketplace>",
+        "codex plugin remove foundry@<marketplace>",
+        "codex plugin add foundry@<marketplace>", "codex plugin list",
+        "claude -p", "codex exec", "edit comment", "what was not verified",
+        "AGENTS.md#R5", "not done and not claimed",
+    ):
+        assert token in text, token
+    assert "Do not merge without the maintainer's explicit agreement" in text
+    assert "Do not tag without the maintainer's explicit agreement" in text
+    assert "Do not update any host without the maintainer's explicit agreement" in text
+    assert "were not run when this skill was written" in text
+    # tag and host-update commands only appear after their own STOP section
+    assert raw.index("git tag -a") > raw.index("## 6. STOP — tag")
+    assert raw.index("claude plugin update") > raw.index("## 7. STOP — host update")
+    assert raw.index("codex plugin add") > raw.index("## 7. STOP — host update")
+    assert raw.count("git tag -a") == 1 and raw.count("git push origin") == 1
+    # the skill never writes a marketplace name or a user path
+    assert "/Users/" not in raw and "/home/" not in raw
+
+
+def test_release_freeze_helper_prints_the_frozen_entry_and_writes_nothing():
+    import subprocess
+    import sys
+    helper = os.path.join(os.path.dirname(__file__), "..", "scripts",
+                          "release_freeze_entry.py")
+    history = os.path.join(os.path.dirname(__file__), "fixtures", "release-history.json")
+    before = open(history, "rb").read()
+    frozen = json.loads(before)["releases"]
+    version = sorted(frozen, key=lambda v: tuple(map(int, v.split("."))))[-1]
+    ok = subprocess.run(
+        [sys.executable, helper, version, "--date", frozen[version]["date"]],
+        capture_output=True, text=True, check=True,
+    )
+    assert json.loads(ok.stdout) == {version: frozen[version]}
+    wrong = subprocess.run(
+        [sys.executable, helper, version, "--date", "1999-01-01"],
+        capture_output=True, text=True,
+    )
+    assert wrong.returncode != 0
+    missing = subprocess.run(
+        [sys.executable, helper, "99.0.0", "--date", "1999-01-01"],
+        capture_output=True, text=True,
+    )
+    assert missing.returncode != 0
+    assert open(history, "rb").read() == before

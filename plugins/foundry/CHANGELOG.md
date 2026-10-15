@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- PAT-166: new skill `foundry:release` (`skills/release/SKILL.md`) and read-only helper
+  `scripts/release_freeze_entry.py <version> [--date]`. The skill chains scope, release
+  branch (both manifests, dated CHANGELOG section, release note and migration guide for a
+  minor, freeze entry) and PR, then three separate STOPs (merge, tag, host update) that
+  need the maintainer's explicit agreement, then the loaded-version check and the record on
+  the release ticket. The helper prints the entry computed by `freeze_entry` of
+  `tests/test_release_contract.py` and writes nothing. Documentation status (R5): updated
+  the skills table of `README.md` (new skill row) and the skill page itself, which
+  documents the helper; no existing CLI verb, option, configuration key or public
+  constant changed. The host commands the skill lists were not run when it was written;
+  the helper was run once on the repository at 1.3.0 and printed the entry already in
+  `tests/fixtures/release-history.json`.
 - PAT-208: a closed Epic stays readable after a native update of one of its nodes that
   changes nothing of substance (PAT-ADR-0023, accepted). The audit still records the native
   version; on read and on done replay, `write.epic_closure_graph_unchanged` accepts a node
