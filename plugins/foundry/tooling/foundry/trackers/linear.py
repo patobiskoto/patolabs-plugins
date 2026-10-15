@@ -140,6 +140,18 @@ _AC_OVERRIDE_BOUND_KEYS = ("pr_url", "head_sha", "base_sha", "review_digest")
 _ABANDON_PREDECESSORS = frozenset(
     {"backlog", "ready", "blocked", "in-progress", "review"}
 )
+# PAT-165: native states an existing issue may be put back to ``backlog`` from.
+# ``ready`` and ``blocked`` are excluded: PAT-ADR-0024 admits ``in-progress`` and
+# ``review`` only.
+_BACKLOG_RETURN_PREDECESSORS = frozenset({"in-progress", "review"})
+
+
+def _state_list(states) -> str:
+    order = ("backlog", "ready", "blocked", "in-progress", "review")
+    ordered = [name for name in order if name in states]
+    return ", ".join(ordered[:-1]) + " or " + ordered[-1] if len(ordered) > 1 else ordered[0]
+
+
 _ADR_SCHEMA = "foundry-linear-adr.v1"
 _ADR_HEADER = "<!-- foundry-linear-adr.v1\n"
 _ADR_DOCUMENT_PREFIX = "[Foundry ADR] "
@@ -2844,6 +2856,8 @@ class LinearTracker(Tracker):
     epic_dropped_closure_supported = True
     guarded_abandon_supported = True
     abandon_predecessors = _ABANDON_PREDECESSORS
+    guarded_backlog_return_supported = True
+    backlog_return_predecessors = _BACKLOG_RETURN_PREDECESSORS
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
@@ -3854,9 +3868,11 @@ class LinearTracker(Tracker):
         # is outside this tolerance and reads as before: with no receipt at all it
         # never reaches this point (``native-only``), and with advisory
         # ``cockpit-evidence`` receipts only it keeps the comparison below.
+        # PAT-165: the same tolerance for a native ``backlog`` (guarded return of a
+        # started issue); a never-started issue has no such receipt and is unaffected.
         if (
             native_dropped_prevails
-            and current_name == "dropped"
+            and current_name in {"dropped", "backlog"}
             and done is None
             and (rows.get("state-in-progress") or rows.get("state-review"))
         ):
@@ -3918,7 +3934,8 @@ class LinearTracker(Tracker):
         # The append-only receipt is written before its human-facing native State
         # projection.  Between those two effects it is durable evidence of the
         # intended transition, while the older native state remains an observable
-        # disagreement.  Only the writer/recovery path may read this interval;
+        # disagreement (a native ``backlog`` excepted: PAT-ADR-0024, accepted risk
+        # (c), proposed until the merge that delivers it).  Only the writer/recovery path may read this interval;
         # ordinary reads have ``pending_operation=None`` and fail closed.
         pending_receipt_projection = (
             pending_operation in {"state-in-progress", "state-review", "state-done"}
@@ -4681,12 +4698,13 @@ class LinearTracker(Tracker):
                 epic_closure=epic_closure,
                 native_dropped_prevails=True,
             )
-            if native_state == "dropped" and lifecycle["state"] in {
+            if native_state in {"dropped", "backlog"} and lifecycle["state"] in {
                 "in-progress", "review",
             }:
-                # PAT-ADR-0017: the native abandon is the authority; the receipts
-                # stay (and still expose the PR), they are no longer a disagreement.
-                lifecycle = {**lifecycle, "state": "dropped"}
+                # PAT-ADR-0017 / PAT-165: the native abandon or backlog return is the
+                # authority; the receipts stay (and still expose the PR), they are
+                # no longer a disagreement.
+                lifecycle = {**lifecycle, "state": native_state}
             projection_status = (
                 "native-only" if lifecycle["state"] is None
                 else "aligned" if lifecycle["state"] == native_state
@@ -5585,7 +5603,29 @@ class LinearTracker(Tracker):
         self, issue_id: str, expected_state: str | None, project: Project,
         *, observed: bool = False,
     ) -> Issue:
-        """PAT-ADR-0017: write only the native State to ``dropped`` under S1-S4.
+        """PAT-ADR-0017: write only the native State to ``dropped`` under S1-S4."""
+        return self._guarded_native_state(
+            issue_id, expected_state, project, target="dropped",
+            admitted=_ABANDON_PREDECESSORS, verb="abandon", observed=observed,
+            operation="issue.update.abandon",
+        )
+
+    def _return_to_backlog(
+        self, issue_id: str, expected_state: str | None, project: Project,
+    ) -> Issue:
+        """PAT-165: write only the native State to ``backlog`` under S1-S4."""
+        return self._guarded_native_state(
+            issue_id, expected_state, project, target="backlog",
+            admitted=_BACKLOG_RETURN_PREDECESSORS, verb="backlog return",
+            observed=False, operation="issue.update.backlog-return",
+        )
+
+    def _guarded_native_state(
+        self, issue_id: str, expected_state: str | None, project: Project,
+        *, target: str, admitted: frozenset, verb: str, observed: bool,
+        operation: str,
+    ) -> Issue:
+        """Write only the native State to ``target`` under S1-S4.
 
         Bounded detection, not CAS: one fresh read, one targeted write, one
         readback, closed failure on any divergence and no retry.  An external
@@ -5594,29 +5634,29 @@ class LinearTracker(Tracker):
         deleted or rewritten; a linked PR is left untouched.
         """
         # A named predecessor is checked first, before any read: an inadmissible
-        # one is refused even when the issue is already dropped.  ``set-field``
+        # one is refused even when the issue is already at the target.  ``set-field``
         # names none; it passes the state its own first read observed.
-        if not observed and expected_state not in _ABANDON_PREDECESSORS:
+        if not observed and expected_state not in admitted:
             raise TrackerConflictError(
-                "Linear abandon refused: expected predecessor state required "
-                "(backlog, ready, blocked, in-progress or review)"
+                f"Linear {verb} refused: expected predecessor state required "
+                f"({_state_list(admitted)})"
             )
         binding = self._activate(project)
-        target_state_id = binding["state_ids"].get("dropped")
+        target_state_id = binding["state_ids"].get(target)
         if target_state_id is None:
             raise LinearBindingError("state_unmapped")
         raw = self._read_raw(issue_id)
         self._assert_issue_project(raw, binding)
         native = self._native_state_name(raw, binding)
         if native == "done":
-            raise TrackerConflictError("Linear abandon refused: native state is done")
+            raise TrackerConflictError(f"Linear {verb} refused: native state is done")
         if any(
             isinstance(row.get("body"), str)
             and row["body"].startswith("Foundry Epic closure audit (append-only).")
-            for row in _connection(raw.get("comments"), "abandon.comments")
+            for row in _connection(raw.get("comments"), f"{target}.comments")
         ):
             raise TrackerConflictError(
-                "Linear abandon refused: Epic closure audit present"
+                f"Linear {verb} refused: Epic closure audit present"
             )
         # The whole receipt chain is validated; only its comparison with the
         # current native State is skipped, since that State is what is replaced.
@@ -5625,9 +5665,9 @@ class LinearTracker(Tracker):
         )
         if projection["done"] is not None:
             raise TrackerConflictError(
-                "Linear abandon refused: state-done receipt present"
+                f"Linear {verb} refused: state-done receipt present"
             )
-        if native == "dropped":
+        if native == target:
             # Replay: the target is already reached, nothing is written.
             return self._to_issue(raw, project)
         if projection["state"] is None and projection["receipts"]:
@@ -5635,17 +5675,17 @@ class LinearTracker(Tracker):
             # PAT-ADR-0017 read rule does not cover that chain, so the written
             # State could not be read back.  Refused before the write.
             raise TrackerConflictError(
-                "Linear abandon refused: receipt chain without a lifecycle state "
+                f"Linear {verb} refused: receipt chain without a lifecycle state "
                 "receipt"
             )
         if native != expected_state:
             raise TrackerConflictError(
-                f"Linear abandon refused: native state is {native}, "
+                f"Linear {verb} refused: native state is {native}, "
                 f"expected {expected_state}"
             )
         updated = self._bounded_issue_update(
             issue_id, raw, binding, {"stateId": target_state_id},
-            {"state_id": target_state_id}, "issue.update.abandon",
+            {"state_id": target_state_id}, operation,
         )
         return self._to_issue(updated, project)
 
@@ -5677,6 +5717,14 @@ class LinearTracker(Tracker):
     ) -> Issue | None:
         if project is None:
             raise LinearBindingError("mutation_project_required")
+        if state == "backlog":
+            expected_state = getattr(context, "expected_state", None)
+            if not expected_state:
+                raise TrackerConflictError(
+                    "Linear backlog return refused: expected predecessor state "
+                    "required"
+                )
+            return self._return_to_backlog(issue_id, expected_state, project)
         if state == "dropped":
             expected_state = getattr(context, "expected_state", None)
             if not expected_state:
@@ -5714,8 +5762,10 @@ class LinearTracker(Tracker):
         # The typed lifecycle receipt is Foundry's authority, while the native
         # Linear State remains the human-visible projection.  Write the receipt
         # first so a native transport failure cannot erase delivery evidence.
-        # The intentional receipt/native interval is observable as disagreement
-        # and the exact receipt authorizes recovery of only that missing State
+        # The intentional receipt/native interval is observable as disagreement,
+        # except when the interval is a native ``backlog`` over a valid non-terminal
+        # chain, which reads ``backlog`` without disagreement (PAT-ADR-0024, accepted
+        # risk (c)); the exact receipt authorizes recovery of only that missing State
         # effect.  This deliberately leaves a named residual S1->S2 race: it is
         # bounded detection, not CAS.
         #
@@ -5747,6 +5797,22 @@ class LinearTracker(Tracker):
                 exact_receipts.append(receipt)
         if len(exact_receipts) > 1:
             raise TrackerConflictError("Linear lifecycle duplicate projection")
+        if (
+            state == "in-progress"
+            and projection["state"] == "review"
+            and projection["done"] is None
+            and len(exact_receipts) == 1
+            and native_state_id == binding["state_ids"].get("backlog")
+        ):
+            # PAT-165 / PAT-ADR-0024 "Reprise": an issue returned to the backlog from
+            # review resumes by rewriting only its native State, under S1-S5; its
+            # in-progress receipt already exists, so none is added.  The review
+            # receipt keeps the logical state ``review``.
+            # ``_project_native_state`` reads the State back; the strict lifecycle
+            # read is not repeated, since native ``in-progress`` over a review receipt
+            # is a disagreement by design (the ``issue open-pr`` replay path).
+            self._project_native_state(issue_id, state, project, binding)
+            return
         if (
             projection["state"] in ranks
             and ranks[projection["state"]] > ranks[state]

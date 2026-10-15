@@ -1034,9 +1034,59 @@ converges without a write when the named predecessor is one of the five, and
 deleted or rewritten, and an open PR is not closed: the command prints its URL.
 Limits: reopening a started-then-dropped issue by hand makes it read back at its
 projected state (`in-progress` or `review`), nothing more; a started issue moved
-natively to `backlog`, `ready` or `blocked` and not abandoned stays unreadable by a
-strict read, although it can be abandoned from that native state; release scope reads a
-started-then-dropped issue as unfinished and a never-started one as unavailable.
+natively to `ready` or `blocked` and not abandoned stays unreadable by a strict read,
+although it can be abandoned from that native state (a native `backlog` is read by the
+PAT-165 rule below); release scope reads a started-then-dropped issue as unfinished and a
+never-started one as unavailable.
+
+**Putting a started issue back to the backlog (PAT-165; decision: PAT-ADR-0024, status
+`proposed`, accepted at the merge that delivers it).** PAT-ADR-0017's guarded transition
+is extended to a second target state, `backlog`. PAT-ADR-0024 amends the "Projection des
+statuts" section of PAT-ADR-0006 for `backlog` only (the read rule below); the rest of
+PAT-ADR-0006 and PAT-ADR-0017 is unchanged. Command: `edit transition <ISSUE-ID>
+backlog <expected-state>`, same shape and same guarantees as the abandon above (the
+`_guarded_native_state` body of `linear.py` serves both): one fresh read, one `issueUpdate`
+carrying only `stateId`, one readback, closed failure on any divergence, no retry; bounded
+detection, not CAS. `<expected-state>` is mandatory and must be `in-progress` or `review`
+(`_BACKLOG_RETURN_PREDECESSORS`, exposed as `backlog_return_predecessors`); any other value
+is refused before any provider read. It is compared with the native state just read.
+Compared sets: this one (`in-progress`, `review`) is a subset of the abandon's five;
+`ready` and `blocked` are left out because PAT-ADR-0024 admits `in-progress` and `review`
+only, and `backlog` is the target. The write is refused from native `done`, with a `state-done`
+receipt, with an Epic closure audit, with an invalid receipt chain, and with a chain of
+advisory `cockpit-evidence` receipts only; an issue already at `backlog` converges without
+a write (when the named predecessor is admitted); a third state fails closed. No lifecycle
+receipt is written, deleted or rewritten: no `state-backlog` receipt exists, because the
+read rule needs none (same choice as PAT-ADR-0017 for `dropped`). The linked PR is neither
+closed nor modified; the command prints its URL when the receipts carry one.
+
+Read rule. An issue whose native state is `backlog` and whose receipt chain is valid and
+non-terminal (`state-in-progress` and/or review generations, no `state-done`) reads
+`state=backlog`, `normalized_state=backlog`, `native_state=backlog`,
+`projection_status=aligned` (the `native_dropped_prevails` branch of
+`_validate_native_state_history` and the rewrite in the issue normalization, `linear.py`);
+the receipts are kept and the review's `pr_url` stays exposed. An issue that was never
+started is unchanged (`native-only`). Accepted risks of PAT-ADR-0024 (the first three
+deduced from the code): the rule cannot tell (a) a return made by Foundry from (b) a hand
+move of a started issue to `backlog` in Linear, nor from (c) an `issue start` from the
+backlog interrupted after its receipt was written and before its native State was;
+(b) and (c) read as a `disagreement` before PAT-165 and now read `backlog`. A pull
+request merged outside Foundry with no `state-done` receipt is not detected by the
+return, which does not read the code host. `edit set-field <ISSUE-ID> State backlog`
+stays a grooming write (PAT-ADR-0006) without the guards of the return.
+Resumption (PAT-ADR-0024 "Reprise"): `issue start` on a returned issue goes through
+`set_state(in-progress)`, which rewrites only the native State `in-progress` under S1-S5
+(`_project_native_state`, `linear.py`) and appends no receipt, since the chain already
+carries `state-in-progress`; after a return from `review` the logical state stays
+`review` and the issue reads `disagreement` (native `in-progress`, review receipt) in
+`observe_issue`, the already-existing shape that `issue open-pr` replays. Covered by
+`test_start_after_a_return_writes_native_in_progress_then_open_pr_is_allowed` and
+`test_a_returned_in_progress_issue_can_be_started_again_by_replaying_its_receipt`.
+Other providers keep their behaviour from before PAT-165 for these transitions:
+`write.transition` adds no check for them (`guarded_backlog_return_supported` is `True`
+on Linear only). YouTrack writes the State through its bounded `set_state`
+(`youtrack.py`); GitHub Projects refuses `backlog` in its own `set_state`
+(`TrackerCapabilityUnavailableError`, capability `set_state`), before any read.
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
