@@ -166,6 +166,10 @@ class Tracker(ABC):
     # The native states that guarded path admits as a named predecessor: the single
     # definition, owned by the adapter, also read by ``write.transition``.
     abandon_predecessors: frozenset[str] = frozenset()
+    # PAT-165: guarded return of a started issue to ``backlog`` (same S1-S4 path,
+    # expected predecessor required); only Linear declares it.
+    guarded_backlog_return_supported: bool = False
+    backlog_return_predecessors: frozenset[str] = frozenset()
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False

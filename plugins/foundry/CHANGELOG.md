@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- PAT-165: Foundry can put a started or in-review issue back to the backlog:
+  `edit transition <ISSUE-ID> backlog <expected-state>` (Linear), a new target of the
+  guarded transition of PAT-ADR-0017 under PAT-ADR-0006. `<expected-state>` is mandatory
+  and is `in-progress` or `review`, compared with the native state read; it is refused on
+  a drift, from `done`, with a `state-done` receipt, with an Epic closure audit or with an
+  invalid receipt chain, and an issue already at `backlog` converges without a write. No
+  receipt is added (no `state-backlog` receipt); an issue at native `backlog` over a valid
+  non-terminal chain now reads `backlog` / `aligned` instead of `disagreement`. The linked PR
+  is neither closed nor modified and the command names it. YouTrack, GitHub Projects and
+  DevHub refuse the request with `TrackerCapabilityUnavailableError` naming
+  `guarded-backlog-return`. Documentation status (R5): updated `docs/linear-tracker.md`
+  (new paragraph, one limit sentence corrected), `docs/tracker-contract.md` (new paragraph,
+  Status projection row, known-limits sentence) and the status-projection evidence of the
+  three providers in `docs/tracker-contract.v1.json`; new CLI target documented in the
+  `foundry.edit` docstring; new constants `_BACKLOG_RETURN_PREDECESSORS`,
+  `guarded_backlog_return_supported` and `backlog_return_predecessors` are covered by the
+  `docs/linear-tracker.md` paragraph.
 - PAT-208: a closed Epic stays readable after a native update of one of its nodes that
   changes nothing of substance (PAT-ADR-0023, accepted). The audit still records the native
   version; on read and on done replay, `write.epic_closure_graph_unchanged` accepts a node

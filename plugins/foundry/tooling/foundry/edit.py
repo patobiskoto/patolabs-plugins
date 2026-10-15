@@ -18,7 +18,9 @@ CLI:
   python3 -m foundry.edit set-field <ISSUE-ID> "<Field>" "<value>"
   python3 -m foundry.edit transition <ISSUE-ID> <state> [<expected-state>]
       (Linear: `transition <ISSUE-ID> dropped <expected-state>` abandons the issue,
-       PAT-ADR-0017; `set-field <ISSUE-ID> State dropped` takes the same guarded path)
+       PAT-ADR-0017; `set-field <ISSUE-ID> State dropped` takes the same guarded path;
+       `transition <ISSUE-ID> backlog <expected-state>` puts a started or in-review issue
+       back to the backlog, expected state `in-progress` or `review`, PAT-165)
   python3 -m foundry.edit link <SRC-ID> <link-type> <DST-ID>
   python3 -m foundry.edit comment <ISSUE-ID> < note.md   (progress note, body on stdin)
   python3 -m foundry.edit body <ISSUE-ID> <expected-body.md> <updated-body.md>
@@ -82,14 +84,21 @@ def transition(issue_id, state, expected_state=None):
     print(f"🔀 {issue_id} → {state}")
     if state == "dropped":
         _name_linked_pr(result)
+    elif state == "backlog":
+        _name_linked_pr(result, "le retour au backlog")
 
 
-def _name_linked_pr(issue):
-    """PAT-ADR-0017: abandoning an issue never closes its PR; name it."""
+def _name_linked_pr(issue, cause="l'abandon"):
+    """PAT-ADR-0017 / PAT-165: abandoning or returning an issue never touches its PR."""
     pr_url = getattr(issue, "pr_url", None)
-    if pr_url:
+    if not pr_url:
+        return
+    if cause == "l'abandon":
         print(f"⚠️  PR liée non fermée par l'abandon : {pr_url} — "
               "ferme-la à la main si elle est encore ouverte.")
+    else:
+        print(f"⚠️  PR liée ni fermée ni modifiée par {cause} : {pr_url} — "
+              "ferme-la ou mets-la à jour à la main si besoin.")
 
 
 def link(src, link_type, dst):

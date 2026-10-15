@@ -1,0 +1,251 @@
+"""PAT-165: put a started or in-review issue back to the backlog (guarded)."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from foundry import edit as edit_cli
+from foundry import write
+from foundry.models import TransitionContext
+from foundry.trackers.base import (
+    Tracker,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
+from foundry.trackers.devhub import DevHubTracker
+from foundry.trackers.ghprojects import GitHubProjectsTracker
+from foundry.trackers.linear import LinearTracker
+from foundry.trackers.youtrack import YouTrackTracker
+
+from test_abandon_and_dropped_closure import (  # noqa: F401
+    DONE,
+    REVIEW,
+    _add,
+    _cockpit,
+    _close,
+    _graph,
+    _isolated_youtrack_epic_closure_intents,
+    _native,
+    _started,
+    _writes,
+)
+from test_linear_tracker import STATE_IDS
+
+
+def _back(tracker, project, issue_id, expected):
+    return tracker.set_state(
+        issue_id, "backlog", context=TransitionContext(expected_state=expected),
+        project=project,
+    )
+
+
+@pytest.mark.parametrize("source", ("in-progress", "review"))
+def test_return_to_backlog_from_a_started_issue_with_one_native_write(monkeypatch, source):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=source)
+    receipts = copy.deepcopy(wire.issues[issue_id]["comments"])
+    before = len(wire.calls)
+    seen = _back(tracker, project, issue_id, source)
+    assert (seen.state, seen.projection_status) == ("backlog", "aligned")
+    assert len(_writes(wire, before)) == 1
+    assert wire.issues[issue_id]["state"]["id"] == STATE_IDS["backlog"]
+    # Append-only: no receipt added, rewritten or deleted.
+    assert wire.issues[issue_id]["comments"] == receipts
+
+
+def test_return_refuses_a_drift_of_the_expected_state(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto="review")
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="native state is review, expected in-progress"):
+        _back(tracker, project, issue_id, "in-progress")
+    # A third state fails closed too.
+    _native(wire, issue_id, "ready")
+    with pytest.raises(TrackerConflictError, match="native state is ready, expected review"):
+        _back(tracker, project, issue_id, "review")
+    assert not _writes(wire, before)
+
+
+@pytest.mark.parametrize("expected", ("backlog", "ready", "blocked", "done", "dropped", "x"))
+def test_return_refuses_an_inadmissible_expected_state_before_any_read(monkeypatch, expected):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    snapshot = copy.deepcopy(wire.issues[issue_id])
+    before = len(wire.calls)
+    with pytest.raises(SystemExit, match="Retour au backlog refusé"):
+        write.transition(
+            tracker, issue_id, "backlog",
+            context=TransitionContext(expected_state=expected),
+        )
+    with pytest.raises(TrackerConflictError, match="expected predecessor"):
+        _back(tracker, project, issue_id, expected)
+    assert len(wire.calls) == before and wire.issues[issue_id] == snapshot
+
+
+def test_return_requires_the_expected_state(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    before = len(wire.calls)
+    with pytest.raises(SystemExit, match="Retour au backlog refusé"):
+        write.transition(tracker, issue_id, "backlog")
+    with pytest.raises(TrackerConflictError, match="expected predecessor"):
+        tracker.set_state(issue_id, "backlog", project=project)
+    assert len(wire.calls) == before
+
+
+@pytest.mark.parametrize("case", (
+    "native-done", "done-receipt-native-regressed", "epic-closed",
+    "epic-audit-pending", "invalid-chain",
+))
+def test_return_is_refused_from_done_a_done_receipt_a_closure_audit_or_a_bad_chain(
+    monkeypatch, case,
+):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id, match = "LIN-2", "native state is done"
+    if case == "done-receipt-native-regressed":
+        _native(wire, "LIN-2", "in-progress")
+        match = "state-done receipt present"
+    elif case == "epic-closed":
+        _close(tracker)
+        issue_id = "LIN-1"
+    elif case == "epic-audit-pending":
+        _close(tracker)
+        _native(wire, "LIN-1", "in-progress")
+        issue_id, match = "LIN-1", "Epic closure audit present"
+    elif case == "invalid-chain":
+        issue_id = _started(tracker, wire, project, 5)
+        wire.issues[issue_id]["comments"]["nodes"][0]["id"] = (
+            "00000000-0000-4000-8000-0000000000ff"
+        )
+        match = "comment id invalid"
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match=match):
+        _back(tracker, project, issue_id, "in-progress")
+    assert not _writes(wire, before)
+
+
+def test_return_is_refused_on_a_cockpit_only_receipt_chain(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _add(wire, 5, state="in-progress")
+    _cockpit(tracker, wire, issue_id)
+    before = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="without a lifecycle state receipt"):
+        _back(tracker, project, issue_id, "in-progress")
+    assert not _writes(wire, before)
+
+
+def test_return_replay_converges_without_a_second_effect(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto="review")
+    _back(tracker, project, issue_id, "review")
+    snapshot = copy.deepcopy(wire.issues[issue_id])
+    before = len(wire.calls)
+    for expected in ("review", "in-progress"):
+        again = _back(tracker, project, issue_id, expected)
+        assert (again.state, again.projection_status) == ("backlog", "aligned")
+    assert not _writes(wire, before) and wire.issues[issue_id] == snapshot
+
+
+@pytest.mark.parametrize("upto", ("in-progress", "review"))
+def test_returned_issue_reads_backlog_without_disagreement(monkeypatch, upto):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=upto)
+    _back(tracker, project, issue_id, upto)
+    views = (
+        tracker.get_issue(issue_id), tracker.observe_issue(issue_id),
+        next(item for item in tracker.search(project) if item.id == issue_id),
+    )
+    for seen in views:
+        assert (seen.state, seen.normalized_state, seen.native_state,
+                seen.projection_status) == ("backlog", "backlog", "backlog", "aligned")
+        assert seen.pr_url == (REVIEW.pr_url if upto == "review" else None)
+
+
+def test_a_done_receipt_with_a_native_backlog_stays_a_conflict(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    _native(wire, "LIN-2", "backlog")
+    seen = tracker.observe_issue("LIN-2")
+    assert seen.projection_status != "aligned"
+
+
+def test_a_never_started_backlog_issue_still_reads_native_only(monkeypatch):
+    tracker, wire, _project = _graph(monkeypatch)
+    issue_id = _add(wire, 5, state="backlog")
+    seen = tracker.get_issue(issue_id)
+    assert (seen.state, seen.projection_status) == ("backlog", "native-only")
+
+
+def test_a_returned_in_progress_issue_can_be_started_again_by_replaying_its_receipt(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5)
+    _back(tracker, project, issue_id, "in-progress")
+    receipts = copy.deepcopy(wire.issues[issue_id]["comments"])
+    tracker.set_state(issue_id, "in-progress", project=project)
+    seen = tracker.get_issue(issue_id)
+    assert (seen.state, seen.projection_status) == ("in-progress", "aligned")
+    assert wire.issues[issue_id]["comments"] == receipts
+
+
+@pytest.mark.parametrize("upto", ("review", "in-progress"))
+def test_edit_cli_names_the_linked_pr_and_leaves_it_untouched(monkeypatch, capsys, upto):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=upto)
+    monkeypatch.setattr(edit_cli.foundry, "tracker", lambda: tracker)
+    before = len(wire.calls)
+    edit_cli.transition(issue_id, "backlog", upto)
+    out = capsys.readouterr().out
+    calls = [c for c in wire.calls[before:] if "pull" in repr(c).lower()]
+    assert not calls
+    if upto == "review":
+        assert "PR liée ni fermée ni modifiée" in out and REVIEW.pr_url in out
+    else:
+        assert "PR liée" not in out
+
+
+# --- providers: only Linear declares the guarded path ------------------------
+
+def test_only_linear_declares_the_guarded_backlog_return():
+    assert LinearTracker.guarded_backlog_return_supported is True
+    assert LinearTracker.backlog_return_predecessors == frozenset({"in-progress", "review"})
+    for provider in (Tracker, YouTrackTracker, GitHubProjectsTracker, DevHubTracker):
+        assert provider.guarded_backlog_return_supported is False
+        assert provider.backlog_return_predecessors == frozenset()
+
+
+@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker, DevHubTracker))
+@pytest.mark.parametrize("expected", ("in-progress", "review"))
+def test_other_providers_refuse_with_the_missing_capability_before_any_read(
+    monkeypatch, provider, expected,
+):
+    tracker = object.__new__(provider)
+
+    def boom(*_a, **_k):
+        raise AssertionError("provider reached")
+
+    monkeypatch.setattr(write, "issue_binding", boom)
+    monkeypatch.setattr(provider, "set_state", boom)
+    with pytest.raises(TrackerCapabilityUnavailableError) as excinfo:
+        write.transition(
+            tracker, "DEMO-1", "backlog",
+            context=TransitionContext(expected_state=expected),
+        )
+    assert excinfo.value.capability == "guarded-backlog-return"
+    assert excinfo.value.tracker == provider.name
+
+
+def test_other_backlog_transitions_keep_their_current_path(monkeypatch):
+    class Legacy:
+        name = "legacy"
+        calls = []
+
+        def set_state(self, issue_id, state, **kwargs):
+            self.calls.append((issue_id, state))
+
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    write.transition(Legacy(), "DEMO-1", "backlog")
+    write.transition(
+        Legacy(), "DEMO-1", "backlog", context=TransitionContext(expected_state="ready"),
+    )
+    assert Legacy.calls == [("DEMO-1", "backlog")] * 2

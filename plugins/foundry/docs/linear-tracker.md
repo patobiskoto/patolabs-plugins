@@ -1034,9 +1034,50 @@ converges without a write when the named predecessor is one of the five, and
 deleted or rewritten, and an open PR is not closed: the command prints its URL.
 Limits: reopening a started-then-dropped issue by hand makes it read back at its
 projected state (`in-progress` or `review`), nothing more; a started issue moved
-natively to `backlog`, `ready` or `blocked` and not abandoned stays unreadable by a
-strict read, although it can be abandoned from that native state; release scope reads a
-started-then-dropped issue as unfinished and a never-started one as unavailable.
+natively to `ready` or `blocked` and not abandoned stays unreadable by a strict read,
+although it can be abandoned from that native state (a native `backlog` is read by the
+PAT-165 rule below); release scope reads a started-then-dropped issue as unfinished and a
+never-started one as unavailable.
+
+**Putting a started issue back to the backlog (PAT-165; decision under PAT-ADR-0006 and
+PAT-ADR-0017).** PAT-ADR-0017's guarded transition is extended to a second target state,
+`backlog`; it changes no rule of either decision. Command: `edit transition <ISSUE-ID>
+backlog <expected-state>`, same shape and same guarantees as the abandon above (the
+`_guarded_native_state` body of `linear.py` serves both): one fresh read, one `issueUpdate`
+carrying only `stateId`, one readback, closed failure on any divergence, no retry; bounded
+detection, not CAS. `<expected-state>` is mandatory and must be `in-progress` or `review`
+(`_BACKLOG_RETURN_PREDECESSORS`, exposed as `backlog_return_predecessors`); any other value
+is refused before any provider read. It is compared with the native state just read.
+Compared sets: this one (`in-progress`, `review`) is a subset of the abandon's five;
+`backlog`, `ready` and `blocked` are left out because Foundry never writes `ready` or
+`blocked` and a return from them is a hand move that the read rule below does not cover,
+and `backlog` is the target. The write is refused from native `done`, with a `state-done`
+receipt, with an Epic closure audit, with an invalid receipt chain, and with a chain of
+advisory `cockpit-evidence` receipts only; an issue already at `backlog` converges without
+a write (when the named predecessor is admitted); a third state fails closed. No lifecycle
+receipt is written, deleted or rewritten: no `state-backlog` receipt exists, because the
+read rule needs none (same choice as PAT-ADR-0017 for `dropped`). The linked PR is neither
+closed nor modified; the command prints its URL when the receipts carry one.
+
+Read rule. An issue whose native state is `backlog` and whose receipt chain is valid and
+non-terminal (`state-in-progress` and/or review generations, no `state-done`) reads
+`state=backlog`, `normalized_state=backlog`, `native_state=backlog`,
+`projection_status=aligned` (the `native_dropped_prevails` branch of
+`_validate_native_state_history` and the rewrite in the issue normalization, `linear.py`);
+the receipts are kept and the review's `pr_url` stays exposed. An issue that was never
+started is unchanged (`native-only`). Accepted risk (deduced from the code): the rule
+reads the same for a hand move of a started issue to `backlog`, which was a
+`disagreement` before PAT-165, since no receipt marks the return as Foundry's. Replay of
+a start after a return from `in-progress` replays the existing receipt and projects the
+native State again (observed with the test double,
+`test_a_returned_in_progress_issue_can_be_started_again_by_replaying_its_receipt`); after
+a return from `review`, `set_state(in-progress)` keeps its existing rule of appending
+nothing once a review receipt exists, so the native State stays `backlog` until the review
+step is run again.
+Other providers: `write.transition` refuses `backlog` with `<expected-state>` `in-progress`
+or `review` with `TrackerCapabilityUnavailableError` naming `guarded-backlog-return`
+(`guarded_backlog_return_supported` is `True` on Linear only); their other `backlog`
+transitions are unchanged.
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
