@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- PAT-208: a closed Epic stays readable after a native update of one of its nodes that
+  changes nothing of substance (PAT-ADR-0023, proposed). The audit still records the native
+  version; on read and on done replay, `write.epic_closure_graph_unchanged` accepts a node
+  whose version is equal or newer when id, state, AC counters, acceptance status, source and
+  coordinates are unchanged, and the graph shape is equal (Linear, YouTrack, GitHub
+  Projects). A version going back, a changed field or an added/removed link still refuses;
+  `dropped` and `override` nodes and every write-path comparison stay exact. Documentation
+  status (R5): updated `docs/linear-tracker.md` (new paragraph), the Epic closure row of
+  `docs/tracker-contract.md` and the three bounded-provider evidence entries of
+  `docs/tracker-contract.v1.json`; no CLI verb, option, configuration key or public constant
+  changed (the new function is internal to the closure comparison and covered by the
+  `docs/linear-tracker.md` paragraph).
 - PAT-185: closing an Epic whose required child is itself an Epic already closed under a
   valid closure audit (possibly with nominative waivers and dropped nodes) is accepted
   instead of refused with "la preuve AC de enfant ... est inconnue" (`write._closed_child_epic`,

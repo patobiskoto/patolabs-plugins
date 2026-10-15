@@ -4860,7 +4860,7 @@ def test_pat69_ghprojects_epic_refuses_unknown_or_changed_child(monkeypatch, tmp
         tracker, "GHQUAL-1", issued_at=123,
         nonce="synthetic_nonce_123456", human_verdict="accepted",
     )
-    tracker.child.title = "Changed after closure"
+    tracker.child.state = "in-progress"
     with pytest.raises(TrackerConflictError, match="graph changed"):
         tracker.get_epic_closure(PROJECT, "GHQUAL-1")
     assert tracker.comment_posts == tracker.state_writes == 1

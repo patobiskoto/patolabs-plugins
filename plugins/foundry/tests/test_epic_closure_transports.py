@@ -229,7 +229,8 @@ def test_linear_epic_terminal_projection_rejects_invalid_authority(monkeypatch, 
         parent["children"]["nodes"].append({"id": wire.issues["LIN-3"]["id"], "identifier": "LIN-3"})
     elif corruption in {"child-version", "dependency-version", "transitive-version"}:
         target = {"child-version": "LIN-2", "dependency-version": "LIN-3", "transitive-version": "LIN-4"}[corruption]
-        wire.issues[target]["updatedAt"] = "2026-09-20T10:03:00Z"
+        # PAT-ADR-0023: only a version that goes back is a corruption.
+        wire.issues[target]["updatedAt"] = "2026-09-20T09:00:00Z"
     elif corruption == "dependency-removed":
         wire.issues["LIN-3"]["inverseRelations"] = connection([])
     elif corruption == "historical-lifecycle":
@@ -350,7 +351,7 @@ def test_linear_hidden_audit_effect_never_posts_again(monkeypatch, replay_coordi
     ) == 1
 
 
-@pytest.mark.parametrize("mutation", ("reopened", "version", "added"))
+@pytest.mark.parametrize("mutation", ("reopened", "added"))
 def test_linear_done_replay_rechecks_complete_current_graph(monkeypatch, mutation):
     tracker, wire, project = _linear_graph()
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
@@ -365,8 +366,6 @@ def test_linear_done_replay_rechecks_complete_current_graph(monkeypatch, mutatio
         wire.issues["LIN-1"]["children"]["nodes"].append({"id": extra["id"], "identifier": "LIN-3"})
     elif mutation == "reopened":
         wire.issues["LIN-2"]["state"] = {"id": STATE_IDS["review"], "name": "Review"}
-    else:
-        wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T10:03:00Z"
     with pytest.raises(TrackerConflictError, match="graphe Epic Linear divergent au rejeu"):
         write.close_epic(tracker, "LIN-1", human_verdict="accepted")
 
@@ -691,7 +690,7 @@ def test_epic_parent_procedure_change_blocks_replay_without_second_write(
         assert not any(method == "POST" for method, _path, _body in wire.calls[before:])
 
 
-@pytest.mark.parametrize("mutation", ("reopened", "version", "added"))
+@pytest.mark.parametrize("mutation", ("reopened", "added"))
 def test_youtrack_done_replay_rechecks_complete_current_graph(monkeypatch, mutation):
     tracker = _YouTrackWire()
     project = Project(key="YT", id="p")
@@ -705,8 +704,6 @@ def test_youtrack_done_replay_rechecks_complete_current_graph(monkeypatch, mutat
         tracker.rows["YT-1"]["links"][0]["issues"].append({"idReadable": "YT-3"})
     elif mutation == "reopened":
         tracker.rows["YT-2"]["customFields"][0]["value"] = {"name": "review"}
-    else:
-        tracker.rows["YT-2"]["updated"] += 1
     with pytest.raises(TrackerConflictError, match="graphe Epic YouTrack divergent au rejeu"):
         write.close_epic(tracker, "YT-1", human_verdict="accepted")
 
@@ -973,10 +970,14 @@ def test_dependency_coordinate_change_is_refused_on_resume(
             issued_at=1_800_000_000_000, nonce="nonce_1234567890abcdef",
         )
 
+    # Pending resume binds the exact version; a closed Epic only refuses a regression.
+    step = 1 if phase == "pending" else -1
     if provider == "linear":
-        wire.issues["LIN-3"]["updatedAt"] = "2026-09-20T10:03:00Z"
+        wire.issues["LIN-3"]["updatedAt"] = (
+            "2026-09-20T10:03:00Z" if step > 0 else "2026-09-20T09:00:00Z"
+        )
     else:
-        wire.rows["YT-3"]["updated"] += 1
+        wire.rows["YT-3"]["updated"] += step
     with pytest.raises(TrackerConflictError, match="graphe Epic|dépend"):
         write.close_epic(tracker, parent_id, human_verdict="accepted")
 
@@ -1130,3 +1131,110 @@ def test_graph_version_change_around_parent_write_fails_closed(
             )
         else:
             assert not any(method == "POST" for method, _path, _body in wire.calls)
+
+
+# --- PAT-208 / PAT-ADR-0023: a closed Epic survives a native version advance ---
+
+
+def _close_linear(monkeypatch, **kwargs):
+    tracker, wire, project = _linear_graph(**kwargs)
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    write.close_epic(
+        tracker, "LIN-1", human_verdict="accepted", issued_at=1_800_000_000_000,
+        nonce="nonce_1234567890abcdef",
+    )
+    return tracker, wire, project
+
+
+@pytest.mark.parametrize("target", ("LIN-2", "LIN-3"))
+def test_linear_closed_epic_stays_readable_when_a_node_version_advances(
+    monkeypatch, target,
+):
+    tracker, wire, project = _close_linear(monkeypatch, dependency=True)
+    before = tracker.get_epic_closure(project, "LIN-1")
+    wire.issues[target]["updatedAt"] = "2026-09-20T10:03:00Z"
+    posts = len(wire.calls)
+
+    after = tracker.get_epic_closure(project, "LIN-1")
+    assert after.receipt == before.receipt  # the audit still records the native version
+    replay = write.close_epic(tracker, "LIN-1", human_verdict="accepted")
+
+    assert replay.replayed is True
+    assert not any(
+        "Update" in doc or "CommentCreate" in doc for doc, _ in wire.calls[posts:]
+    )
+    # PAT-185: it still serves as a closed child Epic of a parent closure.
+    issue = tracker.get_issue("LIN-1")
+    assert write._closed_child_epic(issue, tracker, project)[0] == after.audit_id
+
+
+@pytest.mark.parametrize("mutation", (
+    "version_back", "state", "criteria", "dependency_removed", "dependency_added",
+))
+def test_linear_closed_epic_refuses_a_real_node_change(monkeypatch, mutation):
+    tracker, wire, project = _close_linear(monkeypatch, dependency=True)
+    parent_issue = tracker.get_issue("LIN-1")
+    node = wire.issues["LIN-3"]
+    if mutation == "version_back":
+        node["updatedAt"] = "2026-09-20T09:00:00Z"
+    elif mutation == "state":
+        node["updatedAt"] = "2026-09-20T10:03:00Z"
+        node["state"] = {"id": STATE_IDS["review"], "name": "Review"}
+    elif mutation == "criteria":
+        node["updatedAt"] = "2026-09-20T10:03:00Z"
+        node["description"] = "- [x] acceptance\n- [ ] one more"
+    elif mutation == "dependency_removed":
+        node["updatedAt"] = "2026-09-20T10:03:00Z"
+        wire.issues["LIN-2"]["inverseRelations"] = connection([])
+    else:
+        extra = copy.deepcopy(wire.issues["LIN-3"])
+        extra.update({"id": "00000000-0000-4000-8000-000000000009", "identifier": "LIN-9"})
+        wire.issues["LIN-9"] = extra
+        node["updatedAt"] = "2026-09-20T10:03:00Z"
+        node["inverseRelations"] = connection([{
+            "type": "blocks", "issue": {"id": extra["id"], "identifier": "LIN-9"},
+        }])
+    with pytest.raises(TrackerConflictError, match="divergent au rejeu"):
+        tracker.get_epic_closure(project, "LIN-1")
+    assert write._closed_child_epic(parent_issue, tracker, project)[0] is None
+
+
+def test_youtrack_closed_epic_stays_readable_when_a_node_version_advances(monkeypatch):
+    tracker = _YouTrackWire()
+    project = Project(key="YT", id="p")
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    write.close_epic(
+        tracker, "YT-1", human_verdict="accepted", issued_at=1_800_000_000_000,
+        nonce="nonce_1234567890abcdef",
+    )
+    tracker.rows["YT-2"]["updated"] += 1
+    before = len(tracker.calls)
+    assert write.close_epic(tracker, "YT-1", human_verdict="accepted").replayed is True
+    assert not any(method == "POST" for method, _p, _b in tracker.calls[before:])
+    tracker.rows["YT-2"]["updated"] -= 2
+    with pytest.raises(TrackerConflictError, match="graphe Epic YouTrack divergent au rejeu"):
+        write.close_epic(tracker, "YT-1", human_verdict="accepted")
+
+
+def test_closure_graph_comparison_helper_contract():
+    from foundry.models import EpicClosureChild as C, EpicClosureDependency as D
+
+    base = C("A", 10, "done", 1, 1, "accepted", "proof", "digest")
+    same = (base,)
+    eq = write.epic_closure_graph_unchanged
+    assert eq(same, (), (replace(base, version=11),), ())
+    assert not eq(same, (), (replace(base, version=9),), ())
+    for change in ({"state": "review"}, {"ac_done": 0}, {"ac_total": 2},
+                   {"acceptance_status": "override"}, {"acceptance_source": "x"},
+                   {"acceptance_coordinates": "y"}, {"id": "B"}):
+        assert not eq(same, (), (replace(base, version=11, **change),), ())
+    assert not eq(same, (), same + (replace(base, id="B"),), ())
+    dep = D("A", C("B", 5, "done"))
+    assert eq(same, (dep,), (replace(base, version=12),),
+              (D("A", C("B", 6, "done")),))
+    assert not eq(same, (dep,), same, ())
+    assert not eq(same, (dep,), same, (D("C", dep.target),))
+    # Dropped nodes stay bound exactly (PAT-ADR-0017).
+    dropped = C("D", 3, "dropped")
+    assert eq((dropped,), (), (dropped,), ())
+    assert not eq((dropped,), (), (replace(dropped, version=4),), ())

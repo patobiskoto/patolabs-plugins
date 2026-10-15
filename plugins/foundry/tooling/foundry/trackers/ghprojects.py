@@ -3482,12 +3482,15 @@ class GitHubProjectsTracker(Tracker):
             if parent.state == "done":
                 raise TrackerConflictError("GitHub Epic done without closure audit")
             return None
-        from foundry.write import bounded_epic_graph_snapshot
+        from foundry.write import bounded_epic_graph_snapshot, epic_closure_graph_unchanged
         try:
             children, dependencies = bounded_epic_graph_snapshot(self, project, parent)
         except (SystemExit, TrackerConflictError) as exc:
             raise TrackerConflictError("GitHub Epic graph changed after closure") from exc
-        if (children, dependencies) != (outcome.receipt.children, outcome.receipt.dependencies):
+        if not epic_closure_graph_unchanged(
+            outcome.receipt.children, outcome.receipt.dependencies,
+            children, dependencies,
+        ):
             raise TrackerConflictError("GitHub Epic graph changed after closure")
         return outcome
 

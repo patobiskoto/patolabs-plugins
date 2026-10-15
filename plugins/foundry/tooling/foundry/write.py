@@ -8,7 +8,7 @@ mechanical invariants live in code (this file); judgment lives in the skills.
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 import secrets
 import time
@@ -593,6 +593,50 @@ def _epic_override_evidence(node) -> tuple[str, str] | None:
 class _EpicOverrideRefusal(SystemExit):
     """The strict refusal is itself a nominative one: an unnamed override or an
     unnamed abandoned node (PAT-102: gates the hint)."""
+
+
+def _closure_node_unchanged(recorded: EpicClosureChild, current: EpicClosureChild) -> bool:
+    """PAT-ADR-0023: one node equals its audit coordinate or only moved forward.
+
+    Same id, state, AC counters and acceptance status/source/coordinates; the
+    native version may be equal or newer.  A dropped or override node stays bound
+    exactly, version included (PAT-ADR-0017, PAT-ADR-0014).
+    """
+    if recorded.state == "dropped" or recorded.acceptance_status == "override":
+        return recorded == current
+    return (
+        type(current.version) is int and type(recorded.version) is int
+        and current.version >= recorded.version
+        and replace(current, version=recorded.version) == recorded
+    )
+
+
+def epic_closure_graph_unchanged(
+    recorded_children: tuple[EpicClosureChild, ...],
+    recorded_dependencies: tuple[EpicClosureDependency, ...],
+    current_children: tuple[EpicClosureChild, ...],
+    current_dependencies: tuple[EpicClosureDependency, ...],
+) -> bool:
+    """PAT-ADR-0023: the read and replay comparison of a closed Epic's graph.
+
+    The shape (required children, dependency edges, their order) must be equal;
+    each node may only differ by a native version that did not go back.  Writing
+    a new audit keeps the exact comparison (``!=``) on the current versions.
+    """
+    if (
+        len(recorded_children) != len(current_children)
+        or len(recorded_dependencies) != len(current_dependencies)
+    ):
+        return False
+    if not all(
+        _closure_node_unchanged(old, new)
+        for old, new in zip(recorded_children, current_children)
+    ):
+        return False
+    return all(
+        old.source_id == new.source_id and _closure_node_unchanged(old.target, new.target)
+        for old, new in zip(recorded_dependencies, current_dependencies)
+    )
 
 
 def _closed_child_epic(issue: Issue, tracker, project) -> tuple[str | None, str]:

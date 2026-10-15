@@ -102,10 +102,19 @@ def test_a_child_epic_not_closed_is_refused_as_non_terminal(monkeypatch):
 
 def test_a_child_epic_whose_graph_changed_since_its_audit_is_refused(monkeypatch):
     tracker, wire, _project = _two_levels(monkeypatch)
-    wire.issues["LIN-2"]["updatedAt"] = "2026-09-21T10:00:00Z"
+    # PAT-ADR-0023: a version that goes back (or any real change) is refused.
+    wire.issues["LIN-2"]["updatedAt"] = "2026-09-20T09:00:00Z"
     with pytest.raises((SystemExit, TrackerConflictError), match="LIN-1"):
         _close_outer(tracker)
     _assert_not_closed(wire)
+
+
+def test_a_child_epic_whose_node_version_only_advanced_still_serves(monkeypatch):
+    tracker, wire, _project = _two_levels(monkeypatch)
+    wire.issues["LIN-2"]["updatedAt"] = "2026-09-21T10:00:00Z"
+    outcome = _close_outer(tracker)
+    assert outcome.receipt.children[0].acceptance_status == "epic-closed"
+    assert write.close_epic(tracker, "LIN-5", human_verdict="accepted").replayed
 
 
 def test_a_tracker_without_epic_closure_audit_keeps_the_child_epic_unknown():
