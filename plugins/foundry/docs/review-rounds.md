@@ -1,8 +1,9 @@
 # Review rounds: baseline, observation window and return triggers (PAT-136, PAT-139)
 
 The rule itself is `AGENTS.md#R9` (identical in `CLAUDE.md`); this page records how
-its effect is measured. Nothing in that measurement is computed by Foundry: the counting
-below is done by hand. The last point of "Limits" and the last two sections (PAT-139)
+its effect is measured. Since PAT-175 the per-issue count of rounds is computed by
+`routing review-rounds` (section "Per-issue report"); the baseline and window tables below
+were counted by hand before it existed. The last point of "Limits" and the last two sections (PAT-139)
 cite the code that bounds rule (b): what the merge command does not refuse, what no tool
 checks, what is not coded yet, and what each tracker provider carries. Paths are relative
 to `plugins/foundry/`, except `AGENTS.md` and `CLAUDE.md` at the repository root and
@@ -28,9 +29,47 @@ source.
   that the deferral does not hide its cost. Since PAT-139 these follow-up issues are the
   issues of the companion Epic (`AGENTS.md#R9` (b)); their own non-blocking remarks are
   corrected before the merge, so they open no further follow-up issue.
-- Counted by hand from the per-round lines of the PR descriptions (format in
-  `skills/merge-pr/SKILL.md`). Foundry's review generation number is not
+- Counted, for the tables below, by hand from the per-round lines of the PR descriptions
+  (format in `skills/merge-pr/SKILL.md`); `routing review-rounds <ISSUE-ID>` gives only the
+  total round count, and only for reviews recorded in the data directory and repository
+  namespace it reads (see "Per-issue report"); it does not compute the first / after blocking /
+  after remarks split nor the deferred remarks. Foundry's review generation number is not
   used: it was observed to be 4 for 3 reviews on PAT-125 and on PAT-132.
+
+## Per-issue report
+
+`python3 tooling/foundry_cli.py routing review-rounds <ISSUE-ID> [--session <main-log.jsonl>]...
+[--codex-session <rollout.jsonl>]... [--repository R] [--root DIR] [--json]` (code:
+`tooling/foundry/review_rounds.py`, verb in `routing.py`) writes nothing and calls no tracker.
+
+- Rounds and outcome: the terminal proofs of the issue in `AcceptanceProofStore`, one round
+  per non-carried proof; carried proofs (`carry-review-proof`) are counted apart and are not
+  rounds. `outcome` is `validated` when the last round is `mergeable` with every criterion
+  `pass`, `blocked` otherwise, `unknown` with no proof. `validated_rounds` counts the rounds
+  that are `mergeable` with every criterion `pass`; `blocked_rounds` is every other round
+  (`rounds - validated_rounds`), including a `fail` criterion under `mergeable`.
+  Scope: one data directory (`FOUNDRY_DATA` or `~/.config/foundry`, `registry.data_dir()`) and
+  one repository namespace (`--repository`). A review recorded on another machine, under
+  another `FOUNDRY_DATA` or namespace is not seen; with no proof of the issue there, `rounds`,
+  `validated_rounds` and `blocked_rounds` are `null` (unknown, never 0) and the text says
+  `unknown: no review proof in <data dir> for <repository>`. Rounds are ordered by the ledger
+  `completed_at` of `ReviewDeduplicator`.
+- Duration: earliest ledger `claim.started_at` to latest `completed_at` among the rounds
+  that have both, `null` (unknown) when none does; `duration_rounds_timed` says how many.
+  A claim recovered after an abandoned one reports the latest claim's start (deduced from
+  the ledger record shape), so the duration can be shorter than the elapsed time.
+- Tokens: only from logs passed with `--session` / `--codex-session`, read by
+  `cost_attribution.read_host_log` (outside the invocation path, FOUNDRY-ADR-0015). Per class:
+  input, cache_read, cache_write, output. They are the full totals of the logs passed (the
+  session's sub-agents included, every issue worked in it), not filtered by issue or round
+  window; the text labels them "all logs passed, not filtered by issue or round". A Claude log is the coordinator; the `*.jsonl`
+  under `<dir>/<session>/subagents/` are the sub-agents (by position only, as in
+  `cache_ttl_replay.py`). A Codex rollout is reported as `codex_unclassified`: the
+  coordinator/sub-agent split is not implemented in `review_rounds.py`; whether a rollout
+  carries enough to make it is unknown. A class with no readable log is `null`
+  (unknown), never 0; sub-agent logs not found under that path are not counted, so a
+  sub-agent total is a lower bound.
+- Output holds counts only: no claim or proof identifier, prompt or log content.
 
 ## Observation window
 
