@@ -23,11 +23,17 @@ open here too would silently drop the R1 guard exactly when it matters, so an
 R1-candidate command (`gh pr create/merge`, `git push`) is still denied, naming
 the binding error as the cause; a non-candidate command is unaffected (the
 cheap `_is_candidate` prefilter runs first and never touches the registry).
-A malformed global registry (invalid JSON or content) raises the same
-ValueError, so those commands are then denied in any git checkout with an
-`origin` remote (an unregistered repo cannot be proven) until the registry
-is repaired. A registry that cannot be read at all (OSError) and any OTHER
-unexpected failure keep failing OPEN. The pure `deny_reason()` is
+A malformed global registry (`registry.json`: invalid JSON or encoding, a
+non-object root, a provider or an entry that is not an object, an invalid
+`canonical_repo`; PAT-63) raises `registry.RegistryFileError`, a `ValueError`
+subclass: the same fail-closed denial, but the reason names the global registry
+and its path instead of the repository binding, never file content. Those
+commands are then denied in any git checkout with an `origin` remote (an
+unregistered repo cannot be proven) until the registry is repaired. The guard
+path never reads `config.env`/`$FOUNDRY_CONFIG`, so a non-UTF-8 config file
+changes nothing here. A registry that cannot be read at all (OSError) and any
+OTHER unexpected failure keep failing OPEN; "no-op outside registered repos"
+means a well-formed registry with no entry for the checkout. The pure `deny_reason()` is
 what the tests pin. This is a discipline tool, not a sandbox: `bash -c '…'`
 indirection is out of scope by design.
 """
@@ -196,14 +202,21 @@ def _defaults_for(registry, cwd) -> set:
     return {default} if default else {"main", "master"}
 
 
-def binding_error_deny_reason(command: str, defaults: set, current: str, cause: str) -> str | None:
+def binding_error_deny_reason(command: str, defaults: set, current: str, cause: str,
+                              source: str = "binding") -> str | None:
     """Same decision as `deny_reason`, prefixed with the binding error that put
     the repo in this state — PAT-42: an invalid/drifted/ambiguous tracker
     binding must not silently reopen R1 for gh pr create/merge or a push to
-    the default branch."""
+    the default branch. `source` names what is at fault (PAT-63): "binding" for
+    the repo's tracker binding, "registry" for the global registry file; the
+    cause is a path-bearing message, never file content."""
     reason = deny_reason(command, defaults, current)
     if reason is None:
         return None
+    if source == "registry":
+        return (f"registre global Foundry illisible ou invalide ({cause}) — {reason} "
+                f"Ce n'est pas le binding du dépôt : répare ou restaure le registre "
+                f"global avant de continuer.")
     return (f"binding tracker Foundry invalide ou en dérive ({cause}) — {reason} "
             f"Corrige d'abord le binding (registry/.foundry/tracker.json) avant "
             f"de continuer.")
@@ -230,7 +243,8 @@ def main():
             # to the default branch slip through.
             defaults = _defaults_for(registry, cwd)
             current = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD") or ""
-            reason = binding_error_deny_reason(command, defaults, current, str(exc))
+            source = "registry" if isinstance(exc, registry.RegistryFileError) else "binding"
+            reason = binding_error_deny_reason(command, defaults, current, str(exc), source)
             if reason:
                 _emit_deny(reason)
             return

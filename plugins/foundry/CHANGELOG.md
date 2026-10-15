@@ -9,7 +9,18 @@
   sub-agents; anything unreadable is `unknown`. Documentation status (R5): new section
   "Per-issue report" in `docs/review-rounds.md`, whose "counted by hand" statements were
   corrected for issues delivered since; no other CLI verb, key or constant changed.
-
+- PAT-63: the R1 guard (`hooks/guard_bash.py`) now names the real cause of a fail-closed
+  denial. A malformed global registry (invalid JSON or encoding, non-object root, invalid
+  `canonical_repo`, and now a provider or an entry that is not an object, which was silently
+  treated as unregistered) raises `registry.RegistryFileError` (a `ValueError` subclass from
+  `registry.load()`), and the denial says "registre global Foundry" with the registry path
+  instead of "binding tracker Foundry invalide"; a broken repo binding keeps the old wording.
+  Observed: the guard path never reads `config.env`/`$FOUNDRY_CONFIG`, so a non-UTF-8 config
+  file changes nothing (pinned by a test); an unreadable registry (OSError) still fails open.
+  Behaviour change: `registry.load()` now refuses a non-object provider or entry for every
+  caller. Documentation status (R5): updated the `guard_bash.py` docstring, the hooks
+  paragraph of `README.md` and AGENTS.md/CLAUDE.md R1 (identical); no CLI verb, option,
+  configuration key or public constant changed.
 - PAT-165: Foundry can put a started or in-review issue back to the backlog:
   `edit transition <ISSUE-ID> backlog <expected-state>` (Linear), a new target of the
   guarded transition of PAT-ADR-0017 under PAT-ADR-0006, with its read rule decided by
