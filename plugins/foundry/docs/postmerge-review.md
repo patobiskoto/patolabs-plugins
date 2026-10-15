@@ -3,6 +3,8 @@
 Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
 publication bound, native evidence, plugin selection, guarded paths and restitution;
 follow-up corrections cover concrete execution paths, terminal stops and reader diagnostics.
+Updated for PAT-203: the report budget written into the reviewer packet by `prepare`
+(`report_budget`, `REPORT_MARGIN_PERCENT`).
 PAT-ADR-0020 is accepted and supersedes PAT-ADR-0019, by the maintainer's explicit
 decision recorded on PAT-202 after its merge. The earlier implementation conformed to
 PAT-ADR-0019; this delivery is its replacement (PAT-ADR-0020, Context and Decision).
@@ -40,6 +42,21 @@ The serializer is `json.dumps(sort_keys=True, ensure_ascii=False)` with default
 separators and no final newline (`comment_text`); private-file bounds do not
 qualify publication. The native maximum remains unknown; this dated observation
 does not qualify every content or size (PAT-ADR-0020, Qualification).
+Before consuming the authorization, `prepare` serializes an empty terminal receipt with
+the shipped `comment_text` (prefix and header included), built by the same
+`terminal_receipt` that `record` uses (empty report, placeholder hashes, null observations,
+the real hook route on Claude). `room = MAX_COMMENT_BYTES - size` and
+`budget = floor(room * (100 - REPORT_MARGIN_PERCENT) / 100)`, with
+`REPORT_MARGIN_PERCENT=25` (named in `advisory_schema.py`; PAT-203 states the 25% as a
+margin on the remaining room, PAT-ADR-0020 does not fix it). `prepare` refuses with
+`terminal receipt metadata leaves no room for a report` or `... no report budget` when
+`room` or `budget` is not positive, before any write (`report_budget`, `prepare`).
+The budget is written by code into the reviewer message as the maximum UTF-8 size of
+`json.dumps(report, sort_keys=True, ensure_ascii=False)`; the coordinator passes nothing
+by hand. Observed size of the final report is unknown before launch and no host enforces
+an output bound, so the budget is a request, not a guarantee: an overbound comment is still
+refused at `record` (`bounded_comment`). Observation values and hook route length are
+estimated (deduced, not observed); the margin absorbs them.
 Injected fixture ports model complete history; they do not qualify another native provider.
 
 `prepare` requires a merged, closed PR and exact JSON coordinates with keys

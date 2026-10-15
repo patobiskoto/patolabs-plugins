@@ -11,6 +11,15 @@
   numbers and whether the regression trigger fires; the maintain/rollback decision is
   recorded separately. Documentation status (R5): new page and one link added; no CLI verb,
   option, configuration key or public constant changed.
+- PAT-203: the advisory postmerge `prepare` now measures the empty v2 terminal receipt with
+  the shipped serializer (prefix and header included) before consuming the authorization,
+  and writes the report budget `floor(room * 75%)` (`room = MAX_COMMENT_BYTES - size`) into
+  the reviewer message by code instead of a coordinator instruction. It refuses, before any
+  write, when `room` or the budget is not positive. `record` and the estimate share one
+  `terminal_receipt` builder. Documentation status (R5): updated
+  `docs/postmerge-review.md` and the advisory section of `skills/review-pr/SKILL.md`; new
+  public constant `REPORT_MARGIN_PERCENT` (`advisory_schema.py`) documented there; no CLI
+  verb or option changed. The budget is a request, not an enforced host bound.
 - PAT-201: `adr link-issue` now accepts the issue links of the two historical native bodies
   `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, previously refused before any write with
   `unsupported strong inline-code Markdown in ADR body`. A source-digest-pinned profile
