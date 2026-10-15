@@ -40,6 +40,12 @@ code outside (`**Un statut legacy** `success` **posé par un bot non-CI**`); the
 `(AGENTS.md/CLAUDE.md)` becomes `([AGENTS.md/CLAUDE.md](<http://AGENTS.md/CLAUDE.md>))` (the
 same autolink form as PAT-86); a bold span crossing a newline is split (PAT-71).
 
+Deduced, not observed: that Linear renders the version-1 Document written by `adr link-issue`
+the same way. The real link was not run. If the rendering differs, the pre-check still passes
+through the profile, the link comment and the version-1 Document are written
+(`link_adr_issue`, `_append_adr_version` in `trackers/linear.py`), and the divergence is only
+seen at read-back, after those writes.
+
 ## Profile
 
 Each entry binds a full source SHA-256 to its rendered SHA-256 (`8cd2a8f7...` and `54947bd7...`).
