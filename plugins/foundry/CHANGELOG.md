@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- PAT-171: measurement of the PAT-ADR-0016 observation window for Haiku 5.5 (first ten issues
+  delivered after the PAT-125 merge against the ten before it), recorded in
+  `docs/qualification/pat-171-haiku-55-window.md` and linked from
+  `docs/qualification/pat-125-haiku-55-promotion.md`. Read-only measurement from the local proof
+  store (`routing review-rounds`, `routing escalation show`), `git log` and `gh pr view`; no
+  code, model, effort, routing or configuration change, no model call. The page reports the
+  numbers and whether the regression trigger fires; the maintain/rollback decision is
+  recorded separately. Documentation status (R5): new page and one link added; no CLI verb,
+  option, configuration key or public constant changed.
 - PAT-201: `adr link-issue` now accepts the issue links of the two historical native bodies
   `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, previously refused before any write with
   `unsupported strong inline-code Markdown in ADR body`. A source-digest-pinned profile

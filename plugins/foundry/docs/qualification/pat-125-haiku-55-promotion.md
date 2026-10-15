@@ -298,5 +298,7 @@ demande pas de nouvelle ADR tant que la valeur rétablie est celle de PAT-16. Le
 formes projet et le défaut rétabli sont testés hors ligne
 (`tests/test_claude_haiku55.py`).
 
+Mesure de la fenêtre (PAT-171) : [`pat-171-haiku-55-window.md`](pat-171-haiku-55-window.md).
+
 Revue indépendante, CI sur SHA exact et cycle de vie Foundry restent obligatoires pour
 la livraison.
