@@ -3,8 +3,8 @@
 Measurement prescribed by PAT-ADR-0016, section "Observation de production et retour
 arrière", as restated in
 [`pat-125-haiku-55-promotion.md`](pat-125-haiku-55-promotion.md) ("Observation de
-production et retour arrière"). This page reports numbers and whether the regression
-trigger fires. It does not decide to maintain or roll back.
+production et retour arrière"). This page reports the numbers, whether the regression
+trigger fires, and the decision below.
 
 Decision (2026-10-15): keep `haiku-5.5` / `medium` as the Claude `economy` default; the window
 is closed. Taken by the coordinator under the maintainer's delegation of 2026-10-14; the

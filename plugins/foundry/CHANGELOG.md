@@ -7,9 +7,9 @@
   `docs/qualification/pat-171-haiku-55-window.md` and linked from
   `docs/qualification/pat-125-haiku-55-promotion.md`. Read-only measurement from the local proof
   store (`routing review-rounds`, `routing escalation show`), `git log` and `gh pr view`; no
-  code, model, effort, routing or configuration change, no model call. The page reports the
-  numbers and whether the regression trigger fires; the maintain/rollback decision is
-  recorded separately. Documentation status (R5): new page and one link added; no CLI verb,
+  code, model, effort, routing or configuration change, no model call. The regression trigger does not
+  fire; decision recorded in the page: keep `haiku-5.5` / `medium`, window closed (taken by the
+  coordinator under the maintainer's delegation, reversible by the maintainer). Documentation status (R5): new page and one link added; no CLI verb,
   option, configuration key or public constant changed.
 - PAT-203: the advisory postmerge `prepare` now measures the empty v2 terminal receipt with
   the shipped serializer (prefix and header included) before consuming the authorization,
