@@ -105,7 +105,7 @@ Linear's unchecked native checkboxes are not a code-PR acceptance proof. The rec
 binds a digest of the Epic's exact need and test procedure, and every pending or done
 replay refuses a changed procedure. It also requires
 at least one linked required child, and qualified positive AC evidence for every child
-and transitive dependency that is not an abandoned node named by `--accept-dropped`. Zero criteria, an unknown proof, an override, or a dropped
+and transitive dependency that is not an abandoned node named by `--accept-dropped`. A child Epic already closed under a valid closure audit counts as accepted without being named again (PAT-185; see `docs/linear-tracker.md`, "Epic whose child is an Epic already closed"); one not closed, or with an absent, invalid or divergent audit, is refused. Zero criteria, an unknown proof, an override, or a dropped
 node never count as acceptance (an override is only ever waived nominatively, and a dropped node only ever named, see the `--accept-override` and `--accept-dropped` paragraphs above). The receipt binds the original parent predecessor, the
 exact direct-child set, every dependency edge, each node version/state/AC snapshot and
 the provider's acceptance coordinates. DevHub retains its atomic transaction. YouTrack,

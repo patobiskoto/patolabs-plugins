@@ -58,6 +58,11 @@ _SAFE_RECEIPT_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
 _SAFE_AUDIT_ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
 # PAT-ADR-0014: nominative waiver of nodes delivered under an audited override.
 _EPIC_OVERRIDE_SOURCE = "linear-acceptance-override"
+# PAT-185: coordinate of a required child that is itself an Epic closed under a
+# valid audit (PAT-ADR-0014, PAT-ADR-0017).  Bound by id, version, the child's own
+# AC counters and its audit id; it is not an acceptance proof of the ordinary kind.
+_EPIC_CLOSED_STATUS = "epic-closed"
+_EPIC_CLOSED_SOURCE = "epic-closure-audit"
 _EPIC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
 _EPIC_OVERRIDE_BOUND_KEYS = ("pr_url", "head_sha", "base_sha", "review_digest")
 _EPIC_NODE_ID = re.compile(r"[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}\Z")
@@ -590,9 +595,52 @@ class _EpicOverrideRefusal(SystemExit):
     unnamed abandoned node (PAT-102: gates the hint)."""
 
 
+def _closed_child_epic(issue: Issue, tracker, project) -> tuple[str | None, str]:
+    """PAT-185: (audit id, "") of a done child Epic whose closure audit is valid.
+
+    Same audit as ``close-epic --status`` for a bounded tracker, read through
+    ``get_epic_closure`` (audit receipt, nominative sets as recorded, and the exact
+    terminal graph still equal to the recorded one).  Otherwise (None, reason).
+    """
+    if not (
+        getattr(tracker, "bounded_epic_closure_supported", False)
+        and callable(getattr(tracker, "get_epic_closure", None))
+        and project is not None
+    ):
+        return None, (
+            "ce tracker n'expose pas la capacité de lecture d'audit de clôture "
+            "d'Epic (get_epic_closure)"
+        )
+    try:
+        outcome = tracker.get_epic_closure(project, issue.id)
+    except (TrackerConflictError, SystemExit, ValueError, TypeError) as exc:
+        return None, f"audit de clôture invalide ou divergent ({type(exc).__name__}: {exc})"
+    if outcome is None:
+        return None, "aucun audit de clôture"
+    receipt = getattr(outcome, "receipt", None)
+    if (
+        type(outcome) is not EpicClosureOutcome
+        or type(receipt) is not EpicClosureReceipt
+        or receipt.parent_id != issue.id
+        or receipt.human_verdict != _EPIC_HUMAN_VERDICT
+        or not isinstance(outcome.audit_id, str)
+        or _SAFE_AUDIT_ID.fullmatch(outcome.audit_id) is None
+    ):
+        return None, "audit de clôture ambigu ou sans verdict humain"
+    return outcome.audit_id, ""
+
+
+def _is_unproven_epic(issue: Issue) -> bool:
+    return (
+        isinstance(issue.type, str) and issue.type.casefold() == "epic"
+        and issue.state == "done"
+        and issue.acceptance_status not in {"accepted", "override"}
+    )
+
+
 def _bounded_epic_node(
     issue: Issue, *, role: str, tracker=None, waivable: frozenset = frozenset(),
-    dropped: frozenset = frozenset(),
+    dropped: frozenset = frozenset(), project=None,
 ) -> EpicClosureChild:
     """Build one strictly accepted graph coordinate for PAT-ADR-0006."""
     if issue.state == "dropped" and issue.id not in dropped:
@@ -615,6 +663,21 @@ def _bounded_epic_node(
         return EpicClosureChild(id=issue.id, version=version, state="dropped")
     ac_done = _exact_nonnegative_int(issue.ac_done, f"AC {role} satisfaites")
     ac_total = _exact_nonnegative_int(issue.ac_total, f"AC {role} totales")
+    if issue.id not in waivable and _is_unproven_epic(issue):
+        # PAT-185: a child Epic closed under a valid audit already carried its own
+        # human verdict and nominative sets; it needs no second naming here.
+        audit_id, cause = _closed_child_epic(issue, tracker, project)
+        if audit_id is None:
+            raise SystemExit(
+                f"Clôture Epic refusée : {role} {issue.id} est un Epic done sans "
+                f"audit de clôture valide : {cause}."
+            )
+        return EpicClosureChild(
+            id=issue.id, version=version, state="done", ac_done=ac_done,
+            ac_total=ac_total, acceptance_status=_EPIC_CLOSED_STATUS,
+            acceptance_source=_EPIC_CLOSED_SOURCE,
+            acceptance_coordinates=json.dumps({"audit_id": audit_id}, sort_keys=True),
+        )
     if issue.id in waivable:
         # PAT-ADR-0014: the human named this node; its ONLY insufficiency may be a
         # valid typed override receipt.  Anything else stays a closed failure.
@@ -733,7 +796,7 @@ def _bounded_epic_graph_snapshot(
     children = tuple(
         _bounded_epic_node(
             fetch(child_id), role="enfant", tracker=tracker, waivable=waivable,
-            dropped=named_dropped,
+            dropped=named_dropped, project=project,
         )
         for child_id in child_ids
     )
@@ -763,7 +826,7 @@ def _bounded_epic_graph_snapshot(
             target = fetch(target_id)
             node = _bounded_epic_node(
                 target, role="dépendance", tracker=tracker, waivable=waivable,
-                dropped=named_dropped,
+                dropped=named_dropped, project=project,
             )
             edges.append(EpicClosureDependency(source_id=source.id, target=node))
             # What is reached only through an abandoned node is not required.
@@ -913,6 +976,12 @@ def _epic_graph_walk(
             ) if nameable else "abandonné (dropped), jamais acceptable")
         elif issue.state != "done":
             add(issue.id, role, "non-terminal", f"n'est pas terminal (état {issue.state})")
+        elif _is_unproven_epic(issue):
+            # PAT-185: a closed child Epic is positive evidence when its audit reads valid.
+            audit_id, cause = _closed_child_epic(issue, tracker, project)
+            if audit_id is None:
+                add(issue.id, role, "unknown",
+                    f"Epic done sans audit de clôture valide : {cause}")
         elif type(issue.ac_total) is not int or issue.ac_total <= 0:
             add(issue.id, role, "zero-criteria", "aucun critère d'acceptation")
         elif (
@@ -1259,6 +1328,25 @@ def _validate_epic_outcome(
                     f"Clôture Epic refusée : coordonnée abandonnée {label} invalide."
                 )
             dropped_seen.add(child.id)
+            return
+        if bounded_receipt and child.acceptance_status == _EPIC_CLOSED_STATUS:
+            # PAT-185: a closed child Epic; its audit is re-read on replay.
+            try:
+                audit = json.loads(child.acceptance_coordinates)
+            except (TypeError, ValueError):
+                audit = None
+            if (
+                child.state != "done"
+                or child.acceptance_source != _EPIC_CLOSED_SOURCE
+                or child.ac_done > child.ac_total
+                or not isinstance(audit, dict)
+                or set(audit) != {"audit_id"}
+                or not isinstance(audit["audit_id"], str)
+                or _SAFE_AUDIT_ID.fullmatch(audit["audit_id"]) is None
+            ):
+                raise SystemExit(
+                    f"Clôture Epic refusée : coordonnée d'Epic clos {label} invalide."
+                )
             return
         if child.acceptance_status == "override" and bounded_receipt:
             raise SystemExit(

@@ -1261,6 +1261,29 @@ pending audit whose graph changes stays blocked; no recovery path is added.
 YouTrack, GitHub Projects and DevHub refuse `--accept-dropped` before any read and
 keep their current handling of a dropped child.
 
+**Epic whose child is an Epic already closed (PAT-185; PAT-ADR-0014, PAT-ADR-0017).**
+A required child (or transitive prerequisite) that is itself an Epic, `done`, and
+without an ordinary or override acceptance of its own, counts as accepted when
+`LinearTracker.get_epic_closure` reads back its closure audit as valid
+(`write._closed_child_epic`): audit receipt with the `accepted` human verdict, its
+nominative waivers and dropped sets as recorded, and the exact terminal graph still equal
+to the recorded one. It is not named again: its own closure carried the human verdict and
+the nominative sets (no second `--accept-override`/`--accept-dropped`; naming it with
+`--accept-override` keeps the historical refusal). The parent's audit binds it as id,
+version, the child's own AC counters, `acceptance_status: epic-closed`,
+`acceptance_source: epic-closure-audit` and `{"audit_id": ...}` (`_EPIC_CLOSED_STATUS`,
+`_EPIC_CLOSED_SOURCE` in `tooling/foundry/write.py`); the parent's replay re-reads the
+child's audit. A child Epic that is not `done`, or whose audit is absent, invalid,
+ambiguous or divergent from its current graph, stays refused: the refusal names the
+child and the cause, and the diagnostic lists it as `unknown`, or as `read-error` when
+the provider's own issue read already refuses the child (on Linear, a tampered audit or
+a diverged graph refuses in `get_issue`). The graph below a closed
+child Epic is not walked by the parent beyond what `get_epic_closure` itself reads.
+A tracker without `bounded_epic_closure_supported` and `get_epic_closure` keeps the
+child `unknown` with the missing capability named. Observed with the Linear GraphQL
+double only (`tests/test_epic_closed_child_epic.py`); YouTrack and GitHub Projects share
+the code path but are unverified for this case.
+
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while
 observation/backlog expose `unknown`. A native Done without a qualifying audit
