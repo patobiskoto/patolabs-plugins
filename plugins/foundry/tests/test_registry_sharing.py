@@ -617,8 +617,24 @@ def test_invalid_legacy_canonical_repository_fails_closed_without_echo(
     with pytest.raises(ValueError) as error:
         registry.load()
 
-    assert str(error.value) == "canonical_repo invalide dans le registre Foundry"
+    assert isinstance(error.value, registry.RegistryFileError)
+    assert str(error.value).startswith("canonical_repo invalide dans le registre Foundry (")
+    assert str(error.value).endswith("registry.json)")
     assert "PLAINTEXT_SENTINEL" not in str(error.value)
+
+
+@pytest.mark.parametrize("content", ['{"linear": 5}', '{"linear": null}',
+                                      '{"linear": {"demo": "x"}}', '{"linear": {"demo": []}}'])
+def test_load_refuses_non_object_provider_or_entry(monkeypatch, tmp_path, content):
+    """PAT-63: fail closed like a non-object root, never silently 'unregistered'."""
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    (tmp_path / "registry.json").write_text(content, encoding="utf-8")
+
+    with pytest.raises(registry.RegistryFileError) as error:
+        registry.load()
+
+    assert "n'est pas un objet" in str(error.value)
+    assert str(tmp_path / "registry.json") in str(error.value)
 
 
 _MANIFEST_DIGEST = "sha256:" + "a" * 64

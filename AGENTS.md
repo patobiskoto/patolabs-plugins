@@ -39,8 +39,14 @@ with `git config core.hooksPath plugins/foundry/.githooks`). See FOUNDRY-ADR-000
 why the tracker must stay authoritative over the merge path. The guard's usual fail-open
 on internal errors has one exception (PAT-42): an invalid, drifted, or ambiguous repo
 tracker binding (`registry.entry_for()` raising `ValueError`) still denies these same
-commands, naming the binding error, instead of silently reopening the guard in exactly
-the state where every other Foundry command already fails closed.
+commands, naming the cause, instead of silently reopening the guard in exactly
+the state where every other Foundry command already fails closed. The named source is
+the repo binding, or the global registry file and its path when `registry.json` is
+malformed (PAT-63: invalid JSON or encoding, non-object root, provider or entry, invalid
+`canonical_repo`; `registry.RegistryFileError`); file content is never echoed. A registry
+that cannot be read at all (OSError) and any other internal error still fail open, and
+"no-op outside registered repos" means a well-formed registry with no entry for the
+checkout.
 
 ## R2 — Scan the ADR index before an architecture choice
 
