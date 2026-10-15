@@ -33,7 +33,8 @@ when this skill was written (documented from the 1.3.0 publication, ticket PAT-1
 #145); treat their output as the authority, not this text.
 
 ## 1. Scope
-List the entries under `## Unreleased` in `CHANGELOG.md`. Decide the kind with
+List the fragments `plugins/foundry/changelog.d/<ISSUE-ID>.md` (one unreleased entry each;
+`## Unreleased` in `CHANGELOG.md` stays empty, PAT-210). Decide the kind with
 `release_kind` (`tests/test_release_contract.py`): **patch** when only fixes, **minor** when
 a CLI verb or option, a configuration key or a behaviour changes. The kind fixes the
 requirements (`release_requirements`): a patch needs the CHANGELOG section and both
@@ -48,10 +49,19 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 Start the release ticket through `foundry:start-issue`, then in the working tree:
 - bump `version` in both `plugins/foundry/.claude-plugin/plugin.json` and
   `plugins/foundry/.codex-plugin/plugin.json` (equal, plain semver, no `+` suffix);
-- turn `## Unreleased` into `## <version> — <date>` (the date is the publication date in
-  Europe/Paris) and leave an empty `## Unreleased` above it. The section opens with a
-  header paragraph naming the behaviour changes; the entries below are kept byte-identical
-  and in order;
+- open `## <version> — <date>` (the date is the publication date in Europe/Paris) between the
+  empty `## Unreleased` and the previous section. Print its heading and entries from the
+  fragments with the helper of the release worktree, from its repository root:
+```bash
+python3 plugins/foundry/scripts/changelog_assemble.py <version> <date>
+```
+  It is read-only (`assemble`, `scripts/changelog_assemble.py`): it prints the heading, a blank
+  line, then the fragments byte-identical in issue number descending order. Paste it into
+  `CHANGELOG.md`, put a header paragraph naming the behaviour changes between the heading and
+  the entries, and delete the fragments (`git rm plugins/foundry/changelog.d/<ISSUE-ID>.md`) in
+  the same PR. `changelog.d/README.md` stays. Leave `## Unreleased` empty. The tool was run
+  once on a copy of the worktree (`changelog.d` of PAT-210) and printed the entries moved out
+  of `## Unreleased`;
 - for a minor, write the release note and the migration guide (writing rules in step 3).
   `test_current_release_satisfies_the_requirements_of_its_kind` requires: the release note
   `docs/release-<version>.md` names the version, "Claude Code" and "Codex"; the migration
@@ -81,7 +91,8 @@ python3 plugins/foundry/scripts/release_freeze_entry.py <version> --date <date>
   `python3 plugins/foundry/scripts/release_freeze_entry.py 1.3.0 --date 2026-10-15` and
   printed the entry already in the fixture.
 - the PR description gives the documentation status under R5 (`AGENTS.md#R5`) for each
-  touched documented artifact, and the CHANGELOG carries its entry.
+  touched documented artifact, and the change carries its changelog entry:
+  one fragment `plugins/foundry/changelog.d/<ISSUE-ID>.md`, never an edit of `## Unreleased` (PAT-210).
 
 ## 3. Writing rules for frozen pages
 Release note, migration guide and the published CHANGELOG section are frozen by digest.
