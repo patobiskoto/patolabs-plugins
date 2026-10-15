@@ -123,6 +123,24 @@ def raw_issue(identifier, native_id, *, title="Issue", body="- [ ] acceptance"):
     }
 
 
+def _pat201_fixture(name):
+    return (PAT71_FIXTURES / name).read_text(encoding="utf-8")
+
+
+# PAT-201: the two native FOUNDRY ADR bodies and the exact bytes Linear stored for
+# them (read from the version-0 Document), copied unchanged into fixtures.
+PAT201_SOURCES = {
+    adr: _pat201_fixture(f"pat201_foundry_adr_{adr}_source.md")
+    for adr in ("0002", "0018")
+}
+PAT201_READBACKS = {
+    hashlib.sha256(PAT201_SOURCES[adr].encode()).hexdigest(): _pat201_fixture(
+        f"pat201_foundry_adr_{adr}_readback.md"
+    )
+    for adr in ("0002", "0018")
+}
+
+
 def linear_markdown_readback(content):
     """Reproduce Linear's observed escaping of ADR comment closers."""
     if content.startswith(linear_module._ADR_HEADER):
@@ -141,6 +159,9 @@ def linear_markdown_readback(content):
 
 def linear_markdown_body_readback(body):
     """Independently model the observed closed Linear body serializations."""
+    pinned = PAT201_READBACKS.get(hashlib.sha256(body.encode()).hexdigest())
+    if pinned is not None:
+        return pinned
     if hashlib.sha256(body.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256:
         rendered = body
         for heading in (
@@ -10557,3 +10578,160 @@ def test_linear_adr_pat106_html_line_paragraph_glued_to_a_list_is_refused(tracke
     with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
         instance.create_adr(PROJECT, "PAT-106 html", "A\n\n<b>x</b> :\n- x")
     assert not [q for q, _ in wire.calls if "documentCreate" in q]
+
+
+PAT201_SOURCE_SHA256 = {
+    "0002": "abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465",
+    "0018": "ce9869d73a2ce0620c673ec53d6a00c8c3b87d7d8a2eb59cc254bbce8e14c5ea",
+}
+PAT201_READBACK_SHA256 = {
+    "0002": "8cd2a8f7afa1db6b30abde67416b8afeb49ab73d5cc1b6529f2b4bbb211bd830",
+    "0018": "54947bd75df29d2b50f1d1ad0439c913e5922b752d1535f35decb5abc6013cb5",
+}
+
+
+@pytest.fixture
+def pat201_unprofiled(monkeypatch):
+    """The state before PAT-201: no source digest is recognised."""
+    monkeypatch.setattr(linear_module, "_PAT_201_PROFILES", {})
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_fixtures_are_the_observed_bytes(adr):
+    source = PAT201_SOURCES[adr]
+    readback = _pat201_fixture(f"pat201_foundry_adr_{adr}_readback.md")
+    assert hashlib.sha256(source.encode()).hexdigest() == PAT201_SOURCE_SHA256[adr]
+    assert hashlib.sha256(readback.encode()).hexdigest() == PAT201_READBACK_SHA256[adr]
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_reproduces_the_refusal_without_the_profile(pat201_unprofiled, adr):
+    with pytest.raises(ValueError, match="unsupported strong inline-code Markdown"):
+        linear_module._linear_markdown_readback_body(PAT201_SOURCES[adr])
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(PAT201_SOURCES[adr])
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"strict": True}, {"observed_lists": False}, {"observed_paragraph_lists": False}],
+)
+def test_pat201_profile_models_the_observed_readback(adr, kwargs):
+    rendered = linear_module._linear_markdown_readback_body(PAT201_SOURCES[adr], **kwargs)
+    assert rendered == _pat201_fixture(f"pat201_foundry_adr_{adr}_readback.md")
+    linear_module._preflight_adr_body_readback(PAT201_SOURCES[adr])
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_altered_and_unknown_forms_stay_refused(adr):
+    source = PAT201_SOURCES[adr]
+    # Altered: one byte appended or one fragment changed -> digest unknown -> refused.
+    for altered in (
+        source + " ",
+        source.replace("`success`", "`failure`", 1),
+        source.replace("**tous `skipped`**", "**tous `skipped` `x`**", 1),
+        source.replace("**Un gate binaire", "**Un gate  binaire", 1),
+    ):
+        if altered == source:
+            continue
+        with pytest.raises(ValueError):
+            linear_module._linear_markdown_readback_body(altered)
+    # Unknown: the same strong/code form in a body that is not a pinned source.
+    for unknown in (
+        "- **Un flag `--full` sur les listes** — suite\n- autre\n",
+        "**Un gate « `a` modifié ⇒ `b` »** fin\n",
+    ):
+        with pytest.raises(ValueError, match="strong inline-code"):
+            linear_module._linear_markdown_readback_body(unknown)
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+            linear_module._preflight_adr_body_readback(unknown)
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+@pytest.mark.parametrize("failure", ["fragment", "rendered_digest"])
+def test_pat201_profile_checks_fragments_and_final_digest(monkeypatch, adr, failure):
+    digest = PAT201_SOURCE_SHA256[adr]
+    pre, post, readback = linear_module._PAT_201_PROFILES[digest]
+    if failure == "fragment":
+        profile = ((("absent", "replacement"),) + pre, post, readback)
+    else:
+        profile = (pre, post, "0" * 64)
+    monkeypatch.setattr(
+        linear_module, "_PAT_201_PROFILES", {digest: profile}
+    )
+    with pytest.raises(ValueError, match="pat-201"):
+        linear_module._linear_markdown_readback_body(PAT201_SOURCES[adr])
+
+
+def test_pat201_profile_table_is_exactly_the_two_sources():
+    assert {
+        digest: profile[2] for digest, profile in linear_module._PAT_201_PROFILES.items()
+    } == {
+        PAT201_SOURCE_SHA256[adr]: PAT201_READBACK_SHA256[adr]
+        for adr in ("0002", "0018")
+    }
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_create_link_and_replay_keep_the_source_bytes(tracker, adr):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, f"Historical {adr}", PAT201_SOURCES[adr])
+    linked = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert linked.body.endswith(PAT201_SOURCES[adr])
+    assert linked.status == created.status
+    [reread] = instance.list_adrs(PROJECT)
+    assert reread.body.endswith(PAT201_SOURCES[adr])
+    assert hashlib.sha256(PAT201_SOURCES[adr].encode()).hexdigest() == (
+        PAT201_SOURCE_SHA256[adr]
+    )
+    stored = [
+        doc["content"] for doc in wire.documents.values()
+        if doc["content"].startswith(linear_module._ADR_HEADER)
+    ]
+    assert len(stored) == 2
+    assert all(
+        content.endswith(PAT201_READBACKS[PAT201_SOURCE_SHA256[adr]])
+        for content in stored
+    )
+    # An idempotent replay writes nothing.
+    calls = len(wire.calls)
+    instance.link_adr_issue(linked, "LIN-2", project=PROJECT)
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_interrupted_link_resumes_only_the_exact_target(tracker, adr):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, f"Historical {adr}", PAT201_SOURCES[adr])
+    original = wire.__call__
+
+    def interrupt_witness(document, variables):
+        title = variables.get("input", {}).get("title", "")
+        if title.startswith(f"[Foundry ADR witness] {created.id} / v0001"):
+            raise OSError("link witness interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt_witness
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    with pytest.raises(TrackerConflictError, match="version slot diverged"):
+        instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+    assert (wire.documents, wire.comments) == before
+
+    recovered = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert recovered.body.endswith(PAT201_SOURCES[adr])
+    assert len(wire.documents) == 4
+    assert len(wire.comments) == 1
+
+
+@pytest.mark.parametrize("adr", ["0002", "0018"])
+def test_pat201_altered_body_is_refused_before_any_write(tracker, adr):
+    instance, wire = tracker
+    calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, f"Altered {adr}", PAT201_SOURCES[adr] + " **x `y`**")
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])

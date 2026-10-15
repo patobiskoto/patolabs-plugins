@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- PAT-201: `adr link-issue` now accepts the issue links of the two historical native bodies
+  `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, previously refused before any write with
+  `unsupported strong inline-code Markdown in ADR body`. A source-digest-pinned profile
+  (`_PAT_201_PROFILES`, `trackers/linear.py`) binds each complete source to the exact bytes
+  Linear stored for its version 0 (the version-1 rendering is deduced, not observed); the bodies, statuses and proofs are not rewritten, and any other or altered
+  body stays refused. `FOUNDRY-ADR-0003` has the same refusal and remains refused (not in
+  scope). Census and limits: `docs/qualification/pat-201-historical-adr-links.md`.
+  Documentation status (R5): that page and `docs/linear-tracker.md` updated; no CLI verb,
+  option or configuration key changed.
 - PAT-175: new read-only verb `routing review-rounds <ISSUE-ID>` (`tooling/foundry/review_rounds.py`)
   reports, for an issue, its review rounds and outcome from the local proof store, the
   duration from the review ledger timestamps and, for the session logs passed with
