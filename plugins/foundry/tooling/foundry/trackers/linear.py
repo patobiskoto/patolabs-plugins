@@ -141,8 +141,8 @@ _ABANDON_PREDECESSORS = frozenset(
     {"backlog", "ready", "blocked", "in-progress", "review"}
 )
 # PAT-165: native states an existing issue may be put back to ``backlog`` from.
-# ``ready`` and ``blocked`` are excluded: Foundry never writes them, so a started
-# issue sitting there was moved by hand and its read rule is not the one defined here.
+# ``ready`` and ``blocked`` are excluded: PAT-ADR-0024 admits ``in-progress`` and
+# ``review`` only.
 _BACKLOG_RETURN_PREDECESSORS = frozenset({"in-progress", "review"})
 
 

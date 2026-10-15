@@ -1051,9 +1051,8 @@ detection, not CAS. `<expected-state>` is mandatory and must be `in-progress` or
 (`_BACKLOG_RETURN_PREDECESSORS`, exposed as `backlog_return_predecessors`); any other value
 is refused before any provider read. It is compared with the native state just read.
 Compared sets: this one (`in-progress`, `review`) is a subset of the abandon's five;
-`backlog`, `ready` and `blocked` are left out because Foundry never writes `ready` or
-`blocked` and a return from them is a hand move that the read rule below does not cover,
-and `backlog` is the target. The write is refused from native `done`, with a `state-done`
+`ready` and `blocked` are left out because PAT-ADR-0024 admits `in-progress` and `review`
+only, and `backlog` is the target. The write is refused from native `done`, with a `state-done`
 receipt, with an Epic closure audit, with an invalid receipt chain, and with a chain of
 advisory `cockpit-evidence` receipts only; an issue already at `backlog` converges without
 a write (when the named predecessor is admitted); a third state fails closed. No lifecycle
