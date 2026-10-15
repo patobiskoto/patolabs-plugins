@@ -1429,8 +1429,9 @@ def _pat204_snapshot(state):
 @pytest.mark.parametrize("options,configuration,error,match", [
     (["--available-model", "gpt-6-luna"], None, RoutingUnavailableError, None),
     # ``reviewer`` is a gate role: a direct ``--model`` is refused as such, not as an
-    # unknown model. An unknown model reaches the route through a project mapping and is then
-    # refused for availability (RoutingUnavailableError), observed with an availability list.
+    # unknown model. The last case only proves that a project mapping to an unknown model
+    # raises no RoutingConfigError before the availability check; it does not prove the
+    # mapping is used (the gate fallback to ``apex`` keeps its default model).
     (["--model", "missing-model"], None, RoutingConfigError, "gate"),
     (["--effort", "invalid"], None, RoutingConfigError, None),
     ([], {"mappings": {"codex": {"frontier": {"model": "", "effort": "high"}}}}, RoutingConfigError, None),
