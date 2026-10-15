@@ -26,6 +26,9 @@ publication, input failures, publishable strings, legacy isolation and reader re
 sources are `docs/postmerge-review.md` and
 `postmerge_review.py::{prepare,native_evidence,record,restituted_reports}`.
 PAT-ADR-0020 is accepted and supersedes PAT-ADR-0019 (PAT-ADR-0020, Decision).
+`prepare` computes the serialized report budget from the empty terminal receipt and
+writes it into the reviewer message before consuming the authorization; do not add or
+pass a budget by hand (`postmerge_review.py::report_budget`; `docs/postmerge-review.md`).
 Run `prepare` once, then launch the private `invocation.json`'s `launch_arguments`
 with its `tool` in a new child (`postmerge_review.py::prepare`): Codex uses
 `spawn_agent` with `fork_turns=none`; Claude uses logical `foundry:maigret` through

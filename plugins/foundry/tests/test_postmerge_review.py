@@ -1753,3 +1753,42 @@ def test_raw_relative_execution_paths_do_not_refuse_prose(case, report, monkeypa
     assert all(Path(path).is_absolute() for path in a["execution_paths"])
     report["evidence"][0]["detail"] = text
     assert record(case, a, evidence(a, report), report)["report"] == report
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_prepare_writes_report_budget_computed_from_real_empty_receipt(case, host):
+    from foundry.advisory_schema import MAX_COMMENT_BYTES, REPORT_MARGIN_PERCENT
+
+    a = prepare(case, host)
+    prompt = a["launch_arguments"].get("message", a["launch_arguments"].get("prompt", ""))
+    size, room, budget = pm.report_budget(a, case.issue.id)
+    assert room == MAX_COMMENT_BYTES - size and REPORT_MARGIN_PERCENT == 25
+    assert budget == room * 75 // 100
+    assert f"must not exceed {budget} bytes" in prompt
+    # The estimate has the shape of the receipt `record` publishes (same builder).
+    assert 1000 < size < MAX_COMMENT_BYTES
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_report_budget_bounds_real_published_receipt(case, report, host):
+    a = prepare(case, host)
+    _, _, budget = pm.report_budget(a, case.issue.id)
+    assert len(json.dumps(report, sort_keys=True, ensure_ascii=False).encode()) <= budget
+    receipt = record(case, a, evidence(a, report), report)
+    assert len(pm.comment_text(receipt).encode()) <= pm.MAX_COMMENT_BYTES
+
+
+def test_report_budget_refuses_without_room_before_authorization(case, monkeypatch):
+    monkeypatch.setattr(pm, "MAX_COMMENT_BYTES", 100)
+    with pytest.raises(RoutingConfigError, match="leaves no room"):
+        prepare(case)
+    assert case.issue.comments == []
+    assert not case.args["output_dir"].exists()
+
+
+def test_report_budget_refuses_zero_budget_before_authorization(case, monkeypatch):
+    monkeypatch.setattr(pm, "REPORT_MARGIN_PERCENT", 100)
+    with pytest.raises(RoutingConfigError, match="no report budget"):
+        prepare(case)
+    assert case.issue.comments == []
+
