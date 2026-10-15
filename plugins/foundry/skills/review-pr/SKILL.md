@@ -134,7 +134,10 @@ asks for it with a reason. The partial-review packet gives the reviewer the prev
 round's verdict and remarks, the commit range since that round (the coordinator supplies
 both as `--declarations-file` assertions, kept in `coordinator-declarations.json` with
 `verified_by_tool=false`: `docs/review-packet.md`), and the full diff through the shared
-verifier above. The reviewer checks that each correction settles its remark
+verifier above. Neither declaration can be confronted with the bytes the reviewer is
+given (the verifier supplies only `base...HEAD`), and the send text of
+`routing prepare-review` does not say that the review is partial: that comes from the
+coordinator's own message. The reviewer checks that each correction settles its remark
 without a new defect and that nothing else changed, and returns a verdict on all criteria
 for the exact diff, in the same Output form and JSON object as a full review. That proof
 relies on the previous round for the unchanged parts and the PR description says so; no

@@ -259,7 +259,7 @@ created: no remark is added to a started or closed issue (maintainer decision of
 description before the merge. These three cases are still corrected before the merge; the
 rest of this rule adds three more (the PR of an issue of a companion Epic, an issue with
 no origin Epic, a durable refusal of one of the writes), corrected the same way. The
-review that follows is limited as stated below:
+first three cases are:
 
 - a remark the reviewer marks "fix before merge";
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -278,7 +278,10 @@ holds for every non-blocking remark, the three cases above included. The partial
 packet gives the reviewer the previous round's verdict and remarks, the commit range
 since that round, and the full diff through the shared verifier; the reviewer checks that
 each correction settles its remark without a new defect and that nothing else changed,
-and returns a verdict on all criteria for the exact diff. When the criteria of the issue are
+and returns a verdict on all criteria for the exact diff. The commit range and the previous
+round's remarks are declarations of the coordinator: the reviewer cannot confront them with
+the bytes it is given (the shared verifier supplies only `base...HEAD`), and the send text
+of `routing prepare-review` does not say that the review is partial. When the criteria of the issue are
 not all checked in the tracker, and also when they are all checked on a tracker whose
 adapter sets `delivery_receipt_supported` if the issue has a binding
 (`write.issue_binding`), the merge gate asks for a review proof covering all criteria for
@@ -335,11 +338,13 @@ When one of the four writes does not go through, two cases are told apart:
 
 Both are operating choices of this contract (maintainer decision of 2026-10-10; the
 refused retry is the coordinator's reading of those two decisions), not decisions of
-PAT-ADR-0018.
+PAT-ADR-0018; the re-review they mention is the one of PAT-ADR-0022, not part of those
+decisions.
 
 PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
 its non-blocking remarks are corrected before the merge and then re-reviewed as stated
-above (maintainer decision of 2026-10-10). That includes an issue whose direct parent is not an
+above (the re-review is PAT-ADR-0022's; the absence of deferral is the maintainer decision
+of 2026-10-10). That includes an issue whose direct parent is not an
 Epic: the chain of parents is not walked up (maintainer decision of 2026-10-11).
 
 The Foundry skills apply this grouped deferral and this standing authorization in every

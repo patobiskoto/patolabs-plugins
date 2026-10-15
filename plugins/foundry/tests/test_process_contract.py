@@ -283,7 +283,7 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
     # the three cases kept from before, then the three that the rule adds
     assert ("These three cases are still corrected before the merge; the rest of this "
             "rule adds three more") in rule
-    assert "The review that follows is limited as stated below" in rule
+    assert "The first three cases are:" in rule
     assert "fully re-reviewed" not in rule
     assert "Three cases are still corrected" not in rule
     for case in ('- a remark the reviewer marks "fix before merge";',

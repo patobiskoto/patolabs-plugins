@@ -3686,14 +3686,29 @@ class LinearTracker(Tracker):
         }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         proof = payload.get("proof")
-        if not isinstance(proof, dict) or set(proof) != {
+        proof_keys = {
             "schema_version",
             "proof_id",
             "issue",
             "review",
             "coordinates",
             "quality",
-        }:
+        }
+        if not isinstance(proof, dict) or set(proof) not in (
+            proof_keys, proof_keys | {"carried_from"},
+        ):
+            raise TrackerConflictError("Linear acceptance proof malformed")
+        # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
+        carried = proof.get("carried_from")
+        if "carried_from" in proof and (
+            not isinstance(carried, dict)
+            or set(carried) != {"proof_id", "head", "base", "diff_hash"}
+            or not all(
+                isinstance(carried[key], str)
+                and (_SHA if key in {"head", "base"} else _DIGEST).fullmatch(carried[key])
+                for key in ("proof_id", "head", "base", "diff_hash")
+            )
+        ):
             raise TrackerConflictError("Linear acceptance proof malformed")
         canonical_proof = dict(proof)
         proof_id = canonical_proof.pop("proof_id", None)
