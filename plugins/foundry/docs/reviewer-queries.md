@@ -60,7 +60,9 @@ install a tool allow-list. A developer-priority custom reviewer that mandates
 compatible role: back up the custom role, compare its instructions with this template,
 and replace the conflicting diff instruction with its Foundry branch. Load a fresh
 role/session before qualifying an actual reviewer invocation. No model or effort is
-set by the template; routing retains those decisions.
+set by the template; routing retains those decisions. How to establish which profile a
+new session loaded (file, declaration, effective source, loaded text), with its limits and
+rollback: [pat-196-codex-reviewer-provenance.md](qualification/pat-196-codex-reviewer-provenance.md).
 
 For context reads, the template uses available read tools. When no Read tool exists,
 it permits one simple `cat` command for an exact `SKILL.md`, context-packet file,
