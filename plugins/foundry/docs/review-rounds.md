@@ -3,7 +3,7 @@
 The rule itself is `AGENTS.md#R9` (identical in `CLAUDE.md`); this page records how
 its effect is measured. Since PAT-175 the per-issue count of rounds is computed by
 `routing review-rounds` (section "Per-issue report"); the baseline and window tables below
-were counted by hand before it existed. The last point of "Limits" and the last two sections (PAT-139)
+are still counted by hand (see "What is counted"). The last point of "Limits" and the last two sections (PAT-139)
 cite the code that bounds rule (b): what the merge command does not refuse, what no tool
 checks, what is not coded yet, and what each tracker provider carries. Paths are relative
 to `plugins/foundry/`, except `AGENTS.md` and `CLAUDE.md` at the repository root and
@@ -30,8 +30,8 @@ source.
   issues of the companion Epic (`AGENTS.md#R9` (b)); their own non-blocking remarks are
   corrected before the merge, so they open no further follow-up issue.
 - Counted, for the tables below, by hand from the per-round lines of the PR descriptions
-  (format in `skills/merge-pr/SKILL.md`); `routing review-rounds <ISSUE-ID>` gives only the
-  total round count, and only for reviews recorded in the data directory and repository
+  (format in `skills/merge-pr/SKILL.md`); `routing review-rounds <ISSUE-ID>` gives the total
+  round count and the `validated_rounds` / `blocked_rounds` counts, and only for reviews recorded in the data directory and repository
   namespace it reads (see "Per-issue report"); it does not compute the first / after blocking /
   after remarks split nor the deferred remarks. Foundry's review generation number is not
   used: it was observed to be 4 for 3 reviews on PAT-125 and on PAT-132.
@@ -52,8 +52,23 @@ source.
   one repository namespace (`--repository`). A review recorded on another machine, under
   another `FOUNDRY_DATA` or namespace is not seen; with no proof of the issue there, `rounds`,
   `validated_rounds` and `blocked_rounds` are `null` (unknown, never 0) and the text says
-  `unknown: no review proof in <data dir> for <repository>`. Rounds are ordered by the ledger
-  `completed_at` of `ReviewDeduplicator`.
+  `unknown: no non-carried review proof in <data dir> for <repository>`; the same holds when
+  the issue has only carried proofs (`carried_proofs` is then above 0 and `rounds` is `null`).
+  Rounds are ordered by the ledger `completed_at` of `ReviewDeduplicator`; a round with no
+  readable `completed_at` is ordered last and can therefore decide `outcome` (edge case, not
+  handled). The issue identifier is compared exactly, case included: `pat-175` finds no
+  proof of `PAT-175` and the text gives no hint. The store holds proofs, not pull request
+  states: the proofs of a pull request closed without merge for the same issue count as
+  rounds.
+- Output keys (`report()` in `tooling/foundry/review_rounds.py`): `issue`, `repository`,
+  `data_dir`; `rounds`, `validated_rounds`, `blocked_rounds`, `carried_proofs`,
+  `unreadable_proofs`, `outcome`; `duration_seconds`, `duration_rounds_timed`; `per_round`,
+  one entry per round with `round`, `generation`, `quality`, `all_pass`, `validated`,
+  `criteria`, `started_at`, `completed_at`; `tokens` with `coordinator`, `subagents`,
+  `codex_unclassified`, `unreadable_logs` and `scope` (the label of what the totals cover).
+  `unreadable_proofs` counts the proof files of the whole repository namespace that cannot
+  be read, whatever their issue (the issue of an unreadable file is unknown), so a non-zero
+  value does not say that a round of this issue is missing.
 - Duration: earliest ledger `claim.started_at` to latest `completed_at` among the rounds
   that have both, `null` (unknown) when none does; `duration_rounds_timed` says how many.
   A claim recovered after an abandoned one reports the latest claim's start (deduced from
@@ -68,7 +83,10 @@ source.
   coordinator/sub-agent split is not implemented in `review_rounds.py`; whether a rollout
   carries enough to make it is unknown. A class with no readable log is `null`
   (unknown), never 0; sub-agent logs not found under that path are not counted, so a
-  sub-agent total is a lower bound.
+  sub-agent total is a lower bound. `unreadable_logs` is one count over all classes: a class
+  that has some unreadable logs is a lower bound too. Whether an older Claude host wrote
+  sub-agent records into the main log, which would then be counted as coordinator, is
+  unknown.
 - Output holds counts only: no claim or proof identifier, prompt or log content.
 
 ## Observation window
@@ -232,7 +250,12 @@ mechanical check distinguishes a partial from a full review; the merge gate and 
 format are unchanged. The rule is in `AGENTS.md#R9` (b), `skills/merge-pr/SKILL.md` and
 `skills/review-pr/SKILL.md`. The partial and full review times quoted above are one
 observation each; the effect of this extension on the number of rounds is unknown and is
-not counted on this page.
+not counted on this page. The only figure on what giving up the extra full look costs is
+the one in "Limits" (one of 11 full re-reviews after the correction of remarks caught an
+old defect); it comes from that section, written before this extension, and is not
+re-counted for it. The commit range and the previous round's remarks that the packet
+carries are declarations of the coordinator, not checked against the bytes (see
+`skills/review-pr/SKILL.md`).
 
 ## Limits
 
@@ -312,9 +335,13 @@ Not coded yet:
 Decision: PAT-ADR-0021 (read it with `foundry_cli.py query adr PAT-ADR-0021`). Command:
 `routing carry-review-proof --issue <ID> --root <ROOT> --base <NEW-BASE-SHA> --from-base
 <OLD-BASE-SHA> --from-diff-hash <OLD-DIFF-HASH>` (`main`, `tooling/foundry/routing.py`);
-the checks are `AcceptanceProofStore.carry` in that file and run at carry time, while the
-review ledger lock is held. All of them must hold; otherwise the command raises
-`RoutingConfigError` and writes nothing, and a full review stays required:
+the checks are `AcceptanceProofStore.carry` in that file and run at carry time. Condition
+1 is checked first, before the review ledger lock is taken
+(`ReviewDeduplicator.validated_completed_proof_binding`, then the criteria digest); the
+lock is then held for conditions 2 to 6, and under it the ledger entry is read again and
+must still name the original proof. All of them must hold; otherwise the command raises
+`RoutingConfigError` and writes nothing, and a full review stays required. `--base` is the
+PR's base SHA as read on the code host, the one `issue merge` uses:
 
 1. The original proof is terminal in the ledger, for the same issue, `quality=mergeable`
    and every criterion `pass` (`ReviewDeduplicator.validated_completed_proof_binding`),
@@ -323,15 +350,18 @@ review ledger lock is held. All of them must hold; otherwise the command raises
    pairs of the proof).
 2. `--from-base` is the base recorded in the original proof, and the diff recomputed
    from that base to the head recorded in the proof has the hash `--from-diff-hash`.
-3. The old base is an ancestor of the new base, and the new base is an ancestor of the
-   current head.
+3. The new base differs from `--from-base` (with an unchanged base there is no
+   integration of the main branch, so nothing is carried even if the head moved to the
+   same tree); the old base is an ancestor of the new base, and the new base is an
+   ancestor of the current head.
 4. The tree of the current head is exactly the tree printed by `git merge-tree
    --write-tree` of the old reviewed head with the new base, which must be conflict free.
 5. No path changed by the PR (`old base...old head`) is changed by the main branch
    (`old base` to `new base`); renames are not followed (`--no-renames`), so both
    paths count.
 6. The diff of the current head against the new base, computed by the same `git_diff`
-   as every review, has the hash `--from-diff-hash`. This byte identity of the reviewed
+   as every review on the head read under the lock (`git_diff(root, base, new_head)`, not
+   on a head that could move meanwhile), has the hash `--from-diff-hash`. This byte identity of the reviewed
    diff is checked, not deduced from conditions 1 to 5: they do not imply it when the
    recorded base is not an ancestor of the reviewed head, so a different hash is refused.
 
@@ -345,7 +375,17 @@ proof identifier in that entry's `carried` list (`ReviewDeduplicator` record,
 `valid_for_merge` accepts it through its existing checks, and a later `claim-review` of
 that hash with the new coordinates is deduplicated. The command touches neither the
 original proof file, nor the escalation state, nor the merge gate. Repeating the same
-command writes nothing and prints `"carried": false`.
+command writes nothing and prints `"carried": false`; that replay path also checks that
+`--from-base` equals the base recorded in the `carried_from` of the carried proof, and
+recomputes the diff on the head read under the lock.
+
+A proof carrying `carried_from` is accepted by the Linear projection
+(`LinearTracker._validate_acceptance_projection`), by `execution_receipts.review_receipt`
+and by `evidence_plane._review_evidence` (optional key, closed four-key shape). The merge
+gate asks for a proof only when the criteria are not all checked, or when the adapter sets
+`delivery_receipt_supported` and the issue has a binding (`merge` in
+`tooling/foundry/issue.py`); the context of PAT-ADR-0021 states it without these
+conditions, and the ADR is not edited here.
 
 What this does not cover: a conflict resolution, an edit after the integration, a
 change of the issue criteria, or a main branch change to a file of the PR. Tests:

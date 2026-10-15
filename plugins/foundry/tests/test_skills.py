@@ -294,7 +294,7 @@ def test_intake_points_to_the_standing_authorization_of_the_four_writes():
 def test_merge_pr_writes_the_per_round_pr_description_line_format():
     text = _skill_text("merge-pr")
     assert ("round <N>; <validated|blocked>; follows <first|blocking|remarks>; "
-            "<K> remarks deferred, follow-up <ISSUE-ID|none>") in text
+            "review <full|partial>; <K> remarks deferred, follow-up <ISSUE-ID|none>") in text
 
 
 def test_open_pr_cites_the_follow_up_issue_in_the_description():
@@ -460,3 +460,9 @@ def test_release_freeze_helper_prints_the_frozen_entry_and_writes_nothing():
     )
     assert missing.returncode != 0
     assert open(history, "rb").read() == before
+
+
+def test_open_pr_and_merge_pr_state_the_changelog_fragment_rule():
+    for name in ("open-pr", "merge-pr"):
+        text = _flat(_skill_text(name))
+        assert "changelog.d/<ISSUE-ID>.md" in text and "## Unreleased" in text, name

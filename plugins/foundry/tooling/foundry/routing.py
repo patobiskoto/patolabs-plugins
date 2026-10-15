@@ -776,6 +776,7 @@ def git_diff(
 def _git_run(root: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args], cwd=_project_root(root), capture_output=True, text=True,
+        errors="surrogateescape",
     )
 
 
@@ -1077,6 +1078,9 @@ class ReviewDeduplicator:
         except ValueError:
             return False
         return parsed.tzinfo is not None
+
+    # Public name for read-only reporters (``review_rounds``); same behaviour.
+    valid_utc_timestamp = _valid_utc_timestamp
 
     def _validate_claim_publication(self, record: Mapping[str, object]) -> None:
         publication = record.get("claim_publication")
@@ -2114,6 +2118,9 @@ class AcceptanceProofStore:
             raise RoutingConfigError("preuve AC malformée ; refus fermé.")
         return proof
 
+    # Public name for read-only reporters (``review_rounds``); same behaviour.
+    validated_proof = _validated_proof
+
     def _reuse_or_write_canonical(self, proof: dict) -> tuple[Path, bool]:
         """Return a pre-crash proof only when it is byte-for-byte canonical."""
         marker = self.directory / proof["proof_id"]
@@ -2223,9 +2230,9 @@ class AcceptanceProofStore:
         escalation state and the merge gate are never touched.  A new append-only
         proof bound to the new exact head/base/diff is written, and the review
         deduplication ledger entry of that diff hash is rebound to the new
-        coordinates (the previous ones are kept in ``carried``).  The reviewed
-        content is the PR's own files, so with every condition below holding the diff
-        bytes are identical; a different diff hash is therefore refused, not carried.
+        coordinates (the previous ones are kept in ``carried``).  The final diff is
+        recomputed on the frozen head and compared with the reviewed hash, so the
+        identity of the diff bytes is verified, not deduced from the conditions.
         """
         for name, value in (("base", base), ("base d'origine", from_base)):
             if not self._is_lower_hex(value, 40):
@@ -2264,7 +2271,11 @@ class AcceptanceProofStore:
                         "head": new_head, "diff_hash": from_diff_hash, "base": base}):
                 # Replay of a rebinding already done: nothing to write, but the diff
                 # must still be the reviewed bytes.
-                if review_diff_hash(git_diff(project_root, base)) != from_diff_hash:
+                if original["carried_from"]["base"] != from_base:
+                    raise RoutingConfigError(
+                        "report de preuve AC : la base d'origine ne correspond pas à la preuve."
+                    )
+                if review_diff_hash(git_diff(project_root, base, new_head)) != from_diff_hash:
                     raise RoutingConfigError(
                         "report de preuve AC : le diff a changé ; relecture complète requise."
                     )
@@ -2289,7 +2300,9 @@ class AcceptanceProofStore:
                 raise RoutingConfigError(
                     "report de preuve AC : le diff d'origine ne se recalcule pas à l'identique."
                 )
-            if new_head == old_head and base == from_base:
+            if base == from_base:
+                # No integration of the main branch: nothing for PAT-ADR-0021 to carry,
+                # even when the head moved to the same tree.
                 raise RoutingConfigError("report de preuve AC : rien à reporter.")
             if not _git_is_ancestor(project_root, from_base, base):
                 raise RoutingConfigError(
@@ -2328,7 +2341,7 @@ class AcceptanceProofStore:
                     "report de preuve AC : la branche principale modifie des fichiers de la "
                     "PR ; relecture complète requise."
                 )
-            if review_diff_hash(git_diff(project_root, base)) != from_diff_hash:
+            if review_diff_hash(git_diff(project_root, base, new_head)) != from_diff_hash:
                 raise RoutingConfigError(
                     "report de preuve AC : le diff a changé ; relecture complète requise."
                 )
@@ -2681,8 +2694,8 @@ def main(
     rounds_report.add_argument("--codex-session", action="append", default=[],
                                help="Codex rollout log (coordinator/sub-agent split unknown)")
     rounds_report.add_argument("--repository", help="repo namespace; defaults to origin URL")
-    rounds_report.add_argument("--root")
-    rounds_report.add_argument("--json", action="store_true")
+    rounds_report.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
+    rounds_report.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )

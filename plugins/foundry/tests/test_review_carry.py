@@ -15,6 +15,7 @@ from foundry.routing import (
     RoutingConfigError,
     acceptance_criteria,
     git_diff,
+    _git_changed_paths,
     git_head,
     review_diff_hash,
 )
@@ -35,6 +36,16 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _commit_staged(root: Path, message: str) -> str:
+    _git(root, "commit", "-m", message)
+    return _git(root, "rev-parse", "HEAD")
+
+
+def _make_executable(root: Path) -> None:
+    (root / "b.txt").chmod(0o755)
+    _git(root, "add", "b.txt")
+
+
 def _commit(root: Path, name: str, text: str, message: str) -> str:
     (root / name).write_text(text, encoding="utf-8")
     _git(root, "add", name)
@@ -43,9 +54,10 @@ def _commit(root: Path, name: str, text: str, message: str) -> str:
 
 
 class Scenario:
-    def __init__(self, tmp_path: Path, *, quality: str = "mergeable", verdict: str = "pass"):
+    def __init__(self, tmp_path: Path, *, quality: str = "mergeable", verdict: str = "pass",
+                 pr_change=None):
         self.root = tmp_path / "repo"
-        self.root.mkdir()
+        self.root.mkdir(parents=True)
         self.state = tmp_path / "state"
         _git(self.root, "init", "-b", "main")
         lines = "".join(f"line {n}\n" for n in range(1, 21))
@@ -58,6 +70,9 @@ class Scenario:
             encoding="utf-8",
         )
         _git(self.root, "commit", "-am", "feature change")
+        if pr_change is not None:
+            pr_change(self.root)
+            _git(self.root, "commit", "-m", "feature extra change")
         self.old_head = git_head(self.root)
         diff = git_diff(self.root, self.old_base)
         self.old_hash = review_diff_hash(diff)
@@ -82,7 +97,10 @@ class Scenario:
         return self.new_base
 
     def merge_main(self) -> None:
-        _git(self.root, "merge", "--no-edit", "main")
+        self.merge_branch("main")
+
+    def merge_branch(self, branch: str) -> None:
+        _git(self.root, "merge", "--no-edit", branch)
 
     def carry(self, *, body: str = BODY, base: str | None = None, from_base: str | None = None):
         return AcceptanceProofStore(REPOSITORY, self.state).carry(
@@ -118,7 +136,7 @@ def test_clean_integration_of_other_files_carries_the_proof(tmp_path):
     new_head = git_head(scenario.root)
     new_diff = git_diff(scenario.root, scenario.new_base)
     new_hash = review_diff_hash(new_diff)
-    # The reviewed content is the PR's own files: the diff bytes are identical.
+    # ``carry`` recomputed the final diff on the frozen head: the bytes are identical.
     assert new_hash == scenario.old_hash
     assert new_head != scenario.old_head
     assert result["diff_hash"] == new_hash
@@ -173,7 +191,9 @@ def test_a_conflicting_integration_is_refused(tmp_path):
         cwd=scenario.root, capture_output=True, text=True,
     )
     assert result.returncode != 0
-    assert "CONFLICT" in result.stdout, result.stderr + result.stdout
+    # Locale-independent: an unmerged index entry exists (stage 1 to 3), unlike a
+    # translated "CONFLICT" message.
+    assert _git(scenario.root, "ls-files", "-u"), result.stderr + result.stdout
     (scenario.root / "a.txt").write_text("resolved by hand\n", encoding="utf-8")
     _git(scenario.root, "add", "a.txt")
     _git(scenario.root, "commit", "--no-edit")
@@ -209,19 +229,153 @@ def test_changed_issue_criteria_are_refused(tmp_path):
 
 
 def test_an_old_base_that_is_not_an_ancestor_of_the_new_base_is_refused(tmp_path):
-    scenario = _clean_integration(tmp_path)
-    _git(scenario.root, "checkout", "--orphan", "unrelated")
-    _git(scenario.root, "rm", "-rf", ".")
-    unrelated = _commit(scenario.root, "z.txt", "z\n", "unrelated root")
+    # Every other condition holds: the new base has the same content as the old one plus a
+    # file of its own, and HEAD is the clean integration of it.  Only the ancestry of the
+    # old base is wrong (the new base is a sibling commit, not a descendant).
+    scenario = Scenario(tmp_path)
+    _git(scenario.root, "checkout", "-b", "sibling", f"{scenario.old_base}~1")
+    _commit(scenario.root, "c.txt", "c\n", "sibling c")
+    sibling = _commit(scenario.root, "d.txt", "d\n", "sibling d")
     _git(scenario.root, "checkout", "feature")
-    with pytest.raises(RoutingConfigError, match="ancêtre"):
-        scenario.carry(base=unrelated)
+    scenario.merge_branch("sibling")
+    assert subprocess.run(
+        ["git", "merge-base", "--is-ancestor", scenario.old_base, sibling],
+        cwd=scenario.root,
+    ).returncode == 1
+    with pytest.raises(RoutingConfigError, match="ancêtre de la nouvelle"):
+        scenario.carry(base=sibling)
+
+
+def test_a_new_base_that_is_not_an_ancestor_of_head_is_refused(tmp_path):
+    scenario = Scenario(tmp_path)
+    scenario.advance_main("b.txt", "b changed on main\n")  # never merged into the PR
+    with pytest.raises(RoutingConfigError, match="n'est pas ancêtre de HEAD"):
+        scenario.carry()
+
+
+def test_an_unchanged_base_is_refused_even_when_head_has_the_same_tree(tmp_path):
+    scenario = Scenario(tmp_path)
+    _git(scenario.root, "commit", "--allow-empty", "-m", "same tree")
+    with pytest.raises(RoutingConfigError, match="rien à reporter"):
+        scenario.carry()
+
+
+def test_a_rebase_onto_the_new_base_with_the_same_tree_is_carried(tmp_path):
+    scenario = Scenario(tmp_path)
+    scenario.advance_main("b.txt", "b changed on main\n")
+    _git(scenario.root, "rebase", "main")
+    assert git_head(scenario.root) != scenario.old_head
+    result = scenario.carry()
+    assert result["carried"] is True
+    assert result["diff_hash"] == scenario.old_hash
+
+
+def test_a_pr_renaming_a_file_is_carried(tmp_path):
+    scenario = Scenario(tmp_path, pr_change=lambda root: _git(root, "mv", "b.txt", "b2.txt"))
+    scenario.advance_main("c.txt", "c changed on main\n")
+    scenario.merge_main()
+    assert scenario.carry()["diff_hash"] == scenario.old_hash
+
+
+def test_main_renaming_a_file_the_pr_changed_is_refused(tmp_path):
+    scenario = Scenario(tmp_path)
+    _git(scenario.root, "checkout", "main")
+    _git(scenario.root, "mv", "a.txt", "renamed.txt")
+    scenario.new_base = _commit_staged(scenario.root, "main renames a")
+    _git(scenario.root, "checkout", "feature")
+    scenario.merge_main()  # git follows the rename: clean integration
+    with pytest.raises(RoutingConfigError, match="fichiers"):
+        scenario.carry()
+
+
+def test_a_mode_change_is_carried_and_a_mode_change_on_main_of_a_pr_file_is_refused(tmp_path):
+    scenario = Scenario(tmp_path, pr_change=_make_executable)
+    scenario.advance_main("c.txt", "c changed on main\n")
+    scenario.merge_main()
+    assert scenario.carry()["diff_hash"] == scenario.old_hash
+
+    other = Scenario(tmp_path / "other", pr_change=_make_executable)
+    _git(other.root, "checkout", "main")
+    _make_executable(other.root)
+    other.new_base = _commit_staged(other.root, "main chmod b")
+    _git(other.root, "checkout", "feature")
+    other.merge_main()
+    with pytest.raises(RoutingConfigError, match="fichiers"):
+        other.carry()
+
+
+def test_a_submodule_pointer_change_is_carried(tmp_path):
+    gitlink = "160000," + "a" * 40 + ",vendor/lib"
+    scenario = Scenario(
+        tmp_path, pr_change=lambda root: _git(root, "update-index", "--add", "--cacheinfo", gitlink),
+    )
+    scenario.advance_main("c.txt", "c changed on main\n")
+    scenario.merge_main()
+    assert b"160000" in git_diff(scenario.root, scenario.new_base)
+    assert scenario.carry()["diff_hash"] == scenario.old_hash
+
+
+def test_a_binary_file_is_carried(tmp_path):
+    def binary(root):
+        (root / "blob.bin").write_bytes(bytes(range(256)) + b"\x00\xff")
+        _git(root, "add", "blob.bin")
+
+    scenario = Scenario(tmp_path, pr_change=binary)
+    scenario.advance_main("c.txt", "c changed on main\n")
+    scenario.merge_main()
+    assert b"GIT binary patch" in git_diff(scenario.root, scenario.new_base)
+    assert scenario.carry()["diff_hash"] == scenario.old_hash
+
+
+def test_an_already_carried_proof_is_carried_again_on_a_later_base(tmp_path):
+    scenario = _clean_integration(tmp_path)
+    first = scenario.carry()
+    first_base = scenario.new_base
+    scenario.advance_main("c.txt", "c changed on main\n")
+    scenario.merge_main()
+    second = scenario.carry(from_base=first_base)
+    assert second["carried"] is True
+    assert second["carried_from"] == first["proof_id"]
+    assert second["proof_id"] != first["proof_id"]
+    # The replay of the second carry is idempotent and still checks --from-base.
+    assert scenario.carry(from_base=first_base)["carried"] is False
+    with pytest.raises(RoutingConfigError, match="base d'origine"):
+        scenario.carry(from_base=scenario.new_base)
+
+
+def test_a_non_utf8_path_does_not_raise_a_decode_error(tmp_path):
+    scenario = Scenario(tmp_path)
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=scenario.root, input=b"x\n",
+        capture_output=True, check=True,
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "update-index", "--index-info"], cwd=scenario.root, check=True,
+        input=f"100644 {blob}\t".encode() + b"\xff-name.txt\n",
+    )
+    _git(scenario.root, "commit", "-m", "non utf-8 name")
+    paths = _git_changed_paths(scenario.root, scenario.old_head, "HEAD")
+    assert len(paths) == 1 and next(iter(paths)).endswith("-name.txt")
 
 
 def test_a_wrong_from_base_is_refused(tmp_path):
     scenario = _clean_integration(tmp_path)
     with pytest.raises(RoutingConfigError, match="base d'origine"):
         scenario.carry(from_base=scenario.new_base)
+
+
+@pytest.mark.parametrize("key", ["head", "coordinates"])
+def test_a_ledger_record_without_head_or_coordinates_is_a_closed_refusal(tmp_path, key):
+    # Not a raw KeyError: the binding check refuses first, before any write.
+    scenario = _clean_integration(tmp_path)
+    marker = ReviewDeduplicator(REPOSITORY, scenario.state).directory / scenario.old_hash
+    record = json.loads(marker.read_text(encoding="utf-8"))
+    del record[key]
+    marker.write_text(json.dumps(record), encoding="utf-8")
+    before = scenario.snapshot()
+    with pytest.raises(RoutingConfigError):
+        scenario.carry()
+    assert scenario.snapshot() == before
 
 
 def test_replay_is_idempotent_and_preserves_every_existing_byte(tmp_path):
@@ -249,10 +403,11 @@ def test_a_changed_diff_hash_is_refused(tmp_path, monkeypatch):
     from foundry import routing
 
     original = routing.git_diff
+    new_head = git_head(scenario.root)
     monkeypatch.setattr(
         routing, "git_diff",
         lambda root, base, head="HEAD": original(root, base, head) + (
-            b"" if head != "HEAD" else b"x"),
+            b"x" if head == new_head else b""),
     )
     with pytest.raises(RoutingConfigError, match="diff a changé"):
         real(REPOSITORY, scenario.state).carry(

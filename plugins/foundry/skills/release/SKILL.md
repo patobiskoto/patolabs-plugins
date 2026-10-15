@@ -46,7 +46,10 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 
 ## 2. Release branch
-Start the release ticket through `foundry:start-issue`, then in the working tree:
+Start the release ticket through `foundry:start-issue`, then in the working tree. Order
+of operations: bump the manifests; assemble and paste the CHANGELOG section; `git rm` the
+fragments; write the release note and the migration guide (minor); update the READMEs;
+compute the freeze entry last.
 - bump `version` in both `plugins/foundry/.claude-plugin/plugin.json` and
   `plugins/foundry/.codex-plugin/plugin.json` (equal, plain semver, no `+` suffix);
 - open `## <version> — <date>` (the date is the publication date in Europe/Paris) between the
@@ -58,15 +61,20 @@ python3 plugins/foundry/scripts/changelog_assemble.py <version> <date>
   It is read-only (`assemble`, `scripts/changelog_assemble.py`): it prints the heading, a blank
   line, then the fragments byte-identical in issue number descending order. Paste it into
   `CHANGELOG.md`, put a header paragraph naming the behaviour changes between the heading and
-  the entries, and delete the fragments (`git rm plugins/foundry/changelog.d/<ISSUE-ID>.md`) in
+  the first entry, with one blank line on each side of it (and one blank line between the
+  last entry and the previous section's heading), and delete the fragments (`git rm plugins/foundry/changelog.d/<ISSUE-ID>.md`) in
   the same PR. `changelog.d/README.md` stays. Leave `## Unreleased` empty. The tool was run
   once on a copy of the worktree (`changelog.d` of PAT-210) and printed the entries moved out
-  of `## Unreleased`. The whole sequence (version `9.9.9`, paste, delete the fragments, leaving only
-  `README.md`) was also run once on a copy: `pytest -q tests/test_changelog_assemble.py
-  tests/test_release_contract.py -m "not historical_fixture"` gave 15 passed, 3 failed; the
-  three failures are the manifest-bump and freeze-entry checks of `test_release_contract.py`
-  (steps of this list the copy did not do, `KeyError: '9.9.9'` among them), none in
-  `tests/test_changelog_assemble.py`, whose shipped-fragments test accepts zero fragments;
+  of `## Unreleased`. The CHANGELOG steps only (version `9.9.9`, header paragraph, paste,
+  delete the fragments leaving `README.md`) were run once on a copy (PAT-207): in
+  `pytest -q tests/test_changelog_assemble.py tests/test_release_contract.py -m "not
+  historical_fixture"` only three tests of `test_release_contract.py` failed:
+  `test_current_version_is_declared_once_and_both_manifests_carry_it`,
+  `test_published_releases_stay_frozen_except_declared_exceptions` (`KeyError: '9.9.9'`) and
+  `test_frozen_release_check_reports_a_rewrite_of_a_version_without_exception`. They fail
+  because that copy did not bump the manifests or add the freeze entry (deduced from the
+  tests' subjects); none failed in `tests/test_changelog_assemble.py`, whose shipped-fragments
+  test accepts zero fragments;
 - for a minor, write the release note and the migration guide (writing rules in step 3).
   `test_current_release_satisfies_the_requirements_of_its_kind` requires: the release note
   `docs/release-<version>.md` names the version, "Claude Code" and "Codex"; the migration
@@ -81,7 +89,9 @@ python3 plugins/foundry/scripts/changelog_assemble.py <version> <date>
   section and both manifest bumps;
 - in both `README.md` files (repository root and `plugins/foundry/`), say what the PR does
   and that the tag, the host installation and the loaded-version readback are not done and
-  not claimed;
+  not claimed; also add the new version to the list of release pull requests in the "Release
+  rule" of `plugins/foundry/README.md` and in the comment above `RELEASE_MANIFEST_NAMES` in
+  `scripts/ci_plan.py` (repository root), which both name the versions released so far;
 - compute the freeze entry last, once no frozen page changes any more. Run the helper of
   the release worktree, never the installed plugin copy (it reads the CHANGELOG and docs of
   its own copy, `PLUGIN` in `scripts/release_freeze_entry.py`), from the repository root of

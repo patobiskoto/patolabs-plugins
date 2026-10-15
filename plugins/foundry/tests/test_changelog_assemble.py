@@ -41,6 +41,25 @@ def test_assembly_refuses_malformed_or_missing_fragments(tmp_path):
         assembler.assemble("9.9.9", "2030-01-01", tmp_path)
 
 
+def test_assembly_refuses_several_list_items_in_one_fragment(tmp_path):
+    _write(tmp_path, "PAT-1.md", "- PAT-1: one\n- PAT-1: two\n")
+    with pytest.raises(ValueError, match="more than one list item"):
+        assembler.assemble("9.9.9", "2030-01-01", tmp_path)
+    # an indented sub-list is a continuation of the single item
+    _write(tmp_path, "PAT-1.md", "- PAT-1: one\n  - detail\n")
+    assert assembler.assemble("9.9.9", "2030-01-01", tmp_path).endswith("  - detail\n")
+
+
+@pytest.mark.parametrize("version, date", [
+    ("9.9", "2030-01-01"), ("v9.9.9", "2030-01-01"), ("9.9.9", "2030-1-1"),
+    ("9.9.9", "2030-13-01"), ("9.9.9", "2030-02-30"), ("9.9.9", "01/01/2030"),
+])
+def test_assembly_refuses_a_heading_the_release_contract_would_not_parse(tmp_path, version, date):
+    _write(tmp_path, "PAT-1.md", "- PAT-1: one\n")
+    with pytest.raises(ValueError):
+        assembler.assemble(version, date, tmp_path)
+
+
 def test_shipped_fragments_assemble_and_unreleased_may_be_empty():
     # The release PR deletes every fragment (skills/release/SKILL.md): zero is valid here.
     paths = assembler.fragment_paths()
