@@ -78,7 +78,7 @@ def test_unknown_without_timestamps_or_proofs(tmp_path):
     assert empty["rounds"] is None and empty["outcome"] == "unknown"
     assert empty["validated_rounds"] is None and empty["blocked_rounds"] is None
     text = review_rounds.render(empty)
-    assert f"unknown: no review proof in {tmp_path} for {REPO}" in text
+    assert f"unknown: no non-carried review proof in {tmp_path} for {REPO}" in text
     assert "0 round(s), outcome" not in text
 
 
@@ -117,3 +117,50 @@ def test_cli_json(tmp_path, monkeypatch, capsys):
     _proof(_store(tmp_path), "PAT-1", "a", ["pass"], "mergeable")
     routing.main(["review-rounds", "PAT-1", "--repository", REPO, "--json"])
     assert json.loads(capsys.readouterr().out)["rounds"] == 1
+
+
+def test_only_carried_proofs_is_unknown_rounds_and_says_so(tmp_path):
+    _proof(_store(tmp_path), "PAT-5", "h", ["pass"], "mergeable", carried=True)
+    result = review_rounds.report("PAT-5", REPO, state_dir=tmp_path)
+    assert result["rounds"] is None and result["carried_proofs"] == 1
+    text = review_rounds.render(result)
+    assert "no non-carried review proof" in text and "carried proofs 1" in text
+
+
+def test_issue_id_is_compared_case_sensitively(tmp_path):
+    _proof(_store(tmp_path), "PAT-6", "i", ["pass"], "mergeable")
+    assert review_rounds.report("pat-6", REPO, state_dir=tmp_path)["rounds"] is None
+    assert review_rounds.report("PAT-6", REPO, state_dir=tmp_path)["rounds"] == 1
+
+
+def test_unreadable_proofs_are_counted_for_every_issue_of_the_repository(tmp_path):
+    store = _store(tmp_path)
+    _proof(store, "PAT-7", "j", ["pass"], "mergeable")
+    (store.directory / ("0" * 64)).write_text("not json")
+    assert review_rounds.report("PAT-7", REPO, state_dir=tmp_path)["unreadable_proofs"] == 1
+    assert review_rounds.report("PAT-8", REPO, state_dir=tmp_path)["unreadable_proofs"] == 1
+
+
+def test_json_tokens_carry_their_scope_marker(tmp_path):
+    result = review_rounds.report("PAT-1", REPO, state_dir=tmp_path)
+    assert result["tokens"]["scope"] == review_rounds.TOKENS_SCOPE
+
+
+def test_codex_rollout_is_reported_unclassified_and_render_prints_tokens(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("\n".join([
+        json.dumps({"type": "session_meta", "payload": {"cwd": "/w", "session_id": "s1"}}),
+        json.dumps({"type": "turn_context", "payload": {"model": "gpt-test-v2"}}),
+        json.dumps({"type": "token_usage_record", "timestamp": "2026-09-11T10:00:00Z",
+                    "payload": {"thread_token_usage": {
+                        "input_tokens": 3, "cached_input_tokens": 2, "cache_write_input_tokens": 3,
+                        "output_tokens": 4, "reasoning_output_tokens": 3}}}),
+    ]))
+    result = review_rounds.report("PAT-1", REPO, state_dir=tmp_path, codex_sessions=[rollout])
+    assert result["tokens"]["codex_unclassified"] == {
+        "input": 1, "cache_read": 2, "cache_write": 3, "output": 4}
+    assert result["tokens"]["coordinator"] is None and result["tokens"]["subagents"] is None
+    text = review_rounds.render(result)
+    assert (f"tokens ({review_rounds.TOKENS_SCOPE}) codex_unclassified: "
+            "input 1, cache_read 2, cache_write 3, output 4") in text
+    assert "coordinator: unknown" in text

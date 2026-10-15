@@ -18,6 +18,8 @@ from foundry import registry
 from foundry.cost_attribution import BILLING_TOKEN_KEYS, CostAttributionError, read_host_log
 from foundry.routing import AcceptanceProofStore, ReviewDeduplicator, RoutingConfigError
 
+TOKENS_SCOPE = "all logs passed, not filtered by issue or round"
+
 _TOKEN_NAMES = {
     "input_tokens": "input",
     "cached_input_tokens": "cache_read",
@@ -42,7 +44,7 @@ def _ledger_times(ledger_dir: Path, diff_hash: str) -> tuple[str | None, str | N
         return None, None
     claim = record.get("claim")
     started = claim.get("started_at") if isinstance(claim, dict) else None
-    valid = ReviewDeduplicator._valid_utc_timestamp
+    valid = ReviewDeduplicator.valid_utc_timestamp
     return (started if valid(started) else None,
             record.get("completed_at") if valid(record.get("completed_at")) else None)
 
@@ -55,7 +57,7 @@ def _rounds(issue: str, repository: str, state_dir) -> tuple[list[dict], int, in
         if store.directory.is_dir() else []
     for marker in markers:
         try:
-            proof = store._validated_proof(marker)
+            proof = store.validated_proof(marker)
         except RoutingConfigError:
             unreadable += 1
             continue
@@ -109,7 +111,7 @@ def _tokens(files: list[tuple[Path, str, str]]) -> dict:
             for key in BILLING_TOKEN_KEYS:
                 bucket[_TOKEN_NAMES[key]] += row["tokens"][key]
         totals[klass] = bucket
-    return {**totals, "unreadable_logs": unreadable}
+    return {**totals, "unreadable_logs": unreadable, "scope": TOKENS_SCOPE}
 
 
 def _data_dir(state_dir) -> str:
@@ -145,7 +147,7 @@ def render(result: dict) -> str:
         return "unknown" if value is None else value
 
     if result["rounds"] is None:
-        head = (f"issue {result['issue']}: unknown: no review proof in {result['data_dir']} "
+        head = (f"issue {result['issue']}: unknown: no non-carried review proof in {result['data_dir']} "
                 f"for {result['repository']}, outcome {result['outcome']}")
     else:
         head = f"issue {result['issue']}: {result['rounds']} round(s), outcome {result['outcome']}"
@@ -159,7 +161,7 @@ def render(result: dict) -> str:
                      f"generation {r['generation']}")
     for klass in ("coordinator", "subagents", "codex_unclassified"):
         value = result["tokens"][klass]
-        lines.append(f"tokens (all logs passed, not filtered by issue or round) {klass}: " + ("unknown" if value is None else
+        lines.append(f"tokens ({result['tokens']['scope']}) {klass}: " + ("unknown" if value is None else
                      ", ".join(f"{k} {v}" for k, v in value.items())))
     lines.append(f"unreadable logs {result['tokens']['unreadable_logs']}")
     return "\n".join(lines)

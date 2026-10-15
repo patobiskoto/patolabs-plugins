@@ -3,7 +3,7 @@
 Documentation status: updated for PAT-202: CLI inputs, receipt vocabulary,
 publication bound, native evidence, plugin selection, guarded paths and restitution;
 follow-up corrections cover concrete execution paths, terminal stops and reader diagnostics.
-Updated for PAT-203: the report budget written into the reviewer packet by `prepare`
+Updated for PAT-203: the report budget written into the reviewer message by `prepare`
 (`report_budget`, `REPORT_MARGIN_PERCENT`).
 PAT-ADR-0020 is accepted and supersedes PAT-ADR-0019, by the maintainer's explicit
 decision recorded on PAT-202 after its merge. The earlier implementation conformed to
@@ -55,8 +55,12 @@ The budget is written by code into the reviewer message as the maximum UTF-8 siz
 `json.dumps(report, sort_keys=True, ensure_ascii=False)`; the coordinator passes nothing
 by hand. Observed size of the final report is unknown before launch and no host enforces
 an output bound, so the budget is a request, not a guarantee: an overbound comment is still
-refused at `record` (`bounded_comment`). Observation values and hook route length are
-estimated (deduced, not observed); the margin absorbs them.
+refused at `record` (`bounded_comment`). The hook route length is exact: `record` refuses a
+hook context whose `CLAUDE_STABLE_FIELDS` differ from the attempt's (`observed Claude hook
+route divergent`), and `terminal_receipt` publishes those same fields (`stable_hook_route`). The observed `model`, `effort` and `profile_provenance`, the tool name and the
+return status are unbounded strings that the estimate leaves empty or null: that the margin
+(`room - budget`) absorbs them is deduced, and holds only while they stay shorter than it.
+The estimate uses a timestamp with microseconds, the longer form of `isoformat()`.
 Injected fixture ports model complete history; they do not qualify another native provider.
 
 `prepare` requires a merged, closed PR and exact JSON coordinates with keys

@@ -191,9 +191,16 @@ def _review_evidence(value: object) -> dict[str, Any]:
     try:
         if not isinstance(value, Mapping):
             raise EvidencePlaneError("review proof is invalid")
+        # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
         _closed(value, frozenset({
             "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
-        }), "review proof")
+        } | ({"carried_from"} if "carried_from" in value else set())), "review proof")
+        if "carried_from" in value:
+            carried = value["carried_from"]
+            if not isinstance(carried, Mapping):
+                raise EvidencePlaneError("review proof is invalid")
+            _closed(carried, frozenset({"proof_id", "head", "base", "diff_hash"}),
+                    "review carried_from")
         proof = dict(value)
         proof_id = _digest_value(proof.pop("proof_id", None), "review proof id")
         if proof.get("schema_version") != 1 or _digest(proof) != proof_id:

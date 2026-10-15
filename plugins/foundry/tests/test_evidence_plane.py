@@ -120,6 +120,17 @@ def verify(value, **overrides):
     return evidence.verify_evidence_envelope(value, **values)
 
 
+CARRIED_FROM = {"proof_id": "9" * 64, "head": "8" * 40, "base": "7" * 40, "diff_hash": DIFF}
+
+
+def test_a_carried_review_proof_is_published_and_a_malformed_one_is_not():
+    value = envelope(review_proof=review_proof(carried_from=CARRIED_FROM))
+    assert value["evidence"]["review"]["verdict"] == "approved"
+    assert verify(value)["decision"] == "GO"
+    bad = envelope(review_proof=review_proof(carried_from={"proof_id": "9" * 64}))
+    assert bad["evidence"]["review"]["state"] != "available"
+
+
 def test_complete_exact_envelope_is_advisory_go_and_binds_every_required_fact():
     value = envelope()
 

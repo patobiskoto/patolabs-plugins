@@ -7,6 +7,7 @@ hand-written header paragraph of a release goes between the heading and the entr
 writes nothing: the release step pastes it into ``CHANGELOG.md`` and deletes the fragments.
 """
 import argparse
+import datetime
 import re
 import sys
 from pathlib import Path
@@ -14,6 +15,9 @@ from pathlib import Path
 PLUGIN = Path(__file__).resolve().parents[1]
 FRAGMENTS = PLUGIN / "changelog.d"
 NAME = re.compile(r"^([A-Za-z]+)-(\d+)\.md$")
+# The published heading shape of tests/test_release_contract.py (PUBLISHED_HEADING).
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def fragment_paths(directory=FRAGMENTS):
@@ -28,12 +32,26 @@ def fragment_paths(directory=FRAGMENTS):
     return [path for _, _, path in sorted(found)]
 
 
+def _check_heading(version, date):
+    if not VERSION.fullmatch(version):
+        raise ValueError(f"version must be X.Y.Z: {version}")
+    try:
+        if not DATE.fullmatch(date):
+            raise ValueError
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        raise ValueError(f"date must be a valid YYYY-MM-DD: {date}") from None
+
+
 def assemble(version, date, directory=FRAGMENTS):
+    _check_heading(version, date)
     entries = []
     for path in fragment_paths(directory):
         text = path.read_text(encoding="utf-8")
         if not text.startswith("- ") or not text.endswith("\n") or text.endswith("\n\n"):
             raise ValueError(f"{path.name}: must be one list item ending in one newline")
+        if any(line.startswith("- ") for line in text.splitlines()[1:]):
+            raise ValueError(f"{path.name}: holds more than one list item")
         entries.append(text)
     if not entries:
         raise ValueError("no changelog fragment to assemble")

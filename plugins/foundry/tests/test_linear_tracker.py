@@ -3037,6 +3037,51 @@ def test_linear_acceptance_projection_refuses_incomplete_or_stale_proof_before_w
     assert len(wire.comments) == before
 
 
+def test_linear_acceptance_projection_accepts_a_carried_proof(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40,
+        base_sha="b" * 40,
+        review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    value = proof("LIN-2", "- [ ] acceptance")
+    value.pop("proof_id")
+    value["carried_from"] = {
+        "proof_id": "e" * 64, "head": "f" * 40, "base": "1" * 40, "diff_hash": "c" * 64,
+    }
+    value["proof_id"] = hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    assert instance.project_acceptance_proof(
+        "LIN-2", "- [ ] acceptance", value, checked=1, project=PROJECT,
+    ) is True
+
+    good = {"proof_id": "e" * 64, "head": "f" * 40, "base": "1" * 40, "diff_hash": "c" * 64}
+    for bad in (
+        {"proof_id": "e" * 64},
+        {**good, "head": "F" * 40},
+        {**good, "base": "1" * 39},
+        {**good, "diff_hash": "z" * 64},
+        {**good, "proof_id": "e" * 63 + "\n"},
+    ):
+        malformed = copy.deepcopy(value)
+        malformed.pop("proof_id")
+        malformed["carried_from"] = bad
+        # Recompute the digest so only the carried_from shape can cause the refusal.
+        malformed["proof_id"] = hashlib.sha256(
+            json.dumps(malformed, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        before = len(wire.comments)
+        with pytest.raises(TrackerConflictError, match="malformed"):
+            instance.project_acceptance_proof(
+                "LIN-2", "- [ ] acceptance", malformed, checked=1, project=PROJECT,
+            )
+        assert len(wire.comments) == before
+
+
 OVERRIDE_PR_URL = "https://github.com/acme/widgets/pull/17"
 OVERRIDE_DIFF = b"override-diff"
 OVERRIDE_DIGEST = hashlib.sha256(OVERRIDE_DIFF).hexdigest()

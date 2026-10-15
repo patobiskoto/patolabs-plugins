@@ -235,9 +235,20 @@ def review_receipt(
     """Project a mergeable Foundry review proof on the exact structured PR."""
     if not isinstance(pr, PullRequest) or type(pr.number) is not int or pr.number < 1:
         raise ReceiptStoreError("invalid_review_pr")
-    if not isinstance(proof, Mapping) or set(proof) != {
-        "schema_version", "proof_id", "issue", "review", "coordinates", "quality",
-    }:
+    base_keys = {"schema_version", "proof_id", "issue", "review", "coordinates", "quality"}
+    # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
+    if not isinstance(proof, Mapping) or set(proof) not in (
+        base_keys, base_keys | {"carried_from"},
+    ) or ("carried_from" in proof and (
+        not isinstance(proof["carried_from"], Mapping)
+        or set(proof["carried_from"]) != {"proof_id", "head", "base", "diff_hash"}
+        or not all(
+            isinstance(proof["carried_from"][key], str)
+            and (_SHA if key in {"head", "base"} else _DIGEST).fullmatch(
+                proof["carried_from"][key]) is not None
+            for key in ("proof_id", "head", "base", "diff_hash")
+        )
+    )):
         raise ReceiptStoreError("incomplete_review_proof")
     proof_id = proof.get("proof_id")
     coordinates = proof.get("coordinates")
