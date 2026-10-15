@@ -12,8 +12,9 @@
   the skills table of `README.md` (new skill row) and the skill page itself, which
   documents the helper; no existing CLI verb, option, configuration key or public
   constant changed. The host commands the skill lists were not run when it was written;
-  the helper was run once on the repository at 1.3.0 and printed the entry already in
-  `tests/fixtures/release-history.json`.
+  the helper was run once from the repository root of the PAT-166 worktree with
+  `python3 plugins/foundry/scripts/release_freeze_entry.py 1.3.0 --date 2026-10-15` and
+  printed the entry already in `tests/fixtures/release-history.json`.
 - PAT-208: a closed Epic stays readable after a native update of one of its nodes that
   changes nothing of substance (PAT-ADR-0023, accepted). The audit still records the native
   version; on read and on done replay, `write.epic_closure_graph_unchanged` accepts a node

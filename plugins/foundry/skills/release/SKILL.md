@@ -3,11 +3,12 @@ name: release
 description: >
   Chains the steps of a Foundry publication: scope, release branch and PR that satisfy the
   release contract (freeze entry included), then three separate STOPs for merge, tag and
-  host update, and the readback record on the release ticket. USE WHEN the user invokes
+  host update (each needs its own explicit agreement), and the readback record on the
+  release ticket. USE WHEN the user invokes
   /foundry:release (Claude Code), $foundry:release (Codex), "publie Foundry", "prépare la
   release", or "release 1.4.0".
 argument-hint: "<RELEASE-ISSUE-ID> <VERSION>"
-allowed-tools: Bash(python3:*), Bash(git:*), Bash(claude:*), Bash(codex:*)
+allowed-tools: Bash(python3:*), Bash(git:*)
 ---
 
 # release — prepare, then stop before every irreversible step
@@ -51,18 +52,34 @@ Start the release ticket through `foundry:start-issue`, then in the working tree
   Europe/Paris) and leave an empty `## Unreleased` above it. The section opens with a
   header paragraph naming the behaviour changes; the entries below are kept byte-identical
   and in order;
-- for a minor, write the release note and the migration guide (writing rules in step 3);
+- for a minor, write the release note and the migration guide (writing rules in step 3).
+  `test_current_release_satisfies_the_requirements_of_its_kind` requires: the release note
+  `docs/release-<version>.md` names the version, "Claude Code" and "Codex"; the migration
+  guide `docs/migration-<version>.md` names the version, contains `~/.config/foundry`, the
+  word "verify", and each of `/plugin marketplace update patolabs`,
+  `/plugin update foundry@patolabs`, `/reload-plugins`, `/foundry:configure`,
+  `/foundry:doctor`, `codex plugin marketplace upgrade patolabs`,
+  `codex plugin remove foundry@patolabs`, `codex plugin add foundry@patolabs`,
+  `$foundry:configure`, `$foundry:doctor` (the test writes the marketplace name `patolabs`;
+  the coordinator checks it against the host's `<marketplace>`); both pages are cited by
+  their path in `plugins/foundry/README.md`. A patch needs neither page, only the CHANGELOG
+  section and both manifest bumps;
 - in both `README.md` files (repository root and `plugins/foundry/`), say what the PR does
   and that the tag, the host installation and the loaded-version readback are not done and
   not claimed;
-- compute the freeze entry last, once no frozen page changes any more:
+- compute the freeze entry last, once no frozen page changes any more. Run the helper of
+  the release worktree, never the installed plugin copy (it reads the CHANGELOG and docs of
+  its own copy, `PLUGIN` in `scripts/release_freeze_entry.py`), from the repository root of
+  the release worktree:
 ```bash
-python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/scripts/release_freeze_entry.py" <version> --date <date>
+python3 plugins/foundry/scripts/release_freeze_entry.py <version> --date <date>
 ```
   It is read-only: it prints the entry computed by `freeze_entry` and `changelog_sections`;
   paste it under `releases` in `tests/fixtures/release-history.json`. It refuses a version
   with no published CHANGELOG section and a date that differs from the section's. It was
-  run once on the repository at 1.3.0 and printed the entry already in the fixture.
+  run once from the repository root of the PAT-166 worktree with
+  `python3 plugins/foundry/scripts/release_freeze_entry.py 1.3.0 --date 2026-10-15` and
+  printed the entry already in the fixture.
 - the PR description gives the documentation status under R5 (`AGENTS.md#R5`) for each
   touched documented artifact, and the CHANGELOG carries its entry.
 
@@ -81,6 +98,12 @@ through `foundry:merge-pr`. Expect several rounds on frozen pages: a false sente
 is "fix before merge" (`AGENTS.md#R9(b)`), never deferred.
 
 ## 5. STOP — merge
+Agreement, for steps 5, 6 and 7: each STOP needs its own explicit agreement from the
+maintainer in this conversation, asked after the result of the previous step is shown and
+waited for. Invoking this skill, an agreement given for another step, or a standing
+instruction phrased generally does not count, unless the maintainer explicitly said it
+covers that step.
+
 Do not merge without the maintainer's explicit agreement in this conversation. Criteria
 that can only be met after the merge (tag, installation, loaded-version readback) are
 merged with the audited `--allow-incomplete-ac --ac-override-reason=<code>` of
@@ -93,20 +116,24 @@ on the merge commit and push it with an explicit refspec, never a bare `git push
 ```bash
 git tag -a foundry-v<version> -m "Foundry <version>" <merge-commit>
 git push origin refs/tags/foundry-v<version>
-git ls-remote --tags origin foundry-v<version>
+git ls-remote --tags origin 'foundry-v<version>' 'foundry-v<version>^{}'
 ```
-The `ls-remote` line is the readback: record the commit it lists.
+`git` stays in `allowed-tools` for the branch work; the tag push is gated by this STOP. For
+an annotated tag, `refs/tags/foundry-v<version>` lists the tag object and
+`refs/tags/foundry-v<version>^{}` lists the commit: record the `^{}` value as the tagged
+commit and compare it with the merge commit.
 
 ## 7. STOP — host update
 Do not update any host without the maintainer's explicit agreement; the update changes the
-installation of the maintainer's machine. Claude Code, then read back:
-```bash
+installation of the maintainer's machine. `claude` and `codex` are not in `allowed-tools`,
+so the host's own permission prompt applies. Claude Code, then read back:
+```text
 claude plugin marketplace update <marketplace>
 claude plugin update foundry@<marketplace> -y
 claude plugin list --json
 ```
 Codex, then read back:
-```bash
+```text
 codex plugin marketplace upgrade <marketplace>
 codex plugin remove foundry@<marketplace>
 codex plugin add foundry@<marketplace>
@@ -124,6 +151,6 @@ version. Then exercise the new verbs of the release read-only with the installed
 
 ## 9. Record on the release ticket
 Write one `edit comment` on the release ticket, using the command of step 1, with: tag and
-commit (from `ls-remote`), listed version per host, installed-manifest version per host,
+commit (the `^{}` line of `ls-remote`), listed version per host, installed-manifest version per host,
 loaded version per host, verbs exercised, and what was not verified. A readback that failed
 or was skipped is written as such, not omitted.

@@ -398,8 +398,33 @@ def test_release_skill_names_every_step_and_every_stop():
     # tag and host-update commands only appear after their own STOP section
     assert raw.index("git tag -a") > raw.index("## 6. STOP — tag")
     assert raw.index("claude plugin update") > raw.index("## 7. STOP — host update")
-    assert raw.index("codex plugin add") > raw.index("## 7. STOP — host update")
+    # (the migration-guide strings of step 2 are not commands: a command starts its line)
+    assert raw.index("\ncodex plugin add") > raw.index("## 7. STOP — host update")
     assert raw.count("git tag -a") == 1 and raw.count("git push origin") == 1
+    # irreversible commands only appear after their own STOP section
+    stops = {"git push origin": "## 6. STOP — tag",
+             "codex plugin remove": "## 7. STOP — host update",
+             "claude plugin marketplace update": "## 7. STOP — host update",
+             "codex plugin marketplace upgrade": "## 7. STOP — host update"}
+    for command, stop in stops.items():
+        assert raw.index("\n" + command) > raw.index(stop), command
+    # each STOP needs its own agreement; claude/codex stay out of allowed-tools
+    assert ("each STOP needs its own explicit agreement from the maintainer in this "
+            "conversation, asked after the result of the previous step is shown and "
+            "waited for") in text
+    assert ("Invoking this skill, an agreement given for another step, or a standing "
+            "instruction phrased generally does not count, unless the maintainer "
+            "explicitly said it covers that step") in text
+    allowed = _allowed_binaries(_frontmatter(raw))
+    assert "claude" not in allowed and "codex" not in allowed, allowed
+    # the freeze helper runs from the release worktree, never the installed plugin copy
+    helper_lines = [ln for ln in raw.splitlines() if "release_freeze_entry.py" in ln
+                    and ln.startswith("python3")]
+    assert helper_lines == ["python3 plugins/foundry/scripts/release_freeze_entry.py "
+                            "<version> --date <date>"]
+    assert "CLAUDE_PLUGIN_ROOT" not in helper_lines[0] and "<foundry-root>" not in helper_lines[0]
+    # annotated tag: both ls-remote patterns, the ^{} value is the tagged commit
+    assert "'foundry-v<version>' 'foundry-v<version>^{}'" in text
     # the skill never writes a marketplace name or a user path
     assert "/Users/" not in raw and "/home/" not in raw
 
