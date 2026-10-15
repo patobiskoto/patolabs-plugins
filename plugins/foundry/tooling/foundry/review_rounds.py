@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from foundry import registry
 from foundry.cost_attribution import BILLING_TOKEN_KEYS, CostAttributionError, read_host_log
 from foundry.routing import AcceptanceProofStore, ReviewDeduplicator, RoutingConfigError
 
@@ -111,6 +112,10 @@ def _tokens(files: list[tuple[Path, str, str]]) -> dict:
     return {**totals, "unreadable_logs": unreadable}
 
 
+def _data_dir(state_dir) -> str:
+    return str(state_dir) if state_dir is not None else registry.data_dir()
+
+
 def report(issue: str, repository: str, *, state_dir=None, claude_sessions=(), codex_sessions=()) -> dict:
     rounds, carried, unreadable = _rounds(issue, repository, state_dir)
     spans = [(r["started_at"], r["completed_at"]) for r in rounds if r["started_at"] and r["completed_at"]]
@@ -119,9 +124,11 @@ def report(issue: str, repository: str, *, state_dir=None, claude_sessions=(), c
     files += [(Path(p), "codex", "codex_unclassified") for p in codex_sessions]
     return {
         "issue": issue,
-        "rounds": len(rounds),
-        "validated_rounds": sum(r["validated"] for r in rounds),
-        "blocked_rounds": sum(r["quality"] == "blocked" for r in rounds),
+        "repository": repository,
+        "data_dir": _data_dir(state_dir),
+        "rounds": len(rounds) if rounds else None,
+        "validated_rounds": sum(r["validated"] for r in rounds) if rounds else None,
+        "blocked_rounds": sum(not r["validated"] for r in rounds) if rounds else None,
         "carried_proofs": carried,
         "unreadable_proofs": unreadable,
         "outcome": ("validated" if rounds and rounds[-1]["validated"] else
@@ -137,8 +144,13 @@ def render(result: dict) -> str:
     def unknown(value):
         return "unknown" if value is None else value
 
-    lines = [f"issue {result['issue']}: {result['rounds']} round(s), outcome {result['outcome']}",
-             f"validated {result['validated_rounds']}, blocked {result['blocked_rounds']}, "
+    if result["rounds"] is None:
+        head = (f"issue {result['issue']}: unknown: no review proof in {result['data_dir']} "
+                f"for {result['repository']}, outcome {result['outcome']}")
+    else:
+        head = f"issue {result['issue']}: {result['rounds']} round(s), outcome {result['outcome']}"
+    lines = [head,
+             f"validated {unknown(result['validated_rounds'])}, blocked {unknown(result['blocked_rounds'])}, "
              f"carried proofs {result['carried_proofs']}, unreadable proofs {result['unreadable_proofs']}",
              f"duration_seconds {unknown(result['duration_seconds'])} "
              f"({result['duration_rounds_timed']} round(s) timed)"]
@@ -147,7 +159,7 @@ def render(result: dict) -> str:
                      f"generation {r['generation']}")
     for klass in ("coordinator", "subagents", "codex_unclassified"):
         value = result["tokens"][klass]
-        lines.append(f"tokens {klass}: " + ("unknown" if value is None else
+        lines.append(f"tokens (all logs passed, not filtered by issue or round) {klass}: " + ("unknown" if value is None else
                      ", ".join(f"{k} {v}" for k, v in value.items())))
     lines.append(f"unreadable logs {result['tokens']['unreadable_logs']}")
     return "\n".join(lines)

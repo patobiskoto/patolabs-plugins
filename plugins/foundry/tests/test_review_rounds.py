@@ -75,8 +75,19 @@ def test_unknown_without_timestamps_or_proofs(tmp_path):
     result = review_rounds.report("PAT-3", REPO, state_dir=tmp_path)
     assert result["duration_seconds"] is None and result["duration_rounds_timed"] == 0
     empty = review_rounds.report("PAT-9", REPO, state_dir=tmp_path)
-    assert empty["rounds"] == 0 and empty["outcome"] == "unknown"
-    assert "unknown" in review_rounds.render(empty)
+    assert empty["rounds"] is None and empty["outcome"] == "unknown"
+    assert empty["validated_rounds"] is None and empty["blocked_rounds"] is None
+    text = review_rounds.render(empty)
+    assert f"unknown: no review proof in {tmp_path} for {REPO}" in text
+    assert "0 round(s), outcome" not in text
+
+
+def test_fail_criterion_with_mergeable_quality_is_blocked(tmp_path):
+    store = _store(tmp_path)
+    _proof(store, "PAT-4", "f", ["pass", "fail"], "mergeable")
+    _proof(store, "PAT-4", "g", ["pass", "pass"], "mergeable")
+    result = review_rounds.report("PAT-4", REPO, state_dir=tmp_path)
+    assert (result["rounds"], result["validated_rounds"], result["blocked_rounds"]) == (2, 1, 1)
 
 
 def test_tokens_split_coordinator_and_subagents(tmp_path):

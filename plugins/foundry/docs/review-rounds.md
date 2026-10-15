@@ -30,8 +30,10 @@ source.
   issues of the companion Epic (`AGENTS.md#R9` (b)); their own non-blocking remarks are
   corrected before the merge, so they open no further follow-up issue.
 - Counted, for the tables below, by hand from the per-round lines of the PR descriptions
-  (format in `skills/merge-pr/SKILL.md`); for any issue delivered since PAT-175 the same
-  count comes from `routing review-rounds <ISSUE-ID>`. Foundry's review generation number is not
+  (format in `skills/merge-pr/SKILL.md`); `routing review-rounds <ISSUE-ID>` gives only the
+  total round count, and only for reviews recorded in the data directory and repository
+  namespace it reads (see "Per-issue report"); it does not compute the first / after blocking /
+  after remarks split nor the deferred remarks. Foundry's review generation number is not
   used: it was observed to be 4 for 3 reviews on PAT-125 and on PAT-132.
 
 ## Per-issue report
@@ -43,7 +45,14 @@ source.
 - Rounds and outcome: the terminal proofs of the issue in `AcceptanceProofStore`, one round
   per non-carried proof; carried proofs (`carry-review-proof`) are counted apart and are not
   rounds. `outcome` is `validated` when the last round is `mergeable` with every criterion
-  `pass`, `blocked` otherwise, `unknown` with no proof. Rounds are ordered by the ledger
+  `pass`, `blocked` otherwise, `unknown` with no proof. `validated_rounds` counts the rounds
+  that are `mergeable` with every criterion `pass`; `blocked_rounds` is every other round
+  (`rounds - validated_rounds`), including a `fail` criterion under `mergeable`.
+  Scope: one data directory (`FOUNDRY_DATA` or `~/.config/foundry`, `registry.data_dir()`) and
+  one repository namespace (`--repository`). A review recorded on another machine, under
+  another `FOUNDRY_DATA` or namespace is not seen; with no proof of the issue there, `rounds`,
+  `validated_rounds` and `blocked_rounds` are `null` (unknown, never 0) and the text says
+  `unknown: no review proof in <data dir> for <repository>`. Rounds are ordered by the ledger
   `completed_at` of `ReviewDeduplicator`.
 - Duration: earliest ledger `claim.started_at` to latest `completed_at` among the rounds
   that have both, `null` (unknown) when none does; `duration_rounds_timed` says how many.
@@ -51,10 +60,13 @@ source.
   the ledger record shape), so the duration can be shorter than the elapsed time.
 - Tokens: only from logs passed with `--session` / `--codex-session`, read by
   `cost_attribution.read_host_log` (outside the invocation path, FOUNDRY-ADR-0015). Per class:
-  input, cache_read, cache_write, output. A Claude log is the coordinator; the `*.jsonl`
+  input, cache_read, cache_write, output. They are the full totals of the logs passed (the
+  session's sub-agents included, every issue worked in it), not filtered by issue or round
+  window; the text labels them "all logs passed, not filtered by issue or round". A Claude log is the coordinator; the `*.jsonl`
   under `<dir>/<session>/subagents/` are the sub-agents (by position only, as in
-  `cache_ttl_replay.py`). A Codex rollout is reported as `codex_unclassified`: its
-  coordinator/sub-agent split is not read. A class with no readable log is `null`
+  `cache_ttl_replay.py`). A Codex rollout is reported as `codex_unclassified`: the
+  coordinator/sub-agent split is not implemented in `review_rounds.py`; whether a rollout
+  carries enough to make it is unknown. A class with no readable log is `null`
   (unknown), never 0; sub-agent logs not found under that path are not counted, so a
   sub-agent total is a lower bound.
 - Output holds counts only: no claim or proof identifier, prompt or log content.
