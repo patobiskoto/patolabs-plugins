@@ -73,7 +73,8 @@ def test_skill_form(path):
             # foundry tooling goes through the launcher
             # (one read-only helper script of the release skill, PAT-166, is the exception)
             if "foundry" in line and first == "python3":
-                assert "foundry_cli.py" in line or "/scripts/release_freeze_entry.py" in line, \
+                assert "foundry_cli.py" in line or "/scripts/release_freeze_entry.py" in line \
+                    or "/scripts/changelog_assemble.py" in line, \
                     f"foundry invocations go through foundry_cli.py: {line}"
 
 
@@ -380,6 +381,7 @@ def test_release_skill_names_every_step_and_every_stop():
     for token in (
         "foundry:start-issue", "foundry:open-pr", "foundry:review-pr", "foundry:merge-pr",
         "release_kind", "release_requirements", "freeze_entry", "release_freeze_entry.py",
+        "changelog_assemble.py", "changelog.d/<ISSUE-ID>.md",
         "--allow-incomplete-ac --ac-override-reason=<code>", "Europe/Paris",
         "foundry-v<version>", "git ls-remote", "refs/tags/foundry-v<version>",
         "claude plugin marketplace update <marketplace>",
@@ -422,6 +424,10 @@ def test_release_skill_names_every_step_and_every_stop():
                     and ln.startswith("python3")]
     assert helper_lines == ["python3 plugins/foundry/scripts/release_freeze_entry.py "
                             "<version> --date <date>"]
+    assemble_lines = [ln for ln in raw.splitlines() if "changelog_assemble.py" in ln
+                      and ln.startswith("python3")]
+    assert assemble_lines == ["python3 plugins/foundry/scripts/changelog_assemble.py "
+                              "<version> <date>"]
     assert "CLAUDE_PLUGIN_ROOT" not in helper_lines[0] and "<foundry-root>" not in helper_lines[0]
     # annotated tag: both ls-remote patterns, the ^{} value is the tagged commit
     assert "'foundry-v<version>' 'foundry-v<version>^{}'" in text

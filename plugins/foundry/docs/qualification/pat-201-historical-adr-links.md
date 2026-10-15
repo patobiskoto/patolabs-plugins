@@ -63,5 +63,5 @@ proof, or body is rewritten; no global normalisation is added. `FOUNDRY-ADR-0003
 `-0015` and `-0017` are unchanged.
 
 Documentation status (AGENTS.md#R5): `_PAT_201_PROFILES` (new private constant) is documented
-here and in the pointer paragraph of `docs/linear-tracker.md`; the CHANGELOG `Unreleased` entry
-records it; no CLI verb, option or configuration key changed.
+here and in the pointer paragraph of `docs/linear-tracker.md`; the changelog fragment
+`changelog.d/PAT-201.md` records it; no CLI verb, option or configuration key changed.

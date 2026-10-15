@@ -683,6 +683,12 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `tests/test_release_contract.py`). This replaces, for future releases, the 1.1.0
   note's "computed from the tagged tree, through an issue of its own"
   (`docs/release-1.1.0-errata.md`).
+- Changelog fragments (PAT-210): a PR records its unreleased entry as one file
+  `changelog.d/<ISSUE-ID>.md` and does not edit `## Unreleased` of `CHANGELOG.md`, which stays
+  empty between releases, so two open PRs no longer conflict on that file. The release PR
+  assembles the section with `scripts/changelog_assemble.py` and deletes the fragments
+  (`skills/release/SKILL.md`, `changelog.d/README.md`). Observed 2026-10-15 on PRs #151,
+  #152, #154 and #155: each merge added an entry at the top of `## Unreleased`.
 - `ship-ios` runs on `ubuntu-24.04`: its tests call Python, `git` and `ruby` (to evaluate
   the Fastfile), and no test calls Xcode or a simulator. The job installs `ruby` with
   `apt-get` only if the image lacks it. Observed in CI run 38095058779 (head `d640c1a`):
