@@ -73,8 +73,11 @@ def test_skill_form(path):
             # foundry tooling goes through the launcher
             # (one read-only helper script of the release skill, PAT-166, is the exception)
             if "foundry" in line and first == "python3":
-                assert "foundry_cli.py" in line or "/scripts/release_freeze_entry.py" in line \
-                    or "/scripts/changelog_assemble.py" in line, \
+                # the two helpers are an exception of the release skill alone (PAT-205)
+                is_release = os.path.basename(os.path.dirname(path)) == "release"
+                assert "foundry_cli.py" in line or (is_release and (
+                    "/scripts/release_freeze_entry.py" in line
+                    or "/scripts/changelog_assemble.py" in line)), \
                     f"foundry invocations go through foundry_cli.py: {line}"
 
 
@@ -431,8 +434,17 @@ def test_release_skill_names_every_step_and_every_stop():
     assert "CLAUDE_PLUGIN_ROOT" not in helper_lines[0] and "<foundry-root>" not in helper_lines[0]
     # annotated tag: both ls-remote patterns, the ^{} value is the tagged commit
     assert "'foundry-v<version>' 'foundry-v<version>^{}'" in text
-    # the skill never writes a marketplace name or a user path
+    # the skill never writes a user path; `patolabs` (the marketplace name the migration
+    # guide must contain) appears only in step 2
     assert "/Users/" not in raw and "/home/" not in raw
+    step2 = raw[raw.index("## 2. Release branch"):raw.index("## 3. Writing rules")]
+    assert raw.replace(step2, "").count("patolabs") == 0
+    # tag and push are not pre-authorised: no bare `git` prefix, no `git tag`/`git push`
+    allowed_tools = _frontmatter(raw)["allowed-tools"]
+    assert "Bash(git:*)" not in allowed_tools
+    assert "Bash(git tag" not in allowed_tools and "Bash(git push" not in allowed_tools
+    assert raw.splitlines().count("git fetch origin") == 1
+    assert raw.index("\ngit fetch origin\n") < raw.index("git tag -a")
 
 
 def test_release_freeze_helper_prints_the_frozen_entry_and_writes_nothing():

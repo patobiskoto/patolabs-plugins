@@ -8,7 +8,7 @@ description: >
   /foundry:release (Claude Code), $foundry:release (Codex), "publie Foundry", "prépare la
   release", or "release 1.4.0".
 argument-hint: "<RELEASE-ISSUE-ID> <VERSION>"
-allowed-tools: Bash(python3:*), Bash(git:*)
+allowed-tools: Bash(python3:*), Bash(git rm:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git fetch:*), Bash(git ls-remote:*)
 ---
 
 # release — prepare, then stop before every irreversible step
@@ -23,12 +23,14 @@ derive `<foundry-root>` from this skill's absolute path by removing
 (`.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`); the coordinator
 reads it from the host (`claude plugin marketplace list`, `codex plugin marketplace list`)
 and never guesses it. Paths of the installed plugin are read from the host, never typed
-from memory. This skill names no marketplace and no user path.
+from memory. This skill names no marketplace and no user path: the only marketplace name
+written is in the strings that the migration guide must contain (step 2).
 
 Contract this skill serves: `tests/test_release_contract.py`
 (`release_requirements`, `changelog_sections`, `release_documents`, `freeze_entry`) and the
 "Release rule" and "Freeze rule" of `README.md`. The skill never merges, tags or updates a
-host by itself: steps 5, 6 and 7 are STOPs. The host commands of steps 6 to 8 were not run
+host by itself: steps 5, 6 and 7 are STOPs. The host commands of the paragraph above and of
+steps 6 to 8 were not run
 when this skill was written (documented from the 1.3.0 publication, ticket PAT-199, PR
 #145); treat their output as the authority, not this text.
 
@@ -99,6 +101,8 @@ python3 plugins/foundry/scripts/changelog_assemble.py <version> <date>
 ```bash
 python3 plugins/foundry/scripts/release_freeze_entry.py <version> --date <date>
 ```
+  It imports `tests/test_release_contract.py` (`import pytest` at its top), so the `python3`
+  that runs it must be able to import `pytest`; CI runs it with `sys.executable`, which has it.
   It is read-only: it prints the entry computed by `freeze_entry` and `changelog_sections`;
   paste it under `releases` in `tests/fixtures/release-history.json`. It refuses a version
   with no published CHANGELOG section and a date that differs from the section's. It was
@@ -129,7 +133,8 @@ Agreement, for steps 5, 6 and 7: each STOP needs its own explicit agreement from
 maintainer in this conversation, asked after the result of the previous step is shown and
 waited for. Invoking this skill, an agreement given for another step, or a standing
 instruction phrased generally does not count, unless the maintainer explicitly said it
-covers that step.
+covers that step. When such an advance agreement and the agreement asked after the previous
+result differ, the one asked after the result prevails.
 
 Do not merge without the maintainer's explicit agreement in this conversation. Criteria
 that can only be met after the merge (tag, installation, loaded-version readback) are
@@ -141,12 +146,16 @@ Do not tag without the maintainer's explicit agreement, and only after the CI of
 commit is proven green (`AGENTS.md#R4`). Then create an annotated tag `foundry-v<version>`
 on the merge commit and push it with an explicit refspec, never a bare `git push`:
 ```bash
+git fetch origin
 git tag -a foundry-v<version> -m "Foundry <version>" <merge-commit>
 git push origin refs/tags/foundry-v<version>
 git ls-remote --tags origin 'foundry-v<version>' 'foundry-v<version>^{}'
 ```
-`git` stays in `allowed-tools` for the branch work; the tag push is gated by this STOP. For
-an annotated tag, `refs/tags/foundry-v<version>` lists the tag object and
+`allowed-tools` lists exact `git` prefixes and neither `git tag` nor `git push`, so the host's
+own permission prompt applies to the tag and to its push unless the user's own permission settings
+already allow it (for example a global `Bash(git:*)` rule), on top of this STOP (deduced from the
+prefix rule, not run; the `PreToolUse` Bash guard lets a tag push through, `hooks/guard_bash.py`).
+`git fetch origin` first, so the merge commit is present locally. For an annotated tag, `refs/tags/foundry-v<version>` lists the tag object and
 `refs/tags/foundry-v<version>^{}` lists the commit: record the `^{}` value as the tagged
 commit and compare it with the merge commit.
 
@@ -164,8 +173,10 @@ Codex, then read back:
 codex plugin marketplace upgrade <marketplace>
 codex plugin remove foundry@<marketplace>
 codex plugin add foundry@<marketplace>
-codex plugin list
+codex plugin list --marketplace <marketplace> --json
 ```
+(the form of the migration guides, e.g. `docs/migration-1.3.0.md`; whether its output shows the
+installation path is not verified, otherwise read the path from the host's own file listing.)
 Read the installed `plugin.json` of each host (path taken from the listing) and compare its
 `version` with the released one. The listed version and the installed manifest are two
 readbacks; neither proves the version a session loads.

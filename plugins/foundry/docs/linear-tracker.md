@@ -183,16 +183,29 @@ operations is advertised as generally exactly-once.
 forward rendering produced by `_issue_creation_rendering`; partial combinations are
 refused; a null provider description retains the existing empty-body contract.
 The qualified rendering inserts one empty line after an unindented `## `
-heading when the next line is not empty, wraps a complete bare `https://` token as
-`[URL](<URL>)` with identical label and destination, escapes an unescaped `~/` outside
-a word, and removes one terminal LF only when it is not preceded by another LF.
+heading that contains no backtick when the next line is not empty, wraps a complete bare
+`https://` token as `[URL](<URL>)` with identical label and destination, wraps the reference
+`(AGENTS.md#R<n>)` as `([AGENTS.md#R<n>](<http://AGENTS.md#R<n>>))` (observed on PAT-209, where
+Linear returned that form; only this form is qualified: the bare `AGENTS.md#R<n>`, `CLAUDE.md#R<n>`
+and `(AGENTS.md#R9(b))`, which Linear probably autolinks too, stay refused, behaviour unknown),
+escapes an unescaped `~/` outside a word, and removes one terminal
+LF only when it is not preceded by another LF.
 The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
-other URL syntax stays exact. Apart from the terminal LF rule, lines containing
-backticks, indented lines, block-quote lines and fenced blocks stay exact; a fence opens
+other URL syntax stays exact; a URL followed by `.` is wrapped with that dot (deduced from the
+alphabet, not observed: a GFM autolink would exclude it, so Linear may differ). Lines are cut on LF
+only. Apart from the terminal LF rule, lines containing backticks (a `## ` heading with a backtick
+therefore gets no empty line), the lines that follow a line holding a backtick run until a run of the same length closes it or an
+empty line ends it (`span` in `_issue_creation_rendering`; deduced conservatively, not observed:
+CommonMark reads an unmatched run as literal text, not a code span, and the code keeps those lines
+exact anyway), HTML-comment lines (from a line holding `<!--` without backtick to the line holding
+`-->`; a comment opened on a line that also holds a backtick is not tracked, so its following
+lines still receive the rendering: residual limit; the comment rule is deduced from CommonMark too,
+not observed), indented lines, lines that start a block quote and fenced blocks stay exact; a lazy
+continuation line of a quote does not start with `>` and receives the rendering; a fence opens
 only when indented by at most three spaces and closes only on the same
 character with at least the same length as its opening, and a line containing `<`
-takes no `~/` escape; a body containing CR stays entirely exact. These are observed
-renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
+takes no `~/` escape; a body containing CR stays entirely exact. Apart from the rules marked
+deduced above, these are observed renderings on the retained creation pairs, not an arbitrary Markdown equivalence:
 text changes, URL destination changes, other tilde escapes and whitespace folding
 remain refused (`_issue_creation_rendering`; `test_linear_issue_creation.py`).
 Source bytes remain caller-owned; this comparator stores no source and changes no
@@ -203,7 +216,9 @@ After an unvalidated creation, `edit create-issue` exits nonzero and emits the t
 `IssueCreationValidationError.details` JSON on stderr: `creation` is `created` or
 `unknown`, `validation` is `refused` or `unknown`, and `reconciliation` is `required`.
 `client_id` names the submitted UUID; `native_id` and public `issue_id` remain null
-until observed in a successful response or read. An unresolved response stays unknown;
+until observed in a successful response or read. `causes`, present only after a failed create call
+or read-back, holds the sanitized `operation`, `status` and `code` of each (`create`, `read`) and the
+`reset_at` of a quota error; it does not make a refusal certain. An unresolved response stays unknown;
 a known created public identifier survives a failed read. A `LinearQuotaExhaustedError`
 on the create call is not turned into that unknown state: it propagates with its
 `reset_at`, no read follows, and its message names the `client_id` to reconcile later.
@@ -220,7 +235,9 @@ python3 <plugin-root>/tooling/foundry_cli.py edit reconcile-create LIN-3 creatio
 
 `edit.reconcile_create` reads that file without rewriting it; the portable
 `write.reconcile_issue_creation` validates the repository/issue/parent binding and the
-Linear implementation freshly reads the identified record. Title, source-body rendering,
+Linear implementation freshly reads the identified record. `<ISSUE-ID>` may be the public
+identifier or the `client_id` UUID of an unvalidated creation (`test_pat205_reconcile_accepts_the_client_id_of_an_unvalidated_creation`);
+a refusal names the diverging properties (for example `diverged: title, priority`), never their values. Title, source-body rendering,
 parent (including absent parent), team/project and identity must match; only fields
 explicitly included in the spec are compared. If a state or parent changed after
 creation, the original spec fails closed: a separate reconciliation spec may explicitly
@@ -397,7 +414,8 @@ it never rewrites the surviving Document.
 PAT-201 adds a source-digest-pinned profile (`_PAT_201_PROFILES`) for the two native
 bodies `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, whose strong spans contain code outside the
 PAT-85 form on their line. Only those two complete sources are recognised; any other body, or
-a one-byte variant, keeps the PAT-85 refusal. The census, the observed rendering and the
+a one-byte variant, keeps the PAT-85 refusal; `link_adr_issue` refuses such a source before its first
+write when its stored version is not proven by the model (PAT-205). The census, the observed rendering and the
 limits are in `docs/qualification/pat-201-historical-adr-links.md`.
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
 fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one
@@ -1045,7 +1063,7 @@ PAT-165 rule below); release scope reads a started-then-dropped issue as unfinis
 never-started one as unavailable.
 
 **Putting a started issue back to the backlog (PAT-165; decision: PAT-ADR-0024, status
-`proposed`, accepted at the merge that delivers it).** PAT-ADR-0017's guarded transition
+`accepted`).** PAT-ADR-0017's guarded transition
 is extended to a second target state, `backlog`. PAT-ADR-0024 amends the "Projection des
 statuts" section of PAT-ADR-0006 for `backlog` only (the read rule below); the rest of
 PAT-ADR-0006 and PAT-ADR-0017 is unchanged. Command: `edit transition <ISSUE-ID>
@@ -1087,11 +1105,26 @@ carries `state-in-progress`; after a return from `review` the logical state stay
 `observe_issue`, the already-existing shape that `issue open-pr` replays. Covered by
 `test_start_after_a_return_writes_native_in_progress_then_open_pr_is_allowed` and
 `test_a_returned_in_progress_issue_can_be_started_again_by_replaying_its_receipt`.
+Two limits of this resumption, deduced from `set_state` and `_validate_native_state_history`
+(`linear.py`). (1) After a return from `review`, between `issue start` and `issue open-pr`, a
+strict read (`get_issue`, `query issue`) fails closed with `Linear native state changed outside
+lifecycle`: `_review_regression_proven` recognises the history in-progress, review, in-progress
+only, not review, backlog, in-progress; `observe_issue`, which `issue open-pr` replays, reads
+`disagreement` (pinned by `test_strict_read_between_start_and_open_pr_fails_closed_after_a_return_from_review`;
+a return from `in-progress` has no such window). (2) The branch tests native `backlog` on the read at
+the top of `set_state`; `_project_native_state` then reads the State again without checking that it
+is still `backlog`, and the receipt chain is not read again afterwards: the window is wider than
+S1 to S2, with the same schema as the repair branch that follows it (bounded detection, not CAS).
 Other providers keep their behaviour from before PAT-165 for these transitions:
 `write.transition` adds no check for them (`guarded_backlog_return_supported` is `True`
 on Linear only). YouTrack writes the State through its bounded `set_state`
 (`youtrack.py`); GitHub Projects refuses `backlog` in its own `set_state`
-(`TrackerCapabilityUnavailableError`, capability `set_state`), before any read.
+(`TrackerCapabilityUnavailableError`, capability `set_state`), before any read. DevHub's
+`set_state` refuses a context for any state other than review and done with
+`ValueError("preuve de transition inattendue")`, a message that does not name the cause, so
+`edit transition <ID> backlog <expected-state>` fails there (`test_devhub_refuses_a_backlog_context`);
+without an expected state it writes `backlog` with no guard, as before PAT-165 (`devhub.py::set_state`
+has no `backlog` check).
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
@@ -1321,8 +1354,9 @@ A required child (or transitive prerequisite) that is itself an Epic, `done`, an
 without an ordinary or override acceptance of its own, counts as accepted when
 `LinearTracker.get_epic_closure` reads back its closure audit as valid
 (`write._closed_child_epic`): audit receipt with the `accepted` human verdict, its
-nominative waivers and dropped sets as recorded, and the exact terminal graph still equal
-to the recorded one. It is not named again: its own closure carried the human verdict and
+nominative waivers and dropped sets as recorded, and the terminal graph unchanged in the sense
+of PAT-ADR-0023 (same shape; each node equal to its audit coordinate or with a native version that
+did not go back, `write.epic_closure_graph_unchanged`). It is not named again: its own closure carried the human verdict and
 the nominative sets (no second `--accept-override`/`--accept-dropped`; naming it with
 `--accept-override` keeps the historical refusal). The parent's audit binds it as id,
 version, the child's own AC counters, `acceptance_status: epic-closed`,
@@ -1332,12 +1366,19 @@ child's audit. A child Epic that is not `done`, or whose audit is absent, invali
 ambiguous or divergent from its current graph, stays refused: the refusal names the
 child and the cause, and the diagnostic lists it as `unknown`, or as `read-error` when
 the provider's own issue read already refuses the child (on Linear, a tampered audit or
-a diverged graph refuses in `get_issue`). The graph below a closed
-child Epic is not walked by the parent beyond what `get_epic_closure` itself reads.
+a diverged graph refuses in `get_issue`, and so does an absent audit: a native `done` with no
+lifecycle row is refused by `_lifecycle_projection`). The graph below a closed child Epic is
+not walked by the parent beyond what `get_epic_closure` itself reads, except that the parent
+still follows the child's own `depends-on` links (`visit` in `_epic_graph_walk`, `write.py`). A closed
+child Epic named in `--accept-override` is refused by the snapshot and listed by the diagnostic as
+`unknown` (`test_the_diagnostic_reports_a_closed_child_epic_named_in_accept_override`).
 A tracker without `bounded_epic_closure_supported` and `get_epic_closure` keeps the
 child `unknown` with the missing capability named. Observed with the Linear GraphQL
 double only (`tests/test_epic_closed_child_epic.py`); YouTrack and GitHub Projects share
-the code path but are unverified for this case.
+the code path but are unverified for this case. This is not an amendment of PAT-ADR-0014 or
+PAT-ADR-0017: the valid audit of the child is that child's positive acceptance proof (its human
+verdict and nominative sets, recorded at its own closure), so no waiver and no abandoned node is
+added silently; the waiver of PAT-ADR-0014 and the dropped naming of PAT-ADR-0017 are unchanged.
 
 **Closed Epic read after a native update that changes nothing of substance (PAT-208; PAT-ADR-0023, accepted).**
 The audit keeps recording each node's native version; its format does not change. When a
@@ -1347,11 +1388,15 @@ PAT-185 child-Epic path), the current bounded graph is compared with the recorde
 their order must be equal, and each node (children and dependency targets) must have the
 same id, state, AC counters, acceptance status, acceptance source and acceptance
 coordinates as recorded, with a native version equal or newer. A node whose version goes
-back, or any of those fields that differs, a link added or removed, still refuses with
-the same "divergent au rejeu" error. A `dropped` node follows the same rule (its state is
+back, or any of those fields that differs, or a change of the required children or of the
+dependency edges that the bounded graph records, still refuses with the same "divergent au rejeu"
+error. A link that graph does not record is not seen (deduced from the helper, which compares only
+those lists: a subtask added under a child, a `depends-on` added under an abandoned node). A `dropped` node follows the same rule (its state is
 compared, so its exact version protects nothing); a node under an `override` waiver stays
 bound exactly, version included, because its acceptance coordinates carry no body digest.
-The same helper serves the YouTrack read (`youtrack.py`). GitHub Projects keeps the exact
+The same helper serves the YouTrack read (`youtrack.py`). The legacy F89 reconciliation of
+`campaign_terminal.py` compares the children's versions exactly, on purpose: the DevHub coordinate
+it rebuilds carries the recorded version, which DevHub checks again. GitHub Projects keeps the exact
 comparison (`ghprojects.py`): its node version is an opaque digest of the node snapshot,
 not a time order, and excludes the update timestamp. What the audit guarantees
 after such an update: the graph shape and every compared field are those the human

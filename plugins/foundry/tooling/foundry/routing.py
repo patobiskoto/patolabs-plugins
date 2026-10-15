@@ -2589,8 +2589,9 @@ def main(
     resolve_parser.add_argument("--available-model", action="append", dest="available_models")
     resolve_parser.add_argument("--host-override", action="append", default=[])
     claim = sub.add_parser("claim-review", help="atomically claim one exact diff hash")
-    claim.add_argument("--host", choices=HOSTS, default="claude",
-                       help="review host; legacy omission means claude (hook validation)")
+    claim.add_argument("--host", choices=HOSTS, default=None,
+                       help="review host; legacy omission means claude (hook validation) "
+                            "and skips the Codex route precheck")
     claim.add_argument("--tier", choices=LEVELS)
     claim.add_argument("--model")
     claim.add_argument("--effort")
@@ -2975,6 +2976,14 @@ def main(
             print(json.dumps(result, indent=2))
             return
         if args.command == "claim-review":
+            if args.host is None:
+                # PAT-205: the legacy default stays, but is no longer silent.
+                args.host = "claude"
+                print(
+                    "claim-review: --host omitted, defaulting to claude; the Codex route "
+                    "precheck is not run. Codex callers must pass --host codex.",
+                    file=sys.stderr,
+                )
             EscalationStore.for_root(args.root).active_floor(args.issue, "reviewer")
             review_root, review_base = review_diff_coordinates(args.root, args.base)
             coordinates = {"root": str(review_root), "base": review_base}
