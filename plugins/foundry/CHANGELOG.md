@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PAT-185: closing an Epic whose required child is itself an Epic already closed under a
+  valid closure audit (possibly with nominative waivers and dropped nodes) is accepted
+  instead of refused with "la preuve AC de enfant ... est inconnue" (`write._closed_child_epic`,
+  `tooling/foundry/write.py`, via `get_epic_closure`). A child Epic that is not closed, or
+  whose audit is absent, invalid or divergent from its current graph, is still refused.
+  Decision recorded in `docs/linear-tracker.md` under PAT-ADR-0014 and PAT-ADR-0017, no new
+  ADR. Documentation status (R5): updated `docs/linear-tracker.md` (new paragraph) and
+  `skills/close-epic/SKILL.md`; no CLI verb or option, configuration key changed; new
+  internal constants `_EPIC_CLOSED_STATUS`/`_EPIC_CLOSED_SOURCE` are covered by the
+  `docs/linear-tracker.md` paragraph.
 - PAT-172: the review that follows the correction of the non-blocking remarks of a
   validated round (every criterion `pass`, quality `mergeable`) is now partial on every
   pull request, not only on those of a companion Epic (PAT-ADR-0022). It stays full after
