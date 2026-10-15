@@ -17,6 +17,8 @@ import json
 import os
 import subprocess
 
+import pytest
+
 _GUARD = os.path.join(os.path.dirname(__file__), "..", "hooks", "guard_bash.py")
 _spec = importlib.util.spec_from_file_location("guard_bash", _GUARD)
 guard = importlib.util.module_from_spec(_spec)
@@ -371,3 +373,94 @@ def test_binding_error_deny_names_the_cause():
     assert guard.binding_error_deny_reason(
         "git status", {"main"}, "feat/x-1", "marqueur tracker de dépôt invalide",
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# PAT-63 — name the real cause: global registry vs repository binding
+# ---------------------------------------------------------------------------
+
+def _write_registry(tmp_path, content):
+    directory = tmp_path / ".config" / "foundry"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "registry.json"
+    if isinstance(content, bytes):
+        target.write_bytes(content)
+    else:
+        target.write_text(content, encoding="utf-8")
+    return target
+
+
+_MALFORMED_REGISTRIES = {
+    "invalid-json": "{not valid json SECRET-CONTENT",
+    "non-utf8": b"\xff\xfe{}",
+    "non-object-root": "[1, 2]",
+    "invalid-canonical-repo": '{"linear": {"demo": {"canonical_repo": 3}}}',
+    "provider-not-object": '{"linear": 5}',
+    "entry-not-object": '{"linear": {"demo": "SECRET-CONTENT"}}',
+}
+
+
+@pytest.mark.parametrize("name", sorted(_MALFORMED_REGISTRIES))
+def test_malformed_global_registry_denies_naming_the_registry(monkeypatch, tmp_path, name):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = _make_repo(tmp_path)
+    target = _write_registry(tmp_path, _MALFORMED_REGISTRIES[name])
+
+    for command in ("gh pr create --title x", "gh pr merge 12", "git push origin main"):
+        decision = _decision(_run_guard(repo, command, tmp_path))
+        assert decision["permissionDecision"] == "deny"
+        reason = decision["permissionDecisionReason"]
+        assert "registre global Foundry" in reason
+        assert str(target) in reason
+        assert "SECRET-CONTENT" not in reason
+        assert "binding tracker Foundry invalide" not in reason
+
+    # a push to a work branch and a non-candidate command stay allowed
+    assert _decision(_run_guard(repo, "git push -u origin feat/x-1", tmp_path)) is None
+    assert _decision(_run_guard(repo, "git status", tmp_path)) is None
+
+
+def test_broken_repo_binding_is_named_as_binding_not_registry(monkeypatch, tmp_path):
+    repo = _make_repo(tmp_path)
+    _cutover_to_linear(monkeypatch, tmp_path, repo)
+    (repo / ".foundry" / "tracker.json").write_text("{not valid json", encoding="utf-8")
+
+    reason = _decision(_run_guard(repo, "gh pr create --title x", tmp_path))[
+        "permissionDecisionReason"]
+    assert "binding tracker Foundry invalide ou en dérive" in reason
+    assert "registre global" not in reason
+
+
+def test_non_utf8_config_file_is_not_read_by_the_guard(monkeypatch, tmp_path):
+    """Observed (PAT-63): the guard path (`entry_for(use_env=False)`) never reads
+    config.env/$FOUNDRY_CONFIG, so a non-UTF-8 config file in an unregistered repo
+    changes nothing: the guard stays a no-op there (fail-open, not a refusal)."""
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = _make_repo(tmp_path)
+    (tmp_path / ".config" / "foundry").mkdir(parents=True)
+    (tmp_path / ".config" / "foundry" / "config.env").write_bytes(b"\xff\xfe\n")
+
+    assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
+    assert _decision(_run_guard(repo, "git push origin main", tmp_path)) is None
+
+
+def test_registry_oserror_still_fails_open(monkeypatch, tmp_path):
+    _clear_data_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = _make_repo(tmp_path)
+    target = _write_registry(tmp_path, "{}")
+    target.chmod(0)
+    try:
+        assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
+    finally:
+        target.chmod(0o600)
+
+
+def test_registry_error_reason_pure_decision():
+    reason = guard.binding_error_deny_reason(
+        "gh pr create --title x", {"main"}, "feat/x-1", "registre Foundry invalide (/p)",
+        "registry",
+    )
+    assert reason is not None and reason.startswith("registre global Foundry")

@@ -159,20 +159,42 @@ def path() -> str:
     return os.path.join(data_dir(), "registry.json")
 
 
+class RegistryFileError(ValueError):
+    """The global registry file is unreadable as a registry (PAT-63).
+
+    A ``ValueError`` subclass, so existing handlers keep working, but typed so the
+    R1 guard can name the global registry, not the repository binding, as the
+    source at fault. The message never echoes file content.
+    """
+
+
 def _sanitize_canonical_repositories(data: dict) -> dict:
-    """Canonicalize legacy registry identities in memory without echoing raw data."""
+    """Validate the registry shape and canonicalize legacy identities in memory.
+
+    A provider that is not an object, or an entry that is not an object, is a
+    malformed registry (fail closed, like a non-object root), never silently
+    skipped as "unregistered". Raw data is never echoed.
+    """
     for bindings in data.values():
         if not isinstance(bindings, dict):
-            continue
+            raise RegistryFileError(
+                f"registre Foundry invalide : un provider n'est pas un objet ({path()})"
+            )
         for entry in bindings.values():
-            if not isinstance(entry, dict) or "canonical_repo" not in entry:
+            if not isinstance(entry, dict):
+                raise RegistryFileError(
+                    f"registre Foundry invalide : une entrée n'est pas un objet ({path()})"
+                )
+            if "canonical_repo" not in entry:
                 continue
             try:
                 entry["canonical_repo"] = canonical_repository_identity(
                     entry["canonical_repo"],
                 )
             except ValueError:
-                raise ValueError("canonical_repo invalide dans le registre Foundry") from None
+                raise RegistryFileError(
+                    f"canonical_repo invalide dans le registre Foundry ({path()})"
+                ) from None
     return data
 
 
@@ -180,10 +202,17 @@ def load() -> dict:
     """The whole registry as a credential-free, read-only snapshot."""
     registry_path = path()
     if os.path.exists(registry_path):
-        with open(registry_path) as f:
-            data = json.load(f)
+        try:
+            with open(registry_path) as f:
+                data = json.load(f)
+        except ValueError:  # JSON syntax or non-UTF-8 content; OSError propagates
+            raise RegistryFileError(
+                f"registre Foundry invalide : JSON illisible ({registry_path})"
+            ) from None
         if not isinstance(data, dict):
-            raise ValueError("registre Foundry invalide")
+            raise RegistryFileError(
+                f"registre Foundry invalide : la racine n'est pas un objet ({registry_path})"
+            )
         return _sanitize_canonical_repositories(data)
     return {}
 
