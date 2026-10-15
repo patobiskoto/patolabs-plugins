@@ -175,9 +175,13 @@ def test_abandon_succeeds_from_any_open_native_state_after_a_foundry_start(
     with pytest.raises(TrackerConflictError, match=f"native state is {native}"):
         _abandon(tracker, project, issue_id, upto)
     assert not _writes(wire, before)
-    # Documented limit: left as it is, that native move is a strict-read conflict.
-    with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
-        tracker.get_issue(issue_id)
+    if native == "backlog":
+        # PAT-165: a native backlog over a valid non-terminal chain reads aligned.
+        assert tracker.get_issue(issue_id).projection_status == "aligned"
+    else:
+        # Documented limit: left as it is, that native move is a strict-read conflict.
+        with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
+            tracker.get_issue(issue_id)
 
     result = _abandon(tracker, project, issue_id, native)
 
