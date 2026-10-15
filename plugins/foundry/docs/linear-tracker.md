@@ -394,6 +394,11 @@ the exact source UTF-8/base64/SHA-256 and no provider readback is inverted or gl
 normalized. Exact replay of an unwitnessed deterministic version may create only its
 missing witness after the existing project/id/title/envelope/body/previous-link checks;
 it never rewrites the surviving Document.
+PAT-201 adds a source-digest-pinned profile (`_PAT_201_PROFILES`) for the two native
+bodies `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, whose strong spans contain code outside the
+PAT-85 form on their line. Only those two complete sources are recognised; any other body, or
+a one-byte variant, keeps the PAT-85 refusal. The census, the observed rendering and the
+limits are in `docs/qualification/pat-201-historical-adr-links.md`.
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
 fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one
 space after the dot, flush left), whose items are one plain LF line each (item text that

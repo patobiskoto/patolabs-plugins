@@ -1032,6 +1032,64 @@ def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
     return rendered
 
 
+# PAT-201: the two native FOUNDRY ADR bodies (FOUNDRY-ADR-0002, FOUNDRY-ADR-0018) whose
+# strong spans contain code outside what the PAT-85 form qualifies on its line.  Each entry binds one
+# complete source digest to (pre, post, readback digest).  `pre` rewrites the source
+# fragments to the observed Linear strong/code serialization before the general model
+# runs; `post` rewrites the observed autolink after it; the result digest is the
+# SHA-256 of the exact bytes Linear stored.  Nothing here is a Markdown grammar: any
+# other body, including one that differs by a byte, keeps the PAT-85 refusal.
+_PAT_201_PROFILES = {
+    "abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465": (
+        (
+            ("**tous `skipped`**", "**tous** `skipped`"),
+            (
+                "**Un statut legacy `success` posé par un bot non-CI**",
+                "**Un statut legacy** `success` **posé par un bot non-CI**",
+            ),
+        ),
+        (),
+        "8cd2a8f7afa1db6b30abde67416b8afeb49ab73d5cc1b6529f2b4bbb211bd830",
+    ),
+    "ce9869d73a2ce0620c673ec53d6a00c8c3b87d7d8a2eb59cc254bbce8e14c5ea": (
+        (
+            (
+                "**Un gate binaire « `tooling/` modifié ⇒ `docs/` modifié »**",
+                "**Un gate binaire «** `tooling/` **modifié ⇒** `docs/` **modifié »**",
+            ),
+        ),
+        (
+            (
+                "(AGENTS.md/CLAUDE.md) »",
+                "([AGENTS.md/CLAUDE.md](<http://AGENTS.md/CLAUDE.md>)) »",
+            ),
+        ),
+        "54947bd75df29d2b50f1d1ad0439c913e5922b752d1535f35decb5abc6013cb5",
+    ),
+}
+
+
+def _linear_pat_201_readback_body(body: str, **model: bool) -> str | None:
+    """Return the digest-pinned PAT-201 readback of one native FOUNDRY ADR body."""
+    profile = _PAT_201_PROFILES.get(hashlib.sha256(body.encode("utf-8")).hexdigest())
+    if profile is None:
+        return None
+    pre, post, readback_sha256 = profile
+    source = body
+    for before, after in pre:
+        if source.count(before) != 1:
+            raise ValueError("pat-201 rendering source is invalid")
+        source = source.replace(before, after, 1)
+    rendered = _linear_markdown_readback_body(source, **model)
+    for before, after in post:
+        if rendered.count(before) != 1:
+            raise ValueError("pat-201 rendering source is invalid")
+        rendered = rendered.replace(before, after, 1)
+    if hashlib.sha256(rendered.encode("utf-8")).hexdigest() != readback_sha256:
+        raise ValueError("pat-201 rendering is invalid")
+    return rendered
+
+
 _MULTILINE_INLINE_CODE = re.compile(
     r"(?<![A-Za-z0-9_`])`(?![\s`])(?P<before>[^`\n]+)(?<!\s)\n"
     r"(?P<indent>[ \t]+)(?!\s)(?P<after>[^`\n]+)(?<!\s)`(?![A-Za-z0-9_`])"
@@ -2049,6 +2107,15 @@ def _linear_markdown_readback_body(
         if qualified is not None:
             return qualified
     qualified = _linear_foundry_adr_0012_v1_readback(body)
+    if qualified is not None:
+        return qualified
+    qualified = _linear_pat_201_readback_body(
+        body,
+        allow_foundry_adr_0001=allow_foundry_adr_0001,
+        strict=strict,
+        observed_lists=observed_lists,
+        observed_paragraph_lists=observed_paragraph_lists,
+    )
     if qualified is not None:
         return qualified
     drops = (
