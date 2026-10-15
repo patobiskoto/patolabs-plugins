@@ -42,17 +42,31 @@ def test_assembly_refuses_malformed_or_missing_fragments(tmp_path):
 
 
 def test_shipped_fragments_assemble_and_unreleased_may_be_empty():
-    text = assembler.assemble("0.0.0", "2000-01-01")
-    entries = re.findall(r"(?m)^- (PAT-\d+):", text)
-    numbers = [int(e.split("-")[1]) for e in entries]
-    assert numbers == sorted(numbers, reverse=True)
-    names = {p.stem for p in assembler.fragment_paths()}
-    assert set(entries) == names
+    # The release PR deletes every fragment (skills/release/SKILL.md): zero is valid here.
+    paths = assembler.fragment_paths()
+    names = {p.stem for p in paths}
+    if paths:
+        text = assembler.assemble("0.0.0", "2000-01-01")
+        entries = re.findall(r"(?m)^- ([A-Za-z]+-\d+):", text)
+        numbers = [int(e.split("-")[1]) for e in entries]
+        assert numbers == sorted(numbers, reverse=True)
+        assert set(entries) == names
+        for path in paths:
+            assert path.read_text(encoding="utf-8").startswith(f"- {path.stem}:")
     # CHANGELOG.md keeps an empty Unreleased heading; fragments are not duplicated in it
     changelog = (PLUGIN / "CHANGELOG.md").read_text(encoding="utf-8")
     assert changelog.startswith("# Changelog\n\n## Unreleased\n\n## ")
     for name in names:
         assert f"- {name}:" not in changelog.split("\n## ", 2)[1]
+
+
+def test_hidden_files_are_ignored_other_unexpected_files_refused(tmp_path):
+    _write(tmp_path, "PAT-1.md", "- PAT-1: one\n")
+    _write(tmp_path, ".DS_Store", "x")
+    assert [p.name for p in assembler.fragment_paths(tmp_path)] == ["PAT-1.md"]
+    _write(tmp_path, "notes.md", "- x\n")
+    with pytest.raises(ValueError):
+        assembler.fragment_paths(tmp_path)
 
 
 def test_helper_prints_and_writes_nothing(tmp_path):

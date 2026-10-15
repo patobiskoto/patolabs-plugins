@@ -61,7 +61,12 @@ python3 plugins/foundry/scripts/changelog_assemble.py <version> <date>
   the entries, and delete the fragments (`git rm plugins/foundry/changelog.d/<ISSUE-ID>.md`) in
   the same PR. `changelog.d/README.md` stays. Leave `## Unreleased` empty. The tool was run
   once on a copy of the worktree (`changelog.d` of PAT-210) and printed the entries moved out
-  of `## Unreleased`;
+  of `## Unreleased`. The whole sequence (version `9.9.9`, paste, delete the fragments, leaving only
+  `README.md`) was also run once on a copy: `pytest -q tests/test_changelog_assemble.py
+  tests/test_release_contract.py -m "not historical_fixture"` gave 15 passed, 3 failed; the
+  three failures are the manifest-bump and freeze-entry checks of `test_release_contract.py`
+  (steps of this list the copy did not do, `KeyError: '9.9.9'` among them), none in
+  `tests/test_changelog_assemble.py`, whose shipped-fragments test accepts zero fragments;
 - for a minor, write the release note and the migration guide (writing rules in step 3).
   `test_current_release_satisfies_the_requirements_of_its_kind` requires: the release note
   `docs/release-<version>.md` names the version, "Claude Code" and "Codex"; the migration
@@ -91,8 +96,9 @@ python3 plugins/foundry/scripts/release_freeze_entry.py <version> --date <date>
   `python3 plugins/foundry/scripts/release_freeze_entry.py 1.3.0 --date 2026-10-15` and
   printed the entry already in the fixture.
 - the PR description gives the documentation status under R5 (`AGENTS.md#R5`) for each
-  touched documented artifact, and the change carries its changelog entry:
-  one fragment `plugins/foundry/changelog.d/<ISSUE-ID>.md`, never an edit of `## Unreleased` (PAT-210).
+  touched documented artifact, and, except the release PR (it carries the dated section and no fragment), the change
+  carries its changelog entry: one fragment `plugins/foundry/changelog.d/<ISSUE-ID>.md`,
+  never an edit of `## Unreleased` (PAT-210).
 
 ## 3. Writing rules for frozen pages
 Release note, migration guide and the published CHANGELOG section are frozen by digest.

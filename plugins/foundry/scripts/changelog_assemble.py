@@ -19,7 +19,7 @@ NAME = re.compile(r"^([A-Za-z]+)-(\d+)\.md$")
 def fragment_paths(directory=FRAGMENTS):
     found = []
     for path in Path(directory).iterdir():
-        if path.name == "README.md" or not path.is_file():
+        if path.name == "README.md" or path.name.startswith(".") or not path.is_file():
             continue
         match = NAME.match(path.name)
         if not match:
