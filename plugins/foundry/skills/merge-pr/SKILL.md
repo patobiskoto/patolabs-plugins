@@ -224,7 +224,7 @@ The command checks mechanically, and refuses unless all hold, the conditions lis
 `docs/review-rounds.md` ("Carrying a terminal proof across an integration of main",
 PAT-ADR-0021). On a refusal, a full review of the new diff stays required: claim and
 review it as above. A conflict resolution or any other edit of the reviewed content is
-never carried. A rebase onto the new base that leaves the tree identical is carried too
+never carried. A rebase onto the new base whose tree equals the tree of the clean merge of the reviewed head with the new base is carried too
 (`test_a_rebase_onto_the_new_base_with_the_same_tree_is_carried`). On success it prints the new proof identifier; `merge` then finds a proof
 for the exact diff as usual.
 

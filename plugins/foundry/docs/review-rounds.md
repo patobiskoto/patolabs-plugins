@@ -341,7 +341,7 @@ the checks are `AcceptanceProofStore.carry` in that file and run at carry time. 
 ledger lock itself, then the criteria digest); the lock is then held for conditions 2 to 6, and under it the ledger entry is read again and
 must still name the original proof. All of them must hold; otherwise the command raises
 `RoutingConfigError` and writes nothing, and a full review stays required. `--base` is the
-PR's base SHA as read on the code host, the one `issue merge` uses:
+PR's base SHA as read on the code host, the one `issue merge` uses. The conditions are:
 
 1. The original proof is terminal in the ledger, for the same issue, `quality=mergeable`
    and every criterion `pass` (`ReviewDeduplicator.validated_completed_proof_binding`),
@@ -365,7 +365,8 @@ PR's base SHA as read on the code host, the one `issue merge` uses:
    diff is checked, not deduced from conditions 1 to 5: they do not imply it when the
    recorded base is not an ancestor of the reviewed head, so a different hash is refused.
 
-A rebase of the PR onto the new base that leaves the same tree is carried too, as the
+A rebase of the PR onto the new base whose tree equals the tree of the clean merge of the
+reviewed head with the new base (condition 4) is carried too, as the
 conditions above are met (`tests/test_review_carry.py::test_a_rebase_onto_the_new_base_with_the_same_tree_is_carried`).
 
 On success the command appends a new proof (`AcceptanceProofStore._write`, never
