@@ -118,8 +118,8 @@ its rollout, not from these flags.
 
 ## Rollback
 
-Described, not executed by this page. The procedure writes nothing under the Codex home except the session rollouts the host
-itself records for step 4 (`~/.codex/sessions`, read back in step 5).
+Described, not executed by this page. Step 4 writes session rollouts under `~/.codex/sessions` (observed, read back in step 5);
+other writes of the host under the Codex home were not examined (unknown).
 If a profile was installed from the example during qualification: restore the saved copy of
 the previous custom reviewer file in the profile directory, or remove the file (whether the host then has a built-in `reviewer` role is unknown here;
 steps 1 and 5 observe the effect), then start a new session and repeat steps 1 and 5 to see the
