@@ -1284,6 +1284,30 @@ child `unknown` with the missing capability named. Observed with the Linear Grap
 double only (`tests/test_epic_closed_child_epic.py`); YouTrack and GitHub Projects share
 the code path but are unverified for this case.
 
+**Closed Epic read after a native update that changes nothing of substance (PAT-208; PAT-ADR-0023, accepted).**
+The audit keeps recording each node's native version; its format does not change. When a
+closed Epic is read (`get_epic_closure`, and so the done replay of `close-epic` and the
+PAT-185 child-Epic path), the current bounded graph is compared with the recorded one by
+`write.epic_closure_graph_unchanged`: the required children, the dependency edges and
+their order must be equal, and each node (children and dependency targets) must have the
+same id, state, AC counters, acceptance status, acceptance source and acceptance
+coordinates as recorded, with a native version equal or newer. A node whose version goes
+back, or any of those fields that differs, a link added or removed, still refuses with
+the same "divergent au rejeu" error. A `dropped` node follows the same rule (its state is
+compared, so its exact version protects nothing); a node under an `override` waiver stays
+bound exactly, version included, because its acceptance coordinates carry no body digest.
+The same helper serves the YouTrack read (`youtrack.py`). GitHub Projects keeps the exact
+comparison (`ghprojects.py`): its node version is an opaque digest of the node snapshot,
+not a time order, and excludes the update timestamp. What the audit guarantees
+after such an update: the graph shape and every compared field are those the human
+accepted; it no longer guarantees that no native write touched a node since (observed:
+a version advance on a dependency made reading a closed Epic fail; deduced cause: the
+provider bumps the version on any native update). Accepted risk: a native update that
+alters nothing in the compared fields, for example a title, a comment, a label or a
+non-graph link (`relates`), goes unnoticed. The write path (new audit, pre-write and post-write checks, pending-audit
+resume) keeps the exact comparison on current versions. Proved with the Linear GraphQL and
+YouTrack doubles (`tests/test_epic_closure_transports.py`).
+
 Malformed, duplicate, foreign or stale audits and changed validation/type/graph
 coordinates supply no terminal authority: strict reads refuse them, while
 observation/backlog expose `unknown`. A native Done without a qualifying audit

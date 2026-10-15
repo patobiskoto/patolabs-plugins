@@ -1516,7 +1516,7 @@ class YouTrackTracker(Tracker):
         outcome = self._closure_from_issue(parent, project)
         if outcome is None:
             return None
-        from foundry.write import bounded_epic_graph_snapshot
+        from foundry.write import bounded_epic_graph_snapshot, epic_closure_graph_unchanged
 
         try:
             current, dependencies = bounded_epic_graph_snapshot(
@@ -1526,9 +1526,9 @@ class YouTrackTracker(Tracker):
             raise TrackerConflictError(
                 "graphe Epic YouTrack divergent au rejeu"
             ) from exc
-        if (
-            current != outcome.receipt.children
-            or dependencies != outcome.receipt.dependencies
+        if not epic_closure_graph_unchanged(
+            outcome.receipt.children, outcome.receipt.dependencies,
+            current, dependencies,
         ):
             raise TrackerConflictError("graphe Epic YouTrack divergent au rejeu")
         return outcome

@@ -6369,7 +6369,10 @@ class LinearTracker(Tracker):
             outcome = self._closure_from_raw(raw, project)
             if outcome is None:
                 return None
-            from foundry.write import bounded_epic_graph_snapshot, epic_receipt_dropped
+            from foundry.write import (
+                bounded_epic_graph_snapshot, epic_closure_graph_unchanged,
+                epic_receipt_dropped,
+            )
             try:
                 parent = self._to_issue(
                     raw, project, observe_lifecycle=True, project_epic_closure=False,
@@ -6386,9 +6389,9 @@ class LinearTracker(Tracker):
                 raise TrackerConflictError(
                     "graphe Epic Linear divergent au rejeu"
                 ) from exc
-            if (
-                current != outcome.receipt.children
-                or dependencies != outcome.receipt.dependencies
+            if not epic_closure_graph_unchanged(
+                outcome.receipt.children, outcome.receipt.dependencies,
+                current, dependencies,
             ):
                 raise TrackerConflictError("graphe Epic Linear divergent au rejeu")
             return outcome
