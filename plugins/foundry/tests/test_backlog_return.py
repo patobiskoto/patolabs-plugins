@@ -253,6 +253,8 @@ def test_edit_cli_names_the_linked_pr_and_leaves_it_untouched(monkeypatch, capsy
     tracker, wire, project = _graph(monkeypatch)
     issue_id = _started(tracker, wire, project, 5, upto=upto)
     monkeypatch.setattr(edit_cli.foundry, "tracker", lambda: tracker)
+    # PAT-205: instrument the code host itself; any call to it fails the test.
+    monkeypatch.setattr(edit_cli.foundry, "codehost", lambda *_a, **_k: pytest.fail("code host used"))
     before = len(wire.calls)
     edit_cli.transition(issue_id, "backlog", upto)
     out = capsys.readouterr().out
@@ -326,3 +328,75 @@ def test_other_backlog_transitions_keep_their_current_path(monkeypatch):
         Legacy(), "DEMO-1", "backlog", context=TransitionContext(expected_state="ready"),
     )
     assert Legacy.calls == [("DEMO-1", "backlog")] * 2
+
+
+def test_strict_read_between_start_and_open_pr_fails_closed_after_a_return_from_review(monkeypatch):
+    """PAT-205: the limit of PAT-ADR-0024 "Reprise", pinned (documented in linear-tracker.md).
+
+    After review -> backlog -> in-progress, ``_review_regression_proven`` does not recognise
+    the history, so a strict read refuses while ``observe_issue`` (which ``issue open-pr``
+    replays) reads a disagreement.  A return from ``in-progress`` has no such window.
+    """
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto="review")
+    _back(tracker, project, issue_id, "review")
+    tracker.set_state(issue_id, "in-progress", project=project)
+    with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
+        tracker.get_issue(issue_id)
+    assert tracker.observe_issue(issue_id).projection_status == "disagreement"
+
+
+def test_devhub_refuses_a_backlog_context():
+    """PAT-205: DevHub only declares the flag; its own check refuses the context."""
+    tracker = object.__new__(DevHubTracker)
+    with pytest.raises(ValueError, match="preuve de transition inattendue"):
+        tracker.set_state("DEMO-1", "backlog", context=TransitionContext(expected_state="review"))
+
+
+@pytest.mark.parametrize("upto", ("in-progress", "review"))
+def test_open_pr_after_a_restart_projects_review_to_the_end(monkeypatch, upto):
+    """PAT-205: the PR opening goes past ``resolve_repo`` down to the ``review`` projection."""
+    from types import SimpleNamespace
+
+    from foundry.models import PullRequest
+
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=upto)
+    _back(tracker, project, issue_id, upto)
+    tracker.set_state(issue_id, "in-progress", project=project)
+    pr = PullRequest(
+        number=7, url=REVIEW.pr_url, head=f"feat/{issue_id.lower()}-x", base="main",
+        base_sha=REVIEW.base_sha, sha=REVIEW.head_sha,
+    )
+    codehost = SimpleNamespace(
+        name="github", resolve_repo=lambda: "acme/widgets",
+        list_prs=lambda *_a: [], open_pr=lambda *_a: pr,
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: project)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(issue, "git_head", lambda: REVIEW.head_sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kw: b"diff")
+    monkeypatch.setattr(issue, "_observe_receipt", lambda *_a: "observed")
+    monkeypatch.setattr(
+        issue, "_sh",
+        lambda *args, **_kw: pr.head if args[-2:] == ("--abbrev-ref", "HEAD") else "",
+    )
+
+    issue.openpr(issue_id)
+
+    seen = tracker.get_issue(issue_id)
+    assert (seen.state, seen.native_state, seen.projection_status) == (
+        "review", "review", "aligned",
+    )
+    assert seen.pr_url == REVIEW.pr_url
+
+
+def test_set_field_state_backlog_stays_an_unguarded_grooming_write(monkeypatch):
+    """PAT-205: pins the documented limit; only ``edit transition`` carries the guards."""
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto="review")
+    # No expected state is asked, none is compared: the grooming write goes through.
+    write.set_field(tracker, issue_id, "State", "backlog")
+    assert wire.issues[issue_id]["state"]["id"] == STATE_IDS["backlog"]

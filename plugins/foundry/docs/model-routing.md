@@ -752,7 +752,6 @@ defaults to the Git origin URL and is persisted only as a hash. The issue review
 is preflighted before the diff is claimed. File-supplied diffs are rejected by the
 parser before any preflight, claim, authorization binding, or ledger write.
 
-
 `claim-review --host codex` preflights the executable reviewer route before a new
 reservation, legacy migration or interrupted-publication replay through
 `routing_facades.py::codex_review_preflight`, which reuses `codex_spawn_plan` without
@@ -765,7 +764,8 @@ it uses `codex_available_models()` (`routing.py::main`).
 Effective profile keys remain warnings under `detect_codex_overrides` and
 `host_override_warnings`; they do not themselves refuse a route.
 Omitting `--host` preserves the historical `claude` path, whose model invocation is
-validated by the routing hook; Codex callers must supply `--host codex`, and explicit
+validated by the routing hook, and writes one line to standard error saying so and that the
+Codex precheck is not run (`routing.py::main`); Codex callers must supply `--host codex`, and explicit
 Codex route options are refused on the Claude path (`routing.py::main`; see
 `hooks/route_agent.py::route_tool_input`).
 Already coordinated active or completed duplicates retain their route-validation

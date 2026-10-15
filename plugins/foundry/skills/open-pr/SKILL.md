@@ -20,6 +20,11 @@ derive `<foundry-root>` from this skill's absolute path by removing
 PR creation goes through Foundry (never Superpowers' auto-PR, never `gh pr create`), so
 the tracker stays in sync. The issue id is derived from the branch name if omitted.
 
+In a repository that keeps `changelog.d/` (this monorepo: `plugins/foundry/changelog.d/`),
+a PR other than a release PR carries its changelog entry as one fragment
+`changelog.d/<ISSUE-ID>.md` and never edits `## Unreleased` (PAT-210;
+`plugins/foundry/changelog.d/README.md`).
+
 Write a real PR summary from the diff (what changed and why, not the issue title
 restated) to a scratch file (Write tool), then run — the command must START with
 python3 to match allowed-tools, so use a `<` redirect, never an `echo … |` pipe. The

@@ -411,9 +411,13 @@ def _issue_creation_rendering(source: str) -> str:
     """Qualified issue-only rendering; ADR sources never pass through this function."""
     if "\r" in source:
         return source
-    lines = source.splitlines(keepends=True)
+    # Split on LF only (PAT-205): ``splitlines`` also cuts on \x0c, \x85 and U+2028,
+    # which are not line ends in CommonMark.
+    lines = re.findall(r"[^\n]*\n|[^\n]+", source)
     rendered = []
     fence = None  # (character, length) of the open fence; it closes only on the same pair
+    span = None  # length of the backtick run that opened an inline code span still open
+    comment = False  # inside an HTML comment that began on an earlier or this line
     for index, line in enumerate(lines):
         # Ambiguous Markdown contexts stay exact. No URL canonicalization, whitespace
         # folding, list rewriting, or interpretation of inline/fenced code.
@@ -427,12 +431,29 @@ def _issue_creation_rendering(source: str) -> str:
             and not marker[2].strip()
         ):
             fence = None
+        in_span, in_comment = span is not None, comment
+        if not (was_fenced or fence):
+            if not line.strip():
+                span = None  # a code span never crosses a blank line
+            else:
+                for run in re.findall(r"`+", line):
+                    span = len(run) if span is None else (None if len(run) == span else span)
+            if "`" not in line and "<!--" in line:
+                comment = "-->" not in line[line.rfind("<!--") + 4:]
+            elif comment:
+                comment = "-->" not in line
         if (was_fenced or fence or "`" in line or line.startswith((" ", "\t"))
-                or re.match(r" {0,3}>", line)):
+                or re.match(r" {0,3}>", line) or in_span or in_comment
+                or ("<!--" in line and "`" not in line)):
             rendered.append(line)
             continue
         if "<" not in line:  # an autolink `<...>` stays exact
             line = re.sub(r"(?<![\w\\])~(?=/)", r"\\~", line)
+        # Observed on PAT-209 (2026-10-15): Linear autolinks this one reference form.
+        line = re.sub(
+            r"(?<![\w\\\]])\((AGENTS\.md#R[0-9]+)\)",
+            lambda match: f"([{match[1]}](<http://{match[1]}>))", line,
+        )
         # Only a complete bare https token is wrapped; the label and destination
         # both retain its exact bytes. Punctuation/Markdown delimiters are excluded.
         line = re.sub(
@@ -449,6 +470,15 @@ def _issue_creation_rendering(source: str) -> str:
     result = "".join(rendered)
     # Qualify one terminal LF only, never arbitrary trailing whitespace.
     return result[:-1] if result.endswith("\n") and not result.endswith("\n\n") else result
+
+
+def _creation_cause(error: "LinearTrackerError") -> dict:
+    """Sanitized cause of a failed creation call (operation, status, code, reset_at)."""
+    cause = {"operation": error.operation, "status": error.status, "code": error.code}
+    reset_at = getattr(error, "reset_at", None)
+    if reset_at is not None:
+        cause["reset_at"] = reset_at
+    return cause
 
 
 def _issue_creation_body_matches(observed: object, source: str) -> bool:
@@ -3686,14 +3716,29 @@ class LinearTracker(Tracker):
         }:
             raise TrackerConflictError("Linear acceptance proof malformed")
         proof = payload.get("proof")
-        if not isinstance(proof, dict) or set(proof) != {
+        proof_keys = {
             "schema_version",
             "proof_id",
             "issue",
             "review",
             "coordinates",
             "quality",
-        }:
+        }
+        if not isinstance(proof, dict) or set(proof) not in (
+            proof_keys, proof_keys | {"carried_from"},
+        ):
+            raise TrackerConflictError("Linear acceptance proof malformed")
+        # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
+        carried = proof.get("carried_from")
+        if "carried_from" in proof and (
+            not isinstance(carried, dict)
+            or set(carried) != {"proof_id", "head", "base", "diff_hash"}
+            or not all(
+                isinstance(carried[key], str)
+                and (_SHA if key in {"head", "base"} else _DIGEST).fullmatch(carried[key])
+                for key in ("proof_id", "head", "base", "diff_hash")
+            )
+        ):
             raise TrackerConflictError("Linear acceptance proof malformed")
         canonical_proof = dict(proof)
         proof_id = canonical_proof.pop("proof_id", None)
@@ -4002,7 +4047,7 @@ class LinearTracker(Tracker):
         # projection.  Between those two effects it is durable evidence of the
         # intended transition, while the older native state remains an observable
         # disagreement (a native ``backlog`` excepted: PAT-ADR-0024, accepted risk
-        # (c), proposed until the merge that delivers it).  Only the writer/recovery path may read this interval;
+        # (c)).  Only the writer/recovery path may read this interval;
         # ordinary reads have ``pending_operation=None`` and fail closed.
         pending_receipt_projection = (
             pending_operation in {"state-in-progress", "state-review", "state-done"}
@@ -5481,6 +5526,7 @@ class LinearTracker(Tracker):
         # A lost/ambiguous response is resolved only by a fresh read of that UUID.
         client_id = input_value["id"]
         created = {}
+        causes: dict = {}
         try:
             data = self._graphql(_ISSUE_CREATE, {"input": input_value}, "issue.create")
             payload = self._mutation_payload(data, "issueCreate", "issue.create")
@@ -5492,8 +5538,8 @@ class LinearTracker(Tracker):
             error.client_id = client_id
             error.args = (f"{error} client_id={client_id} creation=unknown",)
             raise
-        except LinearTrackerError:
-            pass
+        except LinearTrackerError as error:
+            causes["create"] = _creation_cause(error)
         public_id = created.get("identifier")
         public_id = public_id if isinstance(public_id, str) and public_id else None
         native_id = created.get("id")
@@ -5501,10 +5547,12 @@ class LinearTracker(Tracker):
         creation = "created" if public_id or native_id else "unknown"
         try:
             raw = self._read_raw(client_id)
-        except (LinearTrackerError, IssueUnavailableError):
+        except (LinearTrackerError, IssueUnavailableError) as error:
+            if isinstance(error, LinearTrackerError):
+                causes["read"] = _creation_cause(error)
             raise IssueCreationValidationError(
                 client_id=client_id, native_id=native_id, issue_id=public_id,
-                creation=creation,
+                creation=creation, causes=causes,
             ) from None
         observed_public = raw.get("identifier")
         if not public_id and isinstance(observed_public, str) and observed_public:
@@ -5526,7 +5574,7 @@ class LinearTracker(Tracker):
                 ValueError, TypeError, AttributeError, KeyError):
             raise IssueCreationValidationError(
                 client_id=client_id, native_id=native_id, issue_id=public_id,
-                creation=creation, validation="refused",
+                creation=creation, validation="refused", causes=causes,
             ) from None
 
     def _validate_issue_creation(self, raw, binding, title, body, expected):
@@ -5538,7 +5586,21 @@ class LinearTracker(Tracker):
             or not _issue_creation_body_matches(raw.get("description"), body)
             or not self._raw_matches(raw, expected)
         ):
-            raise TrackerConflictError("Linear issue creation validation refused; no retry")
+            # Names only the diverging properties, never their values (PAT-205).
+            diverged = [
+                name for name, same in (
+                    ("identity", isinstance(raw.get("id"), str) and bool(raw["id"])
+                     and isinstance(raw.get("identifier"), str) and bool(raw["identifier"])),
+                    ("title", raw.get("title") == title),
+                    ("body", _issue_creation_body_matches(raw.get("description"), body)),
+                ) if not same
+            ] + [
+                key for key in expected if not self._raw_matches(raw, {key: expected[key]})
+            ]
+            raise TrackerConflictError(
+                "Linear issue creation validation refused; no retry "
+                f"(diverged: {', '.join(diverged)})"
+            )
 
     def _read_creation_snapshot(self, issue_id):
         # Reconciliation must not reuse an earlier command/snapshot-scope read.
@@ -7814,10 +7876,21 @@ class LinearTracker(Tracker):
         metadata, body = self._next_adr_metadata(
             versions[-1], issue_id=issue_id
         )
+        stored_body = _is_stored_adr_body(versions[-1], body)
+        if (
+            not stored_body
+            and hashlib.sha256(body.encode("utf-8")).hexdigest() in _PAT_201_PROFILES
+        ):
+            # PAT-205: the PAT-201 profile is pinned to the bytes Linear stored for
+            # version 0; a stored body the model does not prove is refused before
+            # the first write instead of at read-back.
+            raise TrackerConflictError(
+                "Linear ADR stored body differs from the qualified PAT-201 rendering"
+            )
         _preflight_adr_body_readback(
             body,
             allow_foundry_adr_0001=_is_foundry_adr_0001_profile_chain(metadata),
-            new_body=not _is_stored_adr_body(versions[-1], body),
+            new_body=not stored_body,
         )
         # The comment is a deterministic reciprocal slot. If a process stops after
         # this write but before the version append, the exact call can reuse it.

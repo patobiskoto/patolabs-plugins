@@ -737,24 +737,25 @@ binding is invalid, has drifted, or is ambiguous — `registry.entry_for()` rais
 `ValueError` — the guard fails CLOSED instead for `gh pr create`/`merge` and a push to
 the default branch, naming the binding error as the cause; this is exactly the state
 where every other Foundry command already refuses to run, so the guard must not be the
-one door left open. This includes a malformed global Foundry registry (`registry.json`, PAT-63: invalid JSON
-or encoding, a non-object root, a provider or an entry that is not an object, an invalid
-`canonical_repo`): the guard then cannot prove a repo is unregistered, so these same
-commands are denied in any git checkout with an `origin` remote until the registry is
-repaired, and the reason names the global registry and its path, not the repo binding
-(never file content). A non-UTF-8 `config.env`/`$FOUNDRY_CONFIG` is not read by the guard
-and changes nothing. "No-op outside registered repos" means a well-formed registry with
-no entry for the checkout. A registry that cannot be read at all (an OS error), any other unexpected failure, and
-any command the cheap `_is_candidate` prefilter does not flag, still fails open — non-candidate commands never
-read the registry at all. Logical entrypoints have a minimal `Read` capability and
-self-stop if routing did not attach its marker. Codex discovers the same
-`hooks/hooks.json`; users must still approve/trust hooks according to their local Codex
-policy. In Codex linked worktrees, `start-issue` creates the issue branch from the
-default branch without trying to check that default branch out in the worktree, and
-`merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for pushes made
-outside either agent: a `git` pre-push hook ships in `.githooks/` — enable it with
-`git config core.hooksPath .githooks`. `foundry.doctor`'s local-hook check (PAT-45)
-accepts either `.githooks` (a consumer repo, where this hook is copied) or
+one door left open. This includes a malformed global Foundry registry (`registry.json`,
+PAT-63: invalid JSON or encoding, a non-object root, a provider or an entry that is not
+an object, an invalid `canonical_repo`): the guard then cannot prove a repo is
+unregistered, so these same commands are denied in any git checkout with an `origin`
+remote until the registry is repaired, and the reason names the global registry and its
+path, not the repo binding (never file content). A non-UTF-8
+`config.env`/`$FOUNDRY_CONFIG` is not read by the guard and changes nothing. "No-op
+outside registered repos" means a well-formed registry with no entry for the checkout. A
+registry that cannot be read at all (an OS error), any other unexpected failure, and any
+command the cheap `_is_candidate` prefilter does not flag, still fails open —
+non-candidate commands never read the registry at all. Logical entrypoints have a
+minimal `Read` capability and self-stop if routing did not attach its marker. Codex
+discovers the same `hooks/hooks.json`; users must still approve/trust hooks according to
+their local Codex policy. In Codex linked worktrees, `start-issue` creates the issue
+branch from the default branch without trying to check that default branch out in the
+worktree, and `merge-pr` delegates local worktree cleanup to Codex. Belt-and-braces for
+pushes made outside either agent: a `git` pre-push hook ships in `.githooks/` — enable
+it with `git config core.hooksPath .githooks`. `foundry.doctor`'s local-hook check
+(PAT-45) accepts either `.githooks` (a consumer repo, where this hook is copied) or
 `plugins/foundry/.githooks` (this monorepo itself, per AGENTS.md#R1) as healthy — but
 only when the configured path resolves, relative to the repo, to a directory that
 actually holds an executable `pre-push`; any other configured value, or a candidate

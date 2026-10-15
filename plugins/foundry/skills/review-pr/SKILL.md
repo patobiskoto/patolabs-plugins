@@ -75,7 +75,6 @@ review. Never launch a premerge reviewer before the claim below.
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --host <HOST> --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
-
 Use `codex` or `claude` for `<HOST>`; before the claim on Codex, pass the same
 explicit `--tier`, `--model`, `--effort`, repeated `--available-model` observations,
 and value-free `--profile-model-active` / `--profile-effort-active` signals that
@@ -134,7 +133,10 @@ asks for it with a reason. The partial-review packet gives the reviewer the prev
 round's verdict and remarks, the commit range since that round (the coordinator supplies
 both as `--declarations-file` assertions, kept in `coordinator-declarations.json` with
 `verified_by_tool=false`: `docs/review-packet.md`), and the full diff through the shared
-verifier above. The reviewer checks that each correction settles its remark
+verifier above. Neither declaration can be confronted with the bytes the reviewer is
+given (the verifier supplies only `base...HEAD`), and the send text of
+`routing prepare-review` does not say that the review is partial: that comes from the
+coordinator's own message. The reviewer checks that each correction settles its remark
 without a new defect and that nothing else changed, and returns a verdict on all criteria
 for the exact diff, in the same Output form and JSON object as a full review. That proof
 relies on the previous round for the unchanged parts and the PR description says so; no
@@ -149,6 +151,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 This uses the same common ledger and validates the existing owner, without making a
 second claim. Append the value-free `--profile-model-active` / `--profile-effort-active`
 flags when host-supplied effective profile metadata reports those keys.
+
+Repeat on `codex-plan` the same `--tier`, `--model`, `--effort` and `--available-model` given to
+`claim-review`: the two commands read the route separately. A refusal by `codex-plan` after the
+reservation leaves the claim active (deduced from `routing_facades.py::codex_review_plan`, which runs
+`codex_review_preflight` before `active_git_claim`; not run): fix the route inputs and rerun with the
+kept `--claim-id`.
 
 3. Only now, if a subagent is available, launch a fresh one. On Codex pass every field
    of `spawn` unchanged, including explicit `model`, `reasoning_effort`, and

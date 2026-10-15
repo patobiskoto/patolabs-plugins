@@ -373,3 +373,15 @@ constraint for PAT-168; this page found no accepted sentence that grants such a 
 | 5 | Make `query issue` skip the embedded ADR index, or return it on request | 54 of 56 (96 %) of a plain issue read | `linear-tracker.md`: "The issue payload's `adrs` field is a project-level retrieval index, never a delivery relation"; the note of `query.py::issue`; the ADR retrieval rule (`AGENTS.md#R2`) | Yes: it changes the output, so it conflicts with "byte-identical outputs" unless the maintainer accepts a new option |
 | 6 | Merge the reads of `issue merge`, `openpr`, `edit comment`, a real `close-epic` | **Not measured** | Same as 4 for writes | Measure first |
 | 7 | Drop the second read of the Epic in `read_epic_closure_state_with_id` (`close-epic --status`) | 1 of 2 (measured total, repetition read in code) | None found: the docstring already promises one read | No |
+
+## Closed child Epic inside an Epic closure (PAT-185; deduced from the code, not measured)
+
+When `close-epic` or its replay reads a required child that is an Epic closed under an audit,
+that child is verified twice per snapshot of the parent's graph: once by `_to_issue` when it
+normalizes the child (`_verified_epic_closure`, for a native `done` with an audit comment) and once
+by `write._closed_child_epic` (`get_epic_closure`). Each verification reads the child's own graph
+again (N + 1 reads for N nodes, "Provider-read cost of a graph snapshot (PAT-99)" in
+`linear-tracker.md`), and the replay of the parent repeats both. The read scope of PAT-168 is
+opened by `query issue`, `query adrs`, `query backlog` and `query profile` only (section above), so
+it does not share these reads. How many requests this costs on a real project is **unknown**: no
+figure was measured, and no change is made here.

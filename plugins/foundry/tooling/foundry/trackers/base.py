@@ -85,12 +85,16 @@ class IssueCreationValidationError(TrackerConflictError):
     """A create effect or its validation needs explicit reconciliation."""
 
     def __init__(self, *, client_id, native_id=None, issue_id=None,
-                 creation="unknown", validation="unknown"):
+                 creation="unknown", validation="unknown", causes=None):
         self.details = {
             "client_id": client_id, "native_id": native_id, "issue_id": issue_id,
             "creation": creation, "validation": validation,
             "reconciliation": "required", "automatic_retry": False,
         }
+        if causes:
+            # PAT-205: sanitized provider errors (operation, status, code, reset_at)
+            # of the create call and of the read-back, when they were not the success.
+            self.details["causes"] = causes
         super().__init__(
             f"issue creation={creation}, validation={validation}; "
             f"issue_id={issue_id}, native_id={native_id}, client_id={client_id}; "

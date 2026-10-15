@@ -658,8 +658,9 @@ def _closed_child_epic(issue: Issue, tracker, project) -> tuple[str | None, str]
     """PAT-185: (audit id, "") of a done child Epic whose closure audit is valid.
 
     Same audit as ``close-epic --status`` for a bounded tracker, read through
-    ``get_epic_closure`` (audit receipt, nominative sets as recorded, and the exact
-    terminal graph still equal to the recorded one).  Otherwise (None, reason).
+    ``get_epic_closure`` (audit receipt, nominative sets as recorded, and the terminal
+    graph unchanged in the sense of PAT-ADR-0023, ``epic_closure_graph_unchanged``: same
+    shape, node versions equal or newer).  Otherwise (None, reason).
     """
     if not (
         getattr(tracker, "bounded_epic_closure_supported", False)
@@ -1041,6 +1042,12 @@ def _epic_graph_walk(
             if audit_id is None:
                 add(issue.id, role, "unknown",
                     f"Epic done sans audit de clôture valide : {cause}")
+            elif issue.id in accept:
+                # PAT-205: the snapshot refuses an override naming (``_bounded_epic_node``):
+                # a closed child Epic is positive evidence, not a waiver.
+                add(issue.id, role, "unknown",
+                    "Epic clos sous audit valide : preuve positive, pas une dérogation ; "
+                    "retirer ce nœud de --accept-override")
         elif type(issue.ac_total) is not int or issue.ac_total <= 0:
             add(issue.id, role, "zero-criteria", "aucun critère d'acceptation")
         elif (

@@ -71,7 +71,6 @@ cross-host ledger:
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing claim-review --host <HOST> --issue <ISSUE-ID> --git-diff --root <ROOT> --base <BASE-SHA> --claim-attempt-token <CLAIM-ATTEMPT-TOKEN> > /private/path/claim.json
 ```
 
-
 Use `codex` or `claude` for `<HOST>`; before the claim on Codex, pass the same
 explicit `--tier`, `--model`, `--effort`, repeated `--available-model` observations,
 and value-free `--profile-model-active` / `--profile-effort-active` signals that
@@ -86,7 +85,6 @@ the exact command with the same `<CLAIM-ATTEMPT-TOKEN>` and append
 ledger write, so another interruption can be replayed again identically. Never use the
 replay flag after a complete result; a normal retry without it remains a capability-free
 duplicate.
-
 
 Build the packet with the read-only command after a successful claim. Keep the complete
 claim JSON in a private file (use `umask 077` before redirecting claim output there).
@@ -117,7 +115,6 @@ pass it the returned `diff_hash`, `generation`, and `claim_id`; invoke the logic
 read-only profile. Precede its packet with
 `FOUNDRY_ROUTE_REQUEST={"issue":"<ISSUE-ID>"}` so an escalated reviewer floor persists.
 
-
 Under Codex, pass the generated send file and the existing claim to the façade, which
 validates that owner and resolves the actual frontier-or-higher invocation:
 
@@ -127,6 +124,12 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 Append `--profile-model-active` / `--profile-effort-active` when host-supplied effective
 profile metadata reports those keys; the façade warns without receiving their values.
+
+Repeat on `codex-plan` the same `--tier`, `--model`, `--effort` and `--available-model` given to
+`claim-review`: the two commands read the route separately. A refusal by `codex-plan` after the
+reservation leaves the claim active (deduced from `routing_facades.py::codex_review_plan`, which runs
+`codex_review_preflight` before `active_git_claim`; not run): fix the route inputs and rerun with the
+kept `--claim-id`.
 
 For `mode=subagent`, pass every `spawn` field unchanged to the host subagent tool and
 instruct it to load `<foundry-root>/skills/review-pr/SKILL.md`; the explicit
@@ -211,7 +214,10 @@ on the same diff.
 
 If the only change since a terminal `mergeable` review is an integration (merge) of the
 main branch, do not start a new review round yet: try to carry the proof, with the
-base SHA and diff hash of the review being carried.
+base SHA and diff hash of the review being carried. `<NEW-BASE-SHA>` is the PR's base
+SHA as read on the code host (`PullRequest.base_sha`, the SHA `issue merge` uses via
+`_require_pr_base_sha` in `<foundry-root>/tooling/foundry/issue.py`), not the local
+branch tip.
 
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" routing carry-review-proof --root <ROOT> --issue <ISSUE-ID> --base <NEW-BASE-SHA> --from-base <OLD-BASE-SHA> --from-diff-hash <OLD-DIFF-HASH>
@@ -221,7 +227,8 @@ The command checks mechanically, and refuses unless all hold, the conditions lis
 `docs/review-rounds.md` ("Carrying a terminal proof across an integration of main",
 PAT-ADR-0021). On a refusal, a full review of the new diff stays required: claim and
 review it as above. A conflict resolution or any other edit of the reviewed content is
-never carried. On success it prints the new proof identifier; `merge` then finds a proof
+never carried. A rebase onto the new base whose tree equals the tree of the clean merge of the reviewed head with the new base is carried too
+(`test_a_rebase_onto_the_new_base_with_the_same_tree_is_carried`). On success it prints the new proof identifier; `merge` then finds a proof
 for the exact diff as usual.
 
 ### 3. Human test — recommended
@@ -246,8 +253,8 @@ description before the merge. If that issue is already started or closed, create
 follow-up issue: never add a remark to a started or closed issue (maintainer decision of
 2026-10-11). These three cases are still corrected before the merge; the rest of this
 section adds three more (the PR of an issue of a companion Epic, an issue with no origin
-Epic, a durable refusal of one of the writes), corrected the same way. The review that
-follows is limited as stated below:
+Epic, a durable refusal of one of the writes), corrected the same way. The first three
+cases are:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
 - a remark on a page frozen after publication (release note, migration guide, a
@@ -266,7 +273,11 @@ non-blocking remark, the three cases above included. The partial-review packet g
 reviewer the previous round's verdict and remarks, the commit range since that round, and
 the full diff through the shared verifier (`foundry:review-pr`); the reviewer checks that
 each correction settles its remark without a new defect and that nothing else changed,
-and returns a verdict on all criteria for the exact diff. When AC are unchecked (step 1 above), and also when they are all checked on a
+and returns a verdict on all criteria for the exact diff. The commit range and the
+previous round's remarks are declarations of the coordinator: the reviewer cannot
+confront them with the bytes it is given (the shared verifier supplies only
+`base...HEAD`), and the send text of `routing prepare-review` does not say that the
+review is partial. When AC are unchecked (step 1 above), and also when they are all checked on a
 tracker whose adapter sets `delivery_receipt_supported` if the issue has a binding
 (`valid_for_merge`, called twice by `merge` in `<foundry-root>/tooling/foundry/issue.py`),
 the merge gate asks for a review proof covering all criteria for the exact diff, so
@@ -292,6 +303,11 @@ repository where the plugin is installed, as an exception to the confirmation
 3. add deferred remarks to such an issue: `edit comment` (command in `foundry:open-pr`);
 4. attach to the companion Epic a follow-up issue whose creation succeeded but whose
    parent link was not set: `edit link <FOLLOW-UP-ID> subtask-of <COMPANION-EPIC-ID>`.
+
+If `edit create-issue` (writes 1 and 2) exits nonzero with a partial-effect error on stderr, do
+not rerun it: read the effect with `edit reconcile-create` (procedure in `foundry:intake` and
+`docs/linear-tracker.md`, "Issue creation validation and explicit reconciliation") before any
+retry.
 
 Perform them without asking and report them in the PR description: the companion Epic
 when this PR created it, the follow-up issue ID and the number of deferred remarks.
@@ -347,12 +363,19 @@ The PR description carries one line per review round, kept current through
 `foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):
 
 ```text
-round <N>; <validated|blocked>; follows <first|blocking|remarks>; <K> remarks deferred, follow-up <ISSUE-ID|none>
+round <N>; <validated|blocked>; follows <first|blocking|remarks>; review <full|partial>; <K> remarks deferred, follow-up <ISSUE-ID|none>
 ```
+
+`review` says whether the round was a full or a partial review (PAT-ADR-0022). Lines
+written before this field existed have none: read it as unknown.
 
 Baseline, observation window and return triggers: `docs/review-rounds.md`.
 
 ### 4. Merge (CI gate enforced in code)
+In a repository that keeps `changelog.d/`, check before merging that a PR other than a
+release PR carries its fragment `changelog.d/<ISSUE-ID>.md` and did not edit
+`## Unreleased` (PAT-210; `plugins/foundry/changelog.d/README.md`).
+
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue merge <ISSUE-ID> <PR-NUMBER>
 ```

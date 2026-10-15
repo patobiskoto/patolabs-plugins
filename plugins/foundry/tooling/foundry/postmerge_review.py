@@ -336,7 +336,10 @@ def report_budget(attempt, issue_id):
     """
     zero = digest('')
     empty = terminal_receipt(
-        attempt, issue_id, {'findings': [], 'evidence': []}, recorded_at=datetime.now(timezone.utc).isoformat(),
+        attempt, issue_id, {'findings': [], 'evidence': []},
+        # microsecond=1: `isoformat()` drops the fraction at microsecond 0 (7 bytes shorter), so the
+        # estimate is always the longer form that `record` can publish.
+        recorded_at=datetime.now(timezone.utc).replace(microsecond=1).isoformat(),
         native_evidence_hash=zero, child_hash=zero, tool='', call_hash=zero, arguments_hash=zero,
         return_status='', return_report_hash=zero,
         observed={'model': None, 'effort': None, 'profile_provenance': None},
@@ -412,7 +415,7 @@ def prepare(*, root, issue_id, coordinates, authorization, history, output_dir, 
     _, _, budget = report_budget(draft, issue_id)
     message = build_message(budget)
     route, tool, arguments, logical, hook_context = invocation(root, issue_id, host, message, effective_profile)
-    require(hook_context == draft['hook_context'], 'hook route changed with the report budget')
+    require(hook_context == draft['hook_context'], 'hook context changed between the budget draft and the launch descriptor')
     execution_paths = sorted({form for path in
                               (os.environ.get('HOME') or Path.home(), raw_root, output_dir,
                                os.environ.get('TMPDIR') or tempfile.gettempdir(),

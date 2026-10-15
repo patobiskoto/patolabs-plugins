@@ -2,6 +2,8 @@ name = "reviewer"
 description = "Review code from fresh context; report findings without repository or tracker mutations."
 # Sandbox configuration is inherited. A native read-only sandbox may deny the
 # existing Foundry ledger lock; qualify that integration separately.
+# A file here is not proof of what a session loads: procedure, limits and rollback in
+# docs/qualification/pat-196-codex-reviewer-provenance.md.
 developer_instructions = """
 Review strictly read-only. Do not edit, create or delete repository files, run
 tests/builds, mutate Git, call the tracker, delegate or use arbitrary shell/Python.

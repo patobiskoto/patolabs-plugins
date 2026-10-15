@@ -1,6 +1,7 @@
 """Fixture-only postmerge capability and refusal coverage."""
 
 import copy
+from datetime import datetime
 import hashlib
 import json
 from types import SimpleNamespace
@@ -1763,7 +1764,8 @@ def test_prepare_writes_report_budget_computed_from_real_empty_receipt(case, hos
     prompt = a["launch_arguments"].get("message", a["launch_arguments"].get("prompt", ""))
     size, room, budget = pm.report_budget(a, case.issue.id)
     assert room == MAX_COMMENT_BYTES - size and REPORT_MARGIN_PERCENT == 25
-    assert budget == room * 75 // 100
+    # Independent of the formula's integer arithmetic: budget is the floor of 75% of room.
+    assert budget <= room * 0.75 < budget + 1
     assert f"must not exceed {budget} bytes" in prompt
     # The estimate has the shape of the receipt `record` publishes (same builder).
     assert 1000 < size < MAX_COMMENT_BYTES
@@ -1778,17 +1780,45 @@ def test_report_budget_bounds_real_published_receipt(case, report, host):
     assert len(pm.comment_text(receipt).encode()) <= pm.MAX_COMMENT_BYTES
 
 
-def test_report_budget_refuses_without_room_before_authorization(case, monkeypatch):
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_a_report_of_exactly_the_budget_fits_the_published_receipt(case, report, host):
+    a = prepare(case, host)
+    _, _, budget = pm.report_budget(a, case.issue.id)
+    base = len(json.dumps(report, sort_keys=True, ensure_ascii=False).encode())
+    report["evidence"][0]["detail"] += "x" * (budget - base)
+    assert len(json.dumps(report, sort_keys=True, ensure_ascii=False).encode()) == budget
+    receipt = record(case, a, evidence(a, report), report)
+    assert len(pm.comment_text(receipt).encode()) <= pm.MAX_COMMENT_BYTES
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_report_budget_does_not_depend_on_the_microsecond_of_the_clock(case, monkeypatch, host):
+    a = prepare(case, host)
+    expected = pm.report_budget(a, case.issue.id)
+
+    class ZeroMicrosecond(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 1, 1, 0, 0, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(pm, "datetime", ZeroMicrosecond)
+    assert pm.report_budget(a, case.issue.id) == expected
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_report_budget_refuses_without_room_before_authorization(case, monkeypatch, host):
     monkeypatch.setattr(pm, "MAX_COMMENT_BYTES", 100)
     with pytest.raises(RoutingConfigError, match="leaves no room"):
-        prepare(case)
+        prepare(case, host)
     assert case.issue.comments == []
     assert not case.args["output_dir"].exists()
 
 
-def test_report_budget_refuses_zero_budget_before_authorization(case, monkeypatch):
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_report_budget_refuses_zero_budget_before_authorization(case, monkeypatch, host):
     monkeypatch.setattr(pm, "REPORT_MARGIN_PERCENT", 100)
     with pytest.raises(RoutingConfigError, match="no report budget"):
-        prepare(case)
+        prepare(case, host)
     assert case.issue.comments == []
+    assert not case.args["output_dir"].exists()
 

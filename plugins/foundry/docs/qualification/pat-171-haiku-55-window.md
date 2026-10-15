@@ -13,6 +13,11 @@ regression trigger does not fire under any reading (difference at most +1, thres
 immediate trigger is unknown, not absent: no launch evidence was recorded in this window. No
 gain in quality, cost or quota is claimed. No code or mapping changes.
 
+The delegation of 2026-10-14 has no trace in this repository: it is recorded in the
+coordinator's local session memory, outside the repository, and nothing here quotes the
+maintainer's words. Consulting the tracker for a comment that records it was not done
+(unknown whether one exists).
+
 ## Window and reference
 
 - Promotion merge: commit `72ee294`, PR #105 (PAT-125), 2026-10-09 08:28:09 +0200
@@ -20,8 +25,12 @@ gain in quality, cost or quota is claimed. No code or mapping changes.
 - Delivered issue: a pull request merged into the default branch whose first-parent
   commit is titled `[PAT-n] ... (#N)`. Window: the ten first such commits after `72ee294`.
   Reference: the ten last before it. Every first-parent commit in both ranges carries a
-  `[PAT-n]` title, so nothing was skipped, and the ten PRs of each set belong to ten
-  distinct issues.
+  `[PAT-n]` title, so nothing was skipped (checked on 2026-10-15: `git log --first-parent
+  72ee294..f5dffa6` lists exactly ten commits and the ten before `72ee294` all carry the
+  title), and the ten PRs of each set belong to ten distinct issues. PR #115 is not in the
+  window: it is the trial pull request of PAT-143, closed without merge
+  (`gh pr view 115 --json state,mergedAt`: `CLOSED`, `mergedAt` null), so it has no
+  first-parent commit; PR #116 is the one merged for PAT-143.
 - Window end: the tenth issue (PAT-143, PR #116) merged on 2026-10-11 02:31, well before
   the thirty-day bound (2026-11-08); the ten-issue term was reached first.
 - Host: deduced `Claude` for all 20 issues. Source: every squashed commit message of the
@@ -34,6 +43,11 @@ gain in quality, cost or quota is claimed. No code or mapping changes.
 
 ## Sources and definitions
 
+- Reference and window membership: the ADR reads the reference "in the acceptance proofs and
+  the tracker"; this page does not read the tracker. The delivered issues are identified from
+  the first-parent titles of the default branch and the signals from the local proof and
+  escalation stores. Whether a tracker read would change the two sets is not checked here
+  (unknown).
 - Proof store: `python3 plugins/foundry/tooling/foundry_cli.py routing review-rounds <ISSUE> --json`
   (fields `rounds`, `blocked_rounds`, `per_round[0].validated`, `unreadable_proofs`; PAT-175)
   and `routing escalation show <ISSUE>` (fields `total_escalations`, `resume_count`), both
@@ -48,7 +62,10 @@ gain in quality, cost or quota is claimed. No code or mapping changes.
   statuses; the 20 PRs have at least one `success` and no failing check. In PR #116 the
   `foundry` job is `skipped` by the selective CI of PAT-142; its `plan`, `ship-ios` and
   `catalogue` checks succeeded. That the merge gate's own two-source read (FOUNDRY-ADR-0002)
-  agreed is not re-run here.
+  agreed is not re-run here. The ADR words the regression signal as a red CI "on the
+  delivered SHA"; this page reads the CI of the PR head, the sha the merge pins and verifies
+  (`AGENTS.md#R4`, FOUNDRY-ADR-0002), not a check on the squash commit created on the
+  default branch, which was not read.
 - Resumptions: `resume_count` of the escalation state; correction cycles: `blocked_rounds`.
   Escalations: `total_escalations` (a `deterministic_failures` count without escalation is
   not counted).

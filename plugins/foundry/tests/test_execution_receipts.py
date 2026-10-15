@@ -238,6 +238,36 @@ def test_unavailable_ci_does_not_claim_or_steal_cross_attempt_ownership(tmp_path
     assert second["receipts"]["ci"]["status"] == "success"
 
 
+def _carried(carried_from):
+    proof = review_proof()
+    proof.pop("proof_id")
+    proof["carried_from"] = carried_from
+    proof["proof_id"] = hashlib.sha256(json.dumps(
+        proof, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    return proof
+
+
+def test_a_carried_review_proof_projects_a_receipt_and_a_malformed_one_is_refused():
+    carried = {"proof_id": "9" * 64, "head": "8" * 40, "base": "7" * 40, "diff_hash": "6" * 64}
+    proof = _carried(carried)
+    observation = receipts.review_receipt(
+        "github", REPOSITORY, open_pr(), proof, observed_at=OBSERVED_AT,
+    )
+    assert observation.receipt["review_id"] == proof["proof_id"]
+    for bad in (
+        {"proof_id": "9" * 64},
+        {**carried, "head": "F" * 40},
+        {**carried, "base": "7" * 41},
+        {**carried, "diff_hash": "z" * 64},
+        {**carried, "proof_id": "9" * 63 + "\n"},
+    ):
+        with pytest.raises(receipts.ReceiptStoreError, match="incomplete_review_proof"):
+            receipts.review_receipt(
+                "github", REPOSITORY, open_pr(), _carried(bad), observed_at=OBSERVED_AT,
+            )
+
+
 @pytest.mark.parametrize(
     "operation",
     [
