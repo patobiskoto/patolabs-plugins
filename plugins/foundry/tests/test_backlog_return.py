@@ -7,6 +7,7 @@ import copy
 import pytest
 
 from foundry import edit as edit_cli
+from foundry import issue
 from foundry import write
 from foundry.models import TransitionContext
 from foundry.trackers.base import (
@@ -31,6 +32,7 @@ from test_abandon_and_dropped_closure import (  # noqa: F401
     _started,
     _writes,
 )
+from test_issue_merge import _youtrack_transport
 from test_linear_tracker import STATE_IDS
 
 
@@ -166,8 +168,9 @@ def test_returned_issue_reads_backlog_without_disagreement(monkeypatch, upto):
 def test_a_done_receipt_with_a_native_backlog_stays_a_conflict(monkeypatch):
     tracker, wire, project = _graph(monkeypatch)
     _native(wire, "LIN-2", "backlog")
-    seen = tracker.observe_issue("LIN-2")
-    assert seen.projection_status != "aligned"
+    with pytest.raises(TrackerConflictError, match="changed outside lifecycle"):
+        tracker.get_issue("LIN-2")
+    assert tracker.observe_issue("LIN-2").projection_status != "aligned"
 
 
 def test_a_never_started_backlog_issue_still_reads_native_only(monkeypatch):
@@ -186,6 +189,63 @@ def test_a_returned_in_progress_issue_can_be_started_again_by_replaying_its_rece
     seen = tracker.get_issue(issue_id)
     assert (seen.state, seen.projection_status) == ("in-progress", "aligned")
     assert wire.issues[issue_id]["comments"] == receipts
+
+
+class _GateReached(Exception):
+    """Raised by the code-host stub once ``openpr`` passed its state gate."""
+
+
+@pytest.mark.parametrize("upto", ("in-progress", "review"))
+def test_start_after_a_return_writes_native_in_progress_then_open_pr_is_allowed(
+    monkeypatch, upto,
+):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto=upto)
+    _back(tracker, project, issue_id, upto)
+    receipts = copy.deepcopy(wire.issues[issue_id]["comments"])
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: project)
+    monkeypatch.setattr(issue, "_prepare_branch", lambda _b: "linked-worktree")
+    monkeypatch.setattr(issue, "_sh", lambda *_a, **_k: "")
+    before = len(wire.calls)
+
+    issue.start(issue_id)
+
+    assert wire.issues[issue_id]["state"]["id"] == STATE_IDS["in-progress"]
+    assert len(_writes(wire, before)) == 1
+    assert wire.issues[issue_id]["comments"] == receipts
+    seen = tracker.observe_issue(issue_id)
+    assert (seen.normalized_state, seen.native_state) == (upto, "in-progress")
+    assert seen.projection_status == ("disagreement" if upto == "review" else "aligned")
+
+    def shell(*args, **_kwargs):
+        if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
+            return f"feat/{issue_id.lower()}-x"
+        return ""
+
+    def reached():
+        raise _GateReached
+
+    monkeypatch.setattr(issue, "_sh", shell)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: type(
+        "CodeHost", (), {"resolve_repo": staticmethod(reached)})())
+    with pytest.raises(_GateReached):
+        issue.openpr(issue_id)
+
+
+def test_open_pr_is_still_refused_on_a_returned_issue_that_was_not_restarted(monkeypatch):
+    tracker, wire, project = _graph(monkeypatch)
+    issue_id = _started(tracker, wire, project, 5, upto="review")
+    _back(tracker, project, issue_id, "review")
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: project)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: type(
+        "CodeHost", (), {"resolve_repo": staticmethod(lambda: pytest.fail("pushed"))})())
+    monkeypatch.setattr(
+        issue, "_sh", lambda *_a, **_k: f"feat/{issue_id.lower()}-x",
+    )
+    with pytest.raises(SystemExit, match="Ouverture PR refusée"):
+        issue.openpr(issue_id)
 
 
 @pytest.mark.parametrize("upto", ("review", "in-progress"))
@@ -214,25 +274,42 @@ def test_only_linear_declares_the_guarded_backlog_return():
         assert provider.backlog_return_predecessors == frozenset()
 
 
-@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker, DevHubTracker))
 @pytest.mark.parametrize("expected", ("in-progress", "review"))
-def test_other_providers_refuse_with_the_missing_capability_before_any_read(
-    monkeypatch, provider, expected,
-):
-    tracker = object.__new__(provider)
+def test_youtrack_keeps_its_bounded_backlog_transition(monkeypatch, expected):
+    """Non-regression: base 4cf5ed7 wrote YouTrack State through youtrack.set_state."""
+    native = {"state": expected}
+    tracker, posts = _youtrack_transport(monkeypatch, native)
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    write.transition(
+        tracker, "DEMO-7", "backlog", context=TransitionContext(expected_state=expected),
+    )
+    assert native["state"] == "backlog" and len(posts) == 1
+    # A drifted predecessor is still refused by the adapter, with no write.
+    native["state"] = "ready"
+    with pytest.raises(TrackerConflictError, match="modifié avant transition"):
+        write.transition(
+            tracker, "DEMO-7", "backlog",
+            context=TransitionContext(expected_state=expected),
+        )
+    assert native["state"] == "ready" and len(posts) == 1
+
+
+@pytest.mark.parametrize("expected", ("in-progress", "review"))
+def test_github_projects_keeps_its_own_refusal_before_any_read(monkeypatch, expected):
+    tracker = object.__new__(GitHubProjectsTracker)
 
     def boom(*_a, **_k):
-        raise AssertionError("provider reached")
+        raise AssertionError("provider read")
 
-    monkeypatch.setattr(write, "issue_binding", boom)
-    monkeypatch.setattr(provider, "set_state", boom)
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    monkeypatch.setattr(GitHubProjectsTracker, "_authoritative_binding", boom)
+    monkeypatch.setattr(GitHubProjectsTracker, "_native_issue_read", boom)
     with pytest.raises(TrackerCapabilityUnavailableError) as excinfo:
         write.transition(
             tracker, "DEMO-1", "backlog",
             context=TransitionContext(expected_state=expected),
         )
-    assert excinfo.value.capability == "guarded-backlog-return"
-    assert excinfo.value.tracker == provider.name
+    assert excinfo.value.capability == "set_state"
 
 
 def test_other_backlog_transitions_keep_their_current_path(monkeypatch):

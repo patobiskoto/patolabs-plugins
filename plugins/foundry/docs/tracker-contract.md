@@ -521,7 +521,8 @@ never **excludes** them, and no text in Foundry may say otherwise.
   Query observations, including next-issue and roadmap profiles, expose
   `normalized_state`, `native_state`, and
   `projection_status`. A valid receipt with a divergent native State remains
-  readable as `disagreement`; an invalid or incomplete receipt chain is `unknown`
+  readable as `disagreement` (on Linear, a native `backlog` over a valid non-terminal
+  chain excepted: it reads `aligned`, PAT-ADR-0024); an invalid or incomplete receipt chain is `unknown`
   and has no normalized state, including when the native State says `done`.
 - **Level 3 — provider transaction plus receipt.** Only DevHub's `close_epic`
   (`devhub.py`), outside V1.
@@ -647,7 +648,9 @@ started-then-dropped issue as unfinished and a never-started one as unavailable;
 `edit set-field <ISSUE-ID> State done` is not guarded by this change.
 
 **Putting a started issue back to the backlog (PAT-165; Linear only).** An extension of
-the guarded transition above to the target `backlog`, under PAT-ADR-0006 and PAT-ADR-0017.
+the guarded transition above to the target `backlog`, under PAT-ADR-0006 and PAT-ADR-0017;
+the read rule is decided by PAT-ADR-0024 (status `proposed`, accepted at the merge that
+delivers it), which amends PAT-ADR-0006 "Projection des statuts" for `backlog` only.
 `edit transition <ISSUE-ID> backlog <expected-state>` writes only the native State under
 S1-S4 (one fresh read, one targeted write, one readback, no retry; bounded detection, not
 CAS). `<expected-state>` is mandatory and is `in-progress` or `review`
@@ -656,13 +659,18 @@ provider read. It is compared with the native state just read, so a drift or a t
 state fails closed. It is refused from native `done`, with a `state-done` receipt, with an
 Epic closure audit and with an invalid receipt chain; an issue already at `backlog`
 converges without a write. No receipt is written, deleted or rewritten. A native
-`backlog` over a valid non-terminal chain reads `backlog` / `aligned`. The linked PR is
-neither closed nor modified and the command output names it. The capability flag is
-`guarded_backlog_return_supported` (`True` on Linear only). YouTrack, GitHub Projects and
-DevHub refuse the request, before any read, with `TrackerCapabilityUnavailableError`
-naming `guarded-backlog-return` (deduced: none of them offers the receipt-chain,
-closure-audit and read-back guards of the Linear path); their other `backlog` transitions
-are unchanged. Details: `linear-tracker.md`.
+`backlog` over a valid non-terminal chain reads `backlog` / `aligned`. Accepted risks
+(PAT-ADR-0024): the read cannot tell a return made by Foundry from a hand move in Linear
+or from an `issue start` interrupted between its receipt and its native State; a pull
+request merged outside Foundry with no `state-done` receipt is not detected; `edit
+set-field <ISSUE-ID> State backlog` stays an unguarded grooming write. `issue start` on a
+returned issue rewrites the native State `in-progress` without a new receipt. The linked PR
+is neither closed nor modified and the command output names it. The capability flag is
+`guarded_backlog_return_supported` (`True` on Linear only). The other providers keep the
+behaviour they had before PAT-165 for these transitions: YouTrack writes the State through
+its bounded `set_state` (`youtrack.py`), GitHub Projects refuses `backlog` in its own
+`set_state` (`ghprojects.py`), DevHub keeps its own `set_state` check (`devhub.py`; its
+`backlog` with a context raises `ValueError`). Details: `linear-tracker.md`.
 
 YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
 fresh client ids. GitHub Projects issue creation meets S5 within one Foundry data

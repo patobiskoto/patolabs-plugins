@@ -3934,7 +3934,8 @@ class LinearTracker(Tracker):
         # The append-only receipt is written before its human-facing native State
         # projection.  Between those two effects it is durable evidence of the
         # intended transition, while the older native state remains an observable
-        # disagreement.  Only the writer/recovery path may read this interval;
+        # disagreement (a native ``backlog`` excepted: PAT-ADR-0024, accepted risk
+        # (c), proposed until the merge that delivers it).  Only the writer/recovery path may read this interval;
         # ordinary reads have ``pending_operation=None`` and fail closed.
         pending_receipt_projection = (
             pending_operation in {"state-in-progress", "state-review", "state-done"}
@@ -5761,8 +5762,10 @@ class LinearTracker(Tracker):
         # The typed lifecycle receipt is Foundry's authority, while the native
         # Linear State remains the human-visible projection.  Write the receipt
         # first so a native transport failure cannot erase delivery evidence.
-        # The intentional receipt/native interval is observable as disagreement
-        # and the exact receipt authorizes recovery of only that missing State
+        # The intentional receipt/native interval is observable as disagreement,
+        # except when the interval is a native ``backlog`` over a valid non-terminal
+        # chain, which reads ``backlog`` without disagreement (PAT-ADR-0024, accepted
+        # risk (c)); the exact receipt authorizes recovery of only that missing State
         # effect.  This deliberately leaves a named residual S1->S2 race: it is
         # bounded detection, not CAS.
         #
@@ -5794,6 +5797,22 @@ class LinearTracker(Tracker):
                 exact_receipts.append(receipt)
         if len(exact_receipts) > 1:
             raise TrackerConflictError("Linear lifecycle duplicate projection")
+        if (
+            state == "in-progress"
+            and projection["state"] == "review"
+            and projection["done"] is None
+            and len(exact_receipts) == 1
+            and native_state_id == binding["state_ids"].get("backlog")
+        ):
+            # PAT-165 / PAT-ADR-0024 "Reprise": an issue returned to the backlog from
+            # review resumes by rewriting only its native State, under S1-S5; its
+            # in-progress receipt already exists, so none is added.  The review
+            # receipt keeps the logical state ``review``.
+            # ``_project_native_state`` reads the State back; the strict lifecycle
+            # read is not repeated, since native ``in-progress`` over a review receipt
+            # is a disagreement by design (the ``issue open-pr`` replay path).
+            self._project_native_state(issue_id, state, project, binding)
+            return
         if (
             projection["state"] in ranks
             and ranks[projection["state"]] > ranks[state]

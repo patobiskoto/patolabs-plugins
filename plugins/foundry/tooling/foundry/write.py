@@ -37,7 +37,6 @@ from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
     TrackerBindingError,
-    TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
 
@@ -325,17 +324,12 @@ def transition(tracker, issue_id: str, state: str, context=None):
                 f"`edit transition {issue_id} dropped <état-attendu>` "
                 f"({', '.join(sorted(admitted))})."
             )
-    # PAT-165: putting a started or in-review issue back to the backlog.  A provider
-    # without the guarded path refuses with a typed reason, before any read; the
-    # adapter owns the admitted predecessors, as for the abandon.
-    expected_backlog = getattr(context, "expected_state", None)
-    if normalized == "backlog" and expected_backlog in {"in-progress", "review"}:
-        if not getattr(tracker, "guarded_backlog_return_supported", False):
-            raise TrackerCapabilityUnavailableError(
-                getattr(tracker, "name", type(tracker).__name__),
-                "guarded-backlog-return",
-            )
+    # PAT-165 / PAT-ADR-0024: on a provider that declares the guarded backlog return,
+    # the adapter owns the admitted predecessors (as for the abandon) and a missing or
+    # inadmissible one is refused here, before any read.  Any other provider keeps the
+    # path it had before PAT-165: no check here, its own ``set_state`` decides.
     if normalized == "backlog" and getattr(tracker, "guarded_backlog_return_supported", False):
+        expected_backlog = getattr(context, "expected_state", None)
         admitted = getattr(tracker, "backlog_return_predecessors", frozenset())
         if not isinstance(expected_backlog, str) or expected_backlog not in admitted:
             raise SystemExit(
