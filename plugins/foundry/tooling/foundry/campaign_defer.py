@@ -42,6 +42,11 @@ _CLIENT = re.compile(r"client_id=([0-9A-Fa-f-]{36})")
 _DURABLE = re.compile(
     r"CapabilityUnavailable|capability unavailable|BindingError|ValueError|SystemExit|"
     r"type_unmapped|invalid_field_options|unknown type", re.I)
+# What `edit reconcile-create` prints when the adapter refuses to validate the creation
+# (`TrackerConflictError`, "validation refused; no retry") or finds no such issue
+# (`IssueUnavailableError`, "issue unavailable"); anything else leaves the effect unknown.
+_REFUSED = re.compile(r"TrackerConflictError|validation refused", re.I)
+_ABSENT = re.compile(r"IssueUnavailableError|issue unavailable", re.I)
 _CREATED = re.compile(r"^\S+\s+(\S+)\s+—", re.M)
 
 
@@ -155,29 +160,43 @@ def _write(runtime, cwd: Path, args: list[str], input: str | None = None):
     return done
 
 
-def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> str | None:
-    """``edit reconcile-create <issue id or client id> <spec>`` (read-only); the issue id it
-    accepts, else ``None``."""
+def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | None]:
+    """``edit reconcile-create <issue id or client id> <spec>`` (read-only): ``("accepted",
+    issue id)``; ``("absent", None)`` when the read finds no such issue (the creation did not
+    happen); ``("refused", None)`` when the adapter refuses to validate it (no replay);
+    otherwise ``("unknown", None)``."""
     with tempfile.TemporaryDirectory() as tmp:
         spec_file = Path(tmp) / "spec.json"
         spec_file.write_text(json.dumps(spec), encoding="utf-8")
         check = _write(runtime, cwd, ["reconcile-create", ref, str(spec_file)])
-    verdict = review._json_object(check.stdout) if check.returncode == 0 else None
+    if check.returncode != 0:
+        tail = (check.stderr or "")[-400:]
+        if _REFUSED.search(tail):
+            return "refused", None
+        return ("absent", None) if _ABSENT.search(tail) else ("unknown", None)
+    verdict = review._json_object(check.stdout)
+    if verdict and verdict.get("validation") == "refused":
+        return "refused", None
     found = verdict.get("issue_id") if verdict and verdict.get("validation") == "accepted" else None
-    return found if isinstance(found, str) and found else None
+    return ("accepted", found) if isinstance(found, str) and found else ("unknown", None)
 
 
 def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
-    """``edit create-issue``; the id it prints.  A failed creation is never retried while its
-    effect is unknown: the client identifier is kept in ``ledger["unknown"]`` (so in the
-    journal) and the next pass reconciles by it before any new creation (PAT-ADR-0028)."""
+    """``edit create-issue``; the id it prints.  A failed creation whose effect is unknown is
+    reconciled by its client identifier (kept in ``ledger["unknown"]``, so in the journal)
+    before any new creation (PAT-ADR-0028).  The read then decides (AGENTS.md#R9 (b)): the
+    issue exists, adopt it; it does not exist, the next pass creates again with a new client
+    identifier; the adapter refuses the replay, durable refusal; unreadable, transient."""
     for entry in [u for u in ledger["unknown"] if u["title"] == spec["title"]]:
-        found = _reconcile(runtime, cwd, entry["client_id"], spec)
-        if found is None:
+        status, found = _reconcile(runtime, cwd, entry["client_id"], spec)
+        if status == "refused":
+            raise Durable("creation_replay_refused")
+        if status == "unknown":
             raise Transient("creation_effect_unknown")
         ledger["unknown"].remove(entry)
-        ledger["writes"].append(label)
-        return found
+        if status == "accepted":
+            ledger["writes"].append(label)
+            return found
     done = _write(runtime, cwd, ["create-issue", json.dumps(spec)])
     if done.returncode == 0:
         created = _CREATED.search(done.stdout or "")
@@ -188,6 +207,8 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     stderr = done.stderr or ""
     details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
+        if details.get("validation") == "refused" or details.get("automatic_retry") is True:
+            raise Durable("creation_replay_refused")  # the adapter refuses to replay
         named, client = details.get("issue_id"), details.get("client_id")
     else:  # a quota error names the client identifier in its message (docs/linear-tracker.md)
         named, found = None, _CLIENT.search(stderr[-400:])
@@ -197,10 +218,14 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     ref = next((v for v in (named, client) if isinstance(v, str) and v), None)
     if ref is None:
         raise Durable("creation_effect_unreconcilable")
-    found = _reconcile(runtime, cwd, ref, spec)
-    if found is not None:
+    status, found = _reconcile(runtime, cwd, ref, spec)
+    if status == "accepted":
         ledger["writes"].append(label)
         return found
+    if status == "refused":
+        raise Durable("creation_replay_refused")
+    if status == "absent":  # the creation did not happen: the next pass creates again
+        raise Transient("creation_not_observed")
     ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
     raise Transient("creation_effect_unknown")
 

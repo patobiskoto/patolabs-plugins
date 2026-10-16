@@ -52,6 +52,7 @@ class World:
         self.search_failure = None
         self.search_blind = set()  # titles the search does not list yet (read lag)
         self.hide_clients = False  # the read of a client id finds nothing (yet)
+        self.reconcile_failure = None  # stderr of the next reconcile-create
         self.clients = {}  # client id of a failed creation -> the issue it created
         self.write_failures = {}  # verb -> stderr of the next failure of that verb
         self.remarks_receipts = 0
@@ -159,6 +160,9 @@ def _edit(self, argv, input):
         self.issues[dst].links.append(Link("parent-of", "outward", src))
         return ok()
     if verb == "reconcile-create":
+        if self.reconcile_failure is not None:
+            failure, self.reconcile_failure = self.reconcile_failure, None
+            return fail(failure)
         if re.fullmatch(r"[0-9a-f-]{36}", args[0]) and args[0] not in self.clients:
             return fail("not found")  # a client id no issue was created with
         return ok(json.dumps({"validation": "accepted",

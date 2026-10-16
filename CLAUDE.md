@@ -400,12 +400,14 @@ still accepts exactly the keys `outcomes` and `quality`, and neither `issue.py` 
 are not marked "fix before merge", the cadencer decides `defer-remarks` before `merge`
 when the direct parent Epic of the ticket exists and is not itself a companion Epic. The
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
-`edit link` and `edit comment`, posts one comment per PR, cites the follow-up issue in
-the PR description and records the deferral in its attempt journal. The following are
-corrected by the correction loop and re-reviewed: a remark marked "fix before merge", a
-ticket with no origin Epic, a ticket of a companion Epic, and a durable refusal
-(capability absent, `Epic` type refused, several companion Epics with the same name). A
-transient failure makes the campaign wait and retry, at most `MAX_DEFER_TRIES` times
+`edit link` and `edit comment`, posts one comment per validated round, never one per
+remark, cites every follow-up issue in the PR description and records the deferral in
+its attempt journal. The following are corrected by the correction loop and
+re-reviewed: a remark marked "fix before merge", a ticket with no origin Epic, a ticket
+of a companion Epic, and a durable refusal (capability absent, `Epic` type refused,
+several companion Epics with the same name, an adapter that refuses to replay a
+creation). A transient failure, including a creation that the read shows did not
+happen, makes the campaign wait and retry, at most `MAX_DEFER_TRIES` times
 (`campaign_defer.py`), then suspend. Not changed by PAT-141: the coordinator of
 `plugins/foundry/tooling/foundry/campaign_runtime.py` (DevHub) reads only the structured
 proof in its review step (`_review_observation`) and has no issue-creation primitive: its

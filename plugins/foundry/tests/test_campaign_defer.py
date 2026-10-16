@@ -239,6 +239,72 @@ def test_an_unnamed_unknown_effect_is_reconciled_by_client_id_before_any_creatio
         "created by this pull request;")
 
 
+ABSENT = "foundry.trackers.base.IssueUnavailableError: issue unavailable: " + CLIENT
+REFUSED = ("foundry.trackers.base.TrackerConflictError: Linear issue creation validation "
+           "refused; no retry (diverged: body)")
+
+
+def test_a_creation_the_read_shows_did_not_happen_is_created_again_with_a_new_attempt(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.reconcile_failure = ABSENT  # the read of the client id: no such issue
+    first = step(env)
+    assert (first.outcome, first.effect["deferral"]["reason"]) == (
+        "waiting", "creation_not_observed")
+    assert first.effect["deferral"]["unknown"] == []  # nothing left to reconcile
+    assert verbs(env) == ["create-issue", "reconcile-create"] and companions(env) == []
+    retry = step(env, LATER)
+    assert retry.outcome == "executed"
+    assert verbs(env).count("create-issue") == 3  # companion again, then the follow-up
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
+
+
+def test_a_journaled_unknown_effect_found_absent_is_created_again(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.hide_clients = True  # unreadable: the effect stays unknown
+    assert step(env).effect["deferral"]["reason"] == "creation_effect_unknown"
+    env.world.reconcile_failure = ABSENT  # next pass: the read now says there is no issue
+    again = step(env, LATER)
+    assert again.outcome == "executed" and again.effect["deferral"]["unknown"] == []
+    assert verbs(env).count("create-issue") == 3 and len(companions(env)) == 1
+
+
+def test_an_adapter_that_refuses_the_replay_is_a_durable_refusal(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": "APP-99", "creation": "created",
+        "validation": "refused", "reconciliation": "required", "automatic_retry": False})
+    result = step(env)
+    assert result.effect["deferral"]["state"] == "refused"
+    assert result.effect["deferral"]["reason"] == "creation_replay_refused"
+    assert verbs(env) == ["create-issue"]  # no substitute write, no reconciliation needed
+    assert step(env).decision.reason == "remarks_not_deferrable"
+
+
+def test_a_reconciliation_that_refuses_validation_is_a_durable_refusal(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.reconcile_failure = REFUSED
+    result = step(env)
+    assert result.effect["deferral"]["reason"] == "creation_replay_refused"
+    assert result.effect["deferral"]["state"] == "refused"
+    assert step(env).decision.reason == "remarks_not_deferrable"
+
+
+def test_an_unreadable_reconciliation_stays_transient_and_bounded(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.reconcile_failure = "ConnectionError: transport_error"
+    result = step(env)
+    assert (result.outcome, result.effect["deferral"]["state"]) == ("waiting", "transient")
+    assert result.effect["deferral"]["unknown"] == [{"title": "Nits APP-1", "client_id": CLIENT}]
+
+
 def test_a_quota_error_naming_the_client_id_is_reconciled_by_it(env):
     reviewed(env)
     env.world.create_failure = f"{RATE_LIMITED} client_id={CLIENT} creation=unknown"
@@ -473,3 +539,35 @@ def test_a_carried_proof_does_not_defer_the_same_remarks_twice(env):
     env.world.checks = [check()]
     assert step(env).decision.kind == "merge"
     assert verbs(env) == ["create-issue", "create-issue", "comment"]
+
+
+def _finished(deferral):
+    return {"epic": "APP-1", "ticket": "APP-2", "event": "finished", "kind": "defer-remarks",
+            "deferral": {"follow_up": None, "companion": None, "reason": None, "remarks": None,
+                         "unknown": [], **deferral}}
+
+
+def test_the_description_cites_every_follow_up_and_every_write_of_the_pull_request():
+    from foundry import campaign_review as review
+
+    records = [
+        _finished({"state": "transient", "diff_hash": "a", "writes": [cd.WRITE_COMPANION]}),
+        _finished({"state": "done", "diff_hash": "a", "follow_up": "APP-51", "companion": "APP-50",
+                   "remarks": 2, "writes": [cd.WRITE_FOLLOW_UP, cd.WRITE_COMMENT]}),
+        _finished({"state": "done", "diff_hash": "b", "follow_up": "APP-52", "companion": "APP-50",
+                   "remarks": 1, "writes": [cd.WRITE_FOLLOW_UP, cd.WRITE_COMMENT]}),
+    ]
+    assert review.deferral_lines(records, "APP-1", "APP-2") == [
+        "Deferred remarks: APP-51, APP-52 (companion Epic APP-50, created by this pull request; "
+        "3 remarks; writes: create companion Epic, create follow-up issue, "
+        "comment on the follow-up issue)"]
+
+
+def test_the_description_cites_the_writes_made_before_a_durable_refusal():
+    from foundry import campaign_review as review
+
+    refused = {"state": "refused", "diff_hash": "a", "reason": "creation_replay_refused",
+               "writes": [cd.WRITE_COMPANION]}
+    assert review.deferral_lines([], "APP-1", "APP-2", _finished(refused)["deferral"]) == [
+        "Remarks not deferred: durable refusal (creation_replay_refused) "
+        "(writes made before it: create companion Epic); they are corrected before the merge."]

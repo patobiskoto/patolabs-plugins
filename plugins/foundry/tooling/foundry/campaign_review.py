@@ -435,9 +435,10 @@ def round_line(number: int, review: dict) -> str:
 
 def deferral_lines(records: list[dict], epic: str, ticket: str,
                    current: dict | None = None) -> list[str]:
-    """What R9 (b) asks the PR description to report (PAT-141): the follow-up issue, the
-    companion Epic and whether this PR created it, the number of deferred remarks and the
-    writes made; after a durable refusal, the refusal.  From the ``deferral`` fields of the
+    """What R9 (b) asks the PR description to report (PAT-141): every follow-up issue of the
+    pull request, the companion Epic and whether this PR created it, the number of deferred
+    remarks and every write of its attempts; after a durable refusal, the refusal and the
+    writes made before it.  From the ``deferral`` fields of the
     journal, then ``current`` (the one about to be journaled)."""
     fields = [r["deferral"] for r in _mine(records, epic, ticket)
               if r["event"] == "finished" and r["kind"] == "defer-remarks"
@@ -449,12 +450,16 @@ def deferral_lines(records: list[dict], epic: str, ticket: str,
         total = sum({f["diff_hash"]: f["remarks"] or 0 for f in done}.values())
         origin = "created by this pull request" if "create companion Epic" in writes \
             else "already existing"
+        follow_ups = ", ".join(dict.fromkeys(f["follow_up"] for f in done))
         lines.append(
-            f"Deferred remarks: {done[-1]['follow_up']} (companion Epic {done[-1]['companion']}, "
+            f"Deferred remarks: {follow_ups} (companion Epic {done[-1]['companion']}, "
             f"{origin}; {total} remarks; writes: {', '.join(writes) or 'none'})")
     if fields and fields[-1]["state"] == "refused":
-        lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}); they are "
-                     "corrected before the merge.")
+        made = list(dict.fromkeys(w for f in fields if f["state"] == "refused"
+                                  for w in f["writes"]))
+        before = f" (writes made before it: {', '.join(made)})" if made else ""
+        lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}){before}; "
+                     "they are corrected before the merge.")
     return lines
 
 

@@ -351,26 +351,37 @@ remarks; `writes` what this attempt wrote; `unknown` the creations whose effect 
    orphan of a creation whose parent link failed: write 4, `edit link <FOLLOW-UP> subtask-of
    <COMPANION>`. Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
-   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`. It
-   is skipped when a comment of the follow-up already contains that reference (a comment whose
+   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: one
+   comment per validated round, never one per remark (a correction changes the diff hash, so a
+   later validated round of the same pull request posts its own). It is skipped when a comment of the follow-up already contains that reference (a comment whose
    answer was lost). The tracker may return only the most recent comments
    (`docs/review-rounds.md`): a comment older than that window would be posted again (unknown).
-5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>
-   (companion Epic <ID>, created by this pull request|already existing; <N> remarks; writes:
-   ...)` after the `## Review rounds` section (R9 (b): the writes are reported in the PR
-   description); the line is kept by the later rewrites (`deferral_lines`, from the `deferral`
-   fields of the journal). After a durable refusal the same rewrite carries `Remarks not
-   deferred: durable refusal (<reason>); they are corrected before the merge.`
+5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>[,
+   <FOLLOW-UP-ID>...] (companion Epic <ID>, created by this pull request|already existing; <N>
+   remarks; writes: ...)` after the `## Review rounds` section (R9 (b): the writes are reported
+   in the PR description). It names every follow-up issue and every write of the attempts of the
+   pull request, those of a transient or refused attempt included; the line is kept by the later
+   rewrites (`deferral_lines`, from the `deferral` fields of the journal). After a durable
+   refusal the same rewrite carries `Remarks not deferred: durable refusal (<reason>) (writes
+   made before it: ...); they are corrected before the merge.`, the second parenthesis only when
+   a refused attempt made a write.
 6. The `finished` line with state `done`; the next pass decides `merge`.
 
 A failed `edit create-issue` is never retried inside the pass. When its standard error is the
 structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
 required`), or is a quota error whose message names a `client_id=<UUID>`, `edit
 reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once; `validation:
-accepted` adopts that issue. Otherwise the effect stays unknown: the client id and the title go
-to the `unknown` key of the `finished` line (transient), and the next pass reconciles by that
-client id (`_create`) before any new creation, and never creates while the reconciliation is
-not accepted (PAT-ADR-0028); the bound is `MAX_DEFER_TRIES`. A search by title still precedes
+accepted` adopts that issue. `_reconcile` tells four answers apart: `accepted`; `absent`
+(standard error naming `IssueUnavailableError`, the read found no such issue: the creation did
+not happen, nothing is kept in `unknown`, transient `creation_not_observed`, and the next pass
+creates again with a new client id); `refused` (standard error naming `TrackerConflictError` or
+`validation refused`, or `validation: refused` in the answer or in the creation error object:
+the adapter does not replay, `creation_replay_refused`, a durable refusal); anything else is
+unreadable and the effect stays unknown: the client id and the title go to the `unknown` key of
+the `finished` line (transient), and the next pass reconciles by that client id (`_create`)
+before any new creation. The ADR only says a creation is retried after reconciliation
+(PAT-ADR-0028); this split is the reading of R9 (b) (`tests/test_campaign_defer.py`).
+The bound is `MAX_DEFER_TRIES`. A search by title still precedes
 the creation and adopts an issue it lists. An error object that names neither an issue nor a
 client id is a durable refusal (`creation_effect_unreconcilable`).
 
