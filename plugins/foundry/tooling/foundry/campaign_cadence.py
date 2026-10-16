@@ -4,7 +4,7 @@ One pass re-reads the tracker, git and the PR, and returns exactly one ``Decisio
 produces no effect: no tracker write, no git mutation, no PR mutation, no session launch.
 The state lives in the tracker, git and the PR, never here.  ``decide`` is pure over an
 immutable ``Observation``; ``observe`` gathers it through declared capabilities only.
-Executing a decision is ``campaign_effects`` (PAT-217); this module stays effect-free.
+Executing a decision is ``campaign_effects`` (PAT-217, PAT-218); this module stays effect-free.
 """
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ from foundry.epic_preview import (
 )
 
 CADENCE_CONTRACT = "foundry-campaign-cadence.v1"
+# Bounds of the review and correction loop of one ticket (PAT-218, AC3): beyond them the
+# campaign suspends and waits for a human.  Counted from the attempt journal.
+MAX_REVIEW_ROUNDS = 3
+MAX_CORRECTIONS = 2
 STARTED_STATES = ("in-progress", "review")
 READY_STATES = ("backlog", "ready")
 KINDS = (
@@ -61,12 +65,20 @@ class TicketFacts:
     branch: bool | None = None
     branch_sha: str | None = None  # head of the branch, when it can be read
     ahead: int | None = None  # commits of the branch beyond the remote default branch
-    # True when the last implementation attempt ended on this very branch head (PAT-217).
+    # True when the last implementation or correction attempt ended on this very branch head
+    # (PAT-217, PAT-218).
     implemented: bool = False
     pr: PullFacts | None = None
     review: str | None = None  # none | valid | blocked | unobservable
     ci: str | None = None  # green | pending | red | none
     anomaly: str | None = None
+    # From the attempt journal (PAT-218), for the ticket in focus only.  ``fix_before_merge``
+    # is the number of remarks marked "fix before merge" in the validated review of exactly
+    # this PR head and base; ``review_rounds`` the recorded (not carried) reviews and
+    # ``corrections`` the correction sessions started for this ticket.
+    fix_before_merge: int = 0
+    review_rounds: int = 0
+    corrections: int = 0
 
 
 @dataclass(frozen=True)
@@ -135,6 +147,17 @@ def _regression(tickets: tuple[TicketFacts, ...]) -> Decision | None:
     return None
 
 
+def _bounded(ticket: TicketFacts, decision: Decision) -> Decision:
+    """Suspend instead of a ``review`` or ``correct`` beyond the bounds of the loop."""
+    counts = {"reviews": ticket.review_rounds, "corrections": ticket.corrections,
+              "max_reviews": MAX_REVIEW_ROUNDS, "max_corrections": MAX_CORRECTIONS}
+    if decision.kind == "review" and ticket.review_rounds >= MAX_REVIEW_ROUNDS:
+        return Decision("suspend", ticket.id, "review_rounds_exhausted", counts)
+    if decision.kind == "correct" and ticket.corrections >= MAX_CORRECTIONS:
+        return Decision("suspend", ticket.id, "corrections_exhausted", counts)
+    return decision
+
+
 def _ticket_step(ticket: TicketFacts) -> Decision:
     if ticket.anomaly:
         return Decision("suspend", ticket.id, ticket.anomaly)
@@ -156,11 +179,18 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
         return Decision("suspend", ticket.id, "pr_closed_unmerged", evidence)
     if not pr.head_sha:
         return Decision("suspend", ticket.id, "pr_head_unreadable", evidence)
+    if ticket.implemented and ticket.branch_sha and ticket.branch_sha != pr.head_sha:
+        # A correction session committed locally: the PR still holds the reviewed head.
+        return Decision("open-pr", ticket.id, "correction_not_pushed", evidence)
     if ticket.review == "blocked":
-        return Decision("correct", ticket.id, "review_blocked", evidence)
+        return _bounded(ticket, Decision("correct", ticket.id, "review_blocked", evidence))
     if ticket.review != "valid":
         reason = "review_unobservable" if ticket.review == "unobservable" else "review_missing"
-        return Decision("review", ticket.id, reason, evidence)
+        return _bounded(ticket, Decision("review", ticket.id, reason, evidence))
+    if ticket.fix_before_merge > 0:
+        return _bounded(ticket, Decision(
+            "correct", ticket.id, "review_fix_before_merge",
+            {**evidence, "fix_before_merge": ticket.fix_before_merge}))
     if ticket.ci == "green":
         return Decision("merge", ticket.id, "review_valid_ci_green", evidence)
     if ticket.ci == "red":
@@ -345,6 +375,7 @@ def observe(
     diff_reader: Callable[[str, str, str], bytes] = _default_diff, proof_store=None,
     branch_facts: Callable[[str, str], tuple[str | None, int | None]] = _git_branch_facts,
     implemented: Callable[[str, str | None], bool] | None = None,
+    history: Callable[[str, str | None, str | None], tuple[int, int, int]] | None = None,
 ) -> Observation:
     """Gather one observation with declared capabilities and read-only calls only."""
     missing = missing_capabilities(tracker)
@@ -391,7 +422,7 @@ def observe(
     if focus is not None:
         tickets = tuple(
             _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store,
-                         branch_facts, implemented)
+                         branch_facts, implemented, history)
             if t.id == focus else t for t in tickets
         )
     return Observation(
@@ -401,7 +432,7 @@ def observe(
 
 
 def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store,
-                 branch_facts, implemented):
+                 branch_facts, implemented, history=None):
     from dataclasses import replace
 
     branch = _branch_for(refs(root), ticket.id)
@@ -421,7 +452,9 @@ def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store
         proof_store = AcceptanceProofStore(repository_identity(root))
     review = _review_status(proof_store, tracker.get_issue(ticket.id), pr, root, diff_reader)
     ci = _ci_status(codehost, repo, pr.head_sha) if review == "valid" and pr.head_sha else None
-    return replace(facts, review=review, ci=ci)
+    fix, rounds, corrections = history(ticket.id, pr.head_sha, pr.base_sha) if history else (0, 0, 0)
+    return replace(facts, review=review, ci=ci, fix_before_merge=fix if review == "valid" else 0,
+                   review_rounds=rounds, corrections=corrections)
 
 
 def report(obs: Observation, decision: Decision) -> str:

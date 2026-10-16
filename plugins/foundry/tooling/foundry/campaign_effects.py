@@ -17,6 +17,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -28,14 +29,16 @@ from typing import Callable
 
 from foundry import campaign_approval as approval
 from foundry import campaign_cadence as cadence
+from foundry import campaign_review
 from foundry import registry
 from foundry.epic_preview import _canonical
 
 EFFECTS_CONTRACT = "foundry-campaign-attempts.v1"
 ATTEMPTS_NAME = "campaign-attempts.jsonl"
 SUMMARIES_NAME = "campaign-summaries"
-EFFECT_KINDS = ("start", "implement", "open-pr", "merge")
-SESSION_KINDS = ("implement",)  # the kinds that launch a model session (ceilings count them)
+EFFECT_KINDS = ("start", "implement", "open-pr", "review", "correct", "merge")
+# The kinds that launch a model session; the approval ceilings count them all (PAT-218).
+SESSION_KINDS = ("implement", "review", "correct")
 IMPLEMENT_BUDGET_USD = 5.0  # default ceiling of one session; not measured (unknown)
 MAX_BUDGET_USD = 25.0
 IMPLEMENT_TIMEOUT_SECONDS = 2 * 60 * 60
@@ -62,6 +65,7 @@ _KEYS = {
                  "exit_code", "cost_usd", "duration_ms", "summary_file", "branch_head",
                  "error", "at"},
 }
+_OPTIONAL = {"started": set(), "finished": {"review"}}  # PAT-218: the verdict of a review
 
 
 class AttemptJournalInvalid(ValueError):
@@ -110,9 +114,14 @@ def read_attempts(path: Path | None = None) -> list[dict]:
         except (ValueError, UnicodeDecodeError) as exc:
             raise AttemptJournalInvalid("ligne de journal illisible") from exc
         if (not isinstance(record, dict) or record.get("schema_version") != EFFECTS_CONTRACT
-                or record.get("event") not in _KEYS or set(record) != _KEYS[record["event"]]
-                or not isinstance(record["attempt"], str)):
+                or record.get("event") not in _KEYS or not isinstance(record.get("attempt"), str)
+                or not _KEYS[record["event"]] <= set(record)
+                <= _KEYS[record["event"]] | _OPTIONAL[record["event"]]):
             raise AttemptJournalInvalid("enregistrement de tentative hors contrat")
+        if "review" in record:
+            if record["kind"] != "review" or not campaign_review.valid_review_field(
+                    record["review"]):
+                raise AttemptJournalInvalid("verdict de relecture hors contrat")
         records.append(record)
     return records
 
@@ -130,6 +139,22 @@ def _write(descriptor: int, record: dict) -> None:
     os.fsync(descriptor)
 
 
+def refusal(records: list[dict], attempt: str, epic: str, ticket: str, kind: str,
+            ceilings: tuple[int, int | None] | None) -> str | None:
+    """The code with which ``claim`` would refuse this attempt now, else ``None``."""
+    started = [r for r in records if r["event"] == "started"]
+    if any(r["attempt"] == attempt for r in started):
+        return "attempt_already_made"
+    if ceilings is not None and kind in SESSION_KINDS:
+        sessions = [r for r in started if r["epic"] == epic and r["kind"] in SESSION_KINDS]
+        maximum, per_issue = ceilings
+        if len(sessions) >= maximum:
+            return "session_ceiling_reached"
+        if per_issue is not None and sum(r["ticket"] == ticket for r in sessions) >= per_issue:
+            return "session_ceiling_per_issue_reached"
+    return None
+
+
 def claim(path: Path, record: dict, ceilings: tuple[int, int | None] | None) -> str | None:
     """Append the ``started`` record unless the identity exists or a ceiling is reached.
 
@@ -138,19 +163,10 @@ def claim(path: Path, record: dict, ceilings: tuple[int, int | None] | None) -> 
     """
     descriptor = _open_locked(path)
     try:
-        records = read_attempts(path)
-        started = [r for r in records if r["event"] == "started"]
-        if any(r["attempt"] == record["attempt"] for r in started):
-            return "attempt_already_made"
-        if ceilings is not None and record["kind"] in SESSION_KINDS:
-            sessions = [r for r in started if r["epic"] == record["epic"]
-                        and r["kind"] in SESSION_KINDS]
-            maximum, per_issue = ceilings
-            if len(sessions) >= maximum:
-                return "session_ceiling_reached"
-            if per_issue is not None and sum(
-                    r["ticket"] == record["ticket"] for r in sessions) >= per_issue:
-                return "session_ceiling_per_issue_reached"
+        refused = refusal(read_attempts(path), record["attempt"], record["epic"],
+                          record["ticket"], record["kind"], ceilings)
+        if refused is not None:
+            return refused
         _write(descriptor, record)
         return None
     finally:
@@ -165,13 +181,17 @@ def finish(path: Path, record: dict) -> None:
         os.close(descriptor)
 
 
-def last_implementation(path: Path, epic: str, ticket: str, branch_sha: str | None) -> dict | None:
-    """The last completed ``implement`` that ended on exactly this branch head, if any."""
+def last_implementation(path: Path, epic: str, ticket: str, branch_sha: str | None,
+                        kinds: tuple[str, ...] = ("implement", "correct")) -> dict | None:
+    """The last completed session of ``kinds`` that ended on exactly this branch head, if any.
+
+    ``correct`` (PAT-218) counts: a correction that committed leaves the branch ahead of the PR.
+    """
     if not branch_sha:
         return None
     found = None
     for record in read_attempts(path):
-        if (record["event"] == "finished" and record["kind"] == "implement"
+        if (record["event"] == "finished" and record["kind"] in kinds
                 and record["epic"] == epic and record["ticket"] == ticket
                 and record["status"] == "completed" and record["branch_head"] == branch_sha):
             found = record
@@ -181,7 +201,7 @@ def last_implementation(path: Path, epic: str, ticket: str, branch_sha: str | No
 @dataclass
 class StepResult:
     decision: cadence.Decision
-    outcome: str  # executed | failed | wait-ci | awaiting_review_execution | terminal | stopped
+    outcome: str  # executed | failed | wait-ci | terminal | stopped
     effect: dict | None = None
 
     def to_dict(self) -> dict:
@@ -285,6 +305,24 @@ def _save_summary(path: Path, attempt: str, text: str) -> str:
     return str(target)
 
 
+def session_plan(runtime: Runtime, route, policy) -> dict:
+    """Model, effort, child environment and host-version check of one routed session."""
+    from foundry.command_runtime import _claude_child_environment
+    from foundry.routing_facades import (
+        claude_effort_parameters, claude_headless_host_version_requirement,
+        claude_invocation_model,
+    )
+
+    model = claude_invocation_model(route.model, project_models=policy.claude_models)
+    effort = claude_effort_parameters(route, invocation_model=model)["transmitted"]
+    env = _claude_child_environment()
+    claude_headless_host_version_requirement(
+        model, "claude", runner=runtime.runner, env=env, cwd=runtime.root,
+    )
+    return {"kind": "session", "model": model, "effort": effort, "env": env,
+            "route": {"tier": route.selected_tier, "model": model, "effort": effort}}
+
+
 def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
           attempts: Path) -> dict:
     """Everything that can fail on configuration, resolved before the attempt is claimed."""
@@ -294,31 +332,20 @@ def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
         return {"argv": runtime.command("issue", "merge", ticket.id, str(ticket.pr.number)),
                 "route": None}
     if kind == "open-pr":
-        record = last_implementation(attempts, epic, ticket.id, ticket.branch_sha)
-        summary = None
-        if record and record["summary_file"]:
-            summary = Path(record["summary_file"]).read_text(encoding="utf-8")
         argv = runtime.command("issue", "openpr", ticket.id)
+        summary = None
+        if ticket.pr is None:  # a push to an open PR (a correction) never replaces its body
+            record = last_implementation(attempts, epic, ticket.id, ticket.branch_sha,
+                                         ("implement",))
+            if record and record["summary_file"]:
+                summary = Path(record["summary_file"]).read_text(encoding="utf-8")
         if summary:
             argv.append("--summary-stdin")
         return {"argv": argv, "route": None, "input": summary or None}
-    from foundry.command_runtime import _claude_child_environment
     from foundry.routing import RoutingPolicy
-    from foundry.routing_facades import (
-        claude_effort_parameters, claude_headless_host_version_requirement,
-        claude_invocation_model,
-    )
 
     policy = RoutingPolicy.load(runtime.root)
-    route = policy.resolve("implementer", "claude")
-    model = claude_invocation_model(route.model, project_models=policy.claude_models)
-    effort = claude_effort_parameters(route, invocation_model=model)["transmitted"]
-    env = _claude_child_environment()
-    claude_headless_host_version_requirement(
-        model, "claude", runner=runtime.runner, env=env, cwd=runtime.root,
-    )
-    return {"kind": "session", "model": model, "effort": effort, "env": env,
-            "route": {"tier": route.selected_tier, "model": model, "effort": effort}}
+    return session_plan(runtime, policy.resolve("implementer", "claude"), policy)
 
 
 def _session_id(attempt: str) -> str:
@@ -347,6 +374,10 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
                 "exit_code": done.returncode, "cost_usd": None, "duration_ms": None,
                 "summary_file": None, "branch_head": None, "error": None,
                 "detail": (done.stderr or "")[-400:]}
+    if plan.get("role") == "reviewer":
+        from foundry.campaign_review import launch_review
+
+        return launch_review(runtime, plan, epic, ticket, attempt, attempts, worktree)
     session_id = _session_id(attempt)
     argv = session_argv(runtime, plan, epic, ticket.id, session_id)
     done = _run(runtime, argv, worktree, input=plan["prompt"], timeout=IMPLEMENT_TIMEOUT_SECONDS,
@@ -362,11 +393,14 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
             "summary_file": saved, "branch_head": head, "error": None, "detail": ""}
 
 
+def _hide_hex(text: str) -> str:
+    """Bound an error text and drop every 64-hex string: a claim capability or attempt token
+    can sit in the argv a failed subprocess reports (``TimeoutExpired``)."""
+    return re.sub(r"[0-9a-f]{64}", "[hex]", text)[:400]
+
+
 def _stopped(decision: cadence.Decision) -> StepResult:
-    outcome = {
-        "wait-ci": "wait-ci", "review": "awaiting_review_execution",
-        "correct": "awaiting_review_execution", "await-verdict": "terminal",
-    }.get(decision.kind, "stopped")
+    outcome = {"wait-ci": "wait-ci", "await-verdict": "terminal"}.get(decision.kind, "stopped")
     return StepResult(decision, outcome)
 
 
@@ -385,11 +419,16 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     obs = cadence.observe(
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
+        history=campaign_review.history(path, epic),
         **observe_kwargs,
     )
     decision = cadence.decide(obs)
     if decision.kind not in EFFECT_KINDS:
         return _stopped(decision)
+    if decision.kind == "correct" and decision.reason == "ci_failing":
+        # Correcting a red CI needs the CI logs, which no effect here reads (PAT-218 scope).
+        return StepResult(cadence.Decision(
+            "suspend", decision.ticket, "ci_failing_not_executed", decision.evidence), "stopped")
     ticket = next(t for t in obs.tickets if t.id == decision.ticket)
     refs = observe_kwargs.get("refs", cadence._git_refs)
     branch_facts = observe_kwargs.get("branch_facts", cadence._git_branch_facts)
@@ -403,15 +442,27 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     except approval.ApprovalError as exc:
         return StepResult(cadence.Decision("refuse", reason=f"approval_{exc.code}"), "stopped")
     try:
-        plan = _plan(runtime, decision.kind, epic, ticket, path)
-        if plan.get("kind") == "session":
+        if decision.kind == "review":
+            plan = campaign_review.plan_review(runtime, epic, ticket, path)
+        elif decision.kind == "correct":
+            plan = campaign_review.plan_correct(
+                runtime, decision, epic, ticket, path, tracker,
+                (granted["max_sessions"], granted["max_sessions_per_issue"]))
+            for kind in ("suspend", "refuse"):
+                if kind in plan:
+                    reason, evidence = plan[kind]
+                    return StepResult(cadence.Decision(kind, ticket.id, reason, evidence),
+                                      "stopped")
+        else:
+            plan = _plan(runtime, decision.kind, epic, ticket, path)
+        if decision.kind == "implement":
             issue = tracker.get_issue(ticket.id)
             plan["prompt"] = implement_prompt(
                 epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "",
             )
     except Exception as exc:  # noqa: BLE001 - configuration refused before any attempt
         return StepResult(decision, "failed", {"phase": "plan", "error": type(exc).__name__,
-                                               "detail": str(exc)[:400]})
+                                               "detail": _hide_hex(str(exc))})
     attempt = identity(epic, ticket.id, decision.kind, fingerprint(ticket))
     started = {
         "schema_version": EFFECTS_CONTRACT, "event": "started", "attempt": attempt,
@@ -430,18 +481,20 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     try:
         outcome = _launch(runtime, plan, epic, ticket, attempt, path, refs, branch_facts)
     except Exception as exc:  # noqa: BLE001 - recorded; the attempt is not replayed
-        outcome.update(status="failed", error=type(exc).__name__, detail=str(exc)[:400])
+        outcome.update(status="failed", error=type(exc).__name__, detail=_hide_hex(str(exc)))
     detail = outcome.pop("detail")
+    review = outcome.get("review")
     finish(path, {
         "schema_version": EFFECTS_CONTRACT, "event": "finished", "attempt": attempt,
         "epic": epic, "ticket": ticket.id, "kind": decision.kind, "at": _stamp(moment),
         **outcome,
     })
-    return StepResult(
-        decision, "executed" if outcome["status"] == "completed" else "failed",
-        {"attempt": attempt, "status": outcome["status"], "exit_code": outcome["exit_code"],
-         "cost_usd": outcome["cost_usd"], "detail": detail},
-    )
+    effect = {"attempt": attempt, "status": outcome["status"], "exit_code": outcome["exit_code"],
+              "cost_usd": outcome["cost_usd"], "detail": detail}
+    if review is not None:  # non-blocking remarks stay in the report; PAT-141 carries them
+        effect.update(review=review, report_file=outcome["summary_file"])
+    return StepResult(decision, "executed" if outcome["status"] == "completed" else "failed",
+                      effect)
 
 
 def run(tracker, codehost, project, epic: str, runtime: Runtime, *, max_steps: int,

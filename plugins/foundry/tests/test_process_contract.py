@@ -166,7 +166,7 @@ def _assert_campaign_facts(flat):
     # the campaign reads a structured proof, never the reviewer's prose
     assert "does not receive the reviewer's prose" in flat
     assert "accepts exactly the keys `outcomes` and `quality`" in flat
-    assert "neither seen nor recorded by a campaign today" in flat
+    assert "neither seen nor recorded by the `campaign_runtime.py` coordinator today" in flat
     for piece in _THREE_MISSING_PIECES:
         assert piece in flat
     # the later issue is a real one: a placeholder identifier is no longer accepted

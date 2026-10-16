@@ -386,7 +386,8 @@ step (`_review_observation` in `plugins/foundry/tooling/foundry/campaign_runtime
 reads only the structured proof stored by `AcceptanceProofStore`
 (`plugins/foundry/tooling/foundry/routing.py`), and the `record-review-proof` command of
 that file accepts exactly the keys `outcomes` and `quality`. So the non-blocking remarks
-of a validated review are neither seen nor recorded by a campaign today, and none of the
+of a validated review are neither seen nor recorded by the `campaign_runtime.py` coordinator today (the cadencer
+of PAT-ADR-0026 keeps their counts in its journal and their text in a report file), and none of the
 steps that follow the review step (`ci`, `human-gate` in `_GATE_STEPS`, then `merge`)
 reads or corrects them. The campaign coordinator has no issue-creation primitive: the
 mutating steps of its runner are `start`, `open-pr`, `merge`, `close-epic` and
@@ -402,6 +403,8 @@ the DevHub and Linear adapters (`plugins/foundry/tooling/foundry/trackers/devhub
 an Epic campaign the authorization of (b) has no effect yet. Three things are missing: a
 channel that carries the remarks to the campaign, the code that creates the companion
 Epic and its issues, and campaigns usable on the repository's tracker (the cadencer of
-PAT-ADR-0026 runs start, implement, open-pr and merge on it since PAT-217, without a review
-launch and without these remarks: `plugins/foundry/docs/campaign-effects.md`). They are
-left to a later issue under the same Epic, PAT-141.
+PAT-ADR-0026 runs start, implement, open-pr, review, correct and merge on it since PAT-217
+and PAT-218: it launches the reviewer and keeps the non-blocking remarks in a report file and
+in the step output, but carries none of them to a companion Epic:
+`plugins/foundry/docs/campaign-effects.md`). They are left to a later issue under the same
+Epic, PAT-141.
