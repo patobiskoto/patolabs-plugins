@@ -28,6 +28,13 @@ REPOSITORY = "test/repo"
 CLI = str(Path(ce.__file__).resolve().parents[2] / "tooling" / "foundry_cli.py")
 
 
+def neutral(env) -> bool:
+    """``env`` sets ``core.hooksPath=/dev/null`` and ``core.fsmonitor=false`` for git."""
+    entries = [(env.get(f"GIT_CONFIG_KEY_{n}"), env.get(f"GIT_CONFIG_VALUE_{n}"))
+               for n in range(int(env.get("GIT_CONFIG_COUNT", "0")))] if env else []
+    return {("core.hooksPath", os.devnull), ("core.fsmonitor", "false")} <= set(entries)
+
+
 class World:
     """Shared state of the tracker, git and the code host, moved only by the fake runner."""
 
@@ -80,6 +87,8 @@ class World:
 
     def runner(self, argv, cwd=None, input=None, env=None, **kwargs):
         self.calls.append((list(argv), cwd, env, input))
+        if argv[0] != "claude":  # PAT-220: no git hook nor fsmonitor in a cadencer subprocess
+            assert neutral(env), argv
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
         if argv[:2] == ["git", "rev-parse"]:  # PAT-220: a linked worktree of the stand-in repository
             common = Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git"
@@ -471,6 +480,50 @@ def test_session_git_writes_exclude_hooks_and_config(env):
                  os.path.join(gitdir, "commondir")):
         assert path in fs["denyWrite"]
     assert common in fs["allowRead"] and not _under(os.path.join(common, "hooks"), fs["allowWrite"])
+
+
+def test_git_neutral_env_appends_to_existing_entries():
+    env = cc.git_neutral_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name",
+                              "GIT_CONFIG_VALUE_0": "x", "PATH": "/bin"})
+    assert env["GIT_CONFIG_COUNT"] == "3" and env["PATH"] == "/bin"
+    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("user.name", "x")
+    assert neutral(env) and neutral(cc.git_neutral_env({}))
+
+
+def test_cadence_git_reads_run_with_hooks_and_fsmonitor_off(monkeypatch):
+    seen = []
+    monkeypatch.setattr(cc.subprocess, "run", lambda argv, **kw: seen.append(kw["env"]) or
+                        SimpleNamespace(returncode=0, stdout=""))
+    cc._git_refs("/r")
+    assert seen and all(neutral(e) for e in seen)
+
+
+def test_hook_planted_in_a_worktree_does_not_run_in_a_cadencer_git_command(tmp_path, monkeypatch):
+    """B1: a relative core.hooksPath resolves in the worktree the session writes."""
+    import subprocess
+
+    for name, value in (("HOME", str(tmp_path)), ("GIT_CONFIG_NOSYSTEM", "1"),
+                        ("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@x"),
+                        ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@x")):
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    root, wt = tmp_path / "repo", tmp_path / "wt"
+    git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True,  # noqa: E731
+                                         capture_output=True)
+    git(tmp_path, "init", "-q", str(root))
+    git(root, "commit", "-q", "--allow-empty", "-m", "base")
+    git(root, "config", "core.hooksPath", ".githooks")  # as `doctor` proposes
+    git(root, "worktree", "add", "-q", "--detach", str(wt / "APP-2"))
+    marker = tmp_path / "hook-ran"
+    hook = wt / "APP-2" / ".githooks" / "pre-commit"  # written by the session
+    hook.parent.mkdir()
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    runtime = ce.Runtime(root=str(root), worktrees_dir=wt)
+    done = ce._run(runtime, ["git", "commit", "-q", "--allow-empty", "-m", "x"], wt / "APP-2")
+    assert done.returncode == 0 and not marker.exists()
+    git(wt / "APP-2", "commit", "-q", "--allow-empty", "-m", "y")  # control: plain env runs it
+    assert marker.exists()
 
 
 def test_correction_session_uses_the_same_sandbox_and_reviewer_does_not():

@@ -135,7 +135,10 @@ home, the network, other hosts and versions.
   and `~/.codex` when it exists. The sandbox also denies shell reads of the whole home, apart
   from what is re-allowed: the git common directory, `~/.gitconfig`, `~/.config/git`, and the
   entries under the home of `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child
-  environment (so the tests find their interpreter). The `Read`/`Edit` rules do not deny the
+  environment (meant to let the tests find their interpreter: deduced, not observed, the trial
+  ran no test; not covered: user site-packages such as `pip --user` under `~/Library/Python`,
+  the symlink targets of `PATH` entries such as pipx or uv tool shims under `~/.local`, and
+  pyenv shims dispatching to a version other than `sys.prefix`). The `Read`/`Edit` rules do not deny the
   home itself when the work root is under it, as the default `<repo>-campaign` is whenever the
   repo is (`native_sandbox_settings` drops a denied path that contains the attempt directory);
   the file tools then hold the rest of the home only by mode `dontAsk` and the absence of an
@@ -145,7 +148,8 @@ home, the network, other hosts and versions.
   `core.hooksPath` or `core.fsmonitor` there would run code outside the sandbox). That an
   `allowWrite` of the user scope cannot reopen them is deduced; a refusal that left the path unchanged
   was observed once (refusing layer not recorded) for the worktree `.claude` and `.git` pointer,
-  for `~/.config/foundry` and `~/.claude` (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
+  for `~/.config/foundry`, `~/.claude` and the data directory (two shell writes and one
+  Write-tool write; steps 3 to 8 and 12 of the trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
   not for the other paths nor for the three user files added after it. `--setting-sources user`
   keeps the worktree's project and local settings from widening the sandbox (arrays merge across
   scopes, PAT-124).
@@ -156,15 +160,24 @@ home, the network, other hosts and versions.
   worktree under these settings made the commit, trial of 2026-10-17).
   `hooks`, `config`, `info`, `refs/replace` of the common directory and `commondir`, `gitdir`,
   `config.worktree` of the git directory are denied to writes, so the session cannot plant a
-  hook, change `core.hooksPath` or a replacement object that a later git command of the
-  cadencer would run (observed once: a write into the common `hooks` and a `git config
-  core.hooksPath` left the common directory unchanged; `commondir`, `config.worktree`,
-  `refs/replace` were not tested).
+  hook there, change `core.hooksPath` or add a replacement object (observed once: a write into
+  the common `hooks` and a `git config core.hooksPath` left the common directory unchanged;
+  `commondir`, `config.worktree`, `refs/replace` were not tested). A relative
+  `core.hooksPath`, such as the `.githooks` that `doctor` proposes, resolves in the worktree,
+  which the session writes. So every subprocess the cadencer runs, sessions excepted, gets
+  `core.hooksPath=/dev/null` and `core.fsmonitor=false` through `GIT_CONFIG_COUNT`, appended
+  after existing entries (`campaign_cadence.git_neutral_env`, applied by `_run` and
+  `campaign_cadence._git`); the `issue`, `edit` and `routing` commands it runs pass it to their
+  git (deduced: they set no environment of their own). A `pre-commit` hook written in a linked worktree under a relative `core.hooksPath` did
+  not run under it and ran without it (observed in `test_hook_planted_in_a_worktree_does_not_run_in_a_cadencer_git_command`,
+  one git version). Consequence: the repository's own `pre-push` guard (AGENTS.md#R1) does not
+  run on the push of `issue openpr`; the merge path, `issue merge`, is unchanged.
 - Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
   `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
-  session could redirect the git directory to a repository of its own with `core.fsmonitor` or
-  hooks, and a later git command of the cadencer would run that code outside the sandbox
-  (deduced). The pointer was refused in the trial; `commondir`, `config.worktree` and
+  session could redirect the git directory to a repository of its own whose configuration
+  names a command other than a hook or fsmonitor (for example `core.sshCommand` or
+  `credential.helper`, for the push of `issue openpr`), and a later git command of the
+  cadencer would run that code outside the sandbox (deduced). The pointer was refused in the trial; `commondir`, `config.worktree` and
   `refs/replace` were not tested.
 - Residual, deduced: the `user` scope of the host settings can add `permissions.allow` rules
   (for example `Edit` or `Read` on the home) that the file tools would honour where no deny

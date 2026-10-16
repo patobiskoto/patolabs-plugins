@@ -263,9 +263,11 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
 
 def _run(runtime: Runtime, argv: list[str], cwd, *, input=None, timeout=COMMAND_TIMEOUT_SECONDS,
          env=None):
+    """Without ``env`` (every subprocess but a session): git hooks and fsmonitor are off
+    (``cadence.git_neutral_env``), also for the git commands of a Foundry command it runs."""
     return runtime.runner(
         argv, cwd=str(cwd), input=input, capture_output=True, text=True, timeout=timeout,
-        env=env if env is not None else runtime.environ(), check=False,
+        env=env if env is not None else cadence.git_neutral_env(runtime.environ()), check=False,
     )
 
 
