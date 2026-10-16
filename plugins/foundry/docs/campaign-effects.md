@@ -237,8 +237,8 @@ Why `dontAsk`: a tool call that no rule pre-approves is refused without a prompt
 `--allowedTools` list above the session can only read files, search, and run the three
 read verbs (deduced). That a mode refuses what no rule approves is
 established for `dontAsk` by the local-first runner (`local_first_runner.py`, `NATIVE_PERMISSION_MODE`,
-trials recorded in `CHANGELOG.md`, PAT-124); the flags `--tools` and `--allowedTools` are used
-by `campaign_runtime.py` and named in `local_first_runner.py`. Not run here: whether the host
+trials recorded in `CHANGELOG.md`, PAT-124); `--tools` is used by
+`campaign_runtime.py`; `--allowedTools` is named in `local_first_runner.py` (a refused flag there). Not run here: whether the host
 matches the `Bash(...)` wildcard rules as written, or refuses a compound command that starts
 with an allowed prefix, and whether `Read` of the packet directory is allowed through
 `--add-dir` (unknown). Remaining limit: the `user` scope is still loaded, so the permission
