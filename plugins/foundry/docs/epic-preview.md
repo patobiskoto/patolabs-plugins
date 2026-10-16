@@ -25,8 +25,9 @@ Two graph contracts are accepted (`GRAPH_CONTRACTS`, `epic_preview.py`):
 A tracker whose `epic_subgraph_supported` is false is refused before any read. The
 pure `build_preview(graph, policy, routing_policy)` boundary then requires:
 
-- one versioned Epic root and a complete, single-parent descendant hierarchy;
-- known versioned nodes, canonical in-scope edges and consistent blocker records;
+- one Epic root and a complete, single-parent descendant hierarchy;
+- known nodes (versioned for `devhub-application.v1`, version nullable for
+  `foundry-epic-subgraph.v1`), canonical in-scope edges and consistent blocker records;
 - exact progress/AC rollups, reached depth and explicit non-truncation;
 - acyclic hierarchy and dependency graphs;
 - an explicit host, issuance time, expiry and optional budget/concurrency ceilings;
@@ -68,8 +69,10 @@ only make that effective floor stricter. Reviewer retains Foundry's existing
 the canonical JSON of: the root, the sorted node ids with their types, the `subtask-of`
 edges, the internal `depends-on` edges, the sorted external blocker pairs
 (`issue`, `blocked_by`, without their states) and the parent component. A new child, an
-internal edge, a type or an external blocker changes it; a state, a version, a title, a
-label or an external blocker turning `done` does not (tests: `tests/test_epic_subgraph.py`).
+internal edge, a type or an external blocker changes it; a state, a version, a title or a
+label does not, nor, for `foundry-epic-subgraph.v1`, an external blocker turning `done`
+(tests: `tests/test_epic_subgraph.py`); `devhub-application.v1` lists no `done` blocker, so
+there that pair leaves the projection and the digest changes.
 The parent component is the Epic's `parent_validation_digest` for
 `foundry-epic-subgraph.v1`; `devhub-application.v1` carries no parent body, so it is the
 named absence `{"unavailable": ...}`. Detecting drift from this digest is not implemented
