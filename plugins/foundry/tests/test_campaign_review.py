@@ -231,6 +231,11 @@ def test_blocking_review_escalates_and_the_correction_session_gets_the_findings(
     from foundry.routing import LEVELS
 
     assert escalation[escalation.index("--current-tier") + 1] in LEVELS
+    from foundry.routing import RoutingPolicy
+
+    # The tier sent excludes the escalation floor, so a replay after `escalated` is identical.
+    assert escalation[escalation.index("--current-tier") + 1] == RoutingPolicy.load(
+        env.runtime.root).resolve("implementer", "claude").selected_tier
     assert "--idempotency-key" in escalation and "--base" in escalation
     argv, cwd, _env, prompt = effects(env.world)[-1]
     assert argv[0] == "claude" and "--tools" not in argv  # the implementer session

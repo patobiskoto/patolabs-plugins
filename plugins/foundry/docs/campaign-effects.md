@@ -258,10 +258,11 @@ For a `correct` decision with reason `review_blocked` or `review_fix_before_merg
 2. For a blocking review only, `routing escalation failure <ID> implementer --kind
    review_blocking` (`review_blocking_after_fix` only when the blocked PR head is the
    `branch_head` of a completed `correct` attempt: "a correction was reviewed and blocked
-   again", `model-routing.md`) `--current-tier <tier> --idempotency-key campaign-<EPIC>-<ID>-<kind>-<head>
+   again", `model-routing.md`) `--current-tier <routed tier without the escalation floor> --idempotency-key campaign-<EPIC>-<ID>-<kind>-<head>
    --root <worktree> --base <PR base sha>`. It runs before the claim because its answer decides
-   whether and at which tier the session runs; the key is stable, so a replay writes nothing
-   more (`escalation.py`, `record_failure`). Before it, `plan_correct` applies the refusals of
+   whether and at which tier the session runs; the key and the tier sent are stable (the floor is not
+   added: `record_failure` raises the tier to it), so a replay after `escalated` sends the same
+   signal and writes nothing more (`escalation.py`, `record_failure`). Before it, `plan_correct` applies the refusals of
    `claim` (`refusal`: attempt already made, session ceilings), so a signal is not recorded for
    an attempt the claim would refuse. `human_required: true` (the command also exits
    2) returns `suspend` `human_required`; `action: technical_blocked` returns `suspend`

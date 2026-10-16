@@ -311,8 +311,11 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
                         and r["status"] == "completed" and r["branch_head"] == pr.head_sha
                         for r in _mine(records, epic, ticket.id))
         kind = "review_blocking_after_fix" if corrected else "review_blocking"
+        # The tier without the escalation floor: record_failure raises it to the floor itself,
+        # and a replay after `escalated` must send the same signal (same idempotent identity).
+        base_tier = policy.resolve("implementer", "claude").selected_tier
         args = ["routing", "escalation", "failure", ticket.id, "implementer", "--kind", kind,
-                "--current-tier", route.selected_tier, "--idempotency-key",
+                "--current-tier", base_tier, "--idempotency-key",
                 f"campaign-{epic}-{ticket.id}-{kind}-{pr.head_sha[:16]}",
                 "--root", str(worktree), "--base", pr.base_sha]
         done = fx._run(runtime, runtime.command(*args), worktree)
