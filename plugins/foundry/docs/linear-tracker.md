@@ -1230,7 +1230,9 @@ comment size (unknown).
 document, document `issue` different from the argument, `from_state` not admitted). After
 the fresh read: an Epic (use `issue close-epic`), a closure audit, an issue with children,
 zero criteria, any `state-review`, `state-done`, `acceptance`, `acceptance-override` or
-`cockpit-evidence` receipt or a linked PR (use `issue merge`), a native state outside
+`cockpit-evidence` receipt or a PR projected by such a Foundry receipt (use `issue merge`); a PR
+linked natively by an integration or merged outside Foundry is not read and so not refused
+(deduced: `pr_url` comes only from Foundry receipts), a native state outside
 `backlog`, `ready`, `in-progress` or different from `from_state`, a natively `dropped`
 issue, a body, criterion count, text or order that differs from the decision, invalid
 evidence, and a receipt beyond the size bound. A start receipt (`state-in-progress`) is
