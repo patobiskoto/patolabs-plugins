@@ -49,7 +49,8 @@ def test_review_claims_packets_runs_a_read_only_reviewer_and_records_the_proof(e
     env.world.reviews.append(result_text(fix=0, nits=2))
     result = step(env)
     assert (result.decision.kind, result.outcome) == ("review", "executed")
-    assert routing_verbs(env.world) == ["claim-review", "prepare-review", "record-review-proof"]
+    assert routing_verbs(env.world) == ["claim-review", "prepare-review", "record-review-proof",
+                                        "record-review-remarks"]
     claim = next(c[0] for c in env.world.calls if c[0][3:4] == ["claim-review"])
     assert claim[claim.index("--base") + 1] == "b" * 40 and "--git-diff" in claim
     assert len(claim[claim.index("--claim-attempt-token") + 1]) == 64
@@ -58,7 +59,7 @@ def test_review_claims_packets_runs_a_read_only_reviewer_and_records_the_proof(e
     assert env.world.proofs == [{"outcomes": [{**CRITERION, "verdict": "pass"}],
                                  "quality": "mergeable"}]
     assert env.world.proof == "valid"
-    # the effect output exposes the verdict and the non-blocking remarks; PAT-141 carries them
+    # the effect output exposes the verdict and the counts; the remarks are in the receipt
     assert result.effect["review"]["verdict"] == "validated"
     assert (result.effect["review"]["fix_before_merge"], result.effect["review"]["non_blocking"]) == (0, 2)
     assert Path(result.effect["report_file"]).read_text().startswith("## AC table")
@@ -442,6 +443,7 @@ def test_remarks_to_fix_then_a_partial_review_with_the_previous_round(env):
     env.world.reviews.append(result_text(fix=1, nits=1, report="## AC\nNIT fix before merge: typo"))
     first = step(env)
     assert first.effect["review"]["fix_before_merge"] == 1
+    assert step(env).decision.kind == "defer-remarks"  # the nit comes first (PAT-141)
     result = step(env)
     assert (result.decision.kind, result.decision.reason) == ("correct", "review_fix_before_merge")
     assert getattr(env.world, "escalations", []) == []  # a non-blocking verdict touches no state
@@ -644,3 +646,10 @@ def test_epic_of_two_tickets_with_a_blocking_first_review_reaches_the_verdict_aw
     assert routing_verbs(env.world).count("record-review-proof") == 3
     assert routing_verbs(env.world).count("claim-review") == 3
     assert not any(CLAIM_ID in line for line in journal_text(env).splitlines())
+
+
+def test_the_reviewer_contract_marks_the_two_never_deferrable_cases_fix_before_merge():
+    contract = " ".join(cr.review_contract().split())
+    assert "Always set fix_before_merge true on a remark about a page frozen after " in contract
+    assert "(release note, migration guide, CHANGELOG section of a published version)" in contract
+    assert "missing or generic documentation status under AGENTS.md#R5" in contract

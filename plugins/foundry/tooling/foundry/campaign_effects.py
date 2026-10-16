@@ -29,6 +29,7 @@ from typing import Callable
 
 from foundry import campaign_approval as approval
 from foundry import campaign_cadence as cadence
+from foundry import campaign_defer
 from foundry import campaign_review
 from foundry import registry
 from foundry.epic_preview import _canonical
@@ -36,7 +37,7 @@ from foundry.epic_preview import _canonical
 EFFECTS_CONTRACT = "foundry-campaign-attempts.v1"
 ATTEMPTS_NAME = "campaign-attempts.jsonl"
 SUMMARIES_NAME = "campaign-summaries"
-EFFECT_KINDS = ("start", "implement", "open-pr", "review", "correct", "merge")
+EFFECT_KINDS = ("start", "implement", "open-pr", "review", "correct", "defer-remarks", "merge")
 # The kinds that launch a model session; the approval ceilings count them all (PAT-218).
 SESSION_KINDS = ("implement", "review", "correct")
 IMPLEMENT_BUDGET_USD = 5.0  # default ceiling of one session; not measured (unknown)
@@ -65,7 +66,8 @@ _KEYS = {
                  "exit_code", "cost_usd", "duration_ms", "summary_file", "branch_head",
                  "error", "at"},
 }
-_OPTIONAL = {"started": set(), "finished": {"review"}}  # PAT-218: the verdict of a review
+# PAT-218: the verdict of a review; PAT-141: the outcome of a deferral of remarks
+_OPTIONAL = {"started": set(), "finished": {"review", "deferral"}}
 
 
 class AttemptJournalInvalid(ValueError):
@@ -122,6 +124,12 @@ def read_attempts(path: Path | None = None) -> list[dict]:
             if record["kind"] != "review" or not campaign_review.valid_review_field(
                     record["review"]):
                 raise AttemptJournalInvalid("verdict de relecture hors contrat")
+        if "deferral" in record:
+            from foundry import campaign_defer
+
+            if record["kind"] != "defer-remarks" or not campaign_defer.valid_deferral_field(
+                    record["deferral"]):
+                raise AttemptJournalInvalid("report de remarques hors contrat")
         records.append(record)
     return records
 
@@ -201,7 +209,7 @@ def last_implementation(path: Path, epic: str, ticket: str, branch_sha: str | No
 @dataclass
 class StepResult:
     decision: cadence.Decision
-    outcome: str  # executed | failed | wait-ci | terminal | stopped
+    outcome: str  # executed | failed | wait-ci | waiting | terminal | stopped
     effect: dict | None = None
 
     def to_dict(self) -> dict:
@@ -328,6 +336,8 @@ def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
     """Everything that can fail on configuration, resolved before the attempt is claimed."""
     if kind == "start":
         return {"argv": runtime.command("issue", "start", ticket.id), "route": None}
+    if kind == "defer-remarks":  # no session and no command of its own: see campaign_defer
+        return {"kind": "defer", "route": None}
     if kind == "merge":
         return {"argv": runtime.command("issue", "merge", ticket.id, str(ticket.pr.number)),
                 "route": None}
@@ -368,6 +378,10 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
             attempt: str, attempts: Path, refs, branch_facts) -> dict:
     """Run the one effect; return the fields of the ``finished`` record."""
     worktree = ensure_worktree(runtime, ticket.id, refs)
+    if plan.get("kind") == "defer":
+        from foundry import campaign_defer
+
+        return campaign_defer.launch(runtime, plan, epic, ticket, attempts, worktree)
     if plan.get("kind") != "session":
         done = _run(runtime, plan["argv"], worktree, input=plan.get("input"))
         return {"status": "completed" if done.returncode == 0 else "failed",
@@ -400,7 +414,8 @@ def _hide_hex(text: str) -> str:
 
 
 def _stopped(decision: cadence.Decision) -> StepResult:
-    outcome = {"wait-ci": "wait-ci", "await-verdict": "terminal"}.get(decision.kind, "stopped")
+    outcome = {"wait-ci": "wait-ci", "wait": "waiting",
+               "await-verdict": "terminal"}.get(decision.kind, "stopped")
     return StepResult(decision, outcome)
 
 
@@ -420,7 +435,9 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
         history=campaign_review.history(path, epic),
-        **observe_kwargs,
+        **{"deferral": campaign_defer.deferral_facts(path, epic),
+           "origin": lambda ticket: campaign_defer.origin_of(tracker, ticket),
+           **observe_kwargs},
     )
     decision = cadence.decide(obs)
     if decision.kind not in EFFECT_KINDS:
@@ -455,6 +472,7 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
                                       "stopped")
         else:
             plan = _plan(runtime, decision.kind, epic, ticket, path)
+            plan.update(tracker=tracker, project=project)
         if decision.kind == "implement":
             issue = tracker.get_issue(ticket.id)
             plan["prompt"] = implement_prompt(
@@ -463,11 +481,14 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     except Exception as exc:  # noqa: BLE001 - configuration refused before any attempt
         return StepResult(decision, "failed", {"phase": "plan", "error": type(exc).__name__,
                                                "detail": _hide_hex(str(exc))})
-    attempt = identity(epic, ticket.id, decision.kind, fingerprint(ticket))
+    facts = fingerprint(ticket)
+    if decision.kind == "defer-remarks":  # a retry after a transient failure is a new attempt
+        facts = {**facts, "diff_hash": ticket.deferral.diff_hash, "try": ticket.deferral.tries}
+    attempt = identity(epic, ticket.id, decision.kind, facts)
     started = {
         "schema_version": EFFECTS_CONTRACT, "event": "started", "attempt": attempt,
         "epic": epic, "ticket": ticket.id, "kind": decision.kind,
-        "fingerprint": fingerprint(ticket),
+        "fingerprint": facts,
         "session_id": _session_id(attempt) if decision.kind in SESSION_KINDS else None,
         "route": plan["route"], "at": _stamp(moment),
     }
@@ -484,6 +505,7 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         outcome.update(status="failed", error=type(exc).__name__, detail=_hide_hex(str(exc)))
     detail = outcome.pop("detail")
     review = outcome.get("review")
+    deferral = outcome.get("deferral")
     finish(path, {
         "schema_version": EFFECTS_CONTRACT, "event": "finished", "attempt": attempt,
         "epic": epic, "ticket": ticket.id, "kind": decision.kind, "at": _stamp(moment),
@@ -491,10 +513,15 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     })
     effect = {"attempt": attempt, "status": outcome["status"], "exit_code": outcome["exit_code"],
               "cost_usd": outcome["cost_usd"], "detail": detail}
-    if review is not None:  # non-blocking remarks stay in the report; PAT-141 carries them
+    if review is not None:  # the remarks are in the receipt (PAT-141), the report in the file
         effect.update(review=review, report_file=outcome["summary_file"])
-    return StepResult(decision, "executed" if outcome["status"] == "completed" else "failed",
-                      effect)
+    if deferral is not None:
+        effect["deferral"] = deferral
+    if outcome["status"] == "completed":
+        return StepResult(decision, "executed", effect)
+    # a transient failure of the deferral is not a failure of the campaign: it waits (R9 b)
+    waiting = deferral is not None and deferral["state"] == "transient"
+    return StepResult(decision, "waiting" if waiting else "failed", effect)
 
 
 def run(tracker, codehost, project, epic: str, runtime: Runtime, *, max_steps: int,
@@ -506,7 +533,7 @@ def run(tracker, codehost, project, epic: str, runtime: Runtime, *, max_steps: i
     for _ in range(max_steps):
         result = step(tracker, codehost, project, epic, runtime, clock(), **step_kwargs)
         results.append(result)
-        if result.outcome == "wait-ci":
+        if result.outcome in ("wait-ci", "waiting"):
             sleep(poll_seconds)
         elif result.outcome != "executed":
             return results, result.outcome

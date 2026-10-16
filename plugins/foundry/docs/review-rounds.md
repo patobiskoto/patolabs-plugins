@@ -5,7 +5,7 @@ its effect is measured. Since PAT-175 the per-issue count of rounds is computed 
 `routing review-rounds` (section "Per-issue report"); the baseline and window tables below
 are still counted by hand (see "What is counted"). The last point of "Limits" and the last two sections (PAT-139)
 cite the code that bounds rule (b): what the merge command does not refuse, what no tool
-checks, what is not coded yet, and what each tracker provider carries. Paths are relative
+checks, how an Epic campaign carries the remarks, and what each tracker provider carries. Paths are relative
 to `plugins/foundry/`, except `AGENTS.md` and `CLAUDE.md` at the repository root and
 Markdown link targets, which are relative to this page.
 
@@ -278,7 +278,7 @@ carries are declarations of the coordinator, not checked against the bytes (see
   so the merge command does not refuse a diff because a marked remark was left
   uncorrected or because the follow-up issue does not exist.
 
-## What is not mechanical and what is not coded yet (PAT-139)
+## What is not mechanical and how a campaign carries the remarks (PAT-139, PAT-141)
 
 Rule (b) of `AGENTS.md#R9` sends the deferred remarks of an Epic to a companion Epic and
 authorizes four tracker writes in advance (PAT-ADR-0018). This section lists what the
@@ -292,7 +292,9 @@ Not mechanical:
   mark; the coordinator then applies the two other cases (a page frozen after
   publication, a missing or generic documentation status), and nobody re-reads that
   second step before the merge: an accepted risk (maintainer decision of 2026-10-11).
-  The rest is judged in review.
+  In an Epic campaign the reviewer contract (`review_contract`, `campaign_review.py`) asks
+  the reviewer to mark those two cases "fix before merge", so the correction loop takes
+  them; nothing checks that it did. The rest is judged in review.
 - No gate checks that a PR of a companion Epic deferred nothing (no second-level
   deferral), that the fourth write was made when needed, that the companion Epic has a
   single follow-up issue, or that the review after a correction was limited to what
@@ -302,20 +304,45 @@ Not mechanical:
   it asks for a review proof of the exact diff (`valid_for_merge`, called twice by
   `merge` in `tooling/foundry/issue.py`), and after
   such a partial review that proof relies on the previous round for the unchanged parts.
-- Nothing checks that only one companion Epic carries a given name. The name and a
-  mention in text are the only relation between the two Epics, and no file under
-  `tooling/` or `hooks/` contains the word `Nits`.
+- Nothing checks, outside the cadencer, that only one companion Epic carries a given
+  name. The name and a mention in text are the only relation between the two Epics. In a
+  campaign, the `defer-remarks` effect refuses a second Epic of the same name as a
+  durable refusal (`_find_companion` in `tooling/foundry/campaign_defer.py`), and that
+  file is the only one under `tooling/` or `hooks/` that contains the word `Nits`.
+- No check proves that the cadencer classes a failure rightly as durable or transient: it
+  reads the text of the error (`_DURABLE` in `tooling/foundry/campaign_defer.py`) and
+  treats any other error as transient, bounded by `MAX_DEFER_TRIES`.
 
-Not coded yet:
+In an Epic campaign (PAT-141, PAT-ADR-0028), run by the cadencer of PAT-ADR-0026
+(`tooling/foundry/campaign_effects.py`), the four writes are made by the `defer-remarks`
+effect (`tooling/foundry/campaign_defer.py`); the page `campaign-effects.md` describes its
+steps, its journal record and its refusals:
 
-- An Epic campaign does not receive the reviewer's prose. Its review step
-  (`_review_observation` in `tooling/foundry/campaign_runtime.py`) reads only the
-  structured proof stored by `AcceptanceProofStore` (`tooling/foundry/routing.py`), and
-  the `record-review-proof` command of that file accepts exactly the keys `outcomes` and
-  `quality`. So the non-blocking remarks of a validated review are neither seen nor
-  recorded by the `campaign_runtime.py` coordinator today (the cadencer of PAT-ADR-0026 keeps their counts in its
-  journal and their text in a report file), and none of the steps that follow the review step (`ci`,
-  `human-gate` in `_GATE_STEPS`, then `merge`) reads or corrects them.
+- The channel is a local receipt distinct from the review proof. The reviewer session
+  prints a `remarks` key, each remark marked `fix_before_merge` true or false
+  (`parse_result`, `tooling/foundry/campaign_review.py`); after `record-review-proof` the
+  review effect runs `record-review-remarks` (`tooling/foundry/routing.py`), which writes
+  the receipt bound to the proof identifier, the diff hash and the review generation
+  (`tooling/foundry/review_remarks.py`). The `record-review-proof` command still accepts
+  exactly the keys `outcomes` and `quality`, and neither `tooling/foundry/issue.py` nor
+  `tooling/foundry/write.py` refers to the receipt, so the merge gate never reads it
+  (`tests/test_campaign_defer.py`).
+- A remark marked "fix before merge", a ticket with no origin Epic, a ticket of a
+  companion Epic (no second-level deferral) and a durable refusal are corrected by the
+  correction loop of the campaign and re-reviewed as stated in "Partial review on every
+  pull request"; a transient failure makes the campaign wait and retry.
+- The companion Epic and its follow-up issue are outside the subgraph of the campaign's
+  Epic: no tracker link joins them to it, so the structure digest of the approval and the
+  closure graph of the origin Epic do not include them (`tests/test_campaign_defer.py`).
+
+Not changed by PAT-141:
+
+- The review step of the DevHub coordinator (`_review_observation` in
+  `tooling/foundry/campaign_runtime.py`) reads only the structured proof stored by
+  `AcceptanceProofStore` (`tooling/foundry/routing.py`); the non-blocking remarks of a
+  validated review are neither seen nor recorded by that coordinator, and none of the
+  steps that follow its review step (`ci`, `human-gate` in `_GATE_STEPS`, then `merge`)
+  reads or corrects them.
 - The campaign coordinator has no issue-creation primitive. The mutating steps of its
   runner are `start`, `open-pr`, `merge`, `close-epic` and `sync-parent-acceptance`
   (`_MUTATING_STEPS`, `tooling/foundry/campaign_runtime.py`), and the
@@ -326,13 +353,6 @@ Not coded yet:
   `epic_subgraph_supported`; the attribute defaults to `False`
   (`tooling/foundry/trackers/base.py`) and the DevHub and Linear adapters set it to `True`
   (`tooling/foundry/trackers/devhub.py`, `tooling/foundry/trackers/linear.py`).
-- So inside an Epic campaign the authorization has no effect yet. Three things are
-  missing: a channel that carries the remarks to the campaign, the code that creates the
-  companion Epic and its issues, and campaigns usable on the repository's tracker (the
-  cadencer of PAT-ADR-0026 runs start, implement, open-pr, review, correct and merge on it
-  since PAT-217 and PAT-218: it launches the reviewer and keeps the non-blocking remarks in a
-  report file and in the step output, but carries none of them to a companion Epic:
-  `docs/campaign-effects.md`). They are left to a later issue under the same Epic, PAT-141.
 
 ## Carrying a terminal proof across an integration of main (PAT-173)
 

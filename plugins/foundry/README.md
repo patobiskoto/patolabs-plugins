@@ -241,7 +241,7 @@ the human approval of its exact preview, recorded by `campaign-approval`
 ([`docs/campaign-approval.md`](docs/campaign-approval.md)). The next step of an approved
 campaign is computed read-only by `campaign-cadence`
 ([`docs/campaign-cadence.md`](docs/campaign-cadence.md)); its steps start, implement, open
-the PR, review, correct and merge run through `campaign-cadence step|run`
+the PR, review, correct, defer remarks and merge run through `campaign-cadence step|run`
 ([`docs/campaign-effects.md`](docs/campaign-effects.md)).
 
 Approved Dev Hub commands are consumed by an outbound, lease-based worker with strict

@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 
 from foundry import campaign_effects as fx
+from foundry import review_remarks
 
 REVIEWS_DIR = "campaign-reviews"
 RESULT_SENTINEL = "FOUNDRY_REVIEW_RESULT_V1"
@@ -31,6 +32,7 @@ REVIEWER_READ_VERBS = ("read-review", "search-review", "list-review")
 VERDICTS = ("pass", "fail", "not_covered", "contradicted")
 QUALITIES = ("mergeable", "blocked")
 MAX_REMARK_COUNT = 1000
+MAX_REMARK_TEXT = review_remarks.MAX_REMARK_TEXT
 MAX_PREVIOUS_REPORT_BYTES = 32 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _FENCE = re.compile(r"\A```(?:json)?\s*\n(.*?)\n```\Z", re.S)
@@ -159,12 +161,20 @@ def review_contract() -> str:
         "`AC: PASS|BLOCK · QUALITY: OK to merge|BLOCK`.\n"
         f"Then, as the very last thing you print, a line `{RESULT_SENTINEL}` followed by ONE "
         "JSON object and nothing after it, with exactly the keys outcomes, quality, "
-        "fix_before_merge and non_blocking: outcomes is the ordered array of "
+        "fix_before_merge, non_blocking and remarks: outcomes is the ordered array of "
         "{\"id\",\"digest\",\"verdict\"} copied from the criteria of acceptance.json "
         "(verdict is pass, fail, not_covered or contradicted); quality is mergeable or "
         "blocked (mergeable only if every verdict is pass and nothing blocks); "
         "fix_before_merge is the number of nits you marked \"fix before merge\"; "
-        "non_blocking is the number of other nits. Never print the claim_id."
+        "non_blocking is the number of other nits; remarks lists every nit once, as "
+        "{\"text\",\"fix_before_merge\"} (a short non-empty text of at most "
+        f"{MAX_REMARK_TEXT} characters, fix_before_merge true or false), so that the number "
+        "of true entries equals fix_before_merge and the number of false entries equals "
+        "non_blocking. Always set fix_before_merge true on a remark about a page frozen after "
+        "publication (release note, migration guide, CHANGELOG section of a published "
+        "version) and on a missing or generic documentation status under AGENTS.md#R5: the "
+        "campaign defers every false remark to a companion Epic and never those two cases. "
+        "Never print the claim_id."
     )
 
 
@@ -178,7 +188,7 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
         "\nPacket instructions (written by `routing prepare-review`):\n" + send_text,
         "\nThe output contract above overrides the packet instructions: do not load the "
         f"`review-pr` skill and do not return another JSON shape; print `{RESULT_SENTINEL}` "
-        "and the four-key object only.\n",
+        "and the five-key object only.\n",
     ]
     if partial:
         parts.append(
@@ -199,8 +209,14 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
 
 def correct_prompt(epic: str, ticket: str, title: str, body: str, report: str,
                    reason: str) -> str:
-    focus = ("the BLOCKING findings of the review below" if reason == "review_blocked"
-             else "the remarks marked \"fix before merge\" in the review below")
+    focus = {
+        "review_blocked": "the BLOCKING findings of the review below",
+        "remarks_not_deferrable": "every non-blocking remark of the review below (none can be "
+                                  "deferred to a companion Epic here, AGENTS.md#R9(b))",
+    }.get(reason, "the remarks marked \"fix before merge\" in the review below")
+    leave = ("" if reason == "remarks_not_deferrable" else
+             "Leave the other non-blocking remarks untouched: the coordinator defers them to "
+             "a companion Epic (AGENTS.md#R9(b)). ")
     return (
         f"{CORRECT_PROMPT_MARK}\n"
         f"Epic campaign {epic}, correction of issue {ticket}. You are a fresh session in the "
@@ -208,8 +224,7 @@ def correct_prompt(epic: str, ticket: str, title: str, body: str, report: str,
         f"1. The issue, as read by the coordinator (do not query the tracker):\n"
         f"<issue id=\"{ticket}\">\n# {title}\n\n{body}\n</issue>\n"
         f"2. The reviewer's report on the current head:\n<review>\n{report}\n</review>\n"
-        f"3. Fix {focus}, nothing else. Leave the other non-blocking remarks untouched: "
-        "they are carried elsewhere (PAT-141). Follow AGENTS.md#R9(c): change as few "
+        f"3. Fix {focus}, nothing else. {leave}Follow AGENTS.md#R9(c): change as few "
         "sentences as possible, and re-check every new sentence against the code before you "
         "finish.\n"
         "4. Run the tests that prove it.\n"
@@ -242,7 +257,7 @@ def parse_result(text: object) -> tuple[str, dict]:
     if not report:
         raise ReviewOutputInvalid("rapport de relecture vide")
     if not isinstance(data, dict) or set(data) != {
-            "outcomes", "quality", "fix_before_merge", "non_blocking"}:
+            "outcomes", "quality", "fix_before_merge", "non_blocking", "remarks"}:
         raise ReviewOutputInvalid("clés du verdict hors contrat")
     outcomes = data["outcomes"]
     if (not isinstance(outcomes, list) or not outcomes or not all(
@@ -255,6 +270,13 @@ def parse_result(text: object) -> tuple[str, dict]:
     for key in ("fix_before_merge", "non_blocking"):
         if type(data[key]) is not int or not 0 <= data[key] <= MAX_REMARK_COUNT:
             raise ReviewOutputInvalid("comptage de remarques hors contrat")
+    try:
+        remarks = review_remarks.validate_remarks(data["remarks"])
+    except review_remarks.ReviewRemarksError as exc:
+        raise ReviewOutputInvalid("remarques du verdict hors contrat") from exc
+    if (sum(r["fix_before_merge"] for r in remarks) != data["fix_before_merge"]
+            or sum(not r["fix_before_merge"] for r in remarks) != data["non_blocking"]):
+        raise ReviewOutputInvalid("remarques incohérentes avec les comptages")
     if data["quality"] == "mergeable" and any(o["verdict"] != "pass" for o in outcomes):
         raise ReviewOutputInvalid("qualité mergeable avec un critère non validé")
     return report, data
@@ -411,17 +433,54 @@ def round_line(number: int, review: dict) -> str:
     return line
 
 
+def deferral_lines(records: list[dict], epic: str, ticket: str,
+                   current: dict | None = None) -> list[str]:
+    """What R9 (b) asks the PR description to report (PAT-141): every follow-up issue of the
+    pull request, the companion Epic and whether this PR created it, the number of deferred
+    remarks and every write of its attempts; after a durable refusal, the refusal and the
+    writes made before it.  From the ``deferral`` fields of the
+    journal, then ``current`` (the one about to be journaled)."""
+    fields = [r["deferral"] for r in _mine(records, epic, ticket)
+              if r["event"] == "finished" and r["kind"] == "defer-remarks"
+              and "deferral" in r] + ([current] if current else [])
+    done = [f for f in fields if f["state"] == "done"]
+    lines = []
+    if done:
+        writes = list(dict.fromkeys(w for f in fields for w in f["writes"]))
+        total = sum({f["diff_hash"]: f["remarks"] or 0 for f in done}.values())
+        origin = "created by this pull request" if "create companion Epic" in writes \
+            else "already existing"
+        follow_ups = ", ".join(dict.fromkeys(f["follow_up"] for f in done))
+        lines.append(
+            f"Deferred remarks: {follow_ups} (companion Epic {done[-1]['companion']}, "
+            f"{origin}; {total} remarks; writes: {', '.join(writes) or 'none'})")
+    if fields and fields[-1]["state"] == "refused":
+        made = list(dict.fromkeys(w for f in fields for w in f["writes"]))
+        before = f" (writes made before it: {', '.join(made)})" if made else ""
+        lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}){before}; "
+                     "they are corrected before the merge.")
+    return lines
+
+
 def pr_body(summary: str | None, records: list[dict], epic: str, ticket: str,
-            review: dict) -> str:
-    """The saved implementation summary and a ``Review rounds`` section from the journal."""
-    rounds = [r["review"] for r in review_records(records, epic, ticket)] + [review]
+            review: dict | None, deferral: dict | None = None) -> str:
+    """The saved implementation summary and a ``Review rounds`` section from the journal.
+
+    ``review`` is the round being recorded (``None`` when every round is already in the
+    journal); ``deferral`` the ``deferral`` field about to be journaled (PAT-141).
+    """
+    rounds = [r["review"] for r in review_records(records, epic, ticket)]
+    rounds += [review] if review is not None else []
     section = "## Review rounds\n" + "\n".join(
         round_line(number, one) for number, one in enumerate(rounds, 1))
+    lines = deferral_lines(records, epic, ticket, deferral)
+    if lines:
+        section += "\n\n" + "\n".join(lines)
     return f"{summary.strip()}\n\n{section}" if summary and summary.strip() else section
 
 
 def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
-                   review: dict) -> str:
+                   review: dict | None, deferral: dict | None = None) -> str:
     """PAT-ADR-0022: say in the PR description that rounds took place; no extra session.
 
     ``issue openpr --summary-stdin`` on the open PR replaces its body.  Returns a detail text.
@@ -434,8 +493,24 @@ def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
     except OSError:
         summary = None
     done = fx._run(runtime, runtime.command("issue", "openpr", ticket.id, "--summary-stdin"),
-                   worktree, input=pr_body(summary, records, epic, ticket.id, review))
+                   worktree, input=pr_body(summary, records, epic, ticket.id, review, deferral))
     return "" if done.returncode == 0 else "pr_body_not_updated"
+
+
+def _record_remarks(runtime, root: Path, ticket, base: str, diff_hash: str, proof: dict,
+                    remarks: list, workdir: Path, hidden) -> str:
+    """``routing record-review-remarks`` right after the proof; a refusal leaves no receipt,
+    so the deferral later finds none and the remarks are corrected (PAT-ADR-0028)."""
+    proof_id = proof.get("proof_id")
+    if not (isinstance(proof_id, str) and _SHA256.match(proof_id)):
+        return "remarks_receipt_not_recorded"
+    remarks_file = workdir / "remarks.json"
+    _write_private(remarks_file, json.dumps(remarks))
+    done, _err = _foundry(runtime, [
+        "routing", "record-review-remarks", "--root", str(root), "--base", base,
+        "--issue", ticket.id, "--diff-hash", diff_hash, "--proof-id", proof_id,
+        "--remarks-file", str(remarks_file)], root, hidden)
+    return "" if done.returncode == 0 else "remarks_receipt_not_recorded"
 
 
 def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts: Path,
@@ -514,6 +589,11 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         "--outcomes-file", str(outcomes)], root, hidden)
     if done.returncode != 0:
         return {**_failed("proof_refused", err, summary_file=saved), **base_out}
+    proof = _json_object(done.stdout) or {}
+    note = ""
+    if verdict["quality"] == "mergeable":  # PAT-141: the remarks, bound to the proof just recorded
+        note = _record_remarks(runtime, root, ticket, pr.base_sha, diff_hash, proof,
+                               verdict["remarks"], workdir, hidden)
     shutil.rmtree(workdir, ignore_errors=True)  # claim, packet and outcomes: the claim is terminal
     review = {
         "verdict": "validated" if verdict["quality"] == "mergeable" else "blocked",
@@ -521,7 +601,7 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         "diff_hash": diff_hash, "base": pr.base_sha, "head": pr.head_sha, "carried": False,
         "partial": partial is not None,
     }
-    detail = update_pr_body(runtime, epic, ticket, attempts, root, review)
+    detail = update_pr_body(runtime, epic, ticket, attempts, root, review) or note
     return {"status": "completed", "exit_code": done.returncode, "cost_usd": cost,
             "duration_ms": duration, "summary_file": saved, "branch_head": pr.head_sha,
             "error": None, "detail": detail, "review": review}

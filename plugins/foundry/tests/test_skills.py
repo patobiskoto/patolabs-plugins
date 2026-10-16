@@ -253,16 +253,12 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert ("If the adapter itself refuses the retry (it cannot replay the write safely), "
             "treat the case as a durable refusal: correct the remarks of that round before "
             "the merge, re-review as stated above, and report the refusal in the PR description") in text
-    # inside a campaign: three missing pieces, left to a later issue
-    for piece in ("a channel that carries the remarks to the campaign",
-                  "the code that creates the companion Epic and its issues",
-                  "campaigns usable on the repository's tracker"):
-        assert piece in text
+    # inside a campaign the cadencer makes the writes itself (PAT-141)
+    assert "Inside an Epic campaign run by the Foundry cadencer, the cadencer makes these four writes" in " ".join(text.split())
+    assert "has no\neffect yet" not in text and "not coded yet" not in text
     # this skill is shipped to every repository: it names no issue of this repository
-    # and says where the page that names it is
     assert not re.search(r"PAT-\d+", text.replace("PAT-ADR-0018", ""))
     assert "PAT-TBD" not in text
-    assert "they are not coded yet, and that page names the issue that carries them" in text
 
 
 def test_merge_pr_deferral_names_no_tracker_and_cites_the_portable_contract_rows():

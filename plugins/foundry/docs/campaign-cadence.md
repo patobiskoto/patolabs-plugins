@@ -43,11 +43,22 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | open PR, no review proof on the exact diff, or diff unobservable, fewer than `MAX_REVIEW_ROUNDS` (3) recorded rounds | `review` |
 | the same, at `MAX_REVIEW_ROUNDS` recorded rounds | `suspend` `review_rounds_exhausted` |
 | open PR, review proof not mergeable, fewer than `MAX_CORRECTIONS` (2) corrections started | `correct` `review_blocked` |
-| valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections | `correct` `review_fix_before_merge` |
+| valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections, and nothing to decide about the deferrable remarks (the rows below come first) | `correct` `review_fix_before_merge` |
 | either `correct` at `MAX_CORRECTIONS` corrections | `suspend` `corrections_exhausted` |
+| valid review with deferrable remarks (`DeferralFacts.deferrable` > 0, not marked "fix before merge"), no origin Epic, or the origin Epic is a companion Epic, or the last deferral ended in a durable refusal, fewer than `MAX_CORRECTIONS` corrections | `correct` `remarks_not_deferrable` |
+| the same remarks, an origin Epic that is not a companion Epic, deferral not done, last attempt transient and inside `DEFER_RETRY_SECONDS` | `wait` `deferral_transient_failure` |
+| the same remarks, `MAX_DEFER_TRIES` attempts made | `suspend` `deferral_retries_exhausted` |
+| the same remarks, deferral not done otherwise | `defer-remarks` `non_blocking_remarks` |
 | valid review, CI checks pending or none proven | `wait-ci` |
 | valid review, CI failing | `correct` `ci_failing` |
 | valid review, CI green | `merge` |
+
+The remarks facts (`TicketFacts.deferral`, PAT-141) come from the attempt journal and the receipt
+state through the `deferral` callable of `observe` (`campaign_defer.deferral_facts`) and, only
+when deferrable remarks remain, from two `get_issue` reads through the `origin` callable
+(`campaign_defer.origin_of`); without them (the `next` verb) they are absent and no deferral is
+decided. The steps of the effect are in [`campaign-effects.md`](campaign-effects.md), section
+"The defer-remarks effect".
 
 The three counts (`fix_before_merge`, `review_rounds`, `corrections`) are facts of
 `TicketFacts` for the ticket in focus, read from the attempt journal by the `history`
@@ -81,7 +92,8 @@ The re-read of a closed PR is needed because the jq of `GitHubCodeHost.list_prs`
 (`test_closed_pr_from_a_list_without_merged_is_re_read`).
 
 Cost in tracker requests: the subgraph read (`epic_subgraph.build_neutral_subgraph`, one
-`get_issue` per node plus binding validation) plus at most one `get_issue`. To measure a
+`get_issue` per node plus binding validation) plus at most one `get_issue`, plus two more
+`get_issue` when the review is valid and deferrable remarks remain (`origin_of`). To measure a
 pass: `FOUNDRY_REQUEST_COUNT=stderr FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py
 campaign-cadence next <EPIC>` (`REQUEST_COUNT_ENV`, `trackers/linear.py`). The measured
 figure is recorded by the issue, not here (unknown until measured).

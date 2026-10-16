@@ -2680,6 +2680,18 @@ def main(
     record_proof.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
     record_proof.add_argument("--repository", help="repo namespace; defaults to origin URL")
     record_proof.add_argument("--root", required=True, help="exact Git worktree root")
+    record_remarks = sub.add_parser(
+        "record-review-remarks",
+        help="record the remarks of a validated review next to its proof (PAT-141)",
+    )
+    record_remarks.add_argument("--issue", required=True)
+    record_remarks.add_argument("--diff-hash", required=True)
+    record_remarks.add_argument("--proof-id", required=True)
+    record_remarks.add_argument("--remarks-file", required=True,
+                                help="JSON array of {text, fix_before_merge}")
+    record_remarks.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
+    record_remarks.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    record_remarks.add_argument("--root", required=True, help="exact Git worktree root")
     carry_proof = sub.add_parser(
         "carry-review-proof",
         help="carry a terminal mergeable proof across a clean integration of the main branch",
@@ -3105,6 +3117,24 @@ def main(
                 diff_hash=args.diff_hash, claim_id=args.claim_id, root=args.root, base=args.base,
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        if args.command == "record-review-remarks":
+            from foundry import review_remarks
+
+            repository = args.repository or repository_identity(args.root)
+            try:
+                remarks = json.loads(Path(args.remarks_file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RoutingConfigError("remarques soumises illisibles ou JSON invalide.") from exc
+            try:
+                marker = AcceptanceProofStore(repository).directory / args.proof_id
+                proof = AcceptanceProofStore.validated_proof(marker)
+                receipt = review_remarks.ReviewRemarksStore(repository).record(
+                    proof, remarks, issue=args.issue, diff_hash=args.diff_hash, base=args.base)
+            except review_remarks.ReviewRemarksError as exc:
+                raise RoutingConfigError(str(exc)) from exc
+            print(json.dumps({"proof_id": receipt["proof_id"], "generation": receipt["generation"],
+                              "remarks": len(receipt["remarks"])}, ensure_ascii=False, indent=2))
             return
         if args.command == "carry-review-proof":
             from foundry import tracker

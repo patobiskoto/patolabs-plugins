@@ -3,7 +3,6 @@ repository, readable by both hosts from an identical single source, and cover th
 concrete facts this issue requires (documentation doctrine, OAuth machine binding,
 current Claude model resolution) without duplicating any ADR decision.
 """
-import re
 from pathlib import Path
 
 
@@ -118,11 +117,13 @@ _R9_CODE_CITATIONS = (
     ("routing.py", "class AcceptanceProofStore:"),
     ("routing.py", '"record-review-proof"'),
     ("routing.py", 'set(submitted) != {"outcomes", "quality"}'),
-)
-_THREE_MISSING_PIECES = (
-    "a channel that carries the remarks to the campaign",
-    "the code that creates the companion Epic and its issues",
-    "campaigns usable on the repository's tracker",
+    ("routing.py", '"record-review-remarks"'),
+    ("campaign_effects.py", "def step("),
+    ("campaign_defer.py", "def run_deferral("),
+    ("campaign_defer.py", "MAX_DEFER_TRIES = "),
+    ("campaign_defer.py", "_DURABLE = re.compile("),
+    ("campaign_review.py", "def parse_result("),
+    ("review_remarks.py", "class ReviewRemarksStore:"),
 )
 _PORTABILITY_CODE_CITATIONS = (
     ("trackers/youtrack.py", "def _cf_write("),
@@ -163,29 +164,24 @@ def _assert_campaign_facts(flat):
                  if line.startswith("_GATE_STEPS = frozenset("))
     assert sorted(gates.split("{")[1].split("}")[0].replace('"', "").split(", ")) == [
         "ci", "human-gate", "review"]
-    # the campaign reads a structured proof, never the reviewer's prose
-    assert "does not receive the reviewer's prose" in flat
-    assert "accepts exactly the keys `outcomes` and `quality`" in flat
-    assert "neither seen nor recorded by the `campaign_runtime.py` coordinator today" in flat
-    for piece in _THREE_MISSING_PIECES:
-        assert piece in flat
-    # the later issue is a real one: a placeholder identifier is no longer accepted
-    assert re.search(r"left to a later issue(?: under the same Epic)?, PAT-\d+", flat)
+    # the cadencer carries the remarks through a receipt; the proof keeps its two keys
+    assert "The channel is a local receipt distinct from the review proof" in flat
+    assert "still accepts exactly the keys `outcomes` and `quality`" in flat
+    assert "so the merge gate never reads it" in flat
+    assert "(PAT-141, PAT-ADR-0028)" in flat
+    # the DevHub coordinator is not changed: it creates no issue; only the effect does
     for module in sorted(_TOOLING.glob("campaign_*.py")):
         source = module.read_text(encoding="utf-8")
-        assert "create_issue" not in source and "create-issue" not in source, module.name
+        creates = "create_issue" in source or "create-issue" in source
+        assert creates == (module.name == "campaign_defer.py"), module.name
     adapters = [path.name for path in sorted((_TOOLING / "trackers").glob("*.py"))
                 if "epic_subgraph_supported = True" in path.read_text(encoding="utf-8")]
     assert adapters == ["devhub.py", "linear.py"]
 
 
-def test_no_file_under_tooling_or_hooks_contains_the_companion_epic_name():
-    """Pins the sentence "no file under `tooling/` or `hooks/` contains the word `Nits`".
-
-    The name of the companion Epic is the only relation between the two Epics and no
-    code creates or reads it (PAT-141). When that code lands, this test fails and the
-    sentence in `docs/review-rounds.md` has to be rewritten with it.
-    """
+def test_only_the_deferral_effect_contains_the_companion_epic_name():
+    """Pins the sentence "that file is the only one under `tooling/` or `hooks/` that
+    contains the word `Nits`" of `docs/review-rounds.md` (PAT-141)."""
     plugin = REPOSITORY_ROOT / "plugins" / "foundry"
     scanned = 0
     offenders = []
@@ -201,7 +197,7 @@ def test_no_file_under_tooling_or_hooks_contains_the_companion_epic_name():
             if "Nits" in text:
                 offenders.append(str(path.relative_to(plugin)))
     assert scanned > 50
-    assert offenders == []
+    assert offenders == ["tooling/foundry/campaign_defer.py"]
 
 
 def _r9_deferral_rule() -> str:
@@ -365,9 +361,10 @@ def test_r9_states_what_is_not_mechanical_and_what_is_not_coded_yet():
     flat = " ".join(text[text.index("**What only the reviewer can judge.**"):].split())
     assert ("no gate checks that the companion Epic of (b) exists, that it has no tracker "
             "link with the origin Epic") in flat
-    assert "**What is not coded yet.**" in flat
-    assert "The campaign coordinator has no issue-creation primitive" in flat
-    assert "inside an Epic campaign the authorization of (b) has no effect yet" in flat
+    assert "**Inside an Epic campaign (PAT-141, PAT-ADR-0028).**" in flat
+    assert "has no issue-creation primitive" in flat
+    assert "has no effect" not in flat and "not coded yet" not in flat
+    assert "does not receive the reviewer's prose" not in flat
     # every file cited there still holds the cited symbol (no line number is pinned)
     for path, symbol in _R9_CODE_CITATIONS:
         assert f"`plugins/foundry/tooling/foundry/{path}`" in flat
@@ -377,11 +374,12 @@ def test_r9_states_what_is_not_mechanical_and_what_is_not_coded_yet():
 
 def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_writes():
     page = " ".join(_repo_text("plugins/foundry/docs/review-rounds.md").split())
-    assert "## What is not mechanical and what is not coded yet (PAT-139)" in page
+    assert "## What is not mechanical and how a campaign carries the remarks (PAT-139, PAT-141)" in page
     assert "No gate checks that the companion Epic exists, that it has no tracker link" in page
     assert "The campaign coordinator has no issue-creation primitive" in page
     assert "the DevHub and Linear adapters set it to `True`" in page
-    assert "inside an Epic campaign the authorization has no effect yet" in page
+    assert "has no effect yet" not in page and "not coded yet" not in page
+    assert "the four writes are made by the `defer-remarks` effect" in page
     assert "## Portability of the three writes (PAT-139)" in page
     # PAT-144: maintainer decisions of 2026-10-11 (presence only)
     assert "so 3.2 rounds per PR is also 3.2 rounds per issue" in page
