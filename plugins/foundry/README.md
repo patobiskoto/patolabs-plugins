@@ -238,7 +238,9 @@ limits, and emits classifications, human gates, dependency waves, explicit unkno
 a stable digest without acquiring execution authority. The API and command contract are
 documented in [`docs/epic-preview.md`](docs/epic-preview.md). A campaign starts only after
 the human approval of its exact preview, recorded by `campaign-approval`
-([`docs/campaign-approval.md`](docs/campaign-approval.md)).
+([`docs/campaign-approval.md`](docs/campaign-approval.md)). The next step of an approved
+campaign is computed read-only by `campaign-cadence`
+([`docs/campaign-cadence.md`](docs/campaign-cadence.md)).
 
 Approved Dev Hub commands are consumed by an outbound, lease-based worker with strict
 identity recovery, durable monotonic receipts and an atomic host-shared reservation of

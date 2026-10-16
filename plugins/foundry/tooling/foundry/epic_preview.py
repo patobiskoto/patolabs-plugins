@@ -438,24 +438,9 @@ def structure_digest(graph: ValidatedGraph) -> str:
     })
 
 
-def build_preview(
-    raw_graph: object, raw_policy: object, routing_policy: RoutingPolicy,
-    *, expected_epic_id: str | None = None, expected_project_key: str | None = None,
-    tracker_name: str = "devhub",
-) -> dict:
-    """Purely validate, classify, route and digest a preview (no I/O or mutation)."""
-    graph = validate_subgraph(
-        raw_graph,
-        expected_epic_id=expected_epic_id,
-        expected_project_key=expected_project_key,
-    )
-    request = _policy_request(raw_policy)
+def classify_nodes(graph: ValidatedGraph) -> dict[str, tuple[str, str]]:
+    """Pure eligible/blocked/omitted classification of every node (shared with PAT-216)."""
     root = graph.value["root"]
-    base_floor = request["routing"]["implementer_minimum_tier"]
-    base_source = request["routing"]["implementer_minimum_source"]
-    host = request["host"]
-    reviewer = routing_policy.resolve("reviewer", host)
-
     categories: dict[str, tuple[str, str]] = {root: ("omitted", "epic_root")}
     for issue_id in sorted(set(graph.nodes) - {root}):
         node = graph.nodes[issue_id]
@@ -487,6 +472,28 @@ def build_preview(
                     categories[issue_id] = ("blocked", f"blocked_dependency:{blocker_id}")
                     changed = True
                     break
+    return categories
+
+
+def build_preview(
+    raw_graph: object, raw_policy: object, routing_policy: RoutingPolicy,
+    *, expected_epic_id: str | None = None, expected_project_key: str | None = None,
+    tracker_name: str = "devhub",
+) -> dict:
+    """Purely validate, classify, route and digest a preview (no I/O or mutation)."""
+    graph = validate_subgraph(
+        raw_graph,
+        expected_epic_id=expected_epic_id,
+        expected_project_key=expected_project_key,
+    )
+    request = _policy_request(raw_policy)
+    root = graph.value["root"]
+    base_floor = request["routing"]["implementer_minimum_tier"]
+    base_source = request["routing"]["implementer_minimum_source"]
+    host = request["host"]
+    reviewer = routing_policy.resolve("reviewer", host)
+
+    categories = classify_nodes(graph)
 
     eligible, blocked, omitted, human_gates, unknowns = [], [], [], [], []
     routes_by_issue: dict[str, list[dict]] = {}

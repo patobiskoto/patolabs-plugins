@@ -17,7 +17,8 @@ _MODULES = ("query", "edit", "issue", "frame", "adr", "doctor", "registry",
             "local-code", "devhub-smoke", "epic-preview", "command-worker", "cutover",
             "campaign-gate", "campaign-retry", "campaign-reconcile",
             "campaign-review-remediation", "campaign-legacy", "campaign-terminal",
-            "cost-attribution", "delivery-audit", "campaign-approval")
+            "cost-attribution", "delivery-audit", "campaign-approval",
+            "campaign-cadence")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
