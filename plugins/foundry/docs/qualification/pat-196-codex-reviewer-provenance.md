@@ -152,18 +152,19 @@ two rollouts newer than the marker (hashes and field values only):
 | Foundry version named in rollout paths | `1.3.0` | `1.3.0` | deduced from `plugins/cache/<marketplace>/foundry/<version>` (not proof of what was loaded) |
 | Model and effort executed by the backend | unknown | unknown | not exposed |
 
-Profile `developer_instructions` SHA-256 `2cf9ff55…dd4d`; example `e42dd0cb…c8d4`; equal: `false`
-(the installed profile is the maintainer's current reviewer patch). `config.toml` declares no
-`[agents.reviewer]` key (`agents` keys: `max_concurrent_threads_per_session`): deduced, by
-elimination, that the profile is loaded by file discovery (step 3 names the sources not examined).
-A built-in `reviewer` source is not excluded by observation: the matched text equals the installed
-profile and differs from the versioned example (`equal: false`), which makes a built-in carrying
-that same text unlikely (deduced), not ruled out (unknown). The child's values equal the parent's; the profile sets none of them (its keys are
-`description`, `developer_instructions`, `name`). Two explanations fit and are not told apart:
-inheritance by the child or transmission by the parent at spawn; both are consistent with what
-was observed and neither is established (unknown: no field of the rollout names the origin). The loaded profile is established for this
-host version and this session only; another host version or a session started differently is
-not covered.
+Profile `developer_instructions` SHA-256 `2cf9ff55…dd4d`; example `e42dd0cb…c8d4`; equal:
+`false` (the installed profile is the maintainer's current reviewer patch). `config.toml`
+declares no `[agents.reviewer]` key (`agents` keys: `max_concurrent_threads_per_session`):
+deduced, by elimination, that the profile is loaded by file discovery (step 3 names the
+sources not examined). A built-in `reviewer` source is not excluded by observation: the
+matched text equals the installed profile and differs from the versioned example (`equal:
+false`), which makes a built-in carrying that same text unlikely (deduced), not ruled out
+(unknown). The child's values equal the parent's; the profile sets none of them (its keys
+are `description`, `developer_instructions`, `name`). Two explanations fit and are not told
+apart: inheritance by the child or transmission by the parent at spawn; both are consistent
+with what was observed and neither is established (unknown: no field of the rollout names
+the origin). The loaded profile is established for this host version and this session only;
+another host version or a session started differently is not covered.
 
 ## Documentation status (R5)
 
