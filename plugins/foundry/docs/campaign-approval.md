@@ -50,21 +50,25 @@ revocation record yet: an approval ends by expiry.
 
 1. `approve` reads the confirmation from `/dev/tty` only, never from stdin, arguments or
    the environment, and refuses when stdin or stdout is not a terminal or `/dev/tty` cannot
-   be opened (`_confirm_on_tty`). That an agent tool shell has no controlling terminal is
-   deduced, not observed on every host; this layer rests on it.
+   be opened (`_confirm_on_tty`, `_stdio_is_tty`). That an agent tool shell has neither a
+   terminal on stdin/stdout nor a controlling terminal is deduced, not observed on every host;
+   a shell started under a pseudo-terminal allocator (`script`, `pty`) passes this layer.
 2. `approve` refuses when an agent-session marker exists in the environment: `CLAUDECODE`
    or any name starting with `CODEX_` (`agent_markers`). The refusal names the variable,
    never its value.
 3. The Claude `PreToolUse` Bash hook denies a command invoking `campaign-approval approve`
    or `campaign_approval approve` (`approval_deny_reason`, `hooks/guard_bash.py`), in any
    repository, registered or not. `bash -c '...'` indirection is out of scope, as for R1.
-   Codex: observed, `.codex-plugin/plugin.json` declares no hook, so Codex gets layers 1
-   and 2 only.
+   Codex: `.codex-plugin/plugin.json` declares no hook (observed); whether Codex runs this
+   guard on its shell through the shared `hooks/hooks.json` is unknown.
 
 Tests: `tests/test_campaign_approval.py` (refusal without terminal, under each marker,
 success with a fake terminal, no tracker access) and `tests/test_hooks.py`.
 
-Limit, stated plainly: this is not a cryptographic guarantee. A process running as the same
+Limit, stated plainly: the three layers stop an accidental or cooperative call by an agent,
+not a deliberate bypass (unsetting the marker, a pseudo-terminal, `bash -c`); like
+`guard_bash.py`, they are a discipline tool, not a sandbox. This is not a cryptographic
+guarantee either. A process running as the same
 OS user can append to the journal file directly. `check` refuses a line whose
 `record_digest` does not verify, so a malformed or edited hand-append is refused, but a
 well-formed forged line, with a correct digest, cannot be detected.

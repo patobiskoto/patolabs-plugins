@@ -10,9 +10,9 @@ This module calls no tracker, starts no campaign and writes nothing else than th
 approval or a typed refusal.  A preview never approves itself: ``epic_preview`` has no
 approval code path.
 
-An agent session cannot approve through Foundry: ``approve`` reads its confirmation from
+An agent session cannot approve by an accidental or cooperative call: ``approve`` reads its confirmation from
 the controlling terminal only and refuses under an agent-session environment marker, and
-the Claude ``PreToolUse`` Bash guard denies the command.  This is not cryptography: a
+the Claude ``PreToolUse`` Bash guard denies the command; a deliberate bypass is not stopped.  This is not cryptography: a
 process running as the same OS user can append to the journal directly.  ``check`` refuses a
 line whose ``record_digest`` does not verify (a malformed hand-append), but cannot detect a
 well-formed forged line.  See ``docs/campaign-approval.md``.
