@@ -117,14 +117,15 @@ def check(conclusion="success", status="completed"):
     return Check(name="ci", status=status, conclusion=conclusion)
 
 
-def approve(raw, journal, *, expires=NOW + timedelta(hours=2), structure=None):
+def approve(raw, journal, *, expires=NOW + timedelta(hours=2), structure=None, sessions=5,
+            per_issue=2):
     digest = structure or structure_digest(validate_subgraph(raw))
     record = {
         "schema_version": ca.APPROVAL_CONTRACT, "epic": "APP-1",
         "preview_contract": "foundry-epic-preview.v1", "preview_digest": "c" * 64,
         "structure_digest": digest, "issued_at": "2026-10-16T10:00:00Z",
-        "expires_at": expires.strftime("%Y-%m-%dT%H:%M:%SZ"), "max_sessions": 5,
-        "max_sessions_per_issue": 2, "approved_at": "2026-10-16T10:00:00Z",
+        "expires_at": expires.strftime("%Y-%m-%dT%H:%M:%SZ"), "max_sessions": sessions,
+        "max_sessions_per_issue": per_issue, "approved_at": "2026-10-16T10:00:00Z",
         "approver": {"kind": ca.APPROVER_KIND},
     }
     record["record_digest"] = ca.record_digest(record)

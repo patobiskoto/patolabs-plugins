@@ -18,6 +18,9 @@ from test_epic_preview import graph, node
 NOW = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
 PROJECT = SimpleNamespace(key="APP")
 BASE = "b" * 40
+CLAIM_ID = "e" * 64  # a secret capability: it must never reach the journal or the output
+DIFF_HASH = "d" * 64
+CRITERION = {"id": "ac-1", "digest": "a" * 64}
 CLI = str(Path(ce.__file__).resolve().parents[2] / "tooling" / "foundry_cli.py")
 
 
@@ -30,6 +33,11 @@ class World:
         self.proof, self.checks = "none", []
         self.calls = []  # (argv, cwd, env, input)
         self.session_commits = True
+        self.reviews = []  # canned reviewer results, consumed in order
+        self.human_required = False
+        self.proofs = []  # outcomes files seen by record-review-proof
+        self.carry_ok = False
+        self.commits = 0
 
     def raw(self):
         return graph([node(i, state=s) for i, s in self.states.items()],
@@ -53,23 +61,36 @@ class World:
             if argv[1] == "--version":
                 return ok("2.1.300 (Claude Code)")
             ticket = Path(cwd).name
+            sid = argv[argv.index("--session-id") + 1]
+            if "--tools" in argv:  # the reviewer
+                text = self.reviews.pop(0)
+                return ok(json.dumps({"session_id": sid, "total_cost_usd": 0.25,
+                                      "duration_ms": 900, "is_error": False, "result": text}))
             if self.session_commits:
-                self.heads[ticket] = "c" * 40
+                self.commits += 1
+                self.heads[ticket] = f"{self.commits:x}" * 40 if self.commits < 16 else "f" * 40
                 self.ahead[ticket] = 1
             return ok(json.dumps({
-                "session_id": argv[argv.index("--session-id") + 1], "total_cost_usd": 0.5,
+                "session_id": sid, "total_cost_usd": 0.5,
                 "duration_ms": 1200, "is_error": False, "result": f"## Summary\n{ticket}",
             }))
-        assert argv[0] == sys.executable and argv[1] == CLI and argv[2] == "issue", argv
+        assert argv[0] == sys.executable and argv[1] == CLI, argv
+        if argv[2] == "routing":
+            return self.routing(argv, cwd, ok)
+        assert argv[2] == "issue", argv
         verb, ticket = argv[3], argv[4]
         if verb == "start":
             self.states[ticket] = "in-progress"
             self.heads[ticket], self.ahead[ticket] = "a" * 40, 0
         elif verb == "openpr":
             number = 10 + int(ticket.split("-")[1])
-            self.prs.append(PullRequest(
-                number=number, url=f"https://x/o/r/pull/{number}", head=self.branch(ticket),
-                base="main", base_sha=BASE, sha=self.heads[ticket]))
+            if self.prs and self.prs[-1].state == "open":  # a push to the open PR
+                self.prs[-1].sha = self.heads[ticket]
+                self.proof = "none"
+            else:
+                self.prs.append(PullRequest(
+                    number=number, url=f"https://x/o/r/pull/{number}", head=self.branch(ticket),
+                    base="main", base_sha=BASE, sha=self.heads[ticket]))
             self.states[ticket] = "review"
         elif verb == "merge":
             assert self.proof == "valid" and self.checks  # the gates of `issue merge`
@@ -77,6 +98,61 @@ class World:
             self.states[ticket] = "done"
             self.proof, self.checks = "none", []  # a proof and CI belong to one exact head
         return ok()
+
+
+def _opt(argv, name):
+    return argv[argv.index(name) + 1]
+
+
+def _routing(self, argv, cwd, ok):
+    verb = argv[3]
+    if verb == "claim-review":
+        assert len(_opt(argv, "--claim-attempt-token")) == 64
+        return ok(json.dumps({"diff_hash": DIFF_HASH, "should_run": True, "state": "claimed",
+                              "generation": 1, "claim_id": CLAIM_ID}))
+    if verb == "prepare-review":
+        claim = json.loads(Path(_opt(argv, "--claim-file")).read_text())
+        assert claim["claim_id"] == CLAIM_ID
+        assert oct(Path(_opt(argv, "--claim-file")).stat().st_mode & 0o777) == "0o600"
+        out = Path(_opt(argv, "--output-dir"))
+        out.mkdir(mode=0o700)
+        (out / "reviewer-send.txt").write_text(
+            f"Goal:\nRun the independent Foundry two-stage review.\n"
+            f"coordinates: diff_hash {DIFF_HASH} claim_id {CLAIM_ID}\n")
+        if "--declarations-file" in argv:
+            self.declarations = json.loads(Path(_opt(argv, "--declarations-file")).read_text())
+        return ok(json.dumps({"schema": "foundry.review-packet.v1", "status": "prepared",
+                              "files": 7}))
+    if verb == "record-review-proof":
+        assert _opt(argv, "--claim-id") == CLAIM_ID
+        submitted = json.loads(Path(_opt(argv, "--outcomes-file")).read_text())
+        assert set(submitted) == {"outcomes", "quality"} and isinstance(submitted["outcomes"], list)
+        self.proofs.append(submitted)
+        self.proof = "valid" if submitted["quality"] == "mergeable" else "blocked"
+        return ok(json.dumps({"proof_id": "p" * 8}))
+    if verb == "escalation":
+        self.escalations = getattr(self, "escalations", []) + [argv]
+        out = {"human_required": self.human_required, "action": "escalated",
+               "final_tier": "frontier"}
+        return SimpleNamespace(returncode=2 if self.human_required else 0,
+                               stdout=json.dumps(out), stderr="")
+    if verb == "carry-review-proof":
+        self.carried = getattr(self, "carried", []) + [argv]
+        if not self.carry_ok:
+            return SimpleNamespace(returncode=1, stdout="", stderr="refus")
+        self.proof = "valid"
+        return ok(json.dumps({"proof_id": "q" * 8, "carried": True}))
+    raise AssertionError(argv)
+
+
+World.routing = _routing
+
+
+def result_text(quality="mergeable", fix=0, nits=0, verdict="pass", report="## AC table\nok"):
+    body = {"outcomes": [{**CRITERION, "verdict": verdict}], "quality": quality,
+            "fix_before_merge": fix, "non_blocking": nits}
+    return f"{report}\nAC: PASS · QUALITY: OK to merge\n{ce.campaign_review.RESULT_SENTINEL}\n" \
+        + json.dumps(body)
 
 
 class WorldProofs:
@@ -254,19 +330,9 @@ def test_session_ceilings_refuse_before_launch(env):
     assert [c[0][0] for c in effects(env.world)] == [sys.executable]  # no claude launch
 
 
-def test_review_and_correct_are_not_executed(env):
-    step(env), step(env), step(env)
-    calls = len(env.world.calls)
-    for proof in ("none", "blocked"):
-        env.world.proof = proof
-        result = step(env)
-        assert result.outcome == "awaiting_review_execution" and result.effect is None
-    assert len(env.world.calls) == calls
-
-
 def test_merge_only_on_a_merge_decision(env):
     step(env), step(env), step(env)
-    env.world.proof = "valid"  # valid review, CI not proven
+    env.world.proof = "valid"  # a valid proof on the exact diff, CI not proven
     result = step(env)
     assert (result.decision.kind, result.outcome) == ("wait-ci", "wait-ci")
     assert not [c for c in env.world.calls if c[0][3:4] == ["merge"]]
@@ -283,34 +349,6 @@ def test_unapproved_campaign_launches_nothing(env):
     result = step(env)
     assert (result.decision.kind, result.outcome) == ("refuse", "stopped")
     assert env.world.calls == []
-
-
-def test_epic_of_two_tickets_reaches_the_verdict_awaited(env):
-    sleeps = []
-    kw = dict(max_steps=20, poll_seconds=3, sleep=sleeps.append, clock=lambda: NOW, **env.kwargs)
-
-    def go():
-        return ce.run(env.tracker, env.codehost, PROJECT, "APP-1", env.runtime, **kw)
-
-    results, stopped = go()
-    assert stopped == "awaiting_review_execution"
-    assert [r.decision.kind for r in results] == ["start", "implement", "open-pr", "review"]
-    env.world.proof, env.world.checks = "valid", [check()]  # injected review proof, green CI
-    results, stopped = go()
-    assert stopped == "awaiting_review_execution"
-    assert [r.decision.kind for r in results] == [
-        "merge", "start", "implement", "open-pr", "review"]
-    assert env.world.states == {"APP-2": "done", "APP-3": "review"}
-    env.world.proof, env.world.checks = "valid", [check()]
-    results, stopped = go()
-    assert stopped == "terminal" and results[-1].decision.kind == "await-verdict"
-    assert env.world.states == {"APP-2": "done", "APP-3": "done"}
-    verbs = [c[0][3] for c in effects(env.world) if c[0][0] == sys.executable]
-    assert verbs == ["start", "openpr", "merge", "start", "openpr", "merge"]
-    assert sum(c[0][0] == "claude" for c in effects(env.world)) == 2
-    records = ce.read_attempts(env.kwargs["attempts"])
-    assert len({r["attempt"] for r in records if r["event"] == "started"}) == 8
-    assert all(r["status"] == "completed" for r in records if r["event"] == "finished")
 
 
 def test_run_waits_on_ci_without_an_effect(env):

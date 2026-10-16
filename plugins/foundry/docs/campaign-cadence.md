@@ -4,8 +4,8 @@ One pass of the cadencer of an Epic campaign re-reads the tracker, git and the P
 returns exactly one decision. This page covers that computation only
 (`tooling/foundry/campaign_cadence.py`). Nothing here executes the decision: no tracker
 write, no git mutation, no PR mutation, no session launch. Executing a decision is
-[`campaign-effects.md`](campaign-effects.md) (PAT-217); launching a review is another issue
-(PAT-218). The state lives in the tracker, git and the PR; the module
+[`campaign-effects.md`](campaign-effects.md) (PAT-217, and PAT-218 for `review` and
+`correct`). The state lives in the tracker, git and the PR; the module
 keeps none. The frozen Dev Hub coordinator (`campaign_coordinator.py`,
 `campaign_runtime.py`) is not used.
 
@@ -39,15 +39,24 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | `in-progress`, branch present, no PR, the last implementation attempt ended on this branch head and the branch has commits beyond the remote default branch | `open-pr` |
 | `in-progress`, branch present, no PR, otherwise | `implement` |
 | `in-progress`, no branch, no PR | `start` (resume) |
-| open PR, no review proof on the exact diff, or diff unobservable | `review` |
-| open PR, review proof not mergeable | `correct` `review_blocked` |
+| open PR whose head is not the branch head, the last implementation or correction attempt ended on the branch head | `open-pr` `correction_not_pushed` |
+| open PR, no review proof on the exact diff, or diff unobservable, fewer than `MAX_REVIEW_ROUNDS` (3) recorded rounds | `review` |
+| the same, at `MAX_REVIEW_ROUNDS` recorded rounds | `suspend` `review_rounds_exhausted` |
+| open PR, review proof not mergeable, fewer than `MAX_CORRECTIONS` (2) corrections started | `correct` `review_blocked` |
+| valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections | `correct` `review_fix_before_merge` |
+| either `correct` at `MAX_CORRECTIONS` corrections | `suspend` `corrections_exhausted` |
 | valid review, CI checks pending or none proven | `wait-ci` |
 | valid review, CI failing | `correct` `ci_failing` |
 | valid review, CI green | `merge` |
 
+The three counts (`fix_before_merge`, `review_rounds`, `corrections`) are facts of
+`TicketFacts` for the ticket in focus, read from the attempt journal by the `history`
+callable passed to `observe` (`campaign_review.history`); without it (the `next` verb) they are
+0 and the bounds never fire. `step` also turns a `correct` `ci_failing` into `suspend`
+`ci_failing_not_executed` (`campaign-effects.md`); `decide` itself still returns `correct`.
 A ticket already `done` costs no PR read: the next ticket is chosen instead.
-"Implementation finished" is not observable from the tracker, git and the PR alone, so
-`open-pr` reads one more fact: the local attempt journal of
+"Implementation finished" (or a correction finished) is not observable from the tracker,
+git and the PR alone, so `open-pr` reads one more fact: the local attempt journal of
 [`campaign-effects.md`](campaign-effects.md) (`last_implementation`, `campaign_effects.py`),
 passed to `observe` as the `implemented` callable; without it (the `next` verb) the field is
 false and the decision stays `implement`. "Required
