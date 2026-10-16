@@ -52,6 +52,8 @@ def test_matching_rollout_reports_location_and_observed_fields(tmp_path):
     rollout = _rollout(tmp_path / "r.jsonl")
     report = prov.inspect_rollout(rollout, profile)
     assert report["profile_text_found"] == [{"message": 0, "content_item": 0}]
+    # "matched" means the rollout contains the profile text verbatim; a short text could match by
+    # chance, so a rollout known not to carry the profile (the parent) is the negative witness.
     assert report["loaded_profile"] == "matched"
     assert report["session_meta"]["agent_role"] == "reviewer"
     assert report["session_meta"]["cli_version"] == "0.0.1"
@@ -124,3 +126,37 @@ def test_cli_prints_json_without_content(tmp_path, capsys):
     out = capsys.readouterr().out
     assert json.loads(out)["rollouts"][0]["loaded_profile"] == "matched"
     assert SECRET not in out
+
+
+def test_absent_profile_with_rollout_is_not_observed_not_an_error(tmp_path):
+    report = prov.inspect_rollout(_rollout(tmp_path / "r.jsonl"), tmp_path / "absent.toml")
+    assert report["loaded_profile"] == "not_observed"
+    assert report["profile_text_found"] == []
+    assert prov.main(["--profile", str(tmp_path / "absent.toml"), "--rollout", str(tmp_path / "r.jsonl")]) == 0
+
+
+def test_json_lines_that_are_not_objects_are_skipped(tmp_path):
+    profile = tmp_path / "reviewer.toml"
+    profile.write_text(PROFILE)
+    rollout = _rollout(tmp_path / "r.jsonl")
+    rollout.write_text('[1, 2]\n"text"\n42\nnull\n' + rollout.read_text(), encoding="utf-8")
+    report = prov.inspect_rollout(rollout, profile)
+    assert report["loaded_profile"] == "matched"
+    assert report["session_meta"]["agent_role"] == "reviewer"
+
+
+def test_foundry_versions_go_through_the_token_filter(tmp_path):
+    profile = tmp_path / "reviewer.toml"
+    profile.write_text(PROFILE)
+    long_version = "1." + "9" * 70
+    rollout = tmp_path / "r.jsonl"
+    rollout.write_text(json.dumps({"type": "x", "payload": {
+        "t": f"plugins/cache/mk/foundry/1.4.0 plugins/cache/mk/foundry/{long_version}"}}) + "\n")
+    versions = prov.inspect_rollout(rollout, profile)["foundry_versions"]
+    assert versions == ["1.4.0", "<not_a_short_token>"]
+
+
+def test_token_refuses_path_and_url_like_values():
+    assert prov._token("read-only") == "read-only"
+    assert prov._token("a/b") == "<not_a_short_token>"
+    assert prov._token("a:b") == "<not_a_short_token>"

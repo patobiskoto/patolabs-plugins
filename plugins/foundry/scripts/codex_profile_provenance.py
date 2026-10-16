@@ -12,7 +12,7 @@ import re
 import sys
 import tomllib
 
-_TOKEN = re.compile(r"[A-Za-z0-9._:/-]{1,64}")
+_TOKEN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _FOUNDRY_PATH = re.compile(r"plugins/cache/[A-Za-z0-9._-]+/foundry/([0-9][A-Za-z0-9._+-]*)")
 _TOP_LEVEL = ("model", "model_reasoning_effort", "sandbox_mode", "approval_policy", "agents")
 
@@ -31,6 +31,8 @@ def _sha(text):
 
 
 def _instructions(path):
+    if not Path(path).is_file():
+        return None
     return tomllib.loads(Path(path).read_text(encoding="utf-8")).get("developer_instructions")
 
 
@@ -75,6 +77,8 @@ def inspect_rollout(rollout, profile):
             row = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(row, dict):
+            continue
         payload = _dict(row.get("payload"))
         kind = row.get("type")
         versions.update(_FOUNDRY_PATH.findall(line))
@@ -113,7 +117,7 @@ def inspect_rollout(rollout, profile):
             "sandbox_policy_type": _token(_dict(ctx.get("sandbox_policy")).get("type")),
             "permission_profile_type": _token(_dict(ctx.get("permission_profile")).get("type")),
         },
-        "foundry_versions": sorted(versions),
+        "foundry_versions": sorted(_token(version) for version in versions),
         "token_count_events": tokens,
     }
 
