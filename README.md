@@ -154,11 +154,11 @@ Statuses:
   installed plugin on Claude Code and on Codex, and the readback of the version a host
   actually loads. They come after the merge; the tag and the host update each need the
   maintainer's explicit authorization (STOPs 6 and 7), the readback does not (step 8), and
-  all are recorded on the release ticket (`skills/release/SKILL.md`, steps 6 to 9). Now known: the tag `foundry-v1.4.0` exists on `origin`
-  (`git ls-remote --tags origin 'foundry-v1.4.0^{}'`, read 2026-10-16; commit
-  `b2e2c0cb71ee6418a4b17af29257398f43c6958e`, the squash commit of PR #158); the
-  installation and the readbacks are recorded on PAT-211, not restated here, and the
-  version Claude Code loads is not verified there.
+  all are recorded on the release ticket (`skills/release/SKILL.md`, steps 6 to 9). Now
+  known: the tag `foundry-v1.4.0` exists on `origin` (`git ls-remote --tags origin
+  'foundry-v1.4.0^{}'`, read 2026-10-16; commit `b2e2c0cb71ee6418a4b17af29257398f43c6958e`,
+  the squash commit of PR #158); the installation and the readbacks are recorded on PAT-211,
+  not restated here, and the version Claude Code loads is not verified there.
 - **Not verified:** the Foundry 1.4.0 / Ship-iOS 0.3.0 pair on a host, the Codex
   reviewer profile provenance beyond the one session recorded by PAT-196 (host `0.162.1`),
   the native availability of the rollback profiles (PAT-198), the Linear rendering of

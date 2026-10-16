@@ -145,7 +145,7 @@ two rollouts newer than the marker (hashes and field values only):
 | Loaded profile (instructions text found in the first developer message) | `not_observed` | `matched` (message 0, item 0) | observed |
 | Model / effort requested | `gpt-6.1-sol` / `low` (`-m`, `-c` of the command) | none stated by the spawn task or the profile (its keys name no model or effort) | requested |
 | `turn_context.model` / `effort` (transmitted) | `gpt-6.1-sol` / `low` | `gpt-6.1-sol` / `low` | observed as recorded by the host |
-| `collaboration_mode.settings` | not recorded | not recorded | unknown (the helper output kept for this page does not include them) |
+| `collaboration_mode.settings` model / reasoning effort | `gpt-6.1-sol` / `low` | `gpt-6.1-sol` / `low` | observed (helper fields `collaboration_model`, `collaboration_reasoning_effort`, run on the two rollouts on 2026-10-15) |
 | `codex --version` | `codex-cli 0.162.1` | same installed binary | observed |
 | Codex plugin cache listing (`ls ~/.codex/plugins/cache/*/foundry`) | foundry `1.3.0` | same listing | observed at that time |
 | `turn_context.sandbox_policy.type` / `approval_policy` / `permission_profile.type` | `read-only` / `never` / `managed` | `read-only` / `never` / `managed` | observed |
@@ -160,8 +160,8 @@ A built-in `reviewer` source is not excluded by observation: the matched text eq
 profile and differs from the versioned example (`equal: false`), which makes a built-in carrying
 that same text unlikely (deduced), not ruled out (unknown). The child's values equal the parent's; the profile sets none of them (its keys are
 `description`, `developer_instructions`, `name`). Two explanations fit and are not told apart:
-inheritance by the child (deduced) or transmission by the parent at spawn (unknown, no field
-of the rollout names the origin). The loaded profile is established for this
+inheritance by the child or transmission by the parent at spawn; both are consistent with what
+was observed and neither is established (unknown: no field of the rollout names the origin). The loaded profile is established for this
 host version and this session only; another host version or a session started differently is
 not covered.
 
