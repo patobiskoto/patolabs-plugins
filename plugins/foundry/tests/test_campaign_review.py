@@ -230,7 +230,6 @@ def test_blocking_review_escalates_and_the_correction_session_gets_the_findings(
     assert escalation[escalation.index("--kind") + 1] == "review_blocking"
     from foundry.routing import LEVELS
 
-    assert escalation[escalation.index("--current-tier") + 1] in LEVELS
     from foundry.routing import RoutingPolicy
 
     # The tier sent excludes the escalation floor, so a replay after `escalated` is identical.
@@ -309,6 +308,33 @@ def test_escalation_is_not_signalled_when_the_claim_would_refuse(env):
         "at": "2026-01-01T00:00:00Z"}, None)
     plan = cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
     assert plan["suspend"][0] == "attempt_already_made" and _escalations(env) == []
+
+
+def test_an_escalation_replay_with_an_active_floor_sends_the_same_signal(env, monkeypatch):
+    """A floor raised by `escalated` must not change the tier sent on a replay (same identity)."""
+    from foundry.escalation import EscalationStore
+    from foundry.routing import LEVELS, RoutingPolicy
+
+    to_review(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    ticket = next(t for t in cc.observe(
+        env.tracker, env.codehost, PROJECT, "APP-1", env.runtime.root, NOW,
+        journal=env.kwargs["journal"], refs=env.kwargs["refs"],
+        branch_facts=env.kwargs["branch_facts"], diff_reader=env.kwargs["diff_reader"],
+        proof_store=env.kwargs["proof_store"]).tickets if t.id == "APP-2")
+    decision = cc.Decision("correct", "APP-2", "review_blocked")
+    base = RoutingPolicy.load(env.runtime.root).resolve("implementer", "claude").selected_tier
+    higher = LEVELS[min(LEVELS.index(base) + 1, len(LEVELS) - 1)]
+    floors = iter([None, higher])  # first call: no floor; replay: the floor `escalated` raised
+    monkeypatch.setattr(EscalationStore, "active_floor",
+                        lambda self, issue, role: next(floors) if role == "implementer" else None)
+    attempts = env.kwargs["attempts"]
+    cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
+    cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
+    first, replay = _escalations(env)
+    assert first == replay
+    assert replay[replay.index("--current-tier") + 1] == base
 
 
 def test_a_halted_state_that_is_not_a_continue_action_launches_no_session(env, monkeypatch):
