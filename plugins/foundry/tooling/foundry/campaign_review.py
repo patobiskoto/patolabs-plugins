@@ -455,8 +455,7 @@ def deferral_lines(records: list[dict], epic: str, ticket: str,
             f"Deferred remarks: {follow_ups} (companion Epic {done[-1]['companion']}, "
             f"{origin}; {total} remarks; writes: {', '.join(writes) or 'none'})")
     if fields and fields[-1]["state"] == "refused":
-        made = list(dict.fromkeys(w for f in fields if f["state"] == "refused"
-                                  for w in f["writes"]))
+        made = list(dict.fromkeys(w for f in fields for w in f["writes"]))
         before = f" (writes made before it: {', '.join(made)})" if made else ""
         lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}){before}; "
                      "they are corrected before the merge.")

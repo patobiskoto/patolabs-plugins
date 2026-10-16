@@ -208,6 +208,8 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
         if details.get("validation") == "refused" or details.get("automatic_retry") is True:
+            if details.get("creation") == "created":
+                ledger["writes"].append(label)  # the issue exists: report the write (R9 b)
             raise Durable("creation_replay_refused")  # the adapter refuses to replay
         named, client = details.get("issue_id"), details.get("client_id")
     else:  # a quota error names the client identifier in its message (docs/linear-tracker.md)

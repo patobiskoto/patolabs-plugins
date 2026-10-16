@@ -281,6 +281,8 @@ def test_an_adapter_that_refuses_the_replay_is_a_durable_refusal(env):
     assert result.effect["deferral"]["state"] == "refused"
     assert result.effect["deferral"]["reason"] == "creation_replay_refused"
     assert verbs(env) == ["create-issue"]  # no substitute write, no reconciliation needed
+    # the issue was created before the validation refused: the write is reported (R9 b)
+    assert result.effect["deferral"]["writes"] == [cd.WRITE_COMPANION]
     assert step(env).decision.reason == "remarks_not_deferrable"
 
 
@@ -561,6 +563,18 @@ def test_the_description_cites_every_follow_up_and_every_write_of_the_pull_reque
         "Deferred remarks: APP-51, APP-52 (companion Epic APP-50, created by this pull request; "
         "3 remarks; writes: create companion Epic, create follow-up issue, "
         "comment on the follow-up issue)"]
+
+
+def test_the_refusal_line_cites_writes_of_an_earlier_transient_attempt():
+    from foundry import campaign_review as review
+
+    transient = {"state": "failed", "diff_hash": "a", "reason": "quota",
+                 "writes": [cd.WRITE_COMPANION]}
+    refused = {"state": "refused", "diff_hash": "a", "reason": "creation_replay_refused",
+               "writes": []}
+    records = [_finished(transient)]
+    line, = review.deferral_lines(records, "APP-1", "APP-2", _finished(refused)["deferral"])
+    assert "(writes made before it: create companion Epic)" in line
 
 
 def test_the_description_cites_the_writes_made_before_a_durable_refusal():
