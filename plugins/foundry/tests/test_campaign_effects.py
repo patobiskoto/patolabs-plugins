@@ -440,6 +440,23 @@ def test_session_cannot_write_foundry_state_or_user_configuration(env, monkeypat
     assert _under(os.path.join(data, ca.JOURNAL_NAME), ["/" + e.removesuffix("/**") for e in edit_deny])
 
 
+def test_session_protects_user_git_and_host_files_with_work_root_under_home(env, monkeypatch):
+    home = env.tmp  # the work root (tmp/wt) is then under the home, as with the default one
+    monkeypatch.setenv("HOME", str(home))
+    _argv, settings, cwd = _session(env)
+    real_home = os.path.realpath(home)
+    assert _under(os.path.realpath(cwd), [real_home])
+    edit_deny = ["/" + r[len("Edit(//"):-1].removesuffix("/**") for r in settings["permissions"]["deny"]
+                 if r.startswith("Edit(//")]
+    fs = settings["sandbox"]["filesystem"]
+    for name in (".gitconfig", ".config/git", ".claude.json"):
+        path = os.path.join(real_home, name)
+        assert path in fs["denyWrite"] and not _under(path, fs["allowWrite"]), path
+        assert path in edit_deny, path
+    for name in (".gitconfig", ".config/git"):  # a commit still finds its identity
+        assert os.path.join(real_home, name) in fs["allowRead"]
+
+
 def test_session_git_writes_exclude_hooks_and_config(env):
     _argv, settings, cwd = _session(env)
     common = os.path.realpath(env.tmp / "repo" / ".git")

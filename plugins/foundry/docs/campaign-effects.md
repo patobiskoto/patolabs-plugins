@@ -107,15 +107,21 @@ and `campaign-approval approve` when the plugin is active, because `--plugin-dir
 `native_sandbox_settings` (`local_first_runner.py`, the PAT-124 sandbox, unchanged), with the
 ticket worktree as attempt directory and the worktrees directory as work root. Sources are the
 code and the tests `test_session_*` and `test_implement_session_runs_in_the_native_sandbox`
-(`tests/test_campaign_effects.py`), which read the built settings and pin them; no live
-`claude` session was run for PAT-220. PAT-124 (`CHANGELOG.md`, review round 3, trials of
+(`tests/test_campaign_effects.py`), which read the built settings and pin them; one live
+`claude` session was run, once (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`): `claude` 2.1.294,
+`claude-haiku-5-5`, effort `low`, work root and data directory under the home, settings built by
+`sandbox_settings` before the protection of `~/.gitconfig`, `~/.config/git` and `~/.claude.json`
+below. PAT-124 (`CHANGELOG.md`, review round 3, trials of
 2026-10-08) observed one OS write refusal outside the attempt directory with the launcher's
 settings; it lists as "STILL not established" a work root under the home, the Edit rule,
 Glob/Grep, the shared per-user temporary directory and the OS-level `denyWrite` on `.claude`
 for a shell command (the trial note `pat-19-native-sandbox-trial-2026-10-08-t4.json` says the
 same of a work root under the home). The default work root `<repo>-campaign` is under the home
-(`default_worktrees_dir`), so those points are unknown here, as is the OS enforcement of
-`denyWrite` inside an `allowWrite` and of reads re-allowed inside the denied home.
+(`default_worktrees_dir`). The trial answers, observed once: shell writes in a work root under the
+home, the OS `denyWrite` inside an `allowWrite` for the worktree `.claude` (`mkdir` and `echo`
+refused) and the `.git` pointer (append refused), and the `Edit` deny on the data directory
+through the Write tool (refused). Still unknown, not tested: Glob/Grep, the shared temporary
+directory, reads re-allowed inside the denied home, the network, other hosts and versions.
 
 - Shell commands run in the Bash sandbox (`enabled`, `failIfUnavailable` true,
   `allowUnsandboxedCommands` false): writes only in the worktree, in the per-user temporary
@@ -124,24 +130,42 @@ same of a work root under the home). The default work root `<repo>-campaign` is 
 - Denied to reads and writes, by sandbox and by `Read`/`Edit` rules: `registry.data_dir()`
   (the proof store `acceptance-proofs`, `campaign-approvals.jsonl`, `campaign-attempts.jsonl`,
   `review-remarks`), the directory and the file of `config.default_config_path()`, `~/.claude`
-  and `~/.codex` when it exists, and the whole home apart from what is re-allowed for reading:
-  the git common directory, `~/.gitconfig`, `~/.config/git`, and the entries under the home of
-  `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child environment (so the tests
-  find their interpreter). The worktree's `.claude` and `.git` pointer file, and all the denied paths
-  above, are also in `denyWrite` (an `allowWrite` of the user scope cannot reopen them). `--setting-sources user` keeps the worktree's project and local settings from
-  widening the sandbox (arrays merge across scopes, PAT-124).
+  and `~/.codex` when it exists. The sandbox also denies shell reads of the whole home, apart
+  from what is re-allowed: the git common directory, `~/.gitconfig`, `~/.config/git`, and the
+  entries under the home of `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child
+  environment (so the tests find their interpreter). The `Read`/`Edit` rules do not deny the
+  home itself when the work root is under it, as the default `<repo>-campaign` is whenever the
+  repo is (`native_sandbox_settings` drops a denied path that contains the attempt directory);
+  the file tools then hold the rest of the home only by mode `dontAsk` and the absence of an
+  allow rule (deduced). The worktree's `.claude` and `.git` pointer file, the denied paths
+  above, `~/.gitconfig`, `~/.config/git` and `~/.claude.json` are also in `denyWrite` and in
+  the `Edit` deny rules (reads of the first two stay allowed, so a commit finds its identity;
+  `core.hooksPath` or `core.fsmonitor` there would run code outside the sandbox). That an
+  `allowWrite` of the user scope cannot reopen them is deduced; the OS refusal was observed once
+  for the worktree `.claude` and `.git` pointer, for `~/.config/foundry` and `~/.claude` (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
+  not for the other paths nor for the three user files added after it. `--setting-sources user`
+  keeps the worktree's project and local settings from widening the sandbox (arrays merge across
+  scopes, PAT-124).
 - Git in a linked worktree writes into the main repository's directory. `git_dirs` reads the
   common directory and the worktree's git directory (`git rev-parse`), and the sandbox
   allows writes to `objects`, `refs`, `logs` of the common directory and to the worktree's own
-  git directory only (what a local `git commit` writes: deduced, not run under the sandbox).
+  git directory only (what a local `git commit` writes: observed once, a `git add` and `git commit` in a linked
+  worktree under these settings made the commit, trial of 2026-10-17).
   `hooks`, `config`, `info`, `refs/replace` of the common directory and `commondir`, `gitdir`,
   `config.worktree` of the git directory are denied to writes, so the session cannot plant a
   hook, change `core.hooksPath` or a replacement object that a later git command of the
-  cadencer would run.
-- Residual, unknown: if the `denyWrite` on the worktree `.git` pointer did not hold, the
-  session could point the git directory at a repository of its own with `core.fsmonitor` or
+  cadencer would run (observed once: a write into the common `hooks` and a `git config
+  core.hooksPath` left the common directory unchanged; `commondir`, `config.worktree`,
+  `refs/replace` were not tested).
+- Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
+  `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
+  session could redirect the git directory to a repository of its own with `core.fsmonitor` or
   hooks, and a later git command of the cadencer would run that code outside the sandbox
-  (deduced, not observed); the same list above applies to `.claude` and `refs/replace`.
+  (deduced). The pointer was refused in the trial; `commondir`, `config.worktree` and
+  `refs/replace` were not tested.
+- Residual, deduced: the `user` scope of the host settings can add `permissions.allow` rules
+  (for example `Edit` or `Read` on the home) that the file tools would honour where no deny
+  rule exists, which is most of the home when the work root is under it.
 - Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
   `refs`; the objects are shared by all worktrees; the user scope of the host settings still
   loads (`--setting-sources user`) and can add to the sandbox arrays.
@@ -302,8 +326,7 @@ not receive it. `--setting-sources user --strict-mcp-config --mcp-config` (the f
 by the installed `claude --help`; the last two are used by `campaign_runtime.py`) keep the
 `.claude/settings*.json` of the worktree, which the diff or an earlier session may have
 written, and any project MCP server out of the reviewer session; the `session_argv` of the
-implementer session is unchanged, because the `DISALLOWED_TOOLS` deny rules stay in force
-whatever the scopes allow (deduced, not run). The prompt (`review_prompt`, standard input) carries the
+implementer session carries the same three flags (`session_argv`, `campaign_effects.py`). The prompt (`review_prompt`, standard input) carries the
 reviewer contract of `skills/review-pr/SKILL.md` (stages, output, marker), the exact
 `read-review` command, and the send text written by `prepare-review`, followed by a sentence
 saying that the output contract overrides that text (which asks to load `review-pr` and to

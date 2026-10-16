@@ -401,6 +401,8 @@ def sandbox_settings(worktree: Path, worktrees_dir: Path, common: str, gitdir: s
     allow = [p for p in dict.fromkeys(allow)
              if not any(inside(p, d) or inside(d, p) for d in deny)]
     protect = [*deny, *[os.path.join(real(worktree), name) for name in (".claude", ".git")]]
+    # Read stays allowed for the git identity files (above); they and ~/.claude.json are not written.
+    protect += [os.path.join(home, name) for name in (".gitconfig", ".config/git", ".claude.json")]
     protect += [os.path.join(common, name) for name in ("hooks", "config", "info", "refs/replace")]
     protect += [os.path.join(gitdir, name) for name in ("commondir", "gitdir", "config.worktree")]
     return native_sandbox_settings(
