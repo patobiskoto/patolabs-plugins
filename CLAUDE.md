@@ -47,6 +47,9 @@ malformed (PAT-63: invalid JSON or encoding, non-object root, provider or entry,
 that cannot be read at all (OSError) and any other internal error still fail open, and
 "no-op outside registered repos" means a well-formed registry with no entry for the
 checkout.
+The guard has one denial outside that rule: a command invoking `campaign-approval approve`
+is denied in every repository, registered or not, before any registry read (PAT-215;
+`guard_bash.py::approval_deny_reason`, `plugins/foundry/docs/campaign-approval.md`).
 
 ## R2 — Scan the ADR index before an architecture choice
 

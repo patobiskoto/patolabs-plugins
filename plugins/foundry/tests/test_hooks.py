@@ -464,3 +464,28 @@ def test_registry_error_reason_pure_decision():
         "registry",
     )
     assert reason is not None and reason.startswith("registre global Foundry")
+
+
+def test_campaign_approval_approve_is_denied_without_registry():
+    # PAT-215: a human act, denied for every spelling of the module, any repo
+    for command in (
+        "python3 tooling/foundry_cli.py campaign-approval approve PAT-1 --preview-file p.json",
+        "PYTHONPATH=tooling python3 -m foundry.campaign_approval approve PAT-1",
+        "python3 tooling/foundry/campaign_approval.py approve PAT-1",
+        "cd x && env python3 foundry_cli.py campaign-approval approve PAT-1",
+    ):
+        assert _deny(command) is not None, command
+    # read-only verbs and quoted text pass
+    assert _deny("python3 tooling/foundry_cli.py campaign-approval check PAT-1") is None
+    assert _deny("python3 tooling/foundry_cli.py campaign-approval status PAT-1") is None
+    assert _deny("echo 'campaign-approval approve'") is None
+
+
+def test_campaign_approval_denied_by_main_outside_any_repo(tmp_path):
+    payload = {"cwd": str(tmp_path), "tool_input": {
+        "command": "python3 foundry_cli.py campaign-approval approve PAT-1"}}
+    result = subprocess.run(
+        ["python3", _GUARD], input=json.dumps(payload), capture_output=True, text=True,
+        env={**os.environ, "FOUNDRY_DATA": str(tmp_path / "data")},
+    )
+    assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"

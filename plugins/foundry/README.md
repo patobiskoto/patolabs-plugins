@@ -236,7 +236,9 @@ Epic orchestration starts with a deterministic read-only preview (Dev Hub and Li
 consumes the provider's complete subgraph, resolves the effective Foundry routing and
 limits, and emits classifications, human gates, dependency waves, explicit unknowns and
 a stable digest without acquiring execution authority. The API and command contract are
-documented in [`docs/epic-preview.md`](docs/epic-preview.md).
+documented in [`docs/epic-preview.md`](docs/epic-preview.md). A campaign starts only after
+the human approval of its exact preview, recorded by `campaign-approval`
+([`docs/campaign-approval.md`](docs/campaign-approval.md)).
 
 Approved Dev Hub commands are consumed by an outbound, lease-based worker with strict
 identity recovery, durable monotonic receipts and an atomic host-shared reservation of
@@ -738,7 +740,8 @@ The pipeline invariants are enforced by **plugin hooks** in registered repos: a
 hooks route logical Claude agents and deny `gh pr create` / `gh pr merge` and direct
 pushes to the default branch
 (pointing to the `foundry:open-pr` / `foundry:merge-pr` skills instead). The workflow
-guard is a no-op outside registered repos and routing ignores non-Foundry agents. The
+guard is a no-op outside registered repos, except that it denies `campaign-approval approve`
+everywhere (PAT-215, `docs/campaign-approval.md`), and routing ignores non-Foundry agents. The
 hooks remain fail-open on internal errors per ADR-0005; explicit policy violations can
 still be denied. **One exception (PAT-42, AGENTS.md#R1)**: when the repo's tracker
 binding is invalid, has drifted, or is ambiguous — `registry.entry_for()` raising

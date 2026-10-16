@@ -14,6 +14,10 @@ The command is TOKENIZED (shlex), not substring-matched: quoted text —
 commit messages, grep patterns — never trips the guard, and git/gh global
 flags (`git -C dir push`, `gh -R o/r pr merge`) can't slip past it.
 
+PAT-215 adds one unconditional denial, independent of the registry: a command invoking
+`campaign-approval approve` / `campaign_approval approve` (`approval_deny_reason()`), because
+a campaign approval is a human act (docs/campaign-approval.md).
+
 Everything else passes, unregistered repos are untouched, and any internal
 error fails OPEN (exit 0): a guard hook must never break normal work — EXCEPT
 one case (PAT-42, AGENTS.md#R1): `registry.entry_for()` raising `ValueError`
@@ -146,8 +150,30 @@ def _push_denies(args, defaults: set, current: str) -> bool:
     return False
 
 
+_APPROVAL_MODULES = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
+
+
+def approval_deny_reason(command: str) -> str | None:
+    """PAT-215: `campaign-approval approve` is a human act; deny it in an agent's Bash.
+
+    Independent of any repository binding (no registry read): the approval journal is
+    global to the user. Layer 3 of docs/campaign-approval.md; `bash -c` indirection stays
+    out of scope, as for R1."""
+    for seg in _segments(_tokens(command)):
+        for index, token in enumerate(seg[:-1]):
+            if os.path.basename(token).removesuffix(".py") in _APPROVAL_MODULES:
+                if seg[index + 1] == "approve":
+                    return ("campaign-approval approve est un acte humain : lance-le toi-même "
+                            "dans un terminal, pas depuis une session d'agent "
+                            "(docs/campaign-approval.md).")
+    return None
+
+
 def deny_reason(command: str, defaults: set, current: str) -> str | None:
     """Pure decision: the reason to deny `command`, or None to allow."""
+    approval = approval_deny_reason(command)
+    if approval:
+        return approval
     for seg in _segments(_tokens(command)):
         cmd, args = _command_and_args(seg)
         if cmd == "gh" and _gh_pr_denies(args):
@@ -227,7 +253,14 @@ def main():
         payload = json.load(sys.stdin)
         command = (payload.get("tool_input") or {}).get("command") or ""
         cwd = payload.get("cwd") or os.getcwd()
-        if not command or ("git" not in command and "gh" not in command):
+        if not command:
+            return
+        if "campaign" in command:
+            reason = approval_deny_reason(command)
+            if reason:
+                _emit_deny(reason)
+                return
+        if "git" not in command and "gh" not in command:
             return
         if not _is_candidate(command):
             return
