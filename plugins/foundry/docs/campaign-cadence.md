@@ -28,7 +28,7 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | a required capability is not declared | `refuse` `capability_missing` |
 | a node is unreadable in strict read (`validate_subgraph`, adapter read error) | `suspend` `node_unreadable` |
 | approval refusal `structure_digest_mismatch` (observed digest differs from the approved one) | `suspend` `structure_changed` |
-| a started or done ticket has an unfinished in-graph `depends-on` | `suspend` `dependency_state_behind` |
+| a started or done ticket has an unfinished in-graph `depends-on` (precaution, see below) | `suspend` `dependency_state_behind` |
 | several tickets in `in-progress`/`review` | `suspend` `several_in_progress` |
 | the ticket's PR is merged but the tracker state is not `done`; PR closed unmerged; several open PRs; head sha unreadable | `suspend` `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_ambiguous`, `pr_head_unreadable` |
 | no ticket in progress and none startable, but some not terminal | `suspend` `no_eligible_ticket` |
@@ -85,7 +85,11 @@ Limit, stated: the cadencer keeps no previous state, so a regression is detected
 contradictions visible in one observation: a started or done ticket with an unfinished
 `depends-on` in the graph, a merged PR against a tracker state that is not `done`, several
 tickets in progress. A node that went back without contradicting another fact (for example
-`review` back to `ready`) is not detectable here. Contradictions on PR and git facts are
+`review` back to `ready`) is not detectable here. `dependency_state_behind` is a precaution,
+not drift in the sense of PAT-ADR-0027: without a previous state, a dependency that went
+back cannot be told from a dependent that went ahead of it, so it also fires on an
+out-of-order forward progress; the way out is human (finish the dependency, or remove the
+edge and approve again). Contradictions on PR and git facts are
 read for the ticket in focus only. A merged PR whose tracker `done` projection is missing
 suspends; replaying `issue merge` recovers it (`issue.py`, `recover_done_projection`), and
 that is a human decision here.
@@ -95,7 +99,8 @@ that is a human decision here.
 The approval status is one input: without a valid approval the pass still observes
 everything and returns `refuse` with the step it would take. The review proof is read with
 `AcceptanceProofStore.valid_for_merge` and `current_for_sync` (`routing.py`) on the exact
-diff `git diff <base>...<head>` of the PR (`routing.git_diff`); the store may open its
-ledger lock file in the private data directory when that directory exists. Tests:
+diff `git diff <base>...<head>` of the PR (`routing.git_diff`); the store may create its
+review directory and `.ledger.lock` in the private data directory and wait on that lock
+(`ReviewDeduplicator._locked`, `routing.py`). Tests:
 `tests/test_campaign_cadence.py` (one per state, drift, approval, capability, idempotence,
 fakes that fail on any effect).
