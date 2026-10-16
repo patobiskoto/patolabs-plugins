@@ -65,7 +65,7 @@ One fresh headless session per `implement` attempt, launched by `_launch` with t
 ```text
 claude --print --output-format json --model <routed model> --max-budget-usd <budget>
   --plugin-dir <plugin root> --name foundry-campaign-<EPIC>-<ID> --setting-sources user
-  [--effort <routed effort>] --session-id <uuid5 of the attempt identity>
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}' [--effort <routed effort>] --session-id <uuid5 of the attempt identity>
   --disallowedTools <DISALLOWED_TOOLS> --permission-mode dontAsk --settings <sandbox JSON>
 ```
 
@@ -108,8 +108,14 @@ and `campaign-approval approve` when the plugin is active, because `--plugin-dir
 ticket worktree as attempt directory and the worktrees directory as work root. Sources are the
 code and the tests `test_session_*` and `test_implement_session_runs_in_the_native_sandbox`
 (`tests/test_campaign_effects.py`), which read the built settings and pin them; no live
-`claude` session was run for PAT-220, so the operating system's enforcement itself is the one
-qualified by PAT-124 (`CHANGELOG.md`, trials of 2026-10-08) and is not re-observed here.
+`claude` session was run for PAT-220. PAT-124 (`CHANGELOG.md`, review round 3, trials of
+2026-10-08) observed one OS write refusal outside the attempt directory with the launcher's
+settings; it lists as "STILL not established" a work root under the home, the Edit rule,
+Glob/Grep, the shared per-user temporary directory and the OS-level `denyWrite` on `.claude`
+for a shell command (the trial note `pat-19-native-sandbox-trial-2026-10-08-t4.json` says the
+same of a work root under the home). The default work root `<repo>-campaign` is under the home
+(`default_worktrees_dir`), so those points are unknown here, as is the OS enforcement of
+`denyWrite` inside an `allowWrite` and of reads re-allowed inside the denied home.
 
 - Shell commands run in the Bash sandbox (`enabled`, `failIfUnavailable` true,
   `allowUnsandboxedCommands` false): writes only in the worktree, in the per-user temporary
@@ -121,8 +127,8 @@ qualified by PAT-124 (`CHANGELOG.md`, trials of 2026-10-08) and is not re-observ
   and `~/.codex` when it exists, and the whole home apart from what is re-allowed for reading:
   the git common directory, `~/.gitconfig`, `~/.config/git`, and the entries under the home of
   `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child environment (so the tests
-  find their interpreter). The worktree's `.claude` and `.git` pointer file are denied to
-  writes. `--setting-sources user` keeps the worktree's project and local settings from
+  find their interpreter). The worktree's `.claude` and `.git` pointer file, and all the denied paths
+  above, are also in `denyWrite` (an `allowWrite` of the user scope cannot reopen them). `--setting-sources user` keeps the worktree's project and local settings from
   widening the sandbox (arrays merge across scopes, PAT-124).
 - Git in a linked worktree writes into the main repository's directory. `git_dirs` reads the
   common directory and the worktree's git directory (`git rev-parse`), and the sandbox
@@ -132,6 +138,10 @@ qualified by PAT-124 (`CHANGELOG.md`, trials of 2026-10-08) and is not re-observ
   `config.worktree` of the git directory are denied to writes, so the session cannot plant a
   hook, change `core.hooksPath` or a replacement object that a later git command of the
   cadencer would run.
+- Residual, unknown: if the `denyWrite` on the worktree `.git` pointer did not hold, the
+  session could point the git directory at a repository of its own with `core.fsmonitor` or
+  hooks, and a later git command of the cadencer would run that code outside the sandbox
+  (deduced, not observed); the same list above applies to `.claude` and `refs/replace`.
 - Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
   `refs`; the objects are shared by all worktrees; the user scope of the host settings still
   loads (`--setting-sources user`) and can add to the sandbox arrays.

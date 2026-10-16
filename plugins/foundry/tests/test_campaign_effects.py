@@ -396,6 +396,9 @@ def test_implement_session_runs_in_the_native_sandbox(env):
     argv, settings, cwd = _session(env)
     assert argv[argv.index("--permission-mode") + 1] == "dontAsk" and "auto" not in argv
     assert argv[argv.index("--setting-sources") + 1] == "user"
+    at = argv.index("--strict-mcp-config")
+    assert argv[at + 1:at + 3] == ["--mcp-config", '{"mcpServers":{}}']
+    assert at < argv.index("--disallowedTools")
     assert argv.count("--settings") == 1 and argv.index("--settings") > argv.index("--disallowedTools")
     sandbox = settings["sandbox"]
     assert sandbox["enabled"] is True and sandbox["failIfUnavailable"] is True
@@ -430,6 +433,7 @@ def test_session_cannot_write_foundry_state_or_user_configuration(env, monkeypat
                  if r.startswith("Edit(//")]
     for path in protected:
         assert not _under(path, writes), path
+        assert _under(path, settings["sandbox"]["filesystem"]["denyWrite"]), path
         assert any(_under(path, ["/" + e.removesuffix("/**")]) for e in edit_deny), path
         assert _under(path, settings["sandbox"]["filesystem"]["denyRead"]) or _under(
             path, [real_home]), path

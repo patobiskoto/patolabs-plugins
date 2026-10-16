@@ -400,7 +400,7 @@ def sandbox_settings(worktree: Path, worktrees_dir: Path, common: str, gitdir: s
     allow = [real(p) for p in wanted if inside(home, real(p)) or p == common]
     allow = [p for p in dict.fromkeys(allow)
              if not any(inside(p, d) or inside(d, p) for d in deny)]
-    protect = [os.path.join(real(worktree), name) for name in (".claude", ".git")]
+    protect = [*deny, *[os.path.join(real(worktree), name) for name in (".claude", ".git")]]
     protect += [os.path.join(common, name) for name in ("hooks", "config", "info", "refs/replace")]
     protect += [os.path.join(gitdir, name) for name in ("commondir", "gitdir", "config.worktree")]
     return native_sandbox_settings(
@@ -413,14 +413,15 @@ def sandbox_settings(worktree: Path, worktrees_dir: Path, common: str, gitdir: s
 def session_argv(runtime: Runtime, plan: dict, epic: str, ticket: str, session_id: str,
                  settings: dict) -> list[str]:
     """Implementation and correction sessions: native sandbox (``dontAsk`` mode and
-    ``--settings``), user settings only, so the worktree's own ``.claude`` cannot widen it."""
+    ``--settings``), user settings only, so the worktree's own ``.claude`` cannot widen it, and no
+    MCP server (one is launched by ``claude`` outside the sandbox, e.g. from a ``.mcp.json``)."""
     from foundry.local_first_runner import with_native_sandbox
 
     argv = [
         "claude", "--print", "--output-format", "json", "--model", plan["model"],
         "--max-budget-usd", f"{runtime.budget_usd:.2f}",
         "--plugin-dir", str(runtime.plugin_root), "--name", f"foundry-campaign-{epic}-{ticket}",
-        "--setting-sources", "user",
+        "--setting-sources", "user", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
     ]
     if plan["effort"] is not None:
         argv.extend(["--effort", plan["effort"]])
