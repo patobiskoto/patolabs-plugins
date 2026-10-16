@@ -49,7 +49,8 @@ def test_review_claims_packets_runs_a_read_only_reviewer_and_records_the_proof(e
     env.world.reviews.append(result_text(fix=0, nits=2))
     result = step(env)
     assert (result.decision.kind, result.outcome) == ("review", "executed")
-    assert routing_verbs(env.world) == ["claim-review", "prepare-review", "record-review-proof"]
+    assert routing_verbs(env.world) == ["claim-review", "prepare-review", "record-review-proof",
+                                        "record-review-remarks"]
     claim = next(c[0] for c in env.world.calls if c[0][3:4] == ["claim-review"])
     assert claim[claim.index("--base") + 1] == "b" * 40 and "--git-diff" in claim
     assert len(claim[claim.index("--claim-attempt-token") + 1]) == 64
@@ -58,7 +59,7 @@ def test_review_claims_packets_runs_a_read_only_reviewer_and_records_the_proof(e
     assert env.world.proofs == [{"outcomes": [{**CRITERION, "verdict": "pass"}],
                                  "quality": "mergeable"}]
     assert env.world.proof == "valid"
-    # the effect output exposes the verdict and the non-blocking remarks; PAT-141 carries them
+    # the effect output exposes the verdict and the counts; the remarks are in the receipt
     assert result.effect["review"]["verdict"] == "validated"
     assert (result.effect["review"]["fix_before_merge"], result.effect["review"]["non_blocking"]) == (0, 2)
     assert Path(result.effect["report_file"]).read_text().startswith("## AC table")

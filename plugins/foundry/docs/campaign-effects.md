@@ -1,4 +1,4 @@
-# Epic campaign effects: start, implement, open the PR, review, correct, merge (PAT-217, PAT-218, PAT-ADR-0026)
+# Epic campaign effects: start, implement, open the PR, review, correct, defer remarks, merge (PAT-217, PAT-218, PAT-141, PAT-ADR-0026, PAT-ADR-0028)
 
 One pass of the cadencer ([`campaign-cadence.md`](campaign-cadence.md)) computes the one next
 step; this page covers its execution (`tooling/foundry/campaign_effects.py`). A pass runs at
@@ -6,9 +6,11 @@ most one effect. The Foundry commands below are the only path to the tracker and
 host; the Dev Hub coordinator (`campaign_coordinator.py`, `campaign_runtime.py`) is not used.
 Claude Code is the only host wired: no Codex session is launched. Reviewing and correcting
 are executed since PAT-218 (`tooling/foundry/campaign_review.py`); carrying the non-blocking
-remarks to a companion Epic is PAT-141 and is not done. The procedure below was exercised on
-test doubles only (`tests/test_campaign_review.py`, `tests/test_campaign_effects.py`), never
-against a real tracker, code host or `claude`.
+remarks to a companion Epic is the `defer-remarks` effect of PAT-141
+(`tooling/foundry/campaign_defer.py`, section "The defer-remarks effect"). The procedure
+below was exercised on test doubles only (`tests/test_campaign_review.py`,
+`tests/test_campaign_effects.py`, `tests/test_campaign_defer.py`), never against a real
+tracker, code host or `claude`.
 
 ## Commands
 
@@ -19,9 +21,9 @@ FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py campaign-cadence run PAT-1
 ```
 
 `step` is one pass and at most one effect. `run` repeats `step` until the outcome is neither
-`executed` nor `wait-ci`, or `max-steps` passes were made (`run`, defaults `DEFAULT_MAX_STEPS`,
+`executed`, `wait-ci` nor `waiting`, or `max-steps` passes were made (`run`, defaults `DEFAULT_MAX_STEPS`,
 `DEFAULT_POLL_SECONDS`; bounds `MAX_STEPS`, `MAX_POLL_SECONDS`, `MAX_BUDGET_USD`). On
-`wait-ci` it sleeps `--poll-seconds` and observes again: re-reading is not an effect, and each
+`wait-ci` or `waiting` it sleeps `--poll-seconds` and observes again: re-reading is not an effect, and each
 such pass counts as a step. The output is one JSON object (`EFFECTS_CONTRACT`) with the
 outcome of each pass. The exit code is 2 for a missing capability, 1 when an effect failed,
 0 otherwise. An approval must exist (`campaign-approval.md`); without a valid one the pass
@@ -35,9 +37,10 @@ returns `refuse` and launches nothing.
 | `implement` | one `claude --print` session, see below | ticket worktree |
 | `open-pr` | `foundry_cli.py issue openpr <ID> --summary-stdin` (the flag only when a summary was saved and no PR exists); also the push of a correction (`correction_not_pushed`, without the flag) | ticket worktree |
 | `merge` | `foundry_cli.py issue merge <ID> <PR>`; never an `--allow-*` flag | ticket worktree |
-| `wait-ci`, `await-verdict`, `suspend`, `refuse` | none | |
+| `wait-ci`, `wait`, `await-verdict`, `suspend`, `refuse` | none | |
 | `review` | claim, packet, one read-only reviewer session, proof: see "The review effect" | ticket worktree |
 | `correct` | escalation failure, then one implementer session: see "The correction effect" | ticket worktree |
+| `defer-remarks` | no session and no command of its own: reads and `edit` writes, see "The defer-remarks effect" | ticket worktree (the `edit` commands run there) |
 | `correct` for `ci_failing` | none: the pass returns `suspend` `ci_failing_not_executed` (no effect reads CI logs) | |
 
 The merge gates are those of `issue merge` (`issue.py`): CI proven green on two sources
@@ -172,7 +175,11 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    marker line `FOUNDRY_REVIEW_RESULT_V1` (`RESULT_SENTINEL`) and one JSON object. `parse_result` accepts exactly the keys
    `outcomes` (non-empty list of `{id, digest (64 hex), verdict}` with `verdict` in `pass`,
    `fail`, `not_covered`, `contradicted`), `quality` (`mergeable` or `blocked`),
-   `fix_before_merge` and `non_blocking` (integers from 0 to `MAX_REMARK_COUNT`), a non-empty
+   `fix_before_merge` and `non_blocking` (integers from 0 to `MAX_REMARK_COUNT`), `remarks`
+   (PAT-141: a list of at most `MAX_REMARKS` entries `{text, fix_before_merge}`, `text` non-empty
+   and at most `MAX_REMARK_TEXT` characters, `fix_before_merge` a boolean; the number of `true`
+   entries must equal `fix_before_merge` and the number of `false` entries `non_blocking`;
+   `review_remarks.validate_remarks`), a non-empty
    report before the marker, and refuses `mergeable` with a verdict other than `pass`. Anything
    else makes the attempt `failed` (`reviewer_output_invalid`) and records no proof.
 5. The report (the text before the marker, `claim_id` and token replaced by `[redacted]`) is
@@ -182,8 +189,12 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    --outcomes-file` records the proof; the issue criteria are re-read there, so ids and digests
    that differ from the issue's are refused (attempt `failed`, `proof_refused`, claim left
    active, `campaign-reviews/<attempt>/` kept for a human; recovery is `routing recover-review`,
-   a human decision, `skills/review-pr/SKILL.md`). After a recorded proof the directory
-   (claim, packet, outcomes file) is removed.
+   a human decision, `skills/review-pr/SKILL.md`). After a recorded proof of a validated round
+   (quality `mergeable`), `routing record-review-remarks --root --base --issue --diff-hash
+   --proof-id --remarks-file` records the receipt of the remarks (`_record_remarks`; section "The
+   remarks receipt"); a refusal leaves the verdict recorded and sets the detail
+   `remarks_receipt_not_recorded`. Then the directory (claim, packet, outcomes and remarks files)
+   is removed.
 6. PAT-ADR-0022 asks the PR description to say that a partial review took place and that the
    proof relies on the previous round. `update_pr_body` runs `issue openpr <ID>
    --summary-stdin` on the open PR (`_reuse_or_open_pr` replaces the body when a summary is
@@ -196,9 +207,23 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
 
 The `finished` line carries the verdict (`review` key) and `summary_file` (the report). The
 step output (`effect.review`, `effect.report_file`) exposes the verdict, the number of remarks
-marked "fix before merge" and the number of other remarks. The text of the non-blocking
-remarks without the mark stays in the report file: carrying it to a companion Epic is PAT-141
-and is not done here.
+marked "fix before merge" and the number of other remarks. The text of each remark is in the
+receipt, not in the journal.
+
+### The remarks receipt (PAT-141, PAT-ADR-0028)
+
+`routing record-review-remarks` (`routing.py`) loads the proof by its identifier with
+`AcceptanceProofStore.validated_proof` and writes `review-remarks/<sha256 of the repository
+identity>/<proof id>` under `registry.data_dir()` (`ReviewRemarksStore`, `review_remarks.py`;
+file 0600, directory 0700, written once). The receipt holds `proof_id`, `issue`, `diff_hash`,
+`base`, the `generation` of the proof's review and the list of remarks. It is refused when the
+proof is not `mergeable` or when the issue, diff hash or base differ from the proof's; an
+identical replay is accepted, a different receipt for the same proof is refused. The proof is
+not written or changed. `issue merge` never reads the receipt: neither `issue.py` nor `write.py`
+refers to `review_remarks`, and `AcceptanceProofStore.valid_for_merge` and `current_for_sync`
+do not either (`tests/test_campaign_defer.py`, `test_the_merge_gate_never_reads_the_receipt`).
+A carried proof (PAT-ADR-0021) has no receipt of its own: the deferral of the original diff
+hash is looked up by that hash.
 
 ### The reviewer session and its limit
 
@@ -250,8 +275,8 @@ coordinator records the proof, as in the manual workflow).
 
 ## The correction effect
 
-For a `correct` decision with reason `review_blocked` or `review_fix_before_merge`
-(`campaign_review.plan_correct`, before the attempt is claimed):
+For a `correct` decision with reason `review_blocked`, `review_fix_before_merge` or
+`remarks_not_deferrable` (`campaign_review.plan_correct`, before the attempt is claimed):
 
 1. The report saved for the exact PR head and base is read from the journal; without one (for
    example a proof recorded by hand) the pass fails at the plan phase and nothing is launched.
@@ -274,14 +299,86 @@ For a `correct` decision with reason `review_blocked` or `review_fix_before_merg
    no escalation state).
 3. One fresh implementer session (`session_argv`, the argv of "The implementation session")
    whose prompt (`correct_prompt`) carries the issue and the saved report, asks to fix only the
-   blocking findings, or only the remarks marked "fix before merge", and to follow
+   blocking findings, or only the remarks marked "fix before merge", or (reason
+   `remarks_not_deferrable`) every non-blocking remark, and to follow
    AGENTS.md#R9(c): change as few sentences as possible and re-check every new sentence
-   against the code. The other non-blocking remarks are left untouched.
+   against the code. Except for `remarks_not_deferrable`, the other non-blocking remarks are
+   left untouched: the coordinator defers them.
 4. The session commits locally only. The next pass sees the branch ahead of the PR head and
    decides `open-pr` `correction_not_pushed`: `issue openpr <ID>` pushes the branch and reuses
    the open PR without replacing its body (`_reuse_or_open_pr`, `issue.py`). That the `review`
    transition accepts a repeat on a ticket already in `review` is not exercised here (unknown).
    A new head has no proof, so the pass after that decides `review`.
+
+## The defer-remarks effect (PAT-141, PAT-ADR-0028)
+
+Decided by `campaign_cadence._remarks` after a validated review of the exact PR head and base
+and before the CI wait: `deferrable` is the `non_blocking` count of that review (the remarks not
+marked "fix before merge"). Nothing is decided while `fix_before_merge` is above zero (the
+correction loop comes first).
+
+| Facts (`DeferralFacts`) | Decision |
+| --- | --- |
+| no deferrable remark, or the deferral is `done` for this diff hash | none: the pass goes on to CI and `merge` |
+| no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
+| the origin Epic is itself a companion Epic (its title starts with `Nits `): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
+| the last attempt ended in a durable refusal | `correct` `remarks_not_deferrable`, cause `refused` |
+| the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed | `wait` `deferral_transient_failure` |
+| the last attempt ended transient, the wait is over | `defer-remarks` again (a new attempt: the identity carries the `try` count) |
+| `MAX_DEFER_TRIES` attempts made for this diff hash | `suspend` `deferral_retries_exhausted` |
+| otherwise | `defer-remarks` `non_blocking_remarks` |
+
+The origin Epic and the companion test are read from the tracker only when deferrable remarks
+remain (`origin_of`: `get_issue` of the ticket and of its parent). The effect (`run_deferral`)
+launches no session and holds no ceiling of `max_sessions`. Its intent is the `started` line of
+the attempt journal, written before the first write (`claim`); the `finished` line carries the
+`deferral` key `{state, follow_up, companion, reason, diff_hash}` (`state` is `done`, `refused` or
+`transient`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
+
+1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
+   from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
+2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>` (`tracker.search`,
+   then `get_issue` where `type` is absent). More than one: durable refusal
+   `companion_epic_ambiguous`. None: `edit create-issue` with the field `Type: Epic`, state
+   `backlog`, no `parent`; no link to the origin Epic is made.
+3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
+   with the lowest identifier; a started or closed child is never used. Otherwise an issue titled
+   `Review remarks deferred from <ORIGIN-EPIC-ID>` in `backlog` or `ready` with no parent is an
+   orphan of a creation whose parent link failed: write 4, `edit link <FOLLOW-UP> subtask-of
+   <COMPANION>`. Otherwise `edit create-issue` with `parent` set to the companion Epic.
+4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
+   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`. It
+   is skipped when a comment of the follow-up already contains that reference (a comment whose
+   answer was lost). The tracker may return only the most recent comments
+   (`docs/review-rounds.md`): a comment older than that window would be posted again (unknown).
+5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>`
+   after the `## Review rounds` section; the line is kept by the later rewrites
+   (`deferred_follow_up`).
+6. The `finished` line with state `done`; the next pass decides `merge`.
+
+A failed `edit create-issue` is never retried inside the pass. When its standard error is the
+structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
+required`) and it names the created issue, `edit reconcile-create <ID> <spec>` runs
+(read-only); `validation: accepted` adopts that issue, anything else is transient. A creation
+whose effect is unknown without an issue identifier is transient: the next pass finds the issue
+by title, or creates it when none exists. The creation is therefore retried only after a read.
+
+Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
+unavailable, a binding refusal, a `ValueError`, `SystemExit`, `type_unmapped`,
+`invalid_field_options` or an unknown type is a durable refusal; any other error (quota, network,
+an unknown cause) is transient. Durable refusal: the `finished` line is `completed` with state
+`refused`, no substitute write is made, the next pass decides `correct` and the corrected head
+is reviewed again. Transient: the `finished` line is `failed` with error `transient` and the
+outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
+`--poll-seconds` and observes again. That the patterns match what each real adapter raises is
+not exercised here: only the Linear class names are known from the code, the YouTrack and
+GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60) and
+`MAX_DEFER_TRIES` (5) are chosen and not measured.
+
+The companion Epic and its follow-up have no link to the Epic of the campaign: the neutral
+subgraph (`build_neutral_subgraph`) follows `parent-of` from the campaign's Epic only, so the
+structure digest the approval covers and the closure graph (`bounded_epic_graph_snapshot`)
+are unchanged by the deferral (`tests/test_campaign_defer.py`).
 
 ## Bounds
 
@@ -317,7 +414,7 @@ Decided from the journal by `campaign_review.review_mode`, for the review attemp
 
 ## Not executed yet
 
-Carrying the non-blocking remarks to a companion Epic (PAT-141); correcting a red CI; ADR
+Correcting a red CI; ADR
 selection for the reviewer packet; a Codex session; closing the Epic; the replay of a failed
 attempt with the same fingerprint. A failed `implement` session that committed changes the
 branch head, so the next pass launches a new session with a new identity: retries are
@@ -327,7 +424,11 @@ argv, the allowlisted environment, no replay including after a crash, ceilings, 
 a `merge` decision) and `tests/test_campaign_review.py` (the review path, the reviewer argv,
 strict parsing, escalation, the correction prompt, bounds, partial review, carry, secrets, and
 a two-ticket Epic with a blocking first review that reaches `await-verdict` with every proof
-produced by a double of the reviewer session).
+produced by a double of the reviewer session), `tests/test_campaign_defer.py` (the deferral
+effect: companion Epic and follow-up created once, reuse, started follow-up, ambiguity,
+durable refusal and transient wait, reconciliation, orphan attach, the neutral subgraph and
+the closure graph unchanged, the merge gate) and `tests/test_review_remarks.py` (the receipt
+and the strict parsing of `remarks`).
 
 R5 status (PAT-218): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
 `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("What is not coded yet"),
@@ -337,3 +438,12 @@ R5 status (PAT-218): updated `docs/campaign-effects.md`, `docs/campaign-cadence.
 `corrections_exhausted`, `human_required`, `technical_blocked`, `ci_failing_not_executed`;
 the optional journal key `review`. No CLI verb or option, configuration key or routing table
 changed.
+
+R5 status (PAT-141): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
+`docs/review-rounds.md`, `skills/merge-pr/SKILL.md`, `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic
+campaign"). Candidate artefacts: the CLI verb `routing record-review-remarks` and its options;
+the `remarks` key of the reviewer result; the decision kinds `defer-remarks` and `wait`; the
+reasons `non_blocking_remarks`, `remarks_not_deferrable`, `deferral_transient_failure`,
+`deferral_retries_exhausted`; the step outcome `waiting`; the constants `DEFER_RETRY_SECONDS`,
+`MAX_DEFER_TRIES`, `MAX_REMARKS`, `MAX_REMARK_TEXT`; the optional journal key `deferral`; the
+receipt directory `review-remarks`. No configuration key or routing table changed.

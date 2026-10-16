@@ -353,11 +353,12 @@ When one of the four writes does not go through, tell two cases apart:
 An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
 before the merge and re-review as stated above; that includes an issue whose direct parent is not
 an Epic, the chain of parents not being walked up (maintainer decision of 2026-10-11).
-Inside an Epic campaign the authorization has no
-effect yet. Three things are missing: a channel that carries the remarks to the campaign,
-the code that creates the companion Epic and its issues, and campaigns usable on the
-repository's tracker (`docs/review-rounds.md`, "What is not mechanical and what is not
-coded yet"); they are not coded yet, and that page names the issue that carries them.
+Inside an Epic campaign run by the Foundry cadencer, the cadencer makes these four writes
+itself after a validated review, so do not repeat them by hand: it keeps the reviewer's
+remarks in a local receipt that the merge gate never reads, defers the ones that are not
+marked "fix before merge", cites the follow-up issue in the PR description, and has the
+others corrected by its correction loop (`docs/review-rounds.md`, "What is not mechanical
+and how a campaign carries the remarks", and `docs/campaign-effects.md`).
 
 The PR description carries one line per review round, kept current through
 `foundry:open-pr` (that skill describes how a supplied summary replaces the PR body):

@@ -36,8 +36,8 @@ MAX_CORRECTIONS = 2
 STARTED_STATES = ("in-progress", "review")
 READY_STATES = ("backlog", "ready")
 KINDS = (
-    "start", "implement", "open-pr", "review", "correct", "wait-ci", "merge",
-    "await-verdict", "suspend", "refuse",
+    "start", "implement", "open-pr", "review", "correct", "defer-remarks", "wait-ci", "wait",
+    "merge", "await-verdict", "suspend", "refuse",
 )
 # Tracker states strictly behind a started or finished dependent (PAT-ADR-0027 regression).
 _UNFINISHED = ("backlog", "ready", "blocked", "in-progress", "review")
@@ -51,6 +51,27 @@ class PullFacts:
     merged: bool
     head_sha: str | None
     base_sha: str | None
+
+
+@dataclass(frozen=True)
+class DeferralFacts:
+    """The non-blocking remarks of the validated review of the current PR head (PAT-141).
+
+    ``deferrable`` is the number of remarks that are not marked "fix before merge";
+    ``origin`` the direct parent Epic of the ticket (``None``: no origin Epic) and
+    ``origin_is_companion`` whether that Epic is itself a companion Epic.  ``state`` comes from
+    the attempt journal, for this ``diff_hash``: ``pending`` (never attempted), ``done``,
+    ``refused`` (durable refusal), ``transient`` (to retry; ``cooling`` while the wait runs)
+    or ``exhausted`` (``tries`` reached the ceiling).
+    """
+    deferrable: int = 0
+    origin: str | None = None
+    origin_is_companion: bool = False
+    state: str = "pending"
+    tries: int = 0
+    cooling: bool = False
+    diff_hash: str | None = None
+    follow_up: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +100,7 @@ class TicketFacts:
     fix_before_merge: int = 0
     review_rounds: int = 0
     corrections: int = 0
+    deferral: DeferralFacts | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +180,31 @@ def _bounded(ticket: TicketFacts, decision: Decision) -> Decision:
     return decision
 
 
+def _remarks(ticket: TicketFacts, evidence: dict) -> Decision | None:
+    """The non-blocking remarks of a validated review: defer them, else correct them (PAT-141).
+
+    ``None`` when there is nothing left to do about them (none, or already deferred).
+    """
+    facts = ticket.deferral
+    if facts is None or facts.deferrable == 0 or facts.state == "done":
+        return None
+    detail = {**evidence, "remarks": facts.deferrable}
+    cause = ("no_origin_epic" if facts.origin is None
+             else "companion_epic" if facts.origin_is_companion
+             else "refused" if facts.state == "refused" else None)
+    if cause is not None:  # no second-level deferral, no origin Epic, or a durable refusal
+        return _bounded(ticket, Decision(
+            "correct", ticket.id, "remarks_not_deferrable", {**detail, "cause": cause}))
+    if facts.state == "exhausted":
+        return Decision("suspend", ticket.id, "deferral_retries_exhausted",
+                        {**detail, "tries": facts.tries})
+    if facts.state == "transient" and facts.cooling:
+        return Decision("wait", ticket.id, "deferral_transient_failure",
+                        {**detail, "tries": facts.tries})
+    return Decision("defer-remarks", ticket.id, "non_blocking_remarks",
+                    {**detail, "origin": facts.origin, "tries": facts.tries})
+
+
 def _ticket_step(ticket: TicketFacts) -> Decision:
     if ticket.anomaly:
         return Decision("suspend", ticket.id, ticket.anomaly)
@@ -191,6 +238,9 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
         return _bounded(ticket, Decision(
             "correct", ticket.id, "review_fix_before_merge",
             {**evidence, "fix_before_merge": ticket.fix_before_merge}))
+    remarks = _remarks(ticket, evidence)
+    if remarks is not None:
+        return remarks
     if ticket.ci == "green":
         return Decision("merge", ticket.id, "review_valid_ci_green", evidence)
     if ticket.ci == "red":
@@ -376,6 +426,8 @@ def observe(
     branch_facts: Callable[[str, str], tuple[str | None, int | None]] = _git_branch_facts,
     implemented: Callable[[str, str | None], bool] | None = None,
     history: Callable[[str, str | None, str | None], tuple[int, int, int]] | None = None,
+    deferral: Callable[..., DeferralFacts] | None = None,
+    origin: Callable[[str], tuple[str | None, bool]] | None = None,
 ) -> Observation:
     """Gather one observation with declared capabilities and read-only calls only."""
     missing = missing_capabilities(tracker)
@@ -422,7 +474,7 @@ def observe(
     if focus is not None:
         tickets = tuple(
             _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store,
-                         branch_facts, implemented, history)
+                         branch_facts, implemented, history, deferral, origin, now)
             if t.id == focus else t for t in tickets
         )
     return Observation(
@@ -432,7 +484,8 @@ def observe(
 
 
 def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store,
-                 branch_facts, implemented, history=None):
+                 branch_facts, implemented, history=None, deferral=None, origin=None,
+                 now=None):
     from dataclasses import replace
 
     branch = _branch_for(refs(root), ticket.id)
@@ -453,8 +506,14 @@ def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store
     review = _review_status(proof_store, tracker.get_issue(ticket.id), pr, root, diff_reader)
     ci = _ci_status(codehost, repo, pr.head_sha) if review == "valid" and pr.head_sha else None
     fix, rounds, corrections = history(ticket.id, pr.head_sha, pr.base_sha) if history else (0, 0, 0)
+    remarks = None
+    if review == "valid" and deferral is not None:
+        remarks = deferral(ticket.id, pr.head_sha, pr.base_sha, now)
+        if remarks.deferrable > 0 and remarks.state != "done" and origin is not None:
+            found, companion = origin(ticket.id)  # tracker reads, only when remarks remain
+            remarks = replace(remarks, origin=found, origin_is_companion=companion)
     return replace(facts, review=review, ci=ci, fix_before_merge=fix if review == "valid" else 0,
-                   review_rounds=rounds, corrections=corrections)
+                   review_rounds=rounds, corrections=corrections, deferral=remarks)
 
 
 def report(obs: Observation, decision: Decision) -> str:

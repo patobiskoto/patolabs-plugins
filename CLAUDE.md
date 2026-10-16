@@ -380,31 +380,41 @@ Epic deferred nothing: this is judged in review. Nothing checks either that the 
 write was made when needed, that the companion Epic has a single follow-up issue, or that
 the review after the correction of a validated round was limited to what changed.
 
-**What is not coded yet.** The four writes of (b) are made by the coordinator that
-applies the skills. An Epic campaign does not receive the reviewer's prose: its review
-step (`_review_observation` in `plugins/foundry/tooling/foundry/campaign_runtime.py`)
-reads only the structured proof stored by `AcceptanceProofStore`
-(`plugins/foundry/tooling/foundry/routing.py`), and the `record-review-proof` command of
-that file accepts exactly the keys `outcomes` and `quality`. So the non-blocking remarks
-of a validated review are neither seen nor recorded by the `campaign_runtime.py` coordinator today (the cadencer
-of PAT-ADR-0026 keeps their counts in its journal and their text in a report file), and none of the
-steps that follow the review step (`ci`, `human-gate` in `_GATE_STEPS`, then `merge`)
-reads or corrects them. The campaign coordinator has no issue-creation primitive: the
-mutating steps of its runner are `start`, `open-pr`, `merge`, `close-epic` and
-`sync-parent-acceptance` (`_MUTATING_STEPS`,
-`plugins/foundry/tooling/foundry/campaign_runtime.py`), and the `CampaignPipeline`
-protocol (`plugins/foundry/tooling/foundry/campaign_coordinator.py`) declares no
-method that creates an issue. The campaign preview exists for two providers:
-`preview_epic` (`plugins/foundry/tooling/foundry/epic_preview.py`) refuses a tracker
-whose adapter does not set `epic_subgraph_supported`, which defaults to `False`
-(`plugins/foundry/tooling/foundry/trackers/base.py`) and is set to `True` by
-the DevHub and Linear adapters (`plugins/foundry/tooling/foundry/trackers/devhub.py`,
-`plugins/foundry/tooling/foundry/trackers/linear.py`). So inside
-an Epic campaign the authorization of (b) has no effect yet. Three things are missing: a
-channel that carries the remarks to the campaign, the code that creates the companion
-Epic and its issues, and campaigns usable on the repository's tracker (the cadencer of
-PAT-ADR-0026 runs start, implement, open-pr, review, correct and merge on it since PAT-217
-and PAT-218: it launches the reviewer and keeps the non-blocking remarks in a report file and
-in the step output, but carries none of them to a companion Epic:
-`plugins/foundry/docs/campaign-effects.md`). They are left to a later issue under the same
-Epic, PAT-141.
+**Inside an Epic campaign (PAT-141, PAT-ADR-0028).** The four writes of (b) are made by
+the coordinator that applies the skills and, in a campaign run by the cadencer of
+PAT-ADR-0026 (`plugins/foundry/tooling/foundry/campaign_effects.py`), by its
+`defer-remarks` effect (`plugins/foundry/tooling/foundry/campaign_defer.py`), which
+launches no session. The channel is a local receipt distinct from the review proof. The
+reviewer session prints its remarks in a `remarks` key, each marked `fix_before_merge`
+true or false (`parse_result` in `plugins/foundry/tooling/foundry/campaign_review.py`).
+After `record-review-proof`, the review effect runs `record-review-remarks`
+(`plugins/foundry/tooling/foundry/routing.py`), which writes the receipt bound to the
+proof identifier, the diff hash and the review generation
+(`plugins/foundry/tooling/foundry/review_remarks.py`). The `record-review-proof` command
+still accepts exactly the keys `outcomes` and `quality`, and neither `issue.py` nor
+`write.py` refers to the receipt, so the merge gate never reads it
+(`plugins/foundry/tests/test_campaign_defer.py`). After a validated review whose remarks
+are not marked "fix before merge", the cadencer decides `defer-remarks` before `merge`
+when the direct parent Epic of the ticket exists and is not itself a companion Epic. The
+effect reads the tracker before each write, makes the writes through `edit create-issue`,
+`edit link` and `edit comment`, posts one comment per PR, cites the follow-up issue in
+the PR description and records the deferral in its attempt journal. The following are
+corrected by the correction loop and re-reviewed: a remark marked "fix before merge", a
+ticket with no origin Epic, a ticket of a companion Epic, and a durable refusal
+(capability absent, `Epic` type refused, several companion Epics with the same name). A
+transient failure makes the campaign wait and retry, at most `MAX_DEFER_TRIES` times
+(`campaign_defer.py`), then suspend. Not changed by PAT-141: the coordinator of
+`plugins/foundry/tooling/foundry/campaign_runtime.py` (DevHub) reads only the structured
+proof in its review step (`_review_observation`) and has no issue-creation primitive: its
+mutating steps are `start`, `open-pr`, `merge`, `close-epic` and `sync-parent-acceptance`
+(`_MUTATING_STEPS`), and the `CampaignPipeline` protocol
+(`plugins/foundry/tooling/foundry/campaign_coordinator.py`) declares no method that
+creates an issue. The campaign preview exists for two providers: `preview_epic`
+(`plugins/foundry/tooling/foundry/epic_preview.py`) refuses a tracker whose adapter does
+not set `epic_subgraph_supported`, which defaults to `False`
+(`plugins/foundry/tooling/foundry/trackers/base.py`) and is set to `True` by the DevHub
+and Linear adapters (`plugins/foundry/tooling/foundry/trackers/devhub.py`,
+`plugins/foundry/tooling/foundry/trackers/linear.py`). No check proves that a failure is
+classed durable or transient rightly: the cadencer reads the text of the error
+(`_DURABLE` in `campaign_defer.py`) and treats any other error as transient, bounded by
+the same ceiling.

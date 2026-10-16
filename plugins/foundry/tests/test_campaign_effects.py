@@ -1,4 +1,5 @@
 """PAT-217: effects of an Epic campaign; doubles only, no network, no real claude."""
+import hashlib
 import json
 import re
 import sys
@@ -11,7 +12,8 @@ import pytest
 from foundry import campaign_approval as ca
 from foundry import campaign_cadence as cc
 from foundry import campaign_effects as ce
-from foundry.models import PullRequest
+from foundry import review_remarks
+from foundry.models import Link, PullRequest
 from test_campaign_cadence import FakeCodeHost, FakeTracker, check, approve
 from test_epic_preview import graph, node
 
@@ -21,6 +23,7 @@ BASE = "b" * 40
 CLAIM_ID = "e" * 64  # a secret capability: it must never reach the journal or the output
 DIFF_HASH = "d" * 64
 CRITERION = {"id": "ac-1", "digest": "a" * 64}
+REPOSITORY = "test/repo"
 CLI = str(Path(ce.__file__).resolve().parents[2] / "tooling" / "foundry_cli.py")
 
 
@@ -38,6 +41,26 @@ class World:
         self.proofs = []  # outcomes files seen by record-review-proof
         self.carry_ok = False
         self.commits = 0
+        # the tracker the `edit` verbs and the reads of the deferral share (PAT-141)
+        self.issues = {}
+        self.add_issue("APP-1", "Origin epic", "Epic", "in-progress")
+        for ticket in self.states:
+            self.add_issue(ticket, f"Ticket {ticket}", "Task", "ready", parent="APP-1")
+        self.edits = []  # (verb, args, input) of every `edit` write, in order
+        self.create_failure = None  # stderr of the next create-issue, or a callable
+        self.create_effect_first = False  # the failing create still creates the issue
+        self.search_failure = None
+        self.write_failures = {}  # verb -> stderr of the next failure of that verb
+        self.remarks_receipts = 0
+
+    def add_issue(self, issue_id, title, kind, state, parent=None, body="- [ ] done"):
+        links = [Link("subtask-of", "inward", parent)] if parent else []
+        self.issues[issue_id] = SimpleNamespace(
+            id=issue_id, title=title, type=kind, state=state, links=links, comments=[],
+            body=body)
+        if parent:
+            self.issues[parent].links.append(Link("parent-of", "outward", issue_id))
+        return self.issues[issue_id]
 
     def raw(self):
         return graph([node(i, state=s) for i, s in self.states.items()],
@@ -77,6 +100,8 @@ class World:
         assert argv[0] == sys.executable and argv[1] == CLI, argv
         if argv[2] == "routing":
             return self.routing(argv, cwd, ok)
+        if argv[2] == "edit":
+            return self.edit(argv, input)
         assert argv[2] == "issue", argv
         verb, ticket = argv[3], argv[4]
         if verb == "start":
@@ -100,6 +125,48 @@ class World:
             self.states[ticket] = "done"
             self.proof, self.checks = "none", []  # a proof and CI belong to one exact head
         return ok()
+
+
+def _edit(self, argv, input):
+    verb, args = argv[3], argv[4:]
+    self.edits.append((verb, args, input))
+    ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
+    fail = lambda err: SimpleNamespace(returncode=1, stdout="", stderr=err)  # noqa: E731
+    if verb == "create-issue":
+        spec = json.loads(args[0])
+        failure = self.create_failure
+        if failure is not None:
+            self.create_failure = None
+            if self.create_effect_first:
+                created = self.make_issue(spec)
+                failure = failure.replace("<ID>", created.id)
+            return fail(failure)
+        return ok(f"🆕 {self.make_issue(spec).id} — {spec['title']}")
+    if verb in self.write_failures:
+        return fail(self.write_failures.pop(verb))
+    if verb == "comment":
+        self.issues[args[0]].comments.append({"text": input, "created": 1})
+        return ok("note")
+    if verb == "link":
+        src, kind, dst = args
+        assert kind == "subtask-of"
+        self.issues[src].links.append(Link("subtask-of", "inward", dst))
+        self.issues[dst].links.append(Link("parent-of", "outward", src))
+        return ok()
+    if verb == "reconcile-create":
+        return ok(json.dumps({"validation": "accepted", "issue_id": args[0]}))
+    raise AssertionError(argv)
+
+
+def _make_issue(self, spec):
+    number = 100 + len(self.issues)
+    fields = spec.get("fields") or {}
+    return self.add_issue(f"APP-{number}", spec["title"], fields.get("Type", "Task"),
+                          fields.get("State", "backlog"), parent=spec.get("parent"),
+                          body=spec.get("body", ""))
+
+
+World.edit, World.make_issue = _edit, _make_issue
 
 
 def _opt(argv, name):
@@ -131,7 +198,21 @@ def _routing(self, argv, cwd, ok):
         assert set(submitted) == {"outcomes", "quality"} and isinstance(submitted["outcomes"], list)
         self.proofs.append(submitted)
         self.proof = "valid" if submitted["quality"] == "mergeable" else "blocked"
-        return ok(json.dumps({"proof_id": "p" * 8}))
+        self.proof_id = hashlib.sha256(f"proof-{len(self.proofs)}".encode()).hexdigest()
+        return ok(json.dumps({"proof_id": self.proof_id}))
+    if verb == "record-review-remarks":
+        assert _opt(argv, "--proof-id") == self.proof_id and self.proof == "valid"
+        proof = {"proof_id": self.proof_id, "quality": "mergeable", "issue": {"id": _opt(argv, "--issue")},
+                 "coordinates": {"diff_hash": _opt(argv, "--diff-hash"), "base": _opt(argv, "--base")},
+                 "review": {"generation": 1}}
+        remarks = json.loads(Path(_opt(argv, "--remarks-file")).read_text())
+        if getattr(self, "refuse_remarks", False):
+            return SimpleNamespace(returncode=1, stdout="", stderr="refus")
+        review_remarks.ReviewRemarksStore(REPOSITORY).record(
+            proof, remarks, issue=_opt(argv, "--issue"), diff_hash=_opt(argv, "--diff-hash"),
+            base=_opt(argv, "--base"))
+        self.remarks_receipts += 1
+        return ok(json.dumps({"proof_id": self.proof_id}))
     if verb == "escalation":
         self.escalations = getattr(self, "escalations", []) + [argv]
         out = {"human_required": self.human_required, "action": "escalated",
@@ -150,9 +231,15 @@ def _routing(self, argv, cwd, ok):
 World.routing = _routing
 
 
+def remarks_of(fix=0, nits=0):
+    return ([{"text": f"fix before merge: remark {n}", "fix_before_merge": True}
+             for n in range(fix)]
+            + [{"text": f"nit: remark {n}", "fix_before_merge": False} for n in range(nits)])
+
+
 def result_text(quality="mergeable", fix=0, nits=0, verdict="pass", report="## AC table\nok"):
     body = {"outcomes": [{**CRITERION, "verdict": verdict}], "quality": quality,
-            "fix_before_merge": fix, "non_blocking": nits}
+            "fix_before_merge": fix, "non_blocking": nits, "remarks": remarks_of(fix, nits)}
     return f"{report}\nAC: PASS · QUALITY: OK to merge\n{ce.campaign_review.RESULT_SENTINEL}\n" \
         + json.dumps(body)
 
@@ -185,6 +272,16 @@ class WorldTracker(FakeTracker):
         self.raw = self.world.raw()
         return super().get_epic_subgraph(project, epic, depth=depth, nodes=nodes)
 
+    def get_issue(self, issue_id):
+        self.calls.append("get_issue")
+        return self.world.issues[issue_id]
+
+    def search(self, project, query=""):
+        self.calls.append("search")
+        if self.world.search_failure:
+            raise self.world.search_failure
+        return list(self.world.issues.values())
+
 
 class WorldCodeHost(FakeCodeHost):
     def __init__(self, world):
@@ -204,6 +301,7 @@ class WorldCodeHost(FakeCodeHost):
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr("foundry.routing.repository_identity", lambda root=None: REPOSITORY)
     world = World()
     journal = tmp_path / "approvals.jsonl"
     approve(graph([node("APP-2"), node("APP-3")], dependencies=[("APP-3", "APP-2")]), journal)
