@@ -236,7 +236,9 @@ Epic orchestration starts with a deterministic read-only preview (Dev Hub and Li
 consumes the provider's complete subgraph, resolves the effective Foundry routing and
 limits, and emits classifications, human gates, dependency waves, explicit unknowns and
 a stable digest without acquiring execution authority. The API and command contract are
-documented in [`docs/epic-preview.md`](docs/epic-preview.md).
+documented in [`docs/epic-preview.md`](docs/epic-preview.md). A campaign starts only after
+the human approval of its exact preview, recorded by `campaign-approval`
+([`docs/campaign-approval.md`](docs/campaign-approval.md)).
 
 Approved Dev Hub commands are consumed by an outbound, lease-based worker with strict
 identity recovery, durable monotonic receipts and an atomic host-shared reservation of
