@@ -95,8 +95,75 @@ def test_reviewer_argv_is_routed_at_the_gate_floor_and_read_only(env):
                       "--dangerously", "acceptEdits", "auto"):
         assert forbidden not in flat.replace("--output-format", "")
     assert set(child_env) <= {"HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER",
-                              "FOUNDRY_RUNTIME_CONFIG_ISOLATED"}
+                              "FOUNDRY_RUNTIME_CONFIG_ISOLATED", "FOUNDRY_DATA"}
+    # the claim lives under registry.data_dir(): the reviewer's read verbs must find it
+    assert child_env["FOUNDRY_DATA"] == str(env.tmp / "data")
     assert argv[argv.index("--max-budget-usd") + 1] == "5.00"
+    # the worktree's own .claude settings, hooks and MCP servers are not loaded
+    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert "--strict-mcp-config" in argv
+    assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    assert argv.index("--setting-sources") < argv.index("--allowedTools")
+
+
+def test_foundry_data_is_forwarded_to_the_reviewer_only_when_set(env, monkeypatch):
+    to_review(env)
+    monkeypatch.delenv("FOUNDRY_DATA")
+    env.world.reviews.append(result_text())
+    step(env)
+    (_argv, _cwd, child_env, _prompt), = reviewer_calls(env.world)
+    assert "FOUNDRY_DATA" not in child_env
+
+
+def test_the_reviewer_prompt_says_its_output_contract_overrides_the_packet_text(env):
+    to_review(env)
+    env.world.reviews.append(result_text())
+    step(env)
+    prompt = reviewer_calls(env.world)[-1][3]
+    assert prompt.rindex("overrides the packet instructions") > prompt.index(
+        "Run the independent Foundry two-stage review")
+    assert "do not load the `review-pr` skill" in prompt
+
+
+def test_the_pr_description_records_the_review_rounds_and_the_partial_reliance(env):
+    to_review(env)
+    roomy(env)
+    env.world.reviews += [result_text(fix=1, nits=0), result_text()]
+    step(env)  # round 1: validated with a remark to fix
+    first, = env.world.bodies
+    assert first.startswith("## Summary\nAPP-2")  # the saved implementation summary is kept
+    assert "- Round 1: full review, verdict validated, head `" in first and "partial" not in first
+    assert effects(env.world)[-1][0] == [sys.executable, CLI, "issue", "openpr", "APP-2",
+                                         "--summary-stdin"]
+    for _ in range(3):  # correct, open-pr, review (partial)
+        step(env)
+    last = env.world.bodies[-1]
+    assert "- Round 1: full review" in last and "- Round 2: partial review" in last
+    assert "the proof relies on the previous round for the unchanged parts" in last
+    assert last.count("## Review rounds") == 1
+
+
+def test_without_a_saved_summary_the_description_is_only_the_rounds_section():
+    body = cr.pr_body(None, [], "E-1", "APP-2", {
+        "verdict": "blocked", "carried": False, "partial": False, "head": "a" * 40})
+    assert body == "## Review rounds\n- Round 1: full review, verdict blocked, head `aaaaaaa`."
+
+
+def test_a_failed_description_update_keeps_the_recorded_verdict(env):
+    to_review(env)
+    runner = env.world.runner
+
+    def failing(argv, **kw):
+        done = runner(argv, **kw)
+        if argv[3:5] == ["openpr", "APP-2"] and "--summary-stdin" in argv:
+            done.returncode = 1
+        return done
+
+    env.runtime.runner = failing
+    env.world.reviews.append(result_text())
+    result = step(env)
+    assert (result.outcome, result.effect["detail"]) == ("executed", "pr_body_not_updated")
+    assert result.effect["review"]["verdict"] == "validated"
 
 
 def test_malformed_reviewer_output_records_no_proof_and_is_not_replayed(env):
@@ -193,6 +260,73 @@ def test_second_blocking_review_uses_the_after_fix_kind(env):
     assert kinds == ["review_blocking", "review_blocking_after_fix"]
     keys = [e[e.index("--idempotency-key") + 1] for e in env.world.escalations]
     assert len(set(keys)) == 2 and all(k.startswith("campaign-APP-1-APP-2-") for k in keys)
+
+
+def _escalations(env):
+    return getattr(env.world, "escalations", [])
+
+
+def test_a_failed_correction_session_does_not_make_the_next_signal_after_fix(env):
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    env.world.session_commits = False  # the correction session ends without a commit
+    assert step(env).decision.kind == "correct"
+    # the same head: the attempt exists, nothing new is signalled (and nothing is relaunched)
+    again = step(env)
+    assert (again.decision.kind, again.decision.reason) == ("suspend", "attempt_already_made")
+    kinds = [e[e.index("--kind") + 1] for e in _escalations(env)]
+    assert kinds == ["review_blocking"]
+
+
+def test_escalation_is_not_signalled_when_the_claim_would_refuse(env):
+    to_review(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    ticket = cc.observe(env.tracker, env.codehost, PROJECT, "APP-1", env.runtime.root, NOW,
+                        journal=env.kwargs["journal"], refs=env.kwargs["refs"],
+                        branch_facts=env.kwargs["branch_facts"],
+                        diff_reader=env.kwargs["diff_reader"],
+                        proof_store=env.kwargs["proof_store"]).tickets
+    ticket = next(t for t in ticket if t.id == "APP-2")
+    attempts = env.kwargs["attempts"]
+    decision = cc.Decision("correct", "APP-2", "review_blocked")
+    identity = ce.identity("APP-1", "APP-2", "correct", ce.fingerprint(ticket))
+    # a session ceiling already reached: refused before any escalation write
+    plan = cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, (0, None))
+    assert plan["refuse"][0] == "session_ceiling_reached"
+    assert _escalations(env) == []
+    ce.claim(attempts, {
+        "schema_version": ce.EFFECTS_CONTRACT, "event": "started", "attempt": identity,
+        "epic": "APP-1", "ticket": "APP-2", "kind": "correct",
+        "fingerprint": ce.fingerprint(ticket), "session_id": None, "route": None,
+        "at": "2026-01-01T00:00:00Z"}, None)
+    plan = cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
+    assert plan["suspend"][0] == "attempt_already_made" and _escalations(env) == []
+
+
+def test_a_halted_state_that_is_not_a_continue_action_launches_no_session(env, monkeypatch):
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    original = type(env.world).routing
+
+    def ambiguous(self, argv, cwd, ok):
+        if argv[3] == "escalation":
+            self.escalations = getattr(self, "escalations", []) + [argv]
+            return ok(json.dumps({"human_required": False, "action": "authority_ambiguous",
+                                  "final_tier": "frontier"}))
+        return original(self, argv, cwd, ok)
+
+    monkeypatch.setattr(type(env.world), "routing", ambiguous)
+    sessions = len([c for c in env.world.calls if c[0][0] == "claude"])
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "suspend", "authority_ambiguous", "stopped")
+    assert len([c for c in env.world.calls if c[0][0] == "claude"]) == sessions
+    assert set(cr.CONTINUE_ACTIONS) == {"failure_recorded", "escalated", "remediation_continued"}
 
 
 def test_human_required_suspends_without_a_session(env):
@@ -472,7 +606,9 @@ def test_epic_of_two_tickets_with_a_blocking_first_review_reaches_the_verdict_aw
     assert env.world.reviews == []  # no injected proof: every proof came from a reviewer session
     verbs = [c[0][3] for c in effects(env.world) if c[0][0] == sys.executable
              and c[0][2] == "issue"]
-    assert verbs == ["start", "openpr", "openpr", "merge", "start", "openpr", "merge"]
+    # each review also updates the PR description (the rounds); 3 reviews, 3 updates among the openpr lines
+    assert verbs == ["start", "openpr", "openpr", "openpr", "openpr", "merge", "start",
+                     "openpr", "openpr", "merge"]
     assert routing_verbs(env.world).count("record-review-proof") == 3
     assert routing_verbs(env.world).count("claim-review") == 3
     assert not any(CLAIM_ID in line for line in journal_text(env).splitlines())

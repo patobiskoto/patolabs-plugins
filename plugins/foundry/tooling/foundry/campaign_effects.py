@@ -139,6 +139,22 @@ def _write(descriptor: int, record: dict) -> None:
     os.fsync(descriptor)
 
 
+def refusal(records: list[dict], attempt: str, epic: str, ticket: str, kind: str,
+            ceilings: tuple[int, int | None] | None) -> str | None:
+    """The code with which ``claim`` would refuse this attempt now, else ``None``."""
+    started = [r for r in records if r["event"] == "started"]
+    if any(r["attempt"] == attempt for r in started):
+        return "attempt_already_made"
+    if ceilings is not None and kind in SESSION_KINDS:
+        sessions = [r for r in started if r["epic"] == epic and r["kind"] in SESSION_KINDS]
+        maximum, per_issue = ceilings
+        if len(sessions) >= maximum:
+            return "session_ceiling_reached"
+        if per_issue is not None and sum(r["ticket"] == ticket for r in sessions) >= per_issue:
+            return "session_ceiling_per_issue_reached"
+    return None
+
+
 def claim(path: Path, record: dict, ceilings: tuple[int, int | None] | None) -> str | None:
     """Append the ``started`` record unless the identity exists or a ceiling is reached.
 
@@ -147,19 +163,10 @@ def claim(path: Path, record: dict, ceilings: tuple[int, int | None] | None) -> 
     """
     descriptor = _open_locked(path)
     try:
-        records = read_attempts(path)
-        started = [r for r in records if r["event"] == "started"]
-        if any(r["attempt"] == record["attempt"] for r in started):
-            return "attempt_already_made"
-        if ceilings is not None and record["kind"] in SESSION_KINDS:
-            sessions = [r for r in started if r["epic"] == record["epic"]
-                        and r["kind"] in SESSION_KINDS]
-            maximum, per_issue = ceilings
-            if len(sessions) >= maximum:
-                return "session_ceiling_reached"
-            if per_issue is not None and sum(
-                    r["ticket"] == record["ticket"] for r in sessions) >= per_issue:
-                return "session_ceiling_per_issue_reached"
+        refused = refusal(read_attempts(path), record["attempt"], record["epic"],
+                          record["ticket"], record["kind"], ceilings)
+        if refused is not None:
+            return refused
         _write(descriptor, record)
         return None
     finally:
@@ -438,11 +445,14 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         if decision.kind == "review":
             plan = campaign_review.plan_review(runtime, epic, ticket, path)
         elif decision.kind == "correct":
-            plan = campaign_review.plan_correct(runtime, decision, epic, ticket, path, tracker)
-            if "suspend" in plan:
-                reason, evidence = plan["suspend"]
-                return StepResult(cadence.Decision("suspend", ticket.id, reason, evidence),
-                                  "stopped")
+            plan = campaign_review.plan_correct(
+                runtime, decision, epic, ticket, path, tracker,
+                (granted["max_sessions"], granted["max_sessions_per_issue"]))
+            for kind in ("suspend", "refuse"):
+                if kind in plan:
+                    reason, evidence = plan[kind]
+                    return StepResult(cadence.Decision(kind, ticket.id, reason, evidence),
+                                      "stopped")
         else:
             plan = _plan(runtime, decision.kind, epic, ticket, path)
         if decision.kind == "implement":

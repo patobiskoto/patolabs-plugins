@@ -184,6 +184,15 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    active, `campaign-reviews/<attempt>/` kept for a human; recovery is `routing recover-review`,
    a human decision, `skills/review-pr/SKILL.md`). After a recorded proof the directory
    (claim, packet, outcomes file) is removed.
+6. PAT-ADR-0022 asks the PR description to say that a partial review took place and that the
+   proof relies on the previous round. `update_pr_body` runs `issue openpr <ID>
+   --summary-stdin` on the open PR (`_reuse_or_open_pr` replaces the body when a summary is
+   supplied, `issue.py`), with the saved implementation summary and a `## Review rounds`
+   section rebuilt from the journal (`round_line`: full, partial or carried, verdict, short
+   head sha, and for a partial round the sentence on the reliance). It is a Foundry command,
+   not a session, and is made after a carried proof too. A refusal leaves the verdict
+   recorded and sets the detail `pr_body_not_updated`. Without a saved summary the body is
+   the rounds section only.
 
 The `finished` line carries the verdict (`review` key) and `summary_file` (the report). The
 step output (`effect.review`, `effect.report_file`) exposes the verdict, the number of remarks
@@ -196,6 +205,7 @@ and is not done here.
 ```text
 claude --print --output-format json --model <routed model> --max-budget-usd <budget>
   --permission-mode dontAsk --tools Read,Grep,Glob,Bash --add-dir <packet directory>
+  --setting-sources user --strict-mcp-config --mcp-config '{"mcpServers":{}}'
   --name foundry-campaign-<EPIC>-<ID>-review [--effort <routed effort>]
   --session-id <uuid5 of the attempt identity>
   --allowedTools Read Grep Glob "Bash(python3 <cli> routing read-review *)"
@@ -208,20 +218,32 @@ minimum_tier=<escalation floor>)`: the reviewer is a gate role, so the route can
 `routing.py`; FOUNDRY-ADR-0006); `tests/test_campaign_review.py` asserts the argv against
 that resolution. The budget is `--budget-usd` (the same value as an implementer session);
 timeout `REVIEW_TIMEOUT_SECONDS`; the child environment is that of the implementer session
-(`_claude_child_environment`). The prompt (`review_prompt`, standard input) carries the
+(`_claude_child_environment`) plus `FOUNDRY_DATA` when it is set (`plan_review`): the read
+verbs find the claim under `registry.data_dir()`, which reads that variable (`registry.py`);
+without it, deduced, they would look in the default directory. The implementer session does
+not receive it. `--setting-sources user --strict-mcp-config --mcp-config` (the flags are listed
+by the installed `claude --help`; the last two are used by `campaign_runtime.py`) keep the
+`.claude/settings*.json` of the worktree, which the diff or an earlier session may have
+written, and any project MCP server out of the reviewer session; the `session_argv` of the
+implementer session is unchanged, because the `DISALLOWED_TOOLS` deny rules stay in force
+whatever the scopes allow (deduced, not run). The prompt (`review_prompt`, standard input) carries the
 reviewer contract of `skills/review-pr/SKILL.md` (stages, output, marker), the exact
-`read-review` command, and the send text written by `prepare-review`; it carries `claim_id`
+`read-review` command, and the send text written by `prepare-review`, followed by a sentence
+saying that the output contract overrides that text (which asks to load `review-pr` and to
+return its JSON; `review_packet.py` is unchanged, for the manual workflow); it carries `claim_id`
 because the reviewer needs it to read the diff, and the argv of the session does not.
 
 Why `dontAsk`: a tool call that no rule pre-approves is refused without a prompt, so with the
 `--allowedTools` list above the session can only read files, search, and run the three
-read verbs; no mode of the session edits. That a mode refuses what no rule approves is
+read verbs (deduced). That a mode refuses what no rule approves is
 established for `dontAsk` by the local-first runner (`local_first_runner.py`, `NATIVE_PERMISSION_MODE`,
 trials recorded in `CHANGELOG.md`, PAT-124); the flags `--tools` and `--allowedTools` are used
 by `campaign_runtime.py` and named in `local_first_runner.py`. Not run here: whether the host
 matches the `Bash(...)` wildcard rules as written, or refuses a compound command that starts
 with an allowed prefix, and whether `Read` of the packet directory is allowed through
-`--add-dir` (unknown). The session runs as the same OS user as the cadencer and in the ticket
+`--add-dir` (unknown). Remaining limit: the `user` scope is still loaded, so the permission
+rules of the user's own settings apply to the reviewer, and its `Read` reaches any file the OS
+user can read. The session runs as the same OS user as the cadencer and in the ticket
 worktree: the limit stated for the implementer session applies, a discipline boundary and not
 a sandbox, and the reviewer does not hold the `record-review-proof` verb in its rules (the
 coordinator records the proof, as in the manual workflow).
@@ -234,14 +256,19 @@ For a `correct` decision with reason `review_blocked` or `review_fix_before_merg
 1. The report saved for the exact PR head and base is read from the journal; without one (for
    example a proof recorded by hand) the pass fails at the plan phase and nothing is launched.
 2. For a blocking review only, `routing escalation failure <ID> implementer --kind
-   review_blocking` (`review_blocking_after_fix` once a correction has been started for the
-   ticket) `--current-tier <tier> --idempotency-key campaign-<EPIC>-<ID>-<kind>-<head>
+   review_blocking` (`review_blocking_after_fix` only when the blocked PR head is the
+   `branch_head` of a completed `correct` attempt: "a correction was reviewed and blocked
+   again", `model-routing.md`) `--current-tier <tier> --idempotency-key campaign-<EPIC>-<ID>-<kind>-<head>
    --root <worktree> --base <PR base sha>`. It runs before the claim because its answer decides
    whether and at which tier the session runs; the key is stable, so a replay writes nothing
-   more (`escalation.py`, `record_failure`). `human_required: true` (the command also exits
+   more (`escalation.py`, `record_failure`). Before it, `plan_correct` applies the refusals of
+   `claim` (`refusal`: attempt already made, session ceilings), so a signal is not recorded for
+   an attempt the claim would refuse. `human_required: true` (the command also exits
    2) returns `suspend` `human_required`; `action: technical_blocked` returns `suspend`
-   `technical_blocked`; no session is launched and no attempt is claimed. Otherwise the session
-   runs at the tier of `final_tier`. A validated review with remarks marked "fix before merge"
+   `technical_blocked`; any `action` outside `CONTINUE_ACTIONS` (`failure_recorded`,
+   `escalated`, `remediation_continued`; for example `authority_ambiguous`) returns `suspend`
+   with the action as reason; no session is launched and no attempt is claimed. Otherwise the
+   session runs at the tier of `final_tier`. A validated review with remarks marked "fix before merge"
    records no escalation failure (`skills/review-pr/SKILL.md`: a non-blocking verdict touches
    no escalation state).
 3. One fresh implementer session (`session_argv`, the argv of "The implementation session")

@@ -25,6 +25,8 @@ CORRECT_PROMPT_MARK = "FOUNDRY_CAMPAIGN_CORRECT_V1"
 REVIEW_TIMEOUT_SECONDS = 60 * 60
 # Built-in tools the reviewer session has at all; Bash is further limited by allow rules.
 REVIEWER_TOOLS = "Read,Grep,Glob,Bash"
+# Escalation actions after which a correction session may run (escalation.py, record_failure).
+CONTINUE_ACTIONS = ("failure_recorded", "escalated", "remediation_continued")
 REVIEWER_READ_VERBS = ("read-review", "search-review", "list-review")
 VERDICTS = ("pass", "fail", "not_covered", "contradicted")
 QUALITIES = ("mergeable", "blocked")
@@ -174,6 +176,9 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
         review_contract(),
         f"\nThe command that emits the claimed diff:\n{command}\n",
         "\nPacket instructions (written by `routing prepare-review`):\n" + send_text,
+        "\nThe output contract above overrides the packet instructions: do not load the "
+        f"`review-pr` skill and do not return another JSON shape; print `{RESULT_SENTINEL}` "
+        "and the four-key object only.\n",
     ]
     if partial:
         parts.append(
@@ -274,15 +279,25 @@ def plan_review(runtime, epic: str, ticket, attempts: Path) -> dict:
     """The reviewer route (FOUNDRY-ADR-0006 floor and any escalation floor) and the mode."""
     route, policy = _session_route(runtime, "reviewer", ticket.id)
     plan = fx.session_plan(runtime, route, policy)
+    if os.environ.get("FOUNDRY_DATA"):  # `read-review` finds the claim under registry.data_dir()
+        plan["env"] = {**plan["env"], "FOUNDRY_DATA": os.environ["FOUNDRY_DATA"]}
     mode = review_mode(fx.read_attempts(attempts), epic, ticket.id, ticket.pr.head_sha,
                        ticket.pr.base_sha)
     return {**plan, "role": "reviewer", "mode": mode}
 
 
-def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker) -> dict:
+def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
+                 ceilings: tuple[int, int | None] | None = None) -> dict:
     """Escalation failure first (it decides whether and at which tier), then the prompt."""
     pr = ticket.pr
     records = fx.read_attempts(attempts)
+    # The claim runs after this plan: refuse here what it would refuse, so that no escalation
+    # signal is recorded for an attempt that cannot be made.
+    attempt = fx.identity(epic, ticket.id, "correct", fx.fingerprint(ticket))
+    refused = fx.refusal(records, attempt, epic, ticket.id, "correct", ceilings)
+    if refused is not None:
+        key = "suspend" if refused == "attempt_already_made" else "refuse"
+        return {key: (refused, {"attempt": attempt, "step": "correct"})}
     report_record = review_on(records, epic, ticket.id, pr.head_sha, pr.base_sha)
     if not report_record or not report_record["summary_file"]:
         raise OSError("aucun rapport de relecture de la campagne pour cette tête")
@@ -290,7 +305,10 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker) 
     route, policy = _session_route(runtime, "implementer", ticket.id)
     if decision.reason == "review_blocked":
         worktree = runtime.worktrees_dir / ticket.id
-        corrected = any(r["event"] == "started" and r["kind"] == "correct"
+        # "a correction was reviewed and blocked again": the blocked head is the end of a
+        # correction that completed (docs/model-routing.md)
+        corrected = any(r["event"] == "finished" and r["kind"] == "correct"
+                        and r["status"] == "completed" and r["branch_head"] == pr.head_sha
                         for r in _mine(records, epic, ticket.id))
         kind = "review_blocking_after_fix" if corrected else "review_blocking"
         args = ["routing", "escalation", "failure", ticket.id, "implementer", "--kind", kind,
@@ -308,6 +326,8 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker) 
             return {"suspend": ("human_required", {"action": outcome.get("action")})}
         if outcome.get("action") == "technical_blocked":
             return {"suspend": ("technical_blocked", {})}
+        if outcome.get("action") not in CONTINUE_ACTIONS:
+            return {"suspend": (str(outcome.get("action"))[:64], {})}
         route, policy = _session_route(runtime, "implementer", ticket.id,
                                        floor=outcome.get("final_tier"))
     plan = fx.session_plan(runtime, route, policy)
@@ -329,6 +349,8 @@ def reviewer_argv(runtime, plan: dict, epic: str, ticket: str, session_id: str,
         "claude", "--print", "--output-format", "json", "--model", plan["model"],
         "--max-budget-usd", f"{runtime.budget_usd:.2f}", "--permission-mode", "dontAsk",
         "--tools", REVIEWER_TOOLS, "--add-dir", str(packet),
+        "--setting-sources", "user", "--strict-mcp-config", "--mcp-config",
+        '{"mcpServers":{}}',
         "--name", f"foundry-campaign-{epic}-{ticket}-review",
     ]
     if plan["effort"] is not None:
@@ -373,6 +395,46 @@ def _try_carry(runtime, ticket, mode: dict, worktree: Path) -> dict | None:
             "error": None, "detail": "proof carried (PAT-ADR-0021)", "review": review}
 
 
+def round_line(number: int, review: dict) -> str:
+    kind = "carried" if review["carried"] else "partial" if review["partial"] else "full"
+    line = (f"- Round {number}: {kind} review, verdict {review['verdict']}, "
+            f"head `{review['head'][:7]}`.")
+    if kind == "partial":
+        line += (" Partial review (PAT-ADR-0022): the proof relies on the previous round for "
+                 "the unchanged parts.")
+    elif kind == "carried":
+        line += " The proof of the previous round is carried over an integration of main " \
+                "(PAT-ADR-0021)."
+    return line
+
+
+def pr_body(summary: str | None, records: list[dict], epic: str, ticket: str,
+            review: dict) -> str:
+    """The saved implementation summary and a ``Review rounds`` section from the journal."""
+    rounds = [r["review"] for r in review_records(records, epic, ticket)] + [review]
+    section = "## Review rounds\n" + "\n".join(
+        round_line(number, one) for number, one in enumerate(rounds, 1))
+    return f"{summary.strip()}\n\n{section}" if summary and summary.strip() else section
+
+
+def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
+                   review: dict) -> str:
+    """PAT-ADR-0022: say in the PR description that rounds took place; no extra session.
+
+    ``issue openpr --summary-stdin`` on the open PR replaces its body.  Returns a detail text.
+    """
+    records = fx.read_attempts(attempts)
+    saved = [r for r in _mine(records, epic, ticket.id) if r["event"] == "finished"
+             and r["kind"] == "implement" and r["status"] == "completed" and r["summary_file"]]
+    try:
+        summary = Path(saved[-1]["summary_file"]).read_text(encoding="utf-8") if saved else None
+    except OSError:
+        summary = None
+    done = fx._run(runtime, runtime.command("issue", "openpr", ticket.id, "--summary-stdin"),
+                   worktree, input=pr_body(summary, records, epic, ticket.id, review))
+    return "" if done.returncode == 0 else "pr_body_not_updated"
+
+
 def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts: Path,
                   worktree: Path) -> dict:
     """claim, packet, one reviewer session, strict parse, proof; the fields of ``finished``."""
@@ -381,6 +443,8 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
     if mode["mode"] == "carry":
         carried = _try_carry(runtime, ticket, mode, root)
         if carried is not None:
+            carried["detail"] = update_pr_body(runtime, epic, ticket, attempts, root,
+                                               carried["review"]) or carried["detail"]
             return carried
     workdir = _private_dir(attempts.parent / REVIEWS_DIR / attempt[:16])
     token = secrets.token_hex(32)  # never stored: only the claim command receives it
@@ -454,6 +518,7 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         "diff_hash": diff_hash, "base": pr.base_sha, "head": pr.head_sha, "carried": False,
         "partial": partial is not None,
     }
+    detail = update_pr_body(runtime, epic, ticket, attempts, root, review)
     return {"status": "completed", "exit_code": done.returncode, "cost_usd": cost,
             "duration_ms": duration, "summary_file": saved, "branch_head": pr.head_sha,
-            "error": None, "detail": "", "review": review}
+            "error": None, "detail": detail, "review": review}

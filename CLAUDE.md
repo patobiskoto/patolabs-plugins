@@ -386,7 +386,8 @@ step (`_review_observation` in `plugins/foundry/tooling/foundry/campaign_runtime
 reads only the structured proof stored by `AcceptanceProofStore`
 (`plugins/foundry/tooling/foundry/routing.py`), and the `record-review-proof` command of
 that file accepts exactly the keys `outcomes` and `quality`. So the non-blocking remarks
-of a validated review are neither seen nor recorded by a campaign today, and none of the
+of a validated review are neither seen nor recorded by the `campaign_runtime.py` coordinator today (the cadencer
+of PAT-ADR-0026 keeps their counts in its journal and their text in a report file), and none of the
 steps that follow the review step (`ci`, `human-gate` in `_GATE_STEPS`, then `merge`)
 reads or corrects them. The campaign coordinator has no issue-creation primitive: the
 mutating steps of its runner are `start`, `open-pr`, `merge`, `close-epic` and

@@ -82,6 +82,8 @@ class World:
         if verb == "start":
             self.states[ticket] = "in-progress"
             self.heads[ticket], self.ahead[ticket] = "a" * 40, 0
+        elif verb == "openpr" and "## Review rounds" in (input or ""):
+            self.bodies = getattr(self, "bodies", []) + [input]  # a body update: nothing moves
         elif verb == "openpr":
             number = 10 + int(ticket.split("-")[1])
             if self.prs and self.prs[-1].state == "open":  # a push to the open PR
