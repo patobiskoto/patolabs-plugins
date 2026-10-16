@@ -1,6 +1,6 @@
 {
   "contract": "foundry.tracker-contract.v1",
-  "version": 3,
+  "version": 4,
   "generated_for": "PAT-53",
   "doc": "plugins/foundry/docs/tracker-contract.md",
   "status_vocabulary": {
@@ -469,6 +469,28 @@
         "ghprojects": {
           "status": "refused",
           "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError. PAT-67 qualifies proof-bound normal acceptance, not the optional human override receipt."
+        }
+      }
+    },
+    {
+      "id": "human-acceptance-decision",
+      "journey": "état et AC (acceptation humaine d'une issue sans code, sans PR)",
+      "core": false,
+      "tracker_abc": [
+        "accept_issue"
+      ],
+      "cells": {
+        "youtrack": {
+          "status": "refused",
+          "evidence": "human_acceptance_supported is False (base.py); write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read and Tracker.accept_issue refuses (PAT-206, PAT-ADR-0025)"
+        },
+        "linear": {
+          "status": "supported",
+          "evidence": "human_acceptance_supported = True and human_acceptance_predecessors = backlog/ready/in-progress (linear.py); accept_issue (linear.py) reads the issue and refuses an Epic, an issue with children, zero criteria, a PR or cockpit receipt, a state other than the decision's from_state, any body or criteria drift and any invalid cited evidence, then appends one append-only acceptance-decision receipt (deterministic issue+operation comment id), projects the native State done and requires a strict read-back done, aligned and accepted (source linear-human-acceptance). Exact replay converges without a second write, a different decision is refused before any write, a receipt written without the State is resumed by the same command, and nothing is retried. Bounded detection under PAT-ADR-0006, never CAS (PAT-206, PAT-ADR-0025; test_issue_acceptance.py)"
+        },
+        "ghprojects": {
+          "status": "refused",
+          "evidence": "human_acceptance_supported is False (base.py); write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read and Tracker.accept_issue refuses (PAT-206, PAT-ADR-0025)"
         }
       }
     },

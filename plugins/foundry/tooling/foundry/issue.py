@@ -1,14 +1,17 @@
-"""Mechanical execution-loop steps: start / openpr / merge / close-epic.
+"""Mechanical execution-loop steps: start / openpr / merge / close-epic / accept.
 
 Thin, predictable wrappers over the tracker + code-host adapters. The one piece
 of judgment-free enforcement: `merge` calls the CI gate and REFUSES on non-green.
 
-CLI: python3 -m foundry.issue <start|openpr|merge|close-epic> [ISSUE-ID] [pr#] [flags]
+CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept> [ISSUE-ID] [pr#] [flags]
      openpr: the issue id is derived from the branch name when omitted;
              --summary-stdin reads the PR summary from stdin (use `< file`).
      merge:  --allow-no-ci asks to waive the gate; granted ONLY when both CI
              sources (check-runs + legacy statuses) are empty AND no active
              check-suite signals CI for the commit (see write.ci_gate/ADR-0002).
+     accept: `accept <ID> --human-verdict=accepted --decision-file=<path>` accepts a
+             non-code issue without a PR (Linear only, PAT-ADR-0025); `accept <ID>
+             --status` reads its state and takes no other flag.
 """
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ from foundry.trackers.linear import LinearQuotaExhaustedError, LinearTrackerErro
 from foundry.trackers.base import (
     AcceptanceSyncUnavailableError,
     EpicClosureUnavailableError,
+    TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
 
@@ -1208,13 +1212,94 @@ def close_epic(issue_id, flags=()):
     )
 
 
+_ACCEPT_FLAG_PREFIXES = ("--human-verdict=", "--decision-file=")
+
+
+def _accept_status(tracker, issue_id):
+    """Read-only `accept <ID> --status`."""
+    try:
+        state = write.issue_acceptance_state(tracker, issue_id)
+    except TrackerCapabilityUnavailableError:
+        raise SystemExit(
+            f"⛔ Acceptation humaine indisponible pour le tracker {tracker.name} : "
+            "seul Linear est qualifié."
+        ) from None
+    if state.kind == "accepted":
+        print(f"accepté · {issue_id} · décision {state.decision_digest} · done aligné")
+    elif state.kind == "receipt-only":
+        print(
+            f"reçu écrit, état non projeté · {issue_id} · décision {state.decision_digest} "
+            f"· état natif {state.native_state} : relance exactement la même commande "
+            "`issue accept` (aucun second reçu)"
+        )
+    elif state.kind == "unknown":
+        print(f"inconnu · {issue_id} : lecture du cycle de vie impossible ou périmée")
+    else:
+        print(f"aucune acceptation humaine · {issue_id} · état natif {state.native_state}")
+
+
+def accept(issue_id, flags=()):
+    """Accept a non-code issue by an explicit human decision, without a PR."""
+    flags = list(flags)
+    tracker = foundry.tracker()
+    if "--status" in flags:
+        if flags != ["--status"]:
+            raise SystemExit(
+                "⛔ --status est en lecture seule et n'accepte aucun autre flag : "
+                "l'état se lit sans --human-verdict ni --decision-file."
+            )
+        return _accept_status(tracker, issue_id)
+    verdicts = [f.removeprefix("--human-verdict=") for f in flags
+                if f.startswith("--human-verdict=")]
+    files = [f.removeprefix("--decision-file=") for f in flags
+             if f.startswith("--decision-file=")]
+    if len(verdicts) > 1:
+        raise SystemExit("⛔ Acceptation refusée : verdict humain ambigu ou répété.")
+    if len(files) > 1:
+        raise SystemExit("⛔ Acceptation refusée : --decision-file ambigu ou répété.")
+    if not files or not files[0]:
+        raise SystemExit("⛔ Acceptation refusée : --decision-file=<chemin> requis.")
+    from foundry.acceptance_decision import MAX_BYTES
+
+    try:
+        with open(files[0], "rb") as handle:
+            data = handle.read(MAX_BYTES + 1)
+    except OSError as exc:
+        raise SystemExit(
+            f"⛔ Acceptation refusée : fichier de décision illisible ({type(exc).__name__})."
+        ) from None
+    status_command = f"issue accept {issue_id} --status"
+    try:
+        # write.accept_issue validates locally first: a refusal there happened before
+        # any provider read.
+        issue = write.accept_issue(
+            tracker, issue_id, verdicts[0] if verdicts else None, data,
+        )
+    except TrackerCapabilityUnavailableError:
+        raise SystemExit(
+            f"⛔ Acceptation humaine indisponible pour le tracker {tracker.name} : "
+            "seul Linear est qualifié."
+        ) from None
+    except SystemExit:
+        raise
+    except Exception as exc:
+        cause, _kind = _cause_text(exc)
+        raise SystemExit(
+            f"⛔ Acceptation interrompue ou refusée pour {issue_id}. Cause : {cause}\n"
+            f"`{status_command}` relit l'état. Si le reçu est écrit sans l'état natif, "
+            "relance exactement la même commande (aucun second reçu) ; aucun retry "
+            "automatique."
+        ) from None
+    print(f"✅ {issue_id} → done · acceptation humaine · {issue.acceptance_source}")
+
+
 def _default_branch():
     return registry.default_branch() or "main"
 
 
 _KNOWN_FLAGS = {"start": set(), "openpr": {"--summary-stdin"},
                 "merge": {"--allow-no-ci", "--allow-incomplete-ac"},
-                "close-epic": set()}
+                "close-epic": set(), "accept": set()}
 
 if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
@@ -1228,10 +1313,20 @@ if __name__ == "__main__":
          )}
         if cmd == "close-epic" else set()
     )
-    unknown = flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
+    accept_flags = (
+        {flag for flag in flags
+         if flag == "--status" or flag.startswith(_ACCEPT_FLAG_PREFIXES)}
+        if cmd == "accept" else set()
+    )
+    unknown = (
+        flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
+        - accept_flags
+    )
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
                          f"Autorisés : {', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
     args = [a for a in rest if not a.startswith("--")]
+    if cmd == "accept":  # keep repeated flags: a repeated verdict or file is refused
+        flags = [a for a in rest if a.startswith("--")]
     {"start": start, "openpr": openpr, "merge": merge,
-     "close-epic": close_epic}[cmd](*args, flags=flags)
+     "close-epic": close_epic, "accept": accept}[cmd](*args, flags=flags)

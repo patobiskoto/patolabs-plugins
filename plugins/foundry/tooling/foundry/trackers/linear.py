@@ -131,7 +131,14 @@ _LIFECYCLE_OPERATIONS = frozenset(
         "acceptance",
         "acceptance-override",
     "cockpit-evidence",
+        "acceptance-decision",
     }
+)
+# PAT-206 / PAT-ADR-0025: native states an issue may be accepted by a human decision
+# from, and the receipts of a PR path with which that decision is exclusive.
+_HUMAN_ACCEPTANCE_PREDECESSORS = frozenset({"backlog", "ready", "in-progress"})
+_DECISION_EXCLUSIVE_OPERATIONS = (
+    "state-review", "state-done", "acceptance", "acceptance-override", "cockpit-evidence",
 )
 # Public audit code of an explicit human AC override (never free text).
 _AC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
@@ -2991,6 +2998,8 @@ class LinearTracker(Tracker):
     abandon_predecessors = _ABANDON_PREDECESSORS
     guarded_backlog_return_supported = True
     backlog_return_predecessors = _BACKLOG_RETURN_PREDECESSORS
+    human_acceptance_supported = True
+    human_acceptance_predecessors = _HUMAN_ACCEPTANCE_PREDECESSORS
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
@@ -3816,6 +3825,36 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear acceptance proof malformed or stale")
 
     @staticmethod
+    def _validate_acceptance_decision_projection(
+        issue_id: str,
+        body: str,
+        payload: dict,
+    ) -> None:
+        """Validate one human acceptance decision receipt against the current body.
+
+        A body or criteria modified after the decision makes it stale, as for a review
+        proof; the receipt carries no PR, commit or review coordinate.
+        """
+        from foundry import acceptance_decision as decisions
+
+        decision = payload.get("decision")
+        try:
+            if (
+                set(payload) != {"native_state_id", "decision", "decision_digest"}
+                or not isinstance(decision, dict)
+                or payload.get("decision_digest") != (
+                    decisions.decision_digest(decision)
+                )
+            ):
+                raise decisions.AcceptanceDecisionError("malformed")
+            decisions.validate(decision, issue_id)
+            decisions.check_against_body(decision, body)
+        except decisions.AcceptanceDecisionError:
+            raise TrackerConflictError(
+                "Linear acceptance decision malformed or stale"
+            ) from None
+
+    @staticmethod
     def _validate_acceptance_override_projection(
         payload: dict,
         review: dict | None,
@@ -3920,6 +3959,7 @@ class LinearTracker(Tracker):
         done: dict | None,
         allow_current_disagreement: bool,
         native_dropped_prevails: bool = False,
+        decision: dict | None = None,
     ) -> None:
         state_ids = self._binding(self._project())["state_ids"]
         state_by_id = {identifier: name for name, identifier in state_ids.items()}
@@ -3949,6 +3989,8 @@ class LinearTracker(Tracker):
                 # acceptance at that review, regardless of the native State observed
                 # by the historical writer.
                 target = "review"
+            elif operation == "acceptance-decision":
+                target = "done"
             else:
                 raise TrackerConflictError(
                     "Linear lifecycle native state proof malformed"
@@ -4086,7 +4128,9 @@ class LinearTracker(Tracker):
         # (c)).  Only the writer/recovery path may read this interval;
         # ordinary reads have ``pending_operation=None`` and fail closed.
         pending_receipt_projection = (
-            pending_operation in {"state-in-progress", "state-review", "state-done"}
+            pending_operation in {
+                "state-in-progress", "state-review", "state-done", "acceptance-decision",
+            }
             and rows.get(pending_operation, [])
             and current_name != "done"
             and self._native_state_can_advance(current_name, latest_name)
@@ -4104,7 +4148,10 @@ class LinearTracker(Tracker):
         if (
             current_name == "done"
             and not pending_done
-            and (done is None or state_ids["done"] != native_state_id)
+            and (
+                (done is None and decision is None)
+                or state_ids["done"] != native_state_id
+            )
         ):
             raise TrackerConflictError("Linear native state changed outside lifecycle")
 
@@ -4151,13 +4198,16 @@ class LinearTracker(Tracker):
                 "in_progress": None,
                 "acceptance_by_generation": {},
                 "acceptance_override_by_generation": {},
+                "acceptance_decision": None,
                 "done": None,
                 "review_generation": 0,
                 "latest_review": None,
                 "latest_review_body_digest": None,
             }
 
-        for operation in {"state-in-progress", "state-done", "cockpit-evidence"}:
+        for operation in {
+            "state-in-progress", "state-done", "cockpit-evidence", "acceptance-decision",
+        }:
             if len(rows.get(operation, [])) > 1:
                 raise TrackerConflictError("Linear lifecycle duplicate projection")
 
@@ -4241,9 +4291,17 @@ class LinearTracker(Tracker):
                 or done.get("review_generation") != review.get("generation")
             ):
                 raise TrackerConflictError("Linear done proof lacks matching review")
+        body = raw.get("description") or ""
+        decision = None
+        if rows.get("acceptance-decision"):
+            # PAT-ADR-0025: a second terminal marker, exclusive of every PR-bound one.
+            if any(rows.get(name) for name in _DECISION_EXCLUSIVE_OPERATIONS):
+                raise TrackerConflictError("Linear acceptance decision conflicts with PR receipts")
+            decision = rows["acceptance-decision"][0][0]
+            self._validate_acceptance_decision_projection(issue_id, body, decision)
         projected_state = (
             "done"
-            if done
+            if done or decision
             else "review"
             if review
             else "in-progress"
@@ -4253,7 +4311,6 @@ class LinearTracker(Tracker):
 
         acceptance_complete = False
         acceptance_by_generation = {}
-        body = raw.get("description") or ""
         reviews_by_generation = {item[0]["generation"]: item[0] for item in reviews}
         for payload, _comment_body in rows.get("acceptance", []):
             generation = payload.get("review_generation")
@@ -4324,6 +4381,9 @@ class LinearTracker(Tracker):
             ordered.extend(bound)
         if done is not None:
             ordered.append(("state-done", done))
+        if decision is not None:
+            ordered.append(("acceptance-decision", decision))
+            acceptance_complete = True
         self._validate_native_state_history(
             rows,
             ordered,
@@ -4345,6 +4405,7 @@ class LinearTracker(Tracker):
                 allow_current_disagreement or epic_closure is not None
             ),
             native_dropped_prevails=native_dropped_prevails,
+            decision=decision,
         )
         return {
             "state": "done" if epic_closure is not None else projected_state,
@@ -4355,6 +4416,7 @@ class LinearTracker(Tracker):
             "acceptance_complete": acceptance_complete,
             "acceptance_override": acceptance_override,
             "acceptance_override_by_generation": override_by_generation,
+            "acceptance_decision": decision,
             "done": done,
             "review_generation": review.get("generation") if review else 0,
             "latest_review": review,
@@ -4882,7 +4944,22 @@ class LinearTracker(Tracker):
         overridden = lifecycle.get("acceptance_override_by_generation", {}).get(
             review_generation
         )
-        if lifecycle["acceptance_complete"] and isinstance(accepted, dict):
+        decided = lifecycle.get("acceptance_decision")
+        if isinstance(decided, dict):
+            # PAT-ADR-0025: the human decision, bound by body and decision digests.
+            acceptance_status = "accepted"
+            acceptance_source = "linear-human-acceptance"
+            acceptance_coordinates = json.dumps(
+                {
+                    "body_digest": decided["decision"]["body_sha256"],
+                    "checked": len(decided["decision"]["criteria"]),
+                    "decision_digest": decided["decision_digest"],
+                    "native_state_id": decided["native_state_id"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        elif lifecycle["acceptance_complete"] and isinstance(accepted, dict):
             acceptance_status = "accepted"
             acceptance_source = "linear-acceptance-proof"
             acceptance_coordinates = json.dumps(
@@ -5125,6 +5202,9 @@ class LinearTracker(Tracker):
                     "review_digest", "review_generation",
                 )
             })
+            decided = lifecycle.get("acceptance_decision")
+            if isinstance(decided, dict):
+                references["acceptance_decision_digest"] = decided["decision_digest"]
             if issue.projection_status != "aligned":
                 # A historical exact merge receipt remains useful evidence, but a
                 # current native reopen is a conflicting fact. It cannot appear as
@@ -6199,6 +6279,137 @@ class LinearTracker(Tracker):
             project=project,
         )
         return created
+
+    def accept_issue(
+        self,
+        issue_id: str,
+        decision: dict,
+        *,
+        project: Project | None = None,
+        verify_evidence=None,
+    ) -> Issue:
+        """Accept a non-code issue by one closed human decision (PAT-ADR-0025).
+
+        S1 fresh read and refusals, then the append-only ``acceptance-decision``
+        receipt, then the native ``done`` projection, then a strict read-back that must
+        read ``done``, aligned and accepted.  Bounded detection, not CAS (the S1-S2
+        residual risk of PAT-ADR-0006 stays named); no automatic retry.
+        """
+        from foundry import acceptance_decision as decisions
+
+        if project is None:
+            raise LinearBindingError("mutation_project_required")
+
+        def refuse(reason: str):
+            raise TrackerConflictError(f"Linear acceptance refused: {reason}")
+
+        try:
+            decisions.validate(decision, issue_id)
+        except decisions.AcceptanceDecisionError as exc:
+            refuse(str(exc))
+        digest = decisions.decision_digest(decision)
+        binding = self._activate(project)
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        native = self._native_state_name(raw, binding)
+        comments = _connection(raw.get("comments"), "acceptance.comments")
+        decoded = [
+            self._decode_lifecycle_comment(issue_id, row.get("body")) for row in comments
+        ]
+        decoded = [item for item in decoded if item is not None]
+        recorded = [item for item in decoded if item[0] == "acceptance-decision"]
+        if len(recorded) > 1:
+            raise TrackerConflictError("Linear lifecycle duplicate projection")
+        if recorded:
+            # One decision per issue: an exact replay converges, another is refused
+            # before any write.
+            if recorded[0][1].get("decision_digest") != digest:
+                refuse("a different decision is already recorded for this issue")
+            self._lifecycle_projection(
+                issue_id, raw, pending_operation="acceptance-decision",
+            )
+            if native != "done":
+                if native != decision["from_state"]:
+                    refuse(f"native state is {native}, expected {decision['from_state']}")
+                self._project_native_state(issue_id, "done", project, binding)
+            return self._accepted_readback(issue_id, project, binding, digest)
+
+        if native == "dropped":
+            refuse("issue is natively dropped")
+        if native not in _HUMAN_ACCEPTANCE_PREDECESSORS:
+            refuse(
+                f"native state {native} is not admitted ({_state_list(_HUMAN_ACCEPTANCE_PREDECESSORS)})"
+            )
+        if native != decision["from_state"]:
+            refuse(f"native state is {native}, the decision was made from {decision['from_state']}")
+        if any(
+            isinstance(row.get("body"), str)
+            and row["body"].startswith("Foundry Epic closure audit (append-only).")
+            for row in comments
+        ):
+            refuse("Epic closure audit present; use `issue close-epic`")
+        if any(item[0] in _DECISION_EXCLUSIVE_OPERATIONS for item in decoded):
+            refuse("PR or cockpit receipts present; use `issue merge`")
+        issue = self._to_issue(raw, project)
+        if issue.type == "Epic":
+            refuse("an Epic is closed by `issue close-epic`")
+        if any(link.type == "parent-of" for link in issue.links):
+            refuse("the issue has children")
+        if issue.pr_url:
+            refuse("the issue is linked to a PR; use `issue merge`")
+        if issue.ac_total < 1:
+            refuse("the issue has no acceptance criterion")
+        try:
+            decisions.check_against_body(decision, raw.get("description") or "")
+        except decisions.AcceptanceDecisionError as exc:
+            refuse(str(exc))
+        done_id = binding["state_ids"]["done"]
+        payload = {"decision": decision, "decision_digest": digest}
+        _marker, receipt_body, _comment_id = self._lifecycle_marker(
+            "acceptance-decision", issue_id, {**payload, "native_state_id": done_id},
+        )
+        if len(receipt_body.encode("utf-8")) > decisions.MAX_BYTES:
+            refuse("the receipt exceeds the retained comment size bound")
+        if verify_evidence is not None:
+            try:
+                verify_evidence()
+            except decisions.AcceptanceDecisionError as exc:
+                refuse(str(exc))
+        self._project_lifecycle(
+            issue_id, "acceptance-decision", payload, project, native_state_id=done_id,
+        )
+        fresh = self._read_raw(issue_id)
+        self._assert_issue_project(fresh, binding)
+        observed = self._native_state_name(fresh, binding)
+        if observed not in {decision["from_state"], "done"}:
+            raise TrackerConflictError(
+                f"Linear native state changed to {observed} before the done projection"
+            )
+        self._project_native_state(issue_id, "done", project, binding)
+        return self._accepted_readback(issue_id, project, binding, digest)
+
+    def _accepted_readback(
+        self, issue_id: str, project: Project, binding: dict, digest: str,
+    ) -> Issue:
+        """S3: the strict read must show ``done``, aligned and accepted by this decision."""
+        raw = self._read_raw(issue_id)
+        self._assert_issue_project(raw, binding)
+        issue = self._to_issue(raw, project)
+        try:
+            coordinates = json.loads(issue.acceptance_coordinates or "null")
+        except ValueError:
+            coordinates = None
+        if (
+            issue.state != "done"
+            or issue.native_state != "done"
+            or issue.projection_status != "aligned"
+            or issue.acceptance_status != "accepted"
+            or issue.acceptance_source != "linear-human-acceptance"
+            or not isinstance(coordinates, dict)
+            or coordinates.get("decision_digest") != digest
+        ):
+            raise TrackerConflictError("Linear acceptance read-back divergent")
+        return issue
 
     def project_cockpit_evidence(
         self,

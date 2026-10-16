@@ -464,6 +464,88 @@ def recover_acceptance_override(
     )
 
 
+_ACCEPTANCE_HUMAN_VERDICT = "accepted"
+
+
+def validate_acceptance_request(tracker, issue_id, human_verdict, decision_data) -> dict:
+    """Pure validation of an `issue accept` request: no provider read (PAT-ADR-0025).
+
+    Returns the parsed closed decision document.  ``decision_data`` is the content of
+    the decision file, already read locally by the caller.
+    """
+    from foundry import acceptance_decision as decisions
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    if not getattr(tracker, "human_acceptance_supported", False):
+        raise TrackerCapabilityUnavailableError(tracker.name, "human-acceptance")
+    if not isinstance(issue_id, str) or not issue_id:
+        raise SystemExit("Acceptation refusée : identifiant d'issue invalide.")
+    if human_verdict != _ACCEPTANCE_HUMAN_VERDICT:
+        raise SystemExit(
+            "Acceptation refusée : verdict humain explicite `accepted` requis "
+            "(--human-verdict=accepted)."
+        )
+    try:
+        document = decisions.parse(decision_data, issue_id)
+    except decisions.AcceptanceDecisionError as exc:
+        raise SystemExit(f"Acceptation refusée : décision invalide : {exc}.") from None
+    admitted = getattr(tracker, "human_acceptance_predecessors", frozenset())
+    if document["from_state"] not in admitted:
+        raise SystemExit(
+            f"Acceptation refusée : état natif {document['from_state']} non admis "
+            f"({', '.join(sorted(admitted))})."
+        )
+    return document
+
+
+def accept_issue(tracker, issue_id: str, human_verdict, decision_data) -> Issue:
+    """Accept one non-code issue by an explicit human decision, without a PR."""
+    from foundry import acceptance_decision as decisions
+
+    document = validate_acceptance_request(tracker, issue_id, human_verdict, decision_data)
+    project = mutation_project(tracker)
+    if project is None:
+        project = tracker.resolve_project(registry.repo_basename())
+    return tracker.accept_issue(
+        issue_id, document, project=project,
+        verify_evidence=lambda: decisions.verify_evidence(document, tracker, project),
+    )
+
+
+@dataclass(frozen=True)
+class AcceptanceState:
+    """Read-only reading of the human acceptance of one issue (`accept --status`)."""
+
+    kind: str  # none | accepted | receipt-only | unknown
+    decision_digest: str | None = None
+    native_state: str | None = None
+
+
+def issue_acceptance_state(tracker, issue_id: str) -> AcceptanceState:
+    """Read the acceptance state; never writes."""
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    if not getattr(tracker, "human_acceptance_supported", False):
+        raise TrackerCapabilityUnavailableError(tracker.name, "human-acceptance")
+    issue_binding(tracker, issue_id)
+    issue = tracker.observe_issue(issue_id)
+    if issue.acceptance_source != "linear-human-acceptance":
+        return AcceptanceState(
+            "unknown" if issue.projection_status == "unknown" else "none",
+            native_state=issue.native_state,
+        )
+    try:
+        digest = json.loads(issue.acceptance_coordinates or "null")["decision_digest"]
+    except (ValueError, TypeError, KeyError):
+        digest = None
+    kind = (
+        "accepted"
+        if issue.native_state == "done" and issue.projection_status == "aligned"
+        else "receipt-only"
+    )
+    return AcceptanceState(kind, digest, issue.native_state)
+
+
 def _epic_closure_project(tracker) -> Project:
     project = mutation_project(tracker)
     if project is None:
