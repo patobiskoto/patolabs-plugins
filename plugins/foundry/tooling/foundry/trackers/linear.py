@@ -1062,7 +1062,7 @@ def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
     return rendered
 
 
-# PAT-201: the two native FOUNDRY ADR bodies (FOUNDRY-ADR-0002, FOUNDRY-ADR-0018) whose
+# PAT-201 (+ PAT-209: ADR-0003/0015/0017): the native FOUNDRY ADR bodies whose
 # strong spans contain code outside what the PAT-85 form qualifies on its line.  Each entry binds one
 # complete source digest to (pre, post, readback digest).  `pre` rewrites the source
 # fragments to the observed Linear strong/code serialization before the general model
@@ -1095,6 +1095,42 @@ _PAT_201_PROFILES = {
             ),
         ),
         "54947bd75df29d2b50f1d1ad0439c913e5922b752d1535f35decb5abc6013cb5",
+    ),
+    # PAT-209: three more native FOUNDRY ADR bodies, on the same model.
+    "bd7092a50f514dc9a907da9cc581c6a5188f32cc0e79c35072506b6eaae97db5": (
+        (
+            (
+                "**Un flag `--full` sur les listes**",
+                "**Un flag** `--full` **sur les listes**",
+            ),
+        ),
+        (),
+        "369a3309c6d12ff8e7042d73b05b64cbad56a4ed7a244de8e3f34de57dc64037",
+    ),
+    "31f3b61aea79970b3c315f0daeef45925fccb7c90b982dd2b850dd4a1d462350": (
+        (
+            (
+                "**hors du chemin\nd'invocation**",
+                "**hors du chemin**\n**d'invocation**",
+            ),
+            (
+                "**Faire remonter le coût uniquement depuis `total_cost_usd` du CLI headless**",
+                "**Faire remonter le coût uniquement depuis** `total_cost_usd` "
+                "**du CLI headless**",
+            ),
+        ),
+        (("actual token usage […] Those", "actual token usage \\[…\\] Those"),),
+        "79f30b9c1827a0ce9a50b1010be5d94c8edcd845776147cdee61a70fb03b00ba",
+    ),
+    "c418537244f6cc115ce5a09961e865e58ab23506d2249a7bf501f94bc8000645": (
+        (
+            (
+                "**$-équivalent par Epic livré et validé\nhumainement**",
+                "**$-équivalent par Epic livré et validé**\n**humainement**",
+            ),
+        ),
+        (("|---|---:|---:|", "| -- | -- | -- |"),),
+        "79a9724734ac1da9f8492bbead33ecfc39910d10dd2815ef5f4ac468d22f97e7",
     ),
 }
 

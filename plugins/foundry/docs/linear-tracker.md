@@ -417,6 +417,10 @@ PAT-85 form on their line. Only those two complete sources are recognised; any o
 a one-byte variant, keeps the PAT-85 refusal; `link_adr_issue` refuses such a source before its first
 write when its stored version is not proven by the model (PAT-205). The census, the observed rendering and the
 limits are in `docs/qualification/pat-201-historical-adr-links.md`.
+PAT-209 adds three entries to the same table (`FOUNDRY-ADR-0003`, `-0015`, `-0017`, same
+digest-pinned model, no global normalisation). `FOUNDRY-ADR-0017` is accepted only as a stored
+body (link, status): its table stays refused as a new body (`strict`, PAT-103). See the
+"PAT-209" section of the same page.
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
 fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one
 space after the dot, flush left), whose items are one plain LF line each (item text that
