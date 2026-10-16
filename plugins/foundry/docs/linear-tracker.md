@@ -1134,7 +1134,9 @@ Native `done` is stricter: it is never interpreted as Foundry completion by itse
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
 matches the latest reviewed generation and its AC proof, and carries the exact merge
 SHA (or, for a merge under the human override, the typed override receipt of that
-generation). This includes issues with zero Foundry lifecycle comments: search and direct reads
+generation), or, for a non-code issue accepted by a human decision, the `acceptance-decision`
+receipt described in "Human acceptance of a non-code issue (PAT-206)". This includes issues
+with zero Foundry lifecycle comments: search and direct reads
 fail closed instead of exposing native `done` through the native-state fallback.
 Zero-receipt nonterminal issues keep their explicitly mapped native state. The
 bounded `state-done` write path may recover the interval after GitHub has moved the native
@@ -1182,6 +1184,94 @@ source receipts, then follows the same exact-ID readback. Missing, stale, failed
 otherwise incomplete evidence causes no provider write. Even a complete cockpit comment
 is advisory: it never changes the projected lifecycle, checks an AC, authorizes a merge
 or replaces Foundry's review, test and CI gates.
+
+### Human acceptance of a non-code issue (PAT-206)
+
+Decided by PAT-ADR-0025 (proposed when this section was written; accepted at the merge that
+delivers PAT-206). The only terminal authority for a non-code issue used to be the Epic
+closure audit; an issue with work done but no PR had no path to `done`. The command
+
+```text
+foundry_cli.py issue accept <ID> --human-verdict=accepted --decision-file=<path>
+foundry_cli.py issue accept <ID> --status
+```
+
+(`accept` in `tooling/foundry/issue.py`; flags `--human-verdict=` and `--decision-file=`,
+`_ACCEPT_FLAG_PREFIXES`) accepts one issue on the explicit decision of the maintainer, which
+the coordinator transmits. `--status` is read-only, takes no other flag and prints one of
+`aucune acceptation humaine`, `accepté`, `reçu écrit, état non projeté` or `inconnu`
+(`write.issue_acceptance_state`). A repeated `--human-verdict=` or `--decision-file=` is
+refused before any read. No campaign step calls it (`_MUTATING_STEPS` in
+`campaign_runtime.py` is unchanged). The receipt traces the decision; it does not
+authenticate the person. An architecture delegation authorizes no acceptance: each
+acceptance needs its own decision.
+
+**Decision file.** A closed JSON document, parsed by `tooling/foundry/acceptance_decision.py`
+(duplicate keys, non-finite numbers and extra or missing keys are refused). Top-level keys,
+exactly `_TOP_KEYS`: `schema` (`foundry.issue-acceptance-decision.v1`), `issue`,
+`body_sha256`, `ac_digest`, `from_state` (`backlog`, `ready` or `in-progress`), `authority`
+(`maintainer-direct`), `decided_on` (`YYYY-MM-DD`), `verdict` (`accepted`), `delivery`
+(`none`) and `criteria`. Each criterion, exactly `_CRITERION_KEYS`: `id` and `digest` (the
+ordered identities returned by `routing.acceptance_criteria(body)`, which digests each
+criterion's literal text and retains no text), `verdict` (`pass`), `evidence` (at least
+one) and `unknowns` (required, may be empty, copied verbatim into the receipt and never
+counted as evidence). Evidence types are the closed list `EVIDENCE_TYPES`:
+`advisory-report` (`issue`, `attempt_id`, `report_hash`, read with
+`postmerge_review.restituted_reports`, so only a confirmed report counts; an isolated,
+unconfirmed or other-hash record is refused) and `issue` (`id`, an issue of the same
+project other than the accepted one, checked with `validate_issue_binding`). A checked box
+or a native state is not evidence. Adding a type is a code and test change. The size bound
+is `advisory_schema.MAX_COMMENT_BYTES`, applied to the file and to the final receipt body;
+it is the bound retained for advisory comments, not a qualification of Linear's maximum
+comment size (unknown).
+
+**Refusals before any write** (`LinearTracker.accept_issue`; locally, before any read,
+`write.validate_acceptance_request`: missing or different verdict, other provider, invalid
+document, document `issue` different from the argument, `from_state` not admitted). After
+the fresh read: an Epic (use `issue close-epic`), a closure audit, an issue with children,
+zero criteria, any `state-review`, `state-done`, `acceptance`, `acceptance-override` or
+`cockpit-evidence` receipt or a PR projected by such a Foundry receipt (use `issue merge`); a PR
+linked natively by an integration or merged outside Foundry is not read and so not refused
+(deduced: `pr_url` comes only from Foundry receipts), a native state outside
+`backlog`, `ready`, `in-progress` or different from `from_state`, a natively `dropped`
+issue, a body, criterion count, text or order that differs from the decision, invalid
+evidence, and a receipt beyond the size bound. A start receipt (`state-in-progress`) is
+allowed.
+
+**Receipt and sequence.** Operation `acceptance-decision` (in `_LIFECYCLE_OPERATIONS`). Its
+payload is exactly `native_state_id` (the `done` State id, as for `state-done`),
+`decision` and `decision_digest` (sha256 of the canonical decision); it holds no PR,
+commit or review coordinate. Its comment id derives from the issue and the operation only
+(`_lifecycle_marker`), so one issue holds at most one decision: an exact replay converges
+without a second write, a different decision is refused before any write
+(`a different decision is already recorded`), and an ambiguous creation is resumed by the
+same deterministic id. The sequence is PAT-ADR-0006 S1 to S6 on the existing helpers: fresh
+read and refusals, `_project_lifecycle` (receipt), `_project_native_state` (`done`), then a
+strict read-back that must read `done`, aligned and accepted with source
+`linear-human-acceptance`, else `TrackerConflictError`. A native state changed by a third
+party between the receipt and the projection stops the command before the State write.
+There is no automatic retry. This is bounded detection, not CAS: the S1 to S2 residual
+risk of PAT-ADR-0006 stays. The sequence is exercised on the GraphQL test double only
+(`tests/test_issue_acceptance.py`); no live Linear acceptance has been run (unknown).
+
+**Reading.** An issue with a valid receipt reads `done`, `acceptance_status = accepted`,
+source `linear-human-acceptance`, `ac_done = ac_total`, `pr_url` empty and coordinates
+`body_digest`, `checked`, `decision_digest`, `native_state_id`. The receipt is a second
+terminal marker, exclusive of every PR-bound one: a decision next to a `state-review`,
+`state-done`, `acceptance`, `acceptance-override` or `cockpit-evidence` receipt, or two
+decisions, reads as a conflict. A body or criteria changed after the decision reads as a
+conflict (`malformed or stale`), as for a review proof. Between the receipt and the State
+projection the strict read refuses (`Linear native state changed outside lifecycle`);
+the recovery is to run exactly the same command, which converges on the receipt and writes
+only the State. A wrong decision, or a body edited between receipt and projection, leaves
+the issue in conflict with no correction path here.
+
+**Epic closure and release.** The Epic closure audit counts a child read this way as
+accepted (same positive rule as for a review proof) and binds its coordinates, so the
+PAT-ADR-0023 replay applies to them unchanged. The release scope reads it `accepted` with
+the reference `acceptance_decision_digest` in place of the PR coordinates
+(`_release_issue`). Advisory receipts are never rewritten and keep their no-effect status
+(PAT-ADR-0020).
 
 ### Provider capability versus concurrency guarantee
 

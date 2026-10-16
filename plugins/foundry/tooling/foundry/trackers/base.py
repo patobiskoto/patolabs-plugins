@@ -174,6 +174,10 @@ class Tracker(ABC):
     # expected predecessor required); only Linear declares it.
     guarded_backlog_return_supported: bool = False
     backlog_return_predecessors: frozenset[str] = frozenset()
+    # PAT-206 / PAT-ADR-0025: acceptance of a non-code issue by an explicit human
+    # decision, without a PR; only Linear declares it, with the native states it admits.
+    human_acceptance_supported: bool = False
+    human_acceptance_predecessors: frozenset[str] = frozenset()
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
@@ -426,6 +430,18 @@ class Tracker(ABC):
         """Append only the missing override receipt of an already-merged issue."""
         del issue_id, reason, pr_url, head_sha, base_sha, merge_sha, project
         raise TrackerCapabilityUnavailableError(self.name, "acceptance-override-recovery")
+
+    def accept_issue(
+        self,
+        issue_id: str,
+        decision: dict,
+        *,
+        project: Project | None = None,
+        verify_evidence=None,
+    ) -> Issue:
+        """Accept a non-code issue by one closed human decision (PAT-ADR-0025)."""
+        del issue_id, decision, project, verify_evidence
+        raise TrackerCapabilityUnavailableError(self.name, "human-acceptance")
 
     def update_body(
         self,

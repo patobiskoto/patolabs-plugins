@@ -9,7 +9,7 @@ explicit setup and historical tooling; it never substitutes for a repository bin
 
 Every claim below is grounded in the current adapter code, cited by module and symbol. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 3`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 4`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -73,6 +73,16 @@ The JSON is authoritative for every cell and its evidence; read it before relyin
 cell.
 
 **Capability work and remaining qualification limits:**
+- **PAT-206** — `accept_issue` (operation `human-acceptance-decision`, non-core) accepts a
+  non-code issue by one closed human decision file, without a PR (PAT-ADR-0025, proposed
+  at the time of writing; accepted at the merge that delivers it). Only Linear declares it
+  (`human_acceptance_supported`, `human_acceptance_predecessors` in `trackers/base.py`,
+  `trackers/linear.py`); YouTrack, `ghprojects` and DevHub keep the `base.py` default
+  (`False`, no admitted state) and `write.validate_acceptance_request` refuses with
+  `TrackerCapabilityUnavailableError` before any provider read. The operation, the receipt
+  and its reading are described in `docs/linear-tracker.md`, "Human acceptance of a
+  non-code issue (PAT-206)". The cell is bounded detection under PAT-ADR-0006 (named S1→S2
+  residual risk), never CAS.
 - **PAT-197** — `reconcile_issue_creation` is a read-only port outside the matrix: after a
   `create_issue` whose effect or validation is unresolved, it re-validates the existing issue
   against its creation spec. `Tracker.reconcile_issue_creation` (`trackers/base.py`) refuses by
@@ -314,7 +324,8 @@ provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear
 `ghprojects`
 (optional projection used only by DevHub); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
-YouTrack (free-text audit note fallback, `base.py`).
+YouTrack (free-text audit note fallback, `base.py`); the human acceptance of a non-code
+issue (`accept_issue`, PAT-206) on YouTrack, `ghprojects` and DevHub (`base.py`).
 
 **GitHub Projects read and ADR slices (PAT-57/PAT-58).** PAT-54 supplies
 the canonical checkout binding and read-only existing-project probe. PAT-65 then
@@ -848,6 +859,6 @@ never used by the code-host path.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 3`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 4`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.
