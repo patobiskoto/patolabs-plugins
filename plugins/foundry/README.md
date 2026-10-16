@@ -97,53 +97,59 @@ Not verified: the Foundry 1.2.0 / Ship-iOS 0.3.0
 pair on a host, and a Linear request count on 1.2.0 itself. The return to 1.1.1 through
 an official manager is not tried.
 
-**1.3.0 is a minor release, prepared by its release pull request.** That pull request
-sets both host manifests to 1.3.0 and carries the dated `1.3.0` section of the
-[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.3.0.md), the
-[upgrade and rollback guide](docs/migration-1.3.0.md) and the freeze entry of
-`tests/fixtures/release-history.json`. The release notes open with the behaviour
-changes: the review skills claim the diff with `routing claim-review --host` before
-`routing prepare-review` builds the private packet, with the Codex route checked
-before any reservation; the reviewer gains `routing search-review` and `list-review`
-and its Bash guard widens; `routing postmerge-review prepare|read|record` adds a
-separate advisory post-merge review; Linear issue creation admits only qualified
-renderings, reports partial effects as typed details and adds `edit reconcile-create`;
-the new `scripts/check_model_rollback.py` takes a required `--out`, with no routing default changed. They
-claim no gain. The guide gives the upgrade from 1.2.0 on both hosts and what is known
-and unknown about returning to 1.2.0 (an untried procedure, PAT-162). Both pages are
-frozen from the release pull request on, so they state no tag and no installation. Not
-done by that pull request, and not claimed here: the tag, the update of the installed
-plugin on Claude Code and on Codex, and the readback of the version a host actually loads.
-Now known: the tag `foundry-v1.3.0` exists on `origin` (`git ls-remote --tags origin 'foundry-v1.3.0^{}'`, read 2026-10-15; commit `0c38fe0cb51d0c29b311550f4cd33163fbb0d0b8`, the squash commit of PR #145, an ancestor of this branch). The installation and the loaded-version readback are not stated
-here; they are recorded on PAT-199. Not verified: the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the native
-provenance of the Codex reviewer profile (PAT-196), the native availability of the eight
-rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294 bytes
+**1.3.0 is a minor release, prepared by its release pull request.** That pull request sets
+both host manifests to 1.3.0 and carries the dated `1.3.0` section of the
+[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.3.0.md), the [upgrade and
+rollback guide](docs/migration-1.3.0.md) and the freeze entry of
+`tests/fixtures/release-history.json`. The release notes open with the behaviour changes:
+the review skills claim the diff with `routing claim-review --host` before `routing
+prepare-review` builds the private packet, with the Codex route checked before any
+reservation; the reviewer gains `routing search-review` and `list-review` and its Bash guard
+widens; `routing postmerge-review prepare|read|record` adds a separate advisory post-merge
+review; Linear issue creation admits only qualified renderings, reports partial effects as
+typed details and adds `edit reconcile-create`; the new `scripts/check_model_rollback.py`
+takes a required `--out`, with no routing default changed. They claim no gain. The guide
+gives the upgrade from 1.2.0 on both hosts and what is known and unknown about returning to
+1.2.0 (an untried procedure, PAT-162). Both pages are frozen from the release pull request
+on, so they state no tag and no installation. Not done by that pull request, and not claimed
+here: the tag, the update of the installed plugin on Claude Code and on Codex, and the
+readback of the version a host actually loads. Now known: the tag `foundry-v1.3.0` exists on
+`origin` (`git ls-remote --tags origin 'foundry-v1.3.0^{}'`, read 2026-10-15; commit
+`0c38fe0cb51d0c29b311550f4cd33163fbb0d0b8`, the squash commit of PR #145, an ancestor of
+`main`). The installation and the loaded-version readback are not stated here; they are
+recorded on PAT-199. Not verified: the Foundry 1.3.0 / Ship-iOS 0.3.0 pair on a host, the
+native provenance of the Codex reviewer profile (PAT-196), the native availability of the
+eight rollback profiles (PAT-198), the maximum native Linear comment size (only 12,294 bytes
 probed) and a Linear request count on 1.3.0.
 
-**1.4.0 is a minor release, prepared by its release pull request.** That pull request
-sets both host manifests to 1.4.0 and carries the dated `1.4.0` section of the
-[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.4.0.md), the
-[upgrade and rollback guide](docs/migration-1.4.0.md) and the freeze entry of
+**1.4.0 is a minor release, prepared by its release pull request.** That pull request sets
+both host manifests to 1.4.0 and carries the dated `1.4.0` section of the
+[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-1.4.0.md), the [upgrade and
+rollback guide](docs/migration-1.4.0.md) and the freeze entry of
 `tests/fixtures/release-history.json`; it deletes the fifteen changelog fragments it
-assembles. The release notes open with the behaviour changes: `edit transition
-<ISSUE-ID> backlog <expected-state>` on Linear, `routing carry-review-proof` and
-`routing review-rounds`, a partial re-review on every pull request, Epic closure
-accepting a closed child Epic and a benign native update, `adr link-issue` accepting two
-historical ADR bodies, the advisory budget written by code, a stricter registry loader
-and a guard message naming the registry, the `foundry:release` skill with its two
-read-only helpers, a Codex reviewer profile provenance procedure and helper (one observed
-session), and the remarks deferred from earlier reviews settled by PAT-205 and PAT-207.
-They claim no gain. The guide gives the upgrade from 1.3.0 on both
-hosts and what is known and unknown about returning to 1.3.0 (an untried procedure,
-PAT-162). Both pages are frozen from the release pull request on, so they state no tag
-and no installation. Not done by that pull request, and not claimed here: the tag
-`foundry-v1.4.0`, the update of the installed plugin on Claude Code and on Codex, and
-the readback of the version a host actually loads; they come after the merge, each on the
-maintainer's explicit authorization, and are recorded on the release ticket
-(`skills/release/SKILL.md`, steps 7 to 9). Not verified: the Foundry 1.4.0 / Ship-iOS 0.3.0
-pair on a host, the Codex reviewer profile provenance beyond the one session recorded by
-PAT-196 (host `0.162.1`), the native availability of the rollback profiles (PAT-198) and the
-Linear rendering of PAT-201's links and of the PAT-205 `(AGENTS.md#R<n>)` qualification.
+assembles. The release notes open with the behaviour changes: `edit transition <ISSUE-ID>
+backlog <expected-state>` on Linear, `routing carry-review-proof` and `routing
+review-rounds`, a partial re-review on every pull request, Epic closure accepting a closed
+child Epic and a benign native update, `adr link-issue` accepting two historical ADR bodies,
+the advisory budget written by code, a stricter registry loader and a guard message naming
+the registry, the `foundry:release` skill with its two read-only helpers, a Codex reviewer
+profile provenance procedure and helper (one observed session), and the remarks deferred
+from earlier reviews settled by PAT-205 and PAT-207. They claim no gain. The guide gives the
+upgrade from 1.3.0 on both hosts and what is known and unknown about returning to 1.3.0 (an
+untried procedure, PAT-162). Both pages are frozen from the release pull request on, so they
+state no tag and no installation. Not done by that pull request, and not claimed here: the
+tag `foundry-v1.4.0`, the update of the installed plugin on Claude Code and on Codex, and
+the readback of the version a host actually loads; they come after the merge; the tag and
+the host update each need the maintainer's explicit authorization (STOPs 6 and 7), the
+readback does not (step 8), and all are recorded on the release ticket
+(`skills/release/SKILL.md`, steps 6 to 9). Now known: the tag `foundry-v1.4.0` exists on
+`origin` (`git ls-remote --tags origin 'foundry-v1.4.0^{}'`, read 2026-10-16; commit
+`b2e2c0cb71ee6418a4b17af29257398f43c6958e`, the squash commit of PR #158); the installation
+and the readbacks are recorded on PAT-211, not restated here, and the version Claude Code
+loads is not verified there. Not verified: the Foundry 1.4.0 / Ship-iOS 0.3.0 pair on a
+host, the Codex reviewer profile provenance beyond the one session recorded by PAT-196 (host
+`0.162.1`), the native availability of the rollback profiles (PAT-198) and the Linear
+rendering of PAT-201's links and of the PAT-205 `(AGENTS.md#R<n>)` qualification.
 
 ## Why
 
