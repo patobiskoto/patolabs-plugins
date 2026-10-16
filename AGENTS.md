@@ -390,11 +390,12 @@ mutating steps of its runner are `start`, `open-pr`, `merge`, `close-epic` and
 `sync-parent-acceptance` (`_MUTATING_STEPS`,
 `plugins/foundry/tooling/foundry/campaign_runtime.py`), and the `CampaignPipeline`
 protocol (`plugins/foundry/tooling/foundry/campaign_coordinator.py`) declares no
-method that creates an issue. The campaign preview exists for one provider only:
+method that creates an issue. The campaign preview exists for two providers:
 `preview_epic` (`plugins/foundry/tooling/foundry/epic_preview.py`) refuses a tracker
 whose adapter does not set `epic_subgraph_supported`, which defaults to `False`
-(`plugins/foundry/tooling/foundry/trackers/base.py`) and is set to `True` only by
-the DevHub adapter (`plugins/foundry/tooling/foundry/trackers/devhub.py`). So inside
+(`plugins/foundry/tooling/foundry/trackers/base.py`) and is set to `True` by
+the DevHub and Linear adapters (`plugins/foundry/tooling/foundry/trackers/devhub.py`,
+`plugins/foundry/tooling/foundry/trackers/linear.py`). So inside
 an Epic campaign the authorization of (b) has no effect yet. Three things are missing: a
 channel that carries the remarks to the campaign, the code that creates the companion
 Epic and its issues, and campaigns usable on the repository's tracker. They are left to

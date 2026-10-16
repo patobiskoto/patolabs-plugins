@@ -176,7 +176,7 @@ def _assert_campaign_facts(flat):
         assert "create_issue" not in source and "create-issue" not in source, module.name
     adapters = [path.name for path in sorted((_TOOLING / "trackers").glob("*.py"))
                 if "epic_subgraph_supported = True" in path.read_text(encoding="utf-8")]
-    assert adapters == ["devhub.py"]
+    assert adapters == ["devhub.py", "linear.py"]
 
 
 def test_no_file_under_tooling_or_hooks_contains_the_companion_epic_name():
@@ -380,7 +380,7 @@ def test_review_rounds_page_states_the_limits_and_the_portability_of_the_three_w
     assert "## What is not mechanical and what is not coded yet (PAT-139)" in page
     assert "No gate checks that the companion Epic exists, that it has no tracker link" in page
     assert "The campaign coordinator has no issue-creation primitive" in page
-    assert "only the DevHub adapter sets it to `True`" in page
+    assert "the DevHub and Linear adapters set it to `True`" in page
     assert "inside an Epic campaign the authorization has no effect yet" in page
     assert "## Portability of the three writes (PAT-139)" in page
     # PAT-144: maintainer decisions of 2026-10-11 (presence only)

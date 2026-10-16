@@ -320,11 +320,11 @@ Not coded yet:
   (`_MUTATING_STEPS`, `tooling/foundry/campaign_runtime.py`), and the
   `CampaignPipeline` protocol (`tooling/foundry/campaign_coordinator.py`) declares
   no method that creates an issue.
-- The campaign preview exists for one provider only. `preview_epic`
+- The campaign preview exists for two providers. `preview_epic`
   (`tooling/foundry/epic_preview.py`) refuses a tracker whose adapter does not set
   `epic_subgraph_supported`; the attribute defaults to `False`
-  (`tooling/foundry/trackers/base.py`) and only the DevHub adapter sets it to `True`
-  (`tooling/foundry/trackers/devhub.py`).
+  (`tooling/foundry/trackers/base.py`) and the DevHub and Linear adapters set it to `True`
+  (`tooling/foundry/trackers/devhub.py`, `tooling/foundry/trackers/linear.py`).
 - So inside an Epic campaign the authorization has no effect yet. Three things are
   missing: a channel that carries the remarks to the campaign, the code that creates the
   companion Epic and its issues, and campaigns usable on the repository's tracker. They

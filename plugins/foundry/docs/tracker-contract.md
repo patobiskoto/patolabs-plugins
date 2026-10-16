@@ -320,9 +320,9 @@ before the Milestone enum or issue POST (`youtrack.py`).
 
 **Explicit refusals (non-core):** free native-text `search(query=…)` on Linear
 (`linear.py`, `provider-native-search-query`); full administrative
-provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack, Linear and
+provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack and
 `ghprojects`
-(optional projection used only by DevHub); `supersede_adr`/`link_adr_issue` on YouTrack
+(optional projection implemented by DevHub and, since PAT-178, Linear); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`); the human acceptance of a non-code
 issue (`accept_issue`, PAT-206) on YouTrack, `ghprojects` and DevHub (`base.py`).
@@ -358,7 +358,7 @@ by these slices retain their typed unavailability errors from `base.py`; the exa
 status of each port is the matrix below. The cells therefore do
 not become `supported` from provider probes alone: each cell's `ticket` names the tranche
 that must deliver and qualify the adapter operation (PAT-57, 58, 59, 64, 66, 67, 69),
-including the still-unavailable optional Epic subgraph projection under PAT-57.
+including the still-unavailable optional Epic subgraph projection of `ghprojects` under PAT-57.
 The optional GitHub Projects acceptance-override receipt is explicitly refused.
 PAT-65
 owns no remaining adapter-delivery cell.

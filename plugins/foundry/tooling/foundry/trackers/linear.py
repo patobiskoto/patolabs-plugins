@@ -2994,6 +2994,8 @@ class LinearTracker(Tracker):
     bounded_epic_closure_supported = True
     epic_override_closure_supported = True
     epic_dropped_closure_supported = True
+    # PAT-178 / PAT-ADR-0027: neutral Epic subgraph from portable reads.
+    epic_subgraph_supported = True
     guarded_abandon_supported = True
     abandon_predecessors = _ABANDON_PREDECESSORS
     guarded_backlog_return_supported = True
@@ -4610,6 +4612,14 @@ class LinearTracker(Tracker):
             pending_operation=operation,
         )
         return created_now
+
+    def get_epic_subgraph(
+        self, project: Project, epic_id: str, *, depth: int = 8, nodes: int = 100,
+    ) -> dict:
+        """Read-only ``foundry-epic-subgraph.v1`` (PAT-178), built from ``get_issue``."""
+        from foundry.epic_subgraph import build_neutral_subgraph
+
+        return build_neutral_subgraph(self, project, epic_id, depth=depth, nodes=nodes)
 
     def validate_issue_binding(self, project: Project, *issue_ids: str) -> None:
         binding = self._activate(project)

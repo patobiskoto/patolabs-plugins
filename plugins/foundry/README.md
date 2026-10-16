@@ -232,8 +232,8 @@ is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
 Foundry never installs, downloads, starts, or selects a local model during an upgrade.
 
-Dev Hub Epic orchestration starts with a deterministic read-only preview. It consumes
-the provider's complete versioned subgraph, resolves the effective Foundry routing and
+Epic orchestration starts with a deterministic read-only preview (Dev Hub and Linear). It
+consumes the provider's complete subgraph, resolves the effective Foundry routing and
 limits, and emits classifications, human gates, dependency waves, explicit unknowns and
 a stable digest without acquiring execution authority. The API and command contract are
 documented in [`docs/epic-preview.md`](docs/epic-preview.md).
