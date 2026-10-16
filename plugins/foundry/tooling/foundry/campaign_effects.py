@@ -51,7 +51,8 @@ DEFAULT_POLL_SECONDS = 60
 MAX_POLL_SECONDS = 600
 MAX_SUMMARY_BYTES = 32 * 1024
 # The session may commit locally; it holds no push, code-host or Foundry write verb.  These
-# are tool rules of the host, a discipline boundary and not a sandbox (docs/campaign-effects.md).
+# are tool rules of the host, a second layer: the write boundary is the native sandbox of
+# ``sandbox_settings`` (PAT-220), see docs/campaign-effects.md.
 DISALLOWED_TOOLS = (
     "Bash(git push:*)", "Bash(gh:*)",
     "Bash(python3 *foundry_cli.py issue *)", "Bash(python3 *foundry_cli.py edit *)",
@@ -362,16 +363,69 @@ def _session_id(attempt: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"foundry:campaign:{attempt}"))
 
 
-def session_argv(runtime: Runtime, plan: dict, epic: str, ticket: str, session_id: str) -> list[str]:
+def git_dirs(runtime: Runtime, worktree: Path) -> tuple[str, str]:
+    """(common dir, git dir) of a linked worktree, absolute (one local ``git rev-parse``)."""
+    done = _run(runtime, ["git", "rev-parse", "--path-format=absolute", "--git-common-dir",
+                          "--absolute-git-dir"], worktree, timeout=GIT_TIMEOUT_SECONDS)
+    lines = (done.stdout or "").splitlines() if done.returncode == 0 else []
+    if len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
+        raise OSError("répertoires git du worktree illisibles")
+    common, gitdir = (os.path.realpath(line) for line in lines)
+    if common == gitdir:
+        raise OSError("le répertoire du ticket n'est pas un worktree lié")
+    return common, gitdir
+
+
+def sandbox_settings(worktree: Path, worktrees_dir: Path, common: str, gitdir: str,
+                     env: dict) -> dict:
+    """The ``--settings`` object of an implementation or correction session (PAT-220): the
+    PAT-124 native sandbox (``local_first_runner.native_sandbox_settings``) confined to the
+    ticket worktree plus what a local ``git commit`` writes, with the Foundry data directory,
+    the Foundry configuration and the host configuration of the user denied."""
+    from foundry import config
+    from foundry.local_first_runner import native_sandbox_settings
+
+    real = os.path.realpath
+    home = real(os.path.expanduser("~"))
+    deny = [real(registry.data_dir()), real(config.default_config_path().parent),
+            real(config.default_config_path()), real(os.path.join(home, ".claude"))]
+    if os.path.exists(os.path.join(home, ".codex")):
+        deny.append(real(os.path.join(home, ".codex")))
+    inside = lambda outer, p: p == outer or p.startswith(outer.rstrip("/") + "/")  # noqa: E731
+    # Reads re-allowed under the home: the git common dir, the git identity files, and the
+    # interpreter prefixes and PATH entries that are under the home (bounded, never a denied path).
+    wanted = [common, os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git"),
+              sys.prefix, sys.base_prefix,
+              *[e for e in (env.get("PATH") or "").split(os.pathsep) if os.path.isabs(e)]]
+    allow = [real(p) for p in wanted if inside(home, real(p)) or p == common]
+    allow = [p for p in dict.fromkeys(allow)
+             if not any(inside(p, d) or inside(d, p) for d in deny)]
+    protect = [os.path.join(real(worktree), name) for name in (".claude", ".git")]
+    protect += [os.path.join(common, name) for name in ("hooks", "config", "info", "refs/replace")]
+    protect += [os.path.join(gitdir, name) for name in ("commondir", "gitdir", "config.worktree")]
+    return native_sandbox_settings(
+        attempt_dir=worktree, work_root=worktrees_dir, home=home, deny_read=deny, allow_read=allow,
+        allow_write=[os.path.join(common, "objects"), os.path.join(common, "refs"),
+                     os.path.join(common, "logs"), gitdir],
+        protect=protect)
+
+
+def session_argv(runtime: Runtime, plan: dict, epic: str, ticket: str, session_id: str,
+                 settings: dict) -> list[str]:
+    """Implementation and correction sessions: native sandbox (``dontAsk`` mode and
+    ``--settings``), user settings only, so the worktree's own ``.claude`` cannot widen it."""
+    from foundry.local_first_runner import with_native_sandbox
+
     argv = [
         "claude", "--print", "--output-format", "json", "--model", plan["model"],
-        "--max-budget-usd", f"{runtime.budget_usd:.2f}", "--permission-mode", "auto",
+        "--max-budget-usd", f"{runtime.budget_usd:.2f}",
         "--plugin-dir", str(runtime.plugin_root), "--name", f"foundry-campaign-{epic}-{ticket}",
+        "--setting-sources", "user",
     ]
     if plan["effort"] is not None:
         argv.extend(["--effort", plan["effort"]])
     argv.extend(["--session-id", session_id, "--disallowedTools", *DISALLOWED_TOOLS])
-    return argv
+    return with_native_sandbox(argv, settings)
 
 
 def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts,
@@ -393,7 +447,9 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
 
         return launch_review(runtime, plan, epic, ticket, attempt, attempts, worktree)
     session_id = _session_id(attempt)
-    argv = session_argv(runtime, plan, epic, ticket.id, session_id)
+    common, gitdir = git_dirs(runtime, worktree)
+    settings = sandbox_settings(worktree, runtime.worktrees_dir, common, gitdir, plan["env"])
+    argv = session_argv(runtime, plan, epic, ticket.id, session_id, settings)
     done = _run(runtime, argv, worktree, input=plan["prompt"], timeout=IMPLEMENT_TIMEOUT_SECONDS,
                 env=plan["env"])
     result = _parse_session(done.stdout, session_id)

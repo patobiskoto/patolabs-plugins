@@ -1,6 +1,7 @@
 """PAT-217: effects of an Epic campaign; doubles only, no network, no real claude."""
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -80,6 +81,9 @@ class World:
     def runner(self, argv, cwd=None, input=None, env=None, **kwargs):
         self.calls.append((list(argv), cwd, env, input))
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
+        if argv[:2] == ["git", "rev-parse"]:  # PAT-220: a linked worktree of the stand-in repository
+            common = Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git"
+            return ok(f"{common}\n{common}/worktrees/{Path(cwd).name}\n")
         if argv[0] == "git":
             after = argv[argv.index("add") + 1:]
             Path(next(a for a in after if not a.startswith("-"))).mkdir(parents=True)
@@ -360,7 +364,8 @@ def test_implement_session_argv_env_and_authority(env):
     assert argv[argv.index("--model") + 1]
     assert argv[argv.index("--max-budget-usd") + 1] == "5.00"
     assert re.fullmatch(r"[0-9a-f-]{36}", argv[argv.index("--session-id") + 1])
-    assert argv[argv.index("--disallowedTools") + 1:] == list(ce.DISALLOWED_TOOLS)
+    assert argv[argv.index("--disallowedTools") + 1:argv.index("--permission-mode")] == list(
+        ce.DISALLOWED_TOOLS)
     assert "Bash(git push:*)" in argv and "Bash(gh:*)" in argv
     assert any("issue" in rule for rule in ce.DISALLOWED_TOOLS)
     assert set(child_env) <= {"HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER",
@@ -374,6 +379,86 @@ def test_implement_session_argv_env_and_authority(env):
     from foundry.routing import RoutingPolicy
 
     assert effort == RoutingPolicy.load(env.runtime.root).resolve("implementer", "claude").effort
+
+
+def _session(env):
+    step(env)  # start
+    step(env)
+    (argv, cwd, _e, _p), = effects(env.world)[1:]
+    return argv, json.loads(argv[argv.index("--settings") + 1]), cwd
+
+
+def _under(path, entries):
+    return any(path == e or path.startswith(e.rstrip("/") + "/") for e in entries)
+
+
+def test_implement_session_runs_in_the_native_sandbox(env):
+    argv, settings, cwd = _session(env)
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk" and "auto" not in argv
+    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert argv.count("--settings") == 1 and argv.index("--settings") > argv.index("--disallowedTools")
+    sandbox = settings["sandbox"]
+    assert sandbox["enabled"] is True and sandbox["failIfUnavailable"] is True
+    assert sandbox["allowUnsandboxedCommands"] is False
+    worktree = os.path.realpath(cwd)
+    writes = sandbox["filesystem"]["allowWrite"]
+    assert worktree in writes
+    assert settings["permissions"]["allow"] == [f"Read(//{worktree.lstrip('/')}/**)",
+                                                f"Edit(//{worktree.lstrip('/')}/**)"]
+
+
+def test_session_cannot_write_foundry_state_or_user_configuration(env, monkeypatch):
+    home = env.tmp / "home"
+    (home / ".codex").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FOUNDRY_CONFIG", raising=False)
+    argv, settings, _cwd = _session(env)
+    data = os.path.realpath(env.tmp / "data")
+    real_home = os.path.realpath(home)
+    from foundry import review_remarks
+    from foundry.routing import AcceptanceProofStore
+
+    protected = [
+        str(AcceptanceProofStore("r/x", state_dir=data).directory),
+        os.path.join(data, ca.JOURNAL_NAME), os.path.join(data, ce.ATTEMPTS_NAME),
+        str(review_remarks.ReviewRemarksStore("r/x", state_dir=data).directory),
+        os.path.join(real_home, ".config", "foundry", "config.env"),
+        os.path.join(real_home, ".claude", "settings.json"), os.path.join(real_home, ".codex", "x"),
+    ]
+    writes = settings["sandbox"]["filesystem"]["allowWrite"]
+    edit_deny = [r[len("Edit(//"):-1] for r in settings["permissions"]["deny"]
+                 if r.startswith("Edit(//")]
+    for path in protected:
+        assert not _under(path, writes), path
+        assert any(_under(path, ["/" + e.removesuffix("/**")]) for e in edit_deny), path
+        assert _under(path, settings["sandbox"]["filesystem"]["denyRead"]) or _under(
+            path, [real_home]), path
+    assert _under(os.path.join(data, ca.JOURNAL_NAME), ["/" + e.removesuffix("/**") for e in edit_deny])
+
+
+def test_session_git_writes_exclude_hooks_and_config(env):
+    _argv, settings, cwd = _session(env)
+    common = os.path.realpath(env.tmp / "repo" / ".git")
+    gitdir = os.path.join(common, "worktrees", "APP-2")
+    fs = settings["sandbox"]["filesystem"]
+    assert set(fs["allowWrite"]) >= {os.path.join(common, d) for d in ("objects", "refs", "logs")} | {gitdir}
+    for name in ("hooks", "config", "info", "refs/replace"):
+        assert os.path.join(common, name) in fs["denyWrite"]
+        assert f"Edit(//{os.path.join(common, name).lstrip('/')}/**)" in settings["permissions"]["deny"]
+    worktree = os.path.realpath(cwd)
+    for path in (os.path.join(worktree, ".claude"), os.path.join(worktree, ".git"),
+                 os.path.join(gitdir, "commondir")):
+        assert path in fs["denyWrite"]
+    assert common in fs["allowRead"] and not _under(os.path.join(common, "hooks"), fs["allowWrite"])
+
+
+def test_correction_session_uses_the_same_sandbox_and_reviewer_does_not():
+    from foundry import campaign_review as cr
+
+    runtime = ce.Runtime(root="/r", worktrees_dir=Path("/w"))
+    plan = {"model": "m", "effort": None}
+    assert "--settings" not in cr.reviewer_argv(runtime, plan, "E", "T", "sid", Path("/p"))
+    assert "--settings" in ce.session_argv(runtime, plan, "E", "T", "sid", {"a": 1})
 
 
 def test_open_pr_follows_a_finished_implementation_with_its_summary(env):

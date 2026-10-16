@@ -64,10 +64,14 @@ One fresh headless session per `implement` attempt, launched by `_launch` with t
 
 ```text
 claude --print --output-format json --model <routed model> --max-budget-usd <budget>
-  --permission-mode auto --plugin-dir <plugin root> --name foundry-campaign-<EPIC>-<ID>
+  --plugin-dir <plugin root> --name foundry-campaign-<EPIC>-<ID> --setting-sources user
   [--effort <routed effort>] --session-id <uuid5 of the attempt identity>
-  --disallowedTools <DISALLOWED_TOOLS>
+  --disallowedTools <DISALLOWED_TOOLS> --permission-mode dontAsk --settings <sandbox JSON>
 ```
+
+The last two flags come from `with_native_sandbox` (`local_first_runner.py`, PAT-220); the
+JSON is `sandbox_settings`, below. A correction session (`campaign_review.py`) is launched by
+the same `_launch` and `session_argv`, so it has the same sandbox.
 
 - Model and effort come from `RoutingPolicy.load(root).resolve("implementer", "claude")`,
   translated by `claude_invocation_model` and `claude_effort_parameters`, as in
@@ -97,16 +101,54 @@ Foundry verbs that write, such as `routing record-review-proof`, are not listed)
 guard (`hooks/guard_bash.py`) also denies `gh pr create/merge`, a push to the default branch
 and `campaign-approval approve` when the plugin is active, because `--plugin-dir` is passed.
 
-The limit, stated: the session runs as the same OS user as the cadencer. A token kept in the
-user's Foundry configuration file or keychain, or any credential of that user, is readable by
-a command the session writes outside the Foundry code paths; a plain spelling outside the
-prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not denied (deduced);
-and the session can write the local Foundry state of `registry.data_dir()`, including the
-review-proof store, the approval journal and the attempt journal, so a forged review proof
-would let the cadencer merge without a real review. This is a discipline boundary,
-not a sandbox (the framing of `guard_bash.py`, whose `bash -c` indirection is out of scope by
-design). Whether the host matches the mid-command wildcards of `DISALLOWED_TOOLS` is not
-verified here (unknown); the tests pin the argv, not the host's matching.
+### The native sandbox (PAT-220, PAT-ADR-0026)
+
+`sandbox_settings` (`campaign_effects.py`) builds the `--settings` object with
+`native_sandbox_settings` (`local_first_runner.py`, the PAT-124 sandbox, unchanged), with the
+ticket worktree as attempt directory and the worktrees directory as work root. Sources are the
+code and the tests `test_session_*` and `test_implement_session_runs_in_the_native_sandbox`
+(`tests/test_campaign_effects.py`), which read the built settings and pin them; no live
+`claude` session was run for PAT-220, so the operating system's enforcement itself is the one
+qualified by PAT-124 (`CHANGELOG.md`, trials of 2026-10-08) and is not re-observed here.
+
+- Shell commands run in the Bash sandbox (`enabled`, `failIfUnavailable` true,
+  `allowUnsandboxedCommands` false): writes only in the worktree, in the per-user temporary
+  directory (the host default, `native_sandbox_settings`) and in the git paths below. The file
+  tools rely on permissions (mode `dontAsk`, `Read`/`Edit` allow rules on the worktree only).
+- Denied to reads and writes, by sandbox and by `Read`/`Edit` rules: `registry.data_dir()`
+  (the proof store `acceptance-proofs`, `campaign-approvals.jsonl`, `campaign-attempts.jsonl`,
+  `review-remarks`), the directory and the file of `config.default_config_path()`, `~/.claude`
+  and `~/.codex` when it exists, and the whole home apart from what is re-allowed for reading:
+  the git common directory, `~/.gitconfig`, `~/.config/git`, and the entries under the home of
+  `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child environment (so the tests
+  find their interpreter). The worktree's `.claude` and `.git` pointer file are denied to
+  writes. `--setting-sources user` keeps the worktree's project and local settings from
+  widening the sandbox (arrays merge across scopes, PAT-124).
+- Git in a linked worktree writes into the main repository's directory. `git_dirs` reads the
+  common directory and the worktree's git directory (`git rev-parse`), and the sandbox
+  allows writes to `objects`, `refs`, `logs` of the common directory and to the worktree's own
+  git directory only (what a local `git commit` writes: deduced, not run under the sandbox).
+  `hooks`, `config`, `info`, `refs/replace` of the common directory and `commondir`, `gitdir`,
+  `config.worktree` of the git directory are denied to writes, so the session cannot plant a
+  hook, change `core.hooksPath` or a replacement object that a later git command of the
+  cadencer would run.
+- Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
+  `refs`; the objects are shared by all worktrees; the user scope of the host settings still
+  loads (`--setting-sources user`) and can add to the sandbox arrays.
+- Stays outside the sandbox: the `claude` process itself (model API network, its own
+  credentials and the user's keychain access, `--plugin-dir` reads), the plugin hooks it
+  runs, and the network of the shell commands, which the sandbox policy governs and these
+  settings do not open (deduced from the settings, which set no network key; not observed).
+  A credential kept outside the home or in the keychain is not covered by the read rules.
+
+The remaining limits, stated: `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
+`gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve`; a plain
+spelling outside the prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not
+denied by them (deduced), and with the network of the shell not opened such a push has no
+route (deduced). The sandbox, not these rules, is what keeps the session from writing the
+review-proof store, the approval journal and the attempt journal. Whether the host matches
+the mid-command wildcards of `DISALLOWED_TOOLS` is not verified here (unknown); the tests pin
+the argv, not the host's matching.
 
 ## The attempt journal
 
@@ -268,10 +310,12 @@ matches the `Bash(...)` wildcard rules as written, or refuses a compound command
 with an allowed prefix, and whether `Read` of the packet directory is allowed through
 `--add-dir` (unknown). Remaining limit: the `user` scope is still loaded, so the permission
 rules of the user's own settings apply to the reviewer, and its `Read` reaches any file the OS
-user can read. The session runs as the same OS user as the cadencer and in the ticket
-worktree: the limit stated for the implementer session applies, a discipline boundary and not
-a sandbox, and the reviewer does not hold the `record-review-proof` verb in its rules (the
-coordinator records the proof, as in the manual workflow).
+user can read. The reviewer is not in the native sandbox: `reviewer_argv` carries no
+`--settings` (tested), because its three read verbs take the review-deduplication lock
+(`ReviewDeduplicator._locked`, `routing.py`, `.ledger.lock` under `review-dedup/` of the data
+directory), which the sandbox denies. It runs as the same OS user as the cadencer, in the
+ticket worktree, as a discipline boundary: it does not hold the `record-review-proof` verb in
+its rules (the coordinator records the proof, as in the manual workflow).
 
 ## The correction effect
 
