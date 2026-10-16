@@ -37,7 +37,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
       "v1_core": false,
-      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported and epic_subgraph_supported (devhub.py)."
+      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178."
     }
   },
   "operations": [
@@ -280,8 +280,8 @@
           "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py)"
         },
         "linear": {
-          "status": "refused",
-          "evidence": "no override; the base raises EpicSubgraphUnavailableError (base.py)"
+          "status": "supported",
+          "evidence": "PAT-178: epic_subgraph_supported = True and get_epic_subgraph builds foundry-epic-subgraph.v1 from get_issue reads inside one graph_snapshot (linear.py, epic_subgraph.py); nested connections over 100 items are refused by _connection (nested_pagination_unavailable)"
         },
         "ghprojects": {
           "status": "to_qualify",
@@ -289,7 +289,7 @@
           "ticket": "PAT-57"
         }
       },
-      "note": "Optional read-only projection; only DevHub implements it, for its own wave preview. The core journey is served by search(), link() and create_issue(parent=...)."
+      "note": "Optional read-only projection; DevHub (devhub-application.v1) and Linear (foundry-epic-subgraph.v1, PAT-ADR-0027) implement it, for the Epic preview. The core journey is served by search(), link() and create_issue(parent=...)."
     },
     {
       "id": "full-administrative-provisioning",

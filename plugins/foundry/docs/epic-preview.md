@@ -1,15 +1,28 @@
 # Deterministic Epic execution preview
 
-The Epic preview is a read-only checkpoint between Dev Hub's Tracker graph and any
-future Foundry campaign. Dev Hub remains the tracker and graph-contract owner. Foundry
-alone resolves routing and retains orchestration, review, CI, human and merge gates.
+The Epic preview is a read-only checkpoint between a tracker's Epic graph (Dev Hub or
+Linear) and any future Foundry campaign. Foundry alone resolves routing and retains orchestration, review, CI, human and merge gates.
 Generating a preview creates no branch, agent, command, tracker mutation, budget
 reservation, lease, PR, merge or external effect.
 
 ## Input boundary
 
-`DevHubTracker.get_epic_subgraph()` performs one authenticated `GET` of the strict
-`devhub-application.v1` projection at its maximum supported depth and node budget. The
+Two graph contracts are accepted (`GRAPH_CONTRACTS`, `epic_preview.py`):
+
+- `devhub-application.v1`: `DevHubTracker.get_epic_subgraph()` performs one authenticated
+  `GET` of the strict projection at its maximum supported depth and node budget.
+- `foundry-epic-subgraph.v1` (PAT-ADR-0027): `LinearTracker.get_epic_subgraph()` calls
+  `build_neutral_subgraph` (`epic_subgraph.py`), which reads the hierarchy (`parent-of`,
+  depth at most `PREVIEW_DEPTH`, at most `PREVIEW_NODE_LIMIT` nodes) and the `depends-on`
+  links through `validate_issue_binding` and `get_issue` inside one `graph_snapshot`. It
+  has the Dev Hub keys plus `parent_validation_digest` (`write.epic_parent_validation_digest`
+  of the Epic); a node `version` may be `null`; `blockers` lists every `depends-on` whose
+  target is outside the subgraph, whatever its state, and a `done` one never blocks. A node
+  outside the project, a duplicate, a cycle, an exceeded cap or an unreadable node is
+  refused (`EpicPreviewError` or the adapter's own error); a nested connection of more than
+  100 items is refused by `_connection` (`linear.py`).
+
+A tracker whose `epic_subgraph_supported` is false is refused before any read. The
 pure `build_preview(graph, policy, routing_policy)` boundary then requires:
 
 - one versioned Epic root and a complete, single-parent descendant hierarchy;
@@ -29,12 +42,14 @@ an explicit human gate and unknown, never inferred completion.
 
 The `foundry-epic-preview.v1` result contains:
 
-- the Dev Hub contract, root, canonical snapshot digest and every node version;
+- the graph's own contract, root, canonical snapshot digest and every node version
+  (`null` for a versionless node); `authority.tracker` is the tracker's name;
 - the effective routing policy, planned implementer/reviewer tier, model and effort;
 - eligible, blocked and omitted summaries plus explicit human gates;
 - stable topological waves, split deterministically by the concurrency ceiling;
 - budget/concurrency ceilings, expiry, unknowns and the fixed authority boundary;
-- `preview_digest`, SHA-256 over every material field above.
+- `preview_digest`, SHA-256 over every material field above;
+- `structure_digest`, outside that material so the preview digest is not changed by it.
 
 Canonical JSON uses sorted object keys and compact UTF-8 encoding. The same graph,
 policy and routing mapping therefore produce the same digest. A version, state, edge,
@@ -46,6 +61,19 @@ High-risk issue labels (`risk:high`, `risk/high`, `risk-high` or `high-risk`) im
 `frontier` implementer floor. Critical risk imposes `apex`. An explicit policy floor may
 only make that effective floor stricter. Reviewer retains Foundry's existing
 `frontier/high` gate floor.
+
+## Structure digest
+
+`structure_digest(graph)` (`epic_preview.py`, tag `STRUCTURE_CONTRACT`) is the SHA-256 of
+the canonical JSON of: the root, the sorted node ids with their types, the `subtask-of`
+edges, the internal `depends-on` edges, the sorted external blocker pairs
+(`issue`, `blocked_by`, without their states) and the parent component. A new child, an
+internal edge, a type or an external blocker changes it; a state, a version, a title, a
+label or an external blocker turning `done` does not (tests: `tests/test_epic_subgraph.py`).
+The parent component is the Epic's `parent_validation_digest` for
+`foundry-epic-subgraph.v1`; `devhub-application.v1` carries no parent body, so it is the
+named absence `{"unavailable": ...}`. Detecting drift from this digest is not implemented
+here.
 
 ## Read-only command
 
@@ -66,4 +94,5 @@ python3 tooling/foundry_cli.py epic-preview APP-1 \
 Omitting a budget or concurrency ceiling is allowed only so the preview can report the
 coordinate under `unknowns`; it does not create an implicit unlimited approval. Other
 trackers fail with `EpicSubgraphUnavailableError` until they expose an equivalent
-complete versioned read contract.
+complete read contract. On Linear, `FOUNDRY_REQUEST_COUNT=stderr` reports the number of
+requests (`REQUEST_COUNT_ENV`, `linear.py`).

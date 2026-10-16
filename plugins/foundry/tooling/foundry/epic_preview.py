@@ -1,4 +1,8 @@
-"""Deterministic, strictly read-only preview of a versioned Dev Hub Epic graph.
+"""Deterministic, strictly read-only preview of a versioned Epic graph.
+
+The graph is either the Dev Hub projection (``devhub-application.v1``) or the
+tracker-neutral ``foundry-epic-subgraph.v1`` (PAT-ADR-0027) that
+``foundry.epic_subgraph`` builds from portable reads.
 
 This module owns no branch, agent, tracker mutation, budget reservation, command or
 external-effect primitive.  It validates one complete projection and derives a plan
@@ -19,6 +23,9 @@ from foundry.trackers.base import EpicSubgraphUnavailableError
 
 
 GRAPH_CONTRACT = "devhub-application.v1"
+NEUTRAL_GRAPH_CONTRACT = "foundry-epic-subgraph.v1"
+GRAPH_CONTRACTS = (GRAPH_CONTRACT, NEUTRAL_GRAPH_CONTRACT)
+STRUCTURE_CONTRACT = "foundry-epic-structure.v1"
 POLICY_CONTRACT = "foundry-epic-preview-policy.v1"
 PREVIEW_CONTRACT = "foundry-epic-preview.v1"
 PREVIEW_DEPTH = 8
@@ -85,7 +92,7 @@ def _project_key(issue_id: str) -> str:
     return issue_id.rsplit("-", 1)[0]
 
 
-def _validate_node(raw, index: int, project_key: str) -> dict:
+def _validate_node(raw, index: int, project_key: str, *, neutral: bool = False) -> dict:
     where = f"nodes[{index}]"
     node = _exact(raw, {
         "id", "title", "state", "priority", "estimate", "milestone", "type", "labels",
@@ -118,7 +125,8 @@ def _validate_node(raw, index: int, project_key: str) -> dict:
     for field in ("created", "updated"):
         if node[field] is not None:
             _integer(node[field], f"{where}.{field}")
-    _integer(node["version"], f"{where}.version", minimum=1)
+    if not (neutral and node["version"] is None):
+        _integer(node["version"], f"{where}.version", minimum=1)
     _integer(node["depth"], f"{where}.depth", maximum=8)
     return dict(node)
 
@@ -147,12 +155,19 @@ def validate_subgraph(
     expected_project_key: str | None = None,
 ) -> ValidatedGraph:
     """Validate and normalize the strict complete Dev Hub subgraph contract."""
-    graph = _exact(raw, {
+    keys = {
         "root", "nodes", "edges", "blockers", "progress", "depth", "truncation",
         "schema_version",
-    }, "subgraph")
-    if graph["schema_version"] != GRAPH_CONTRACT:
-        _fail("subgraph.schema_version: contrat Dev Hub non supporté")
+    }
+    if isinstance(raw, dict) and raw.get("schema_version") == NEUTRAL_GRAPH_CONTRACT:
+        keys = keys | {"parent_validation_digest"}
+    graph = _exact(raw, keys, "subgraph")
+    if graph["schema_version"] not in GRAPH_CONTRACTS:
+        _fail("subgraph.schema_version: contrat de sous-graphe non supporté")
+    neutral = graph["schema_version"] == NEUTRAL_GRAPH_CONTRACT
+    if neutral and (not isinstance(graph["parent_validation_digest"], str)
+                    or re.fullmatch(r"[0-9a-f]{64}", graph["parent_validation_digest"]) is None):
+        _fail("subgraph.parent_validation_digest: empreinte hors contrat")
     root = graph["root"]
     project_key = _project_key(root)
     if expected_project_key is not None and project_key != expected_project_key:
@@ -163,7 +178,7 @@ def validate_subgraph(
         _fail("subgraph.nodes: racine versionnée requise")
     nodes: dict[str, dict] = {}
     for index, raw_node in enumerate(graph["nodes"]):
-        node = _validate_node(raw_node, index, project_key)
+        node = _validate_node(raw_node, index, project_key, neutral=neutral)
         if node["id"] in nodes:
             _fail("subgraph.nodes: identifiant dupliqué")
         nodes[node["id"]] = node
@@ -225,12 +240,13 @@ def validate_subgraph(
                 or issue not in descendants):
             _fail(f"blockers[{index}]: blocker hors scope")
         if (not isinstance(blocker["blocker_state"], str)
-                or blocker["blocker_state"] not in STATES
-                or blocker["blocker_state"] == "done"):
+                or blocker["blocker_state"] not in STATES):
             _fail(f"blockers[{index}]: état blocker incohérent")
         if type(blocker["inside_subgraph"]) is not bool:
             _fail(f"blockers[{index}].inside_subgraph: booléen requis")
         inside = blocked_by in nodes
+        if blocker["blocker_state"] == "done" and (inside or not neutral):
+            _fail(f"blockers[{index}]: état blocker incohérent")
         if blocker["inside_subgraph"] != inside:
             _fail(f"blockers[{index}]: appartenance contradictoire")
         key = (issue, blocked_by)
@@ -380,9 +396,52 @@ def _classification_item(node: dict, reason: str, models: list[dict] | None = No
     return result
 
 
+def _open_external(graph: ValidatedGraph, issue_id: str) -> tuple[dict, ...]:
+    """External blockers that still block: a ``done`` one is recorded, never blocking."""
+    return tuple(
+        entry for entry in graph.external_blockers[issue_id]
+        if entry["blocker_state"] != "done"
+    )
+
+
+def structure_digest(graph: ValidatedGraph) -> str:
+    """PAT-ADR-0027 structure digest of one validated graph (pure).
+
+    Covers ids and types, hierarchy (``subtask-of``), internal ``depends-on`` edges,
+    the set of external blocker pairs without their states, and the Epic's validation
+    digest.  States, versions, titles and labels are not covered.  Dev Hub's contract
+    carries no parent body, so the parent component is then a named absence.
+    """
+    value = graph.value
+    edges = value["edges"]
+    parent = (
+        {"validation_digest": value["parent_validation_digest"]}
+        if "parent_validation_digest" in value
+        else {"unavailable": f"{value['schema_version']} carries no parent body"}
+    )
+    return _digest({
+        "contract": STRUCTURE_CONTRACT,
+        "graph_contract": value["schema_version"],
+        "root": value["root"],
+        "nodes": [[key, graph.nodes[key]["type"]] for key in sorted(graph.nodes)],
+        "hierarchy": sorted(
+            [edge["source"], edge["target"]] for edge in edges if edge["type"] == "subtask-of"
+        ),
+        "depends_on": sorted(
+            [edge["source"], edge["target"]] for edge in edges if edge["type"] == "depends-on"
+        ),
+        "external_blockers": sorted(
+            [entry["issue"], entry["blocked_by"]]
+            for entries in graph.external_blockers.values() for entry in entries
+        ),
+        "parent": parent,
+    })
+
+
 def build_preview(
     raw_graph: object, raw_policy: object, routing_policy: RoutingPolicy,
     *, expected_epic_id: str | None = None, expected_project_key: str | None = None,
+    tracker_name: str = "devhub",
 ) -> dict:
     """Purely validate, classify, route and digest a preview (no I/O or mutation)."""
     graph = validate_subgraph(
@@ -408,7 +467,7 @@ def build_preview(
             categories[issue_id] = ("blocked", "missing_issue_type")
         elif node["state"] == "blocked":
             categories[issue_id] = ("blocked", "tracker_state_blocked")
-        elif graph.external_blockers[issue_id]:
+        elif _open_external(graph, issue_id):
             categories[issue_id] = ("blocked", "external_blocker")
         else:
             categories[issue_id] = ("eligible", "ready_or_resumable")
@@ -477,7 +536,9 @@ def build_preview(
             eligible.append(item)
         elif category == "blocked":
             if reason == "external_blocker":
-                item["blocked_by"] = [entry["blocked_by"] for entry in graph.external_blockers[issue_id]]
+                item["blocked_by"] = [
+                    entry["blocked_by"] for entry in _open_external(graph, issue_id)
+                ]
             blocked.append(item)
         else:
             omitted.append(item)
@@ -524,7 +585,7 @@ def build_preview(
     material = {
         "contract": PREVIEW_CONTRACT,
         "snapshot": {
-            "contract": GRAPH_CONTRACT,
+            "contract": graph.value["schema_version"],
             "root": root,
             "digest": _digest(graph.value),
             "versions": {issue_id: graph.nodes[issue_id]["version"] for issue_id in sorted(graph.nodes)},
@@ -537,11 +598,15 @@ def build_preview(
         "waves": waves,
         "unknowns": sorted(set(unknowns)),
         "authority": {
-            "tracker": "devhub", "orchestration": "foundry", "gates": "foundry",
+            "tracker": tracker_name, "orchestration": "foundry", "gates": "foundry",
             "preview": "read-only", "effects": [],
         },
     }
-    return {**material, "preview_digest": _digest(material)}
+    # The structure digest stays outside ``material`` so the preview digest is unchanged.
+    return {
+        **material, "preview_digest": _digest(material),
+        "structure_digest": structure_digest(graph),
+    }
 
 
 def preview_epic(tracker, project, epic_id: str, policy: object, routing_policy: RoutingPolicy) -> dict:
@@ -560,6 +625,7 @@ def preview_epic(tracker, project, epic_id: str, policy: object, routing_policy:
         graph, policy, routing_policy,
         expected_epic_id=epic_id,
         expected_project_key=project_key,
+        tracker_name=tracker.name,
     )
 
 
@@ -581,7 +647,7 @@ def _positive_int(value: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Preview read-only d'un Epic Dev Hub")
+    parser = argparse.ArgumentParser(description="Preview read-only d'un Epic")
     parser.add_argument("epic_id")
     parser.add_argument("--host", required=True, choices=("claude", "codex"))
     parser.add_argument("--issued-at", required=True, type=_non_negative_int)
