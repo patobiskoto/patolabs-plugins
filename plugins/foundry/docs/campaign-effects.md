@@ -364,7 +364,7 @@ remarks; `writes` what this attempt wrote; `unknown` the creations whose effect 
    rewrites (`deferral_lines`, from the `deferral` fields of the journal). After a durable
    refusal the same rewrite carries `Remarks not deferred: durable refusal (<reason>) (writes
    made before it: ...); they are corrected before the merge.`, the second parenthesis only when
-   a refused attempt made a write.
+   an attempt of the pull request made a write.
 6. The `finished` line with state `done`; the next pass decides `merge`.
 
 A failed `edit create-issue` is never retried inside the pass. When its standard error is the
