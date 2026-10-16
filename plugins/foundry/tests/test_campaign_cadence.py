@@ -170,6 +170,36 @@ def test_state_started_without_pr_is_implement(tmp_path):
         "implement", "APP-2", "started_without_pr")
 
 
+def test_implemented_branch_without_pr_is_open_pr(tmp_path):
+    kwargs = dict(refs=["feat/app-2-x"], branch_facts=lambda root, branch: (SHA, 2),
+                  implemented=lambda ticket, sha: sha == SHA)
+    _, decision, _, _ = run([started()], tmp_path, **kwargs)
+    assert (decision.kind, decision.ticket, decision.reason) == (
+        "open-pr", "APP-2", "implemented_without_pr")
+    # no commit beyond the base, or not marked implemented: still `implement`
+    kwargs["branch_facts"] = lambda root, branch: (SHA, 0)
+    assert run([started()], tmp_path, **kwargs)[1].kind == "implement"
+    kwargs.update(branch_facts=lambda root, branch: (SHA, 2), implemented=lambda t, sha: False)
+    assert run([started()], tmp_path, **kwargs)[1].kind == "implement"
+
+
+def test_closed_pr_from_a_list_without_merged_is_re_read(tmp_path):
+    """The list endpoint carries no ``merged`` (only ``merged_at``): get_pr decides."""
+    class ListWithoutMerged(FakeCodeHost):
+        def list_prs(self, repo, head):
+            self.calls.append("list_prs")
+            return [pr("closed", False)]  # the list says merged=False
+
+        def get_pr(self, repo, number):
+            self.calls.append("get_pr")
+            return pr("closed", True, number)
+
+    _, decision, _, codehost = run(
+        [started()], tmp_path, refs=["feat/app-2-x"], codehost=ListWithoutMerged())
+    assert (decision.kind, decision.reason) == ("suspend", "merged_pr_state_behind")
+    assert "get_pr" in codehost.calls
+
+
 def test_started_without_branch_resumes_with_start(tmp_path):
     _, decision, _, _ = run([started()], tmp_path)
     assert (decision.kind, decision.reason) == ("start", "in_progress_branch_absent")

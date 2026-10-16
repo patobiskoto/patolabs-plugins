@@ -4,6 +4,7 @@ One pass re-reads the tracker, git and the PR, and returns exactly one ``Decisio
 produces no effect: no tracker write, no git mutation, no PR mutation, no session launch.
 The state lives in the tracker, git and the PR, never here.  ``decide`` is pure over an
 immutable ``Observation``; ``observe`` gathers it through declared capabilities only.
+Executing a decision is ``campaign_effects`` (PAT-217); this module stays effect-free.
 """
 from __future__ import annotations
 
@@ -31,8 +32,8 @@ CADENCE_CONTRACT = "foundry-campaign-cadence.v1"
 STARTED_STATES = ("in-progress", "review")
 READY_STATES = ("backlog", "ready")
 KINDS = (
-    "start", "implement", "review", "correct", "wait-ci", "merge", "await-verdict",
-    "suspend", "refuse",
+    "start", "implement", "open-pr", "review", "correct", "wait-ci", "merge",
+    "await-verdict", "suspend", "refuse",
 )
 # Tracker states strictly behind a started or finished dependent (PAT-ADR-0027 regression).
 _UNFINISHED = ("backlog", "ready", "blocked", "in-progress", "review")
@@ -58,6 +59,10 @@ class TicketFacts:
     pr_url: str | None = None
     # Observed only for the one ticket in focus; ``None`` means not observed.
     branch: bool | None = None
+    branch_sha: str | None = None  # head of the branch, when it can be read
+    ahead: int | None = None  # commits of the branch beyond the remote default branch
+    # True when the last implementation attempt ended on this very branch head (PAT-217).
+    implemented: bool = False
     pr: PullFacts | None = None
     review: str | None = None  # none | valid | blocked | unobservable
     ci: str | None = None  # green | pending | red | none
@@ -138,6 +143,9 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
     pr = ticket.pr
     if pr is None:
         if ticket.branch:
+            if ticket.implemented and (ticket.ahead or 0) > 0:
+                return Decision("open-pr", ticket.id, "implemented_without_pr",
+                                {"branch": True, "ahead": ticket.ahead})
             return Decision("implement", ticket.id, "started_without_pr", {"branch": True})
         return Decision("start", ticket.id, "in_progress_branch_absent", {"branch": False})
     evidence = {"pr": pr.number}
@@ -225,12 +233,35 @@ def missing_capabilities(tracker) -> tuple[str, ...]:
     return tuple(missing)
 
 
-def _git_refs(root: str) -> list[str]:
+def _git(root: str, *args: str, check: bool = True) -> str:
+    """The one read-only git call of this module; empty on a refused, unchecked call."""
     result = subprocess.run(
-        ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
-        cwd=root, capture_output=True, text=True, check=True,
+        ["git", *args], cwd=root, capture_output=True, text=True, check=check,
     )
-    return sorted(result.stdout.split())
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_refs(root: str) -> list[str]:
+    return sorted(
+        _git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads",
+             "refs/remotes/origin").split()
+    )
+
+
+def _git_branch_facts(root: str, branch: str) -> tuple[str | None, int | None]:
+    """(head sha, commits beyond the remote default branch); ``None`` when unreadable."""
+    from foundry import registry
+
+    head = (_git(root, "rev-parse", "--verify", "-q", f"refs/heads/{branch}", check=False)
+            or _git(root, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}",
+                    check=False))
+    if not head:
+        return None, None
+    default = registry.default_branch(root) or "main"
+    base = (_git(root, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{default}",
+                 check=False) and f"refs/remotes/origin/{default}") or default
+    count = _git(root, "rev-list", "--count", f"{base}..{head}", check=False)
+    return head, int(count) if count.isdigit() else None
 
 
 def _branch_for(refs: list[str], issue_id: str) -> str | None:
@@ -253,9 +284,13 @@ def _find_pr(codehost, repo: str, branch: str | None, pr_url: str | None):
         opened = [pr for pr in candidates if pr.state == "open"]
         if len(opened) > 1:
             return None, "pr_ambiguous"
-        chosen = opened or sorted(
-            (pr for pr in candidates if pr.merged), key=lambda pr: pr.number)[-1:] or sorted(
-            candidates, key=lambda pr: pr.number)[-1:]
+        if opened:
+            return _pull_facts(opened[0]), None
+        # The list endpoint carries no ``merged`` field (only ``merged_at``): a closed PR is
+        # re-read one by one before it is classified merged or closed unmerged.
+        closed = [codehost.get_pr(repo, pr.number)
+                  for pr in sorted(candidates, key=lambda pr: pr.number, reverse=True)]
+        chosen = [pr for pr in closed if pr.merged][:1] or closed[:1]
         return (_pull_facts(chosen[0]) if chosen else None), None
     match = _PR_NUMBER.search(pr_url or "")
     if match:
@@ -308,6 +343,8 @@ def observe(
     tracker, codehost, project, epic: str, root: str, now: datetime | None = None, *,
     journal: Path | None = None, refs: Callable[[str], list[str]] = _git_refs,
     diff_reader: Callable[[str, str, str], bytes] = _default_diff, proof_store=None,
+    branch_facts: Callable[[str, str], tuple[str | None, int | None]] = _git_branch_facts,
+    implemented: Callable[[str, str | None], bool] | None = None,
 ) -> Observation:
     """Gather one observation with declared capabilities and read-only calls only."""
     missing = missing_capabilities(tracker)
@@ -353,7 +390,8 @@ def observe(
     focus, _problem = select_focus(tickets)
     if focus is not None:
         tickets = tuple(
-            _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store)
+            _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store,
+                         branch_facts, implemented)
             if t.id == focus else t for t in tickets
         )
     return Observation(
@@ -362,15 +400,19 @@ def observe(
     )
 
 
-def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store):
+def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store,
+                 branch_facts, implemented):
     from dataclasses import replace
 
     branch = _branch_for(refs(root), ticket.id)
+    sha, ahead = branch_facts(root, branch) if branch else (None, None)
+    done = bool(implemented and branch and implemented(ticket.id, sha))
+    known = dict(branch=branch is not None, branch_sha=sha, ahead=ahead, implemented=done)
     if ticket.state in READY_STATES:  # `start` is the step whatever git holds
-        return replace(ticket, branch=branch is not None)
+        return replace(ticket, **known)
     repo = codehost.resolve_repo(root)
     pr, anomaly = _find_pr(codehost, repo, branch, ticket.pr_url)
-    facts = replace(ticket, branch=branch is not None, pr=pr, anomaly=anomaly)
+    facts = replace(ticket, **known, pr=pr, anomaly=anomaly)
     if pr is None or pr.merged or pr.state != "open" or anomaly:
         return facts
     if proof_store is None:
@@ -400,28 +442,42 @@ def report(obs: Observation, decision: Decision) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Calcul à blanc de l'étape suivante d'une campagne")
-    sub = parser.add_subparsers(dest="verb", required=True)
-    nxt = sub.add_parser("next", help="observe, then print the one next step (no effect)")
-    nxt.add_argument("epic_id")
-    nxt.add_argument("--root", default=".")
-    args = parser.parse_args(argv)
-
+def _context(root: str):
+    """(tracker, project) of the checkout, or (tracker, None) when a capability is missing."""
     import foundry
     from foundry import registry
 
     tracker = foundry.tracker()
-    missing = missing_capabilities(tracker)
-    if missing:  # before any read, even the binding resolution
-        obs = Observation(epic=args.epic_id, missing_capabilities=missing)
-        print(report(obs, decide(obs)))
-        return 2
+    if missing_capabilities(tracker):
+        return tracker, None
     resolver = getattr(tracker, "resolve_checkout_project", None)
     project = (
-        resolver(args.root) if callable(resolver)
-        else tracker.resolve_project(registry.repo_basename(args.root))
+        resolver(root) if callable(resolver)
+        else tracker.resolve_project(registry.repo_basename(root))
     )
+    return tracker, project
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Étape suivante d'une campagne d'Epic")
+    sub = parser.add_subparsers(dest="verb", required=True)
+    nxt = sub.add_parser("next", help="observe, then print the one next step (no effect)")
+    nxt.add_argument("epic_id")
+    nxt.add_argument("--root", default=".")
+    from foundry import campaign_effects
+
+    campaign_effects.add_parsers(sub)
+    args = parser.parse_args(argv)
+    if args.verb != "next":  # `step` and `run` execute effects (PAT-217)
+        return campaign_effects.cli(args)
+
+    import foundry
+
+    tracker, project = _context(args.root)
+    if project is None:  # before any read, even the binding resolution
+        obs = Observation(epic=args.epic_id, missing_capabilities=missing_capabilities(tracker))
+        print(report(obs, decide(obs)))
+        return 2
     obs = observe(
         tracker, foundry.codehost(), project, args.epic_id, args.root,
         datetime.now(timezone.utc),

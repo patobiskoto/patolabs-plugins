@@ -3,8 +3,9 @@
 One pass of the cadencer of an Epic campaign re-reads the tracker, git and the PR, and
 returns exactly one decision. This page covers that computation only
 (`tooling/foundry/campaign_cadence.py`). Nothing here executes the decision: no tracker
-write, no git mutation, no PR mutation, no session launch (executing a step and launching
-a review are other issues). The state lives in the tracker, git and the PR; the module
+write, no git mutation, no PR mutation, no session launch. Executing a decision is
+[`campaign-effects.md`](campaign-effects.md) (PAT-217); launching a review is another issue
+(PAT-218). The state lives in the tracker, git and the PR; the module
 keeps none. The frozen Dev Hub coordinator (`campaign_coordinator.py`,
 `campaign_runtime.py`) is not used.
 
@@ -35,7 +36,8 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | any other approval refusal (`absent`, `expired`, `journal_invalid`, `preview_digest_mismatch`) | `refuse` `approval_<code>`, with `blocked_step` = the step the pass would return once approved |
 | every required ticket `done`/`dropped` | `await-verdict` |
 | ticket `backlog`/`ready`, dependencies `done`, first by numeric id | `start` |
-| `in-progress`, branch present, no PR | `implement` |
+| `in-progress`, branch present, no PR, the last implementation attempt ended on this branch head and the branch has commits beyond the remote default branch | `open-pr` |
+| `in-progress`, branch present, no PR, otherwise | `implement` |
 | `in-progress`, no branch, no PR | `start` (resume) |
 | open PR, no review proof on the exact diff, or diff unobservable | `review` |
 | open PR, review proof not mergeable | `correct` `review_blocked` |
@@ -44,8 +46,11 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | valid review, CI green | `merge` |
 
 A ticket already `done` costs no PR read: the next ticket is chosen instead.
-`implement` also covers opening the PR: "implementation finished" is not deterministically
-observable from the tracker, git and the PR, so there is no `open-pr` decision. "Required
+"Implementation finished" is not observable from the tracker, git and the PR alone, so
+`open-pr` reads one more fact: the local attempt journal of
+[`campaign-effects.md`](campaign-effects.md) (`last_implementation`, `campaign_effects.py`),
+passed to `observe` as the `implemented` callable; without it (the `next` verb) the field is
+false and the decision stays `implement`. "Required
 tickets" are the nodes `epic_preview.classify_nodes` does not classify `omitted` (the
 classification `build_preview` uses; the function was extracted from it, unchanged).
 
@@ -53,12 +58,18 @@ classification `build_preview` uses; the function was extracted from it, unchang
 
 Order: capabilities (flags only), one `get_epic_subgraph` (plus `validate_subgraph` and
 `structure_digest`), the approval journal, then, for the one ticket in focus only,
-`git for-each-ref` (read-only), `list_prs` (or `get_pr` from the tracker PR link), one
+`git for-each-ref`, `git rev-parse` and `git rev-list --count` (read-only, `_git`), `list_prs`
+(or `get_pr` from the tracker PR link) and `get_pr` for each PR that is not open, one
 `get_issue` for its body, the proof store, and `ci_gate` (`write.py`, both CI sources),
 the last one only when the review is valid. The approval is checked with the preview digest
 of the latest journal record of the Epic, because the policy that produced the preview
 digest is not observable; the structure digest is the observed one, so a structure change
 is detected exactly.
+
+The re-read of a closed PR is needed because the jq of `GitHubCodeHost.list_prs` selects
+`merged`; deduced, not re-verified here: the list endpoint of the code host returns
+`merged_at`, not `merged`, so the list cannot tell merged from closed unmerged
+(`test_closed_pr_from_a_list_without_merged_is_re_read`).
 
 Cost in tracker requests: the subgraph read (`epic_subgraph.build_neutral_subgraph`, one
 `get_issue` per node plus binding validation) plus at most one `get_issue`. To measure a
