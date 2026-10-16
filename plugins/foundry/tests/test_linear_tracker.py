@@ -141,6 +141,20 @@ PAT201_READBACKS = {
 }
 
 
+# PAT-209: the stored version-0 bytes of FOUNDRY-ADR-0003, -0015 and -0017.  The fixtures
+# are exact copies of the ADR bodies (they contain product names; kept byte for byte).
+PAT209_SOURCES = {
+    adr: (PAT71_FIXTURES / f"pat209_foundry_adr_{adr}_source.md").read_text(encoding="utf-8")
+    for adr in ("0003", "0015", "0017")
+}
+PAT209_READBACKS = {
+    hashlib.sha256(PAT209_SOURCES[adr].encode()).hexdigest(): (
+        PAT71_FIXTURES / f"pat209_foundry_adr_{adr}_readback.md"
+    ).read_text(encoding="utf-8")
+    for adr in ("0003", "0015", "0017")
+}
+
+
 def linear_markdown_readback(content):
     """Reproduce Linear's observed escaping of ADR comment closers."""
     if content.startswith(linear_module._ADR_HEADER):
@@ -159,7 +173,9 @@ def linear_markdown_readback(content):
 
 def linear_markdown_body_readback(body):
     """Independently model the observed closed Linear body serializations."""
-    pinned = PAT201_READBACKS.get(hashlib.sha256(body.encode()).hexdigest())
+    pinned = PAT201_READBACKS.get(hashlib.sha256(body.encode()).hexdigest()) or (
+        PAT209_READBACKS.get(hashlib.sha256(body.encode()).hexdigest())
+    )
     if pinned is not None:
         return pinned
     if hashlib.sha256(body.encode()).hexdigest() == SYNTHETIC_PROFILE_SOURCE_SHA256:
@@ -10709,15 +10725,6 @@ def test_pat201_profile_checks_fragments_and_final_digest(monkeypatch, adr, fail
         linear_module._linear_markdown_readback_body(PAT201_SOURCES[adr])
 
 
-def test_pat201_profile_table_is_exactly_the_two_sources():
-    assert {
-        digest: profile[2] for digest, profile in linear_module._PAT_201_PROFILES.items()
-    } == {
-        PAT201_SOURCE_SHA256[adr]: PAT201_READBACK_SHA256[adr]
-        for adr in ("0002", "0018")
-    }
-
-
 @pytest.mark.parametrize("adr", ["0002", "0018"])
 def test_pat201_create_link_and_replay_keep_the_source_bytes(tracker, adr):
     instance, wire = tracker
@@ -10805,4 +10812,222 @@ def test_pat201_altered_body_is_refused_before_any_write(tracker, adr):
     calls = len(wire.calls)
     with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
         instance.create_adr(PROJECT, f"Altered {adr}", PAT201_SOURCES[adr] + " **x `y`**")
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+PAT209_ADRS = ("0003", "0015", "0017")
+PAT209_SOURCE_SHA256 = {
+    "0003": "bd7092a50f514dc9a907da9cc581c6a5188f32cc0e79c35072506b6eaae97db5",
+    "0015": "31f3b61aea79970b3c315f0daeef45925fccb7c90b982dd2b850dd4a1d462350",
+    "0017": "c418537244f6cc115ce5a09961e865e58ab23506d2249a7bf501f94bc8000645",
+}
+PAT209_READBACK_SHA256 = {
+    "0003": "369a3309c6d12ff8e7042d73b05b64cbad56a4ed7a244de8e3f34de57dc64037",
+    "0015": "79f30b9c1827a0ce9a50b1010be5d94c8edcd845776147cdee61a70fb03b00ba",
+    "0017": "79a9724734ac1da9f8492bbead33ecfc39910d10dd2815ef5f4ac468d22f97e7",
+}
+PAT209_REFUSAL = {
+    "0003": "unsupported strong inline-code Markdown",
+    "0015": "unsupported multiline inline Markdown",
+    "0017": "unsupported multiline inline Markdown",
+}
+
+
+def _pat209_import(instance, monkeypatch, adr):
+    """Store one ADR as the migration did: a Document whose provider bytes are pinned.
+
+    The migration probe, not the new-body shapes, qualified these stored bytes
+    (`_preflight_adr_body_readback`, ``new_body=False``); the fake wire renders them
+    with the pinned fixtures.
+    """
+    original = linear_module._preflight_adr_body_readback
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            linear_module,
+            "_preflight_adr_body_readback",
+            lambda body, **kw: original(body, **{**kw, "new_body": False}),
+        )
+        return instance.create_adr(PROJECT, f"Historical {adr}", PAT209_SOURCES[adr])
+
+
+@pytest.fixture
+def pat209_unprofiled(monkeypatch):
+    """The state before PAT-209: only the two PAT-201 sources are recognised."""
+    monkeypatch.setattr(
+        linear_module,
+        "_PAT_201_PROFILES",
+        {
+            digest: profile
+            for digest, profile in linear_module._PAT_201_PROFILES.items()
+            if digest not in PAT209_SOURCE_SHA256.values()
+        },
+    )
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_fixtures_are_the_observed_bytes(adr):
+    source, readback = PAT209_SOURCES[adr], PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]]
+    assert hashlib.sha256(source.encode()).hexdigest() == PAT209_SOURCE_SHA256[adr]
+    assert hashlib.sha256(readback.encode()).hexdigest() == PAT209_READBACK_SHA256[adr]
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_reproduces_the_refusal_without_the_profile(pat209_unprofiled, adr):
+    with pytest.raises(ValueError, match=PAT209_REFUSAL[adr]):
+        linear_module._linear_markdown_readback_body(PAT209_SOURCES[adr])
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(PAT209_SOURCES[adr], new_body=False)
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+@pytest.mark.parametrize(
+    "kwargs", [{}, {"observed_lists": False}, {"observed_paragraph_lists": False}]
+)
+def test_pat209_profile_models_the_observed_readback(adr, kwargs):
+    rendered = linear_module._linear_markdown_readback_body(PAT209_SOURCES[adr], **kwargs)
+    assert rendered == PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]]
+    linear_module._preflight_adr_body_readback(PAT209_SOURCES[adr], new_body=False)
+
+
+@pytest.mark.parametrize("adr", ["0003", "0015"])
+def test_pat209_strict_new_body_model_accepts_the_bodies_without_a_table(adr):
+    assert (
+        linear_module._linear_markdown_readback_body(PAT209_SOURCES[adr], strict=True)
+        == PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]]
+    )
+    linear_module._preflight_adr_body_readback(PAT209_SOURCES[adr])
+
+
+def test_pat209_adr_0017_stays_refused_as_a_new_body():
+    # The table of FOUNDRY-ADR-0017 is refused by the strict new-body shapes (PAT-103);
+    # only a stored body (link, status) goes through the profile.
+    with pytest.raises(ValueError, match="unsupported table"):
+        linear_module._linear_markdown_readback_body(PAT209_SOURCES["0017"], strict=True)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        linear_module._preflight_adr_body_readback(PAT209_SOURCES["0017"])
+
+
+_PAT209_ALTERATIONS = {
+    "0003": ("**Un flag `--full` sur", "**Un flag `--full` `x` sur"),
+    "0015": ("**hors du chemin\nd'invocation**", "**hors du  chemin\nd'invocation**"),
+    "0017": ("remédiations incluses", "remediations incluses"),
+}
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_altered_and_unknown_forms_stay_refused(adr):
+    source = PAT209_SOURCES[adr]
+    before, after = _PAT209_ALTERATIONS[adr]
+    for altered in (source + " ", source.replace(before.replace("\\n", "\n"), after.replace("\\n", "\n"), 1)):
+        assert altered != source
+        with pytest.raises(ValueError):
+            linear_module._linear_markdown_readback_body(altered)
+        with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+            linear_module._preflight_adr_body_readback(altered, new_body=False)
+    # The same forms in a body that is not a pinned source.
+    for unknown in (
+        "- **Un flag `--full` sur les listes** suite\n- autre\n",
+        "**un long\nmot** et **un autre\nmot**\n\nTexte avec `a\nb` fin\n",
+    ):
+        with pytest.raises(ValueError):
+            linear_module._linear_markdown_readback_body(unknown)
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+@pytest.mark.parametrize("failure", ["fragment", "rendered_digest"])
+def test_pat209_profile_checks_fragments_and_final_digest(monkeypatch, adr, failure):
+    digest = PAT209_SOURCE_SHA256[adr]
+    pre, post, readback = linear_module._PAT_201_PROFILES[digest]
+    if failure == "fragment":
+        profile = ((("absent", "replacement"),) + pre, post, readback)
+    else:
+        profile = (pre, post, "0" * 64)
+    monkeypatch.setattr(linear_module, "_PAT_201_PROFILES", {digest: profile})
+    with pytest.raises(ValueError, match="pat-201"):
+        linear_module._linear_markdown_readback_body(PAT209_SOURCES[adr])
+
+
+def test_pat209_profile_table_is_exactly_the_five_sources():
+    assert {
+        digest: profile[2] for digest, profile in linear_module._PAT_201_PROFILES.items()
+    } == {
+        **{PAT201_SOURCE_SHA256[a]: PAT201_READBACK_SHA256[a] for a in ("0002", "0018")},
+        **{PAT209_SOURCE_SHA256[a]: PAT209_READBACK_SHA256[a] for a in PAT209_ADRS},
+    }
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_link_and_replay_keep_the_source_bytes(tracker, monkeypatch, adr):
+    instance, wire = tracker
+    created = _pat209_import(instance, monkeypatch, adr)
+    linked = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert linked.body.endswith(PAT209_SOURCES[adr])
+    assert linked.status == created.status
+    [reread] = instance.list_adrs(PROJECT)
+    assert reread.body.endswith(PAT209_SOURCES[adr])
+    stored = [
+        doc["content"] for doc in wire.documents.values()
+        if doc["content"].startswith(linear_module._ADR_HEADER)
+    ]
+    assert len(stored) == 2
+    assert all(
+        content.endswith(PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]]) for content in stored
+    )
+    calls = len(wire.calls)
+    instance.link_adr_issue(linked, "LIN-2", project=PROJECT)
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+@pytest.mark.parametrize("stop", ["document", "witness"])
+def test_pat209_interrupted_link_resumes_only_the_exact_target(tracker, monkeypatch, adr, stop):
+    instance, wire = tracker
+    created = _pat209_import(instance, monkeypatch, adr)
+    original = wire.__call__
+    prefix = {
+        "document": f"{linear_module._ADR_DOCUMENT_PREFIX}{created.id} / v0001",
+        "witness": f"[Foundry ADR witness] {created.id} / v0001",
+    }[stop]
+
+    def interrupt(document, variables):
+        if variables.get("input", {}).get("title", "").startswith(prefix):
+            raise OSError("link write interrupted")
+        return original(document, variables)
+
+    instance._transport = interrupt
+    with pytest.raises(LinearTrackerError, match="transport_error"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    instance._transport = original
+    assert len(wire.comments) == 1
+    if stop == "witness":
+        before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+        with pytest.raises(TrackerConflictError, match="version slot diverged"):
+            instance.link_adr_issue(created, "LIN-1", project=PROJECT)
+        assert (wire.documents, wire.comments) == before
+    recovered = instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert recovered.body.endswith(PAT209_SOURCES[adr])
+    assert len(wire.comments) == 1
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_link_refuses_a_stored_body_the_model_does_not_prove(
+    tracker, adr, monkeypatch
+):
+    instance, wire = tracker
+    created = _pat209_import(instance, monkeypatch, adr)
+    monkeypatch.setattr(linear_module, "_is_stored_adr_body", lambda *_a, **_kw: False)
+    before = (copy.deepcopy(wire.documents), copy.deepcopy(wire.comments))
+    calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="differs from the qualified PAT-201"):
+        instance.link_adr_issue(created, "LIN-2", project=PROJECT)
+    assert (wire.documents, wire.comments) == before
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_altered_body_is_refused_before_any_write(tracker, adr):
+    instance, wire = tracker
+    calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, f"Altered {adr}", PAT209_SOURCES[adr] + " **x `y`**")
     assert not any("mutation " in document for document, _ in wire.calls[calls:])
