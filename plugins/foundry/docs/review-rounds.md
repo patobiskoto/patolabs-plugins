@@ -327,8 +327,10 @@ Not coded yet:
   (`tooling/foundry/trackers/devhub.py`, `tooling/foundry/trackers/linear.py`).
 - So inside an Epic campaign the authorization has no effect yet. Three things are
   missing: a channel that carries the remarks to the campaign, the code that creates the
-  companion Epic and its issues, and campaigns usable on the repository's tracker. They
-  are left to a later issue under the same Epic, PAT-141.
+  companion Epic and its issues, and campaigns usable on the repository's tracker (the
+  cadencer of PAT-ADR-0026 runs start, implement, open-pr and merge on it since PAT-217,
+  without a review launch and without these remarks: `docs/campaign-effects.md`). They are
+  left to a later issue under the same Epic, PAT-141.
 
 ## Carrying a terminal proof across an integration of main (PAT-173)
 
