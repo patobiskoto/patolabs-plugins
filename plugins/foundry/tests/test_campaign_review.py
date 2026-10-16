@@ -9,10 +9,13 @@ from foundry import campaign_cadence as cc
 from foundry import campaign_effects as ce
 from foundry import campaign_review as cr
 from test_campaign_cadence import approve, check
-from test_campaign_effects import (  # noqa: F401 - `env` is a fixture
-    CLAIM_ID, CLI, CRITERION, DIFF_HASH, NOW, PROJECT, effects, env, result_text, step,
+import test_campaign_effects
+from test_campaign_effects import (
+    CLAIM_ID, CLI, CRITERION, DIFF_HASH, NOW, PROJECT, effects, result_text, step,
 )
 from test_epic_preview import graph, node
+
+env = test_campaign_effects.env  # the shared fixture, under the name pytest looks up
 
 TWO = graph([node("APP-2"), node("APP-3")], dependencies=[("APP-3", "APP-2")])
 
@@ -228,8 +231,6 @@ def test_blocking_review_escalates_and_the_correction_session_gets_the_findings(
     escalation, = env.world.escalations
     assert escalation[3:7] == ["escalation", "failure", "APP-2", "implementer"]
     assert escalation[escalation.index("--kind") + 1] == "review_blocking"
-    from foundry.routing import LEVELS
-
     from foundry.routing import RoutingPolicy
 
     # The tier sent excludes the escalation floor, so a replay after `escalated` is identical.
