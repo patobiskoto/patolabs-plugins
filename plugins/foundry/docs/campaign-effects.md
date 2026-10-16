@@ -117,11 +117,13 @@ settings; it lists as "STILL not established" a work root under the home, the Ed
 Glob/Grep, the shared per-user temporary directory and the OS-level `denyWrite` on `.claude`
 for a shell command (the trial note `pat-19-native-sandbox-trial-2026-10-08-t4.json` says the
 same of a work root under the home). The default work root `<repo>-campaign` is under the home
-(`default_worktrees_dir`). The trial answers, observed once: shell writes in a work root under the
-home, the OS `denyWrite` inside an `allowWrite` for the worktree `.claude` (`mkdir` and `echo`
-refused) and the `.git` pointer (append refused), and the `Edit` deny on the data directory
-through the Write tool (refused). Still unknown, not tested: Glob/Grep, the shared temporary
-directory, reads re-allowed inside the denied home, the network, other hosts and versions.
+(`default_worktrees_dir`). The trial answers, observed once: shell and Write-tool writes in a work root under the home
+succeeded, and the attempted writes to the worktree `.claude`, the `.git` pointer and, through
+the Write tool, the data directory were refused and left unchanged on the filesystem. Which
+layer refused (the OS `denyWrite`, the `dontAsk` mode as in PAT-124 P15, or a permission rule)
+was not recorded: unknown. Still unknown, not tested: the OS-level `denyWrite` inside an
+`allowWrite`, Glob/Grep, the shared temporary directory, reads re-allowed inside the denied
+home, the network, other hosts and versions.
 
 - Shell commands run in the Bash sandbox (`enabled`, `failIfUnavailable` true,
   `allowUnsandboxedCommands` false): writes only in the worktree, in the per-user temporary
@@ -141,8 +143,9 @@ directory, reads re-allowed inside the denied home, the network, other hosts and
   above, `~/.gitconfig`, `~/.config/git` and `~/.claude.json` are also in `denyWrite` and in
   the `Edit` deny rules (reads of the first two stay allowed, so a commit finds its identity;
   `core.hooksPath` or `core.fsmonitor` there would run code outside the sandbox). That an
-  `allowWrite` of the user scope cannot reopen them is deduced; the OS refusal was observed once
-  for the worktree `.claude` and `.git` pointer, for `~/.config/foundry` and `~/.claude` (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
+  `allowWrite` of the user scope cannot reopen them is deduced; a refusal that left the path unchanged
+  was observed once (refusing layer not recorded) for the worktree `.claude` and `.git` pointer,
+  for `~/.config/foundry` and `~/.claude` (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
   not for the other paths nor for the three user files added after it. `--setting-sources user`
   keeps the worktree's project and local settings from widening the sandbox (arrays merge across
   scopes, PAT-124).
