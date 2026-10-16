@@ -1,0 +1,434 @@
+"""Dry computation of the next step of an Epic campaign (PAT-216, PAT-ADR-0026/0027).
+
+One pass re-reads the tracker, git and the PR, and returns exactly one ``Decision``.  It
+produces no effect: no tracker write, no git mutation, no PR mutation, no session launch.
+The state lives in the tracker, git and the PR, never here.  ``decide`` is pure over an
+immutable ``Observation``; ``observe`` gathers it through declared capabilities only.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable
+
+from foundry import campaign_approval as approval
+from foundry.epic_preview import (
+    PREVIEW_DEPTH,
+    PREVIEW_NODE_LIMIT,
+    EpicPreviewError,
+    classify_nodes,
+    structure_digest,
+    validate_subgraph,
+)
+
+CADENCE_CONTRACT = "foundry-campaign-cadence.v1"
+STARTED_STATES = ("in-progress", "review")
+READY_STATES = ("backlog", "ready")
+KINDS = (
+    "start", "implement", "review", "correct", "wait-ci", "merge", "await-verdict",
+    "suspend", "refuse",
+)
+# Tracker states strictly behind a started or finished dependent (PAT-ADR-0027 regression).
+_UNFINISHED = ("backlog", "ready", "blocked", "in-progress", "review")
+_PR_NUMBER = re.compile(r"/pull/([0-9]+)(?:[/?#]|$)")
+
+
+@dataclass(frozen=True)
+class PullFacts:
+    number: int
+    state: str  # open | closed
+    merged: bool
+    head_sha: str | None
+    base_sha: str | None
+
+
+@dataclass(frozen=True)
+class TicketFacts:
+    id: str
+    state: str
+    category: str  # eligible | blocked | omitted (epic_preview.classify_nodes)
+    reason: str
+    depends_on: tuple[str, ...] = ()
+    pr_url: str | None = None
+    # Observed only for the one ticket in focus; ``None`` means not observed.
+    branch: bool | None = None
+    pr: PullFacts | None = None
+    review: str | None = None  # none | valid | blocked | unobservable
+    ci: str | None = None  # green | pending | red | none
+    anomaly: str | None = None
+
+
+@dataclass(frozen=True)
+class Observation:
+    epic: str
+    missing_capabilities: tuple[str, ...] = ()
+    read_error: str | None = None
+    structure_observed: str | None = None
+    structure_approved: str | None = None
+    approval_status: str = "unchecked"  # valid | unchecked | an approval refusal code
+    approval_detail: str | None = None
+    tickets: tuple[TicketFacts, ...] = ()
+    focus: str | None = None
+
+
+@dataclass(frozen=True)
+class Decision:
+    kind: str
+    ticket: str | None = None
+    reason: str = ""
+    evidence: dict = field(default_factory=dict)
+    # Only on an approval refusal: the step the pass would return once approved.
+    blocked_step: dict | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in KINDS:
+            raise ValueError(f"unknown decision kind: {self.kind}")
+
+
+def _id_key(issue_id: str) -> tuple[str, int]:
+    prefix, _, number = issue_id.rpartition("-")
+    return prefix, int(number)
+
+
+def select_focus(tickets: tuple[TicketFacts, ...]) -> tuple[str | None, Decision | None]:
+    """The one ticket in progress, else the first startable one; pure and deterministic."""
+    by_id = {ticket.id: ticket for ticket in tickets}
+    started = sorted(
+        (t.id for t in tickets if t.state in STARTED_STATES and t.category != "omitted"),
+        key=_id_key,
+    )
+    if len(started) > 1:
+        return None, Decision(
+            "suspend", reason="several_in_progress", evidence={"tickets": started},
+        )
+    if started:
+        return started[0], None
+    for ticket in sorted(tickets, key=lambda t: _id_key(t.id)):
+        if (ticket.category == "eligible" and ticket.state in READY_STATES
+                and all(by_id[dep].state == "done" for dep in ticket.depends_on)):
+            return ticket.id, None
+    return None, None
+
+
+def _regression(tickets: tuple[TicketFacts, ...]) -> Decision | None:
+    by_id = {ticket.id: ticket for ticket in tickets}
+    for ticket in sorted(tickets, key=lambda t: _id_key(t.id)):
+        if ticket.state not in (*STARTED_STATES, "done"):
+            continue
+        behind = [dep for dep in ticket.depends_on if by_id[dep].state in _UNFINISHED]
+        if behind:
+            return Decision(
+                "suspend", ticket.id, "dependency_state_behind",
+                {"state": ticket.state, "unfinished_dependencies": behind},
+            )
+    return None
+
+
+def _ticket_step(ticket: TicketFacts) -> Decision:
+    if ticket.anomaly:
+        return Decision("suspend", ticket.id, ticket.anomaly)
+    if ticket.state in READY_STATES:
+        return Decision("start", ticket.id, "eligible_dependencies_done")
+    pr = ticket.pr
+    if pr is None:
+        if ticket.branch:
+            return Decision("implement", ticket.id, "started_without_pr", {"branch": True})
+        return Decision("start", ticket.id, "in_progress_branch_absent", {"branch": False})
+    evidence = {"pr": pr.number}
+    if pr.merged:
+        return Decision("suspend", ticket.id, "merged_pr_state_behind",
+                        {**evidence, "tracker_state": ticket.state})
+    if pr.state != "open":
+        return Decision("suspend", ticket.id, "pr_closed_unmerged", evidence)
+    if not pr.head_sha:
+        return Decision("suspend", ticket.id, "pr_head_unreadable", evidence)
+    if ticket.review == "blocked":
+        return Decision("correct", ticket.id, "review_blocked", evidence)
+    if ticket.review != "valid":
+        reason = "review_unobservable" if ticket.review == "unobservable" else "review_missing"
+        return Decision("review", ticket.id, reason, evidence)
+    if ticket.ci == "green":
+        return Decision("merge", ticket.id, "review_valid_ci_green", evidence)
+    if ticket.ci == "red":
+        return Decision("correct", ticket.id, "ci_failing", evidence)
+    reason = "ci_pending" if ticket.ci == "pending" else "ci_not_proven"
+    return Decision("wait-ci", ticket.id, reason, evidence)
+
+
+def _step(obs: Observation) -> Decision:
+    regression = _regression(obs.tickets)
+    if regression is not None:
+        return regression
+    focus, problem = select_focus(obs.tickets)
+    if problem is not None:
+        return problem
+    if focus is None:
+        pending = sorted(
+            (t for t in obs.tickets if t.category != "omitted"), key=lambda t: _id_key(t.id),
+        )
+        if not pending:
+            return Decision("await-verdict", reason="all_tickets_terminal")
+        return Decision(
+            "suspend", reason="no_eligible_ticket",
+            evidence={"tickets": [
+                {"id": t.id, "state": t.state, "reason": t.reason} for t in pending
+            ]},
+        )
+    return _ticket_step(next(t for t in obs.tickets if t.id == focus))
+
+
+def decide(obs: Observation) -> Decision:
+    """Exactly one decision; no effect.  Order: capability, strict read, drift, approval."""
+    if obs.missing_capabilities:
+        return Decision(
+            "refuse", reason="capability_missing",
+            evidence={"missing": list(obs.missing_capabilities)},
+        )
+    if obs.read_error is not None:
+        return Decision("suspend", reason="node_unreadable", evidence={"error": obs.read_error})
+    if obs.approval_status == approval.StructureDigestMismatch.code:
+        return Decision(
+            "suspend", reason="structure_changed",
+            evidence={"observed": obs.structure_observed, "approved": obs.structure_approved},
+        )
+    step = _step(obs)
+    if step.kind == "suspend":
+        return step
+    if obs.approval_status != "valid":
+        return Decision(
+            "refuse", reason=f"approval_{obs.approval_status}",
+            evidence={"detail": obs.approval_detail},
+            blocked_step={"kind": step.kind, "ticket": step.ticket, "reason": step.reason},
+        )
+    return step
+
+
+def missing_capabilities(tracker) -> tuple[str, ...]:
+    """Declared capabilities PAT-ADR-0026 requires; reads only these flags."""
+    from foundry.trackers.base import Tracker
+
+    missing = [
+        flag for flag in ("epic_subgraph_supported", "append_only_lifecycle_supported")
+        if getattr(tracker, flag, False) is not True
+    ]
+    # No declarative flag exists for reconcilable issue creation (PAT-216 gap): the
+    # capability is the adapter overriding ``Tracker.reconcile_issue_creation``.
+    override = getattr(type(tracker), "reconcile_issue_creation", None)
+    if override is None or override is Tracker.reconcile_issue_creation:
+        missing.append("issue_creation_reconciliation")
+    return tuple(missing)
+
+
+def _git_refs(root: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
+        cwd=root, capture_output=True, text=True, check=True,
+    )
+    return sorted(result.stdout.split())
+
+
+def _branch_for(refs: list[str], issue_id: str) -> str | None:
+    pattern = re.compile(rf"^(?:origin/)?[a-z]+/{re.escape(issue_id.lower())}(?:-|$)")
+    names = sorted({ref.removeprefix("origin/") for ref in refs if pattern.match(ref)})
+    return names[0] if names else None
+
+
+def _pull_facts(pr) -> PullFacts:
+    return PullFacts(
+        number=int(pr.number), state=pr.state, merged=bool(pr.merged),
+        head_sha=pr.sha, base_sha=pr.base_sha,
+    )
+
+
+def _find_pr(codehost, repo: str, branch: str | None, pr_url: str | None):
+    """(PullFacts | None, anomaly | None) from the branch, else from the tracker PR link."""
+    if branch is not None:
+        candidates = codehost.list_prs(repo, branch)
+        opened = [pr for pr in candidates if pr.state == "open"]
+        if len(opened) > 1:
+            return None, "pr_ambiguous"
+        chosen = opened or sorted(
+            (pr for pr in candidates if pr.merged), key=lambda pr: pr.number)[-1:] or sorted(
+            candidates, key=lambda pr: pr.number)[-1:]
+        return (_pull_facts(chosen[0]) if chosen else None), None
+    match = _PR_NUMBER.search(pr_url or "")
+    if match:
+        return _pull_facts(codehost.get_pr(repo, int(match.group(1)))), None
+    return None, None
+
+
+def _default_diff(root: str, base: str, head: str) -> bytes:
+    from foundry.routing import git_diff
+
+    return git_diff(root, base, head=head)
+
+
+def _review_status(store, issue, pr: PullFacts, root: str, diff_reader) -> str:
+    from foundry.routing import RoutingConfigError
+
+    if not pr.head_sha or not pr.base_sha:
+        return "unobservable"
+    try:
+        diff = diff_reader(root, pr.base_sha, pr.head_sha)
+    except RoutingConfigError:
+        return "unobservable"
+    coordinates = dict(
+        issue_id=issue.id, issue_body=issue.body, head=pr.head_sha, diff=diff, base=pr.base_sha,
+    )
+    try:
+        store.valid_for_merge(**coordinates)
+        return "valid"
+    except RoutingConfigError:
+        pass
+    try:
+        store.current_for_sync(**coordinates)
+        return "blocked"
+    except RoutingConfigError:
+        return "none"
+
+
+def _ci_status(codehost, repo: str, sha: str) -> str:
+    from foundry.write import ci_gate
+
+    verdict = ci_gate(codehost, repo, sha)
+    if verdict["passed"]:
+        return "green"
+    if verdict["pending"]:
+        return "pending"
+    return "red" if verdict["failing"] else "none"
+
+
+def observe(
+    tracker, codehost, project, epic: str, root: str, now: datetime | None = None, *,
+    journal: Path | None = None, refs: Callable[[str], list[str]] = _git_refs,
+    diff_reader: Callable[[str, str, str], bytes] = _default_diff, proof_store=None,
+) -> Observation:
+    """Gather one observation with declared capabilities and read-only calls only."""
+    missing = missing_capabilities(tracker)
+    if missing:
+        return Observation(epic=epic, missing_capabilities=missing)
+    from foundry.trackers.base import (
+        IssueUnavailableError, TrackerBindingError, TrackerConflictError,
+    )
+
+    try:
+        raw = tracker.get_epic_subgraph(
+            project, epic, depth=PREVIEW_DEPTH, nodes=PREVIEW_NODE_LIMIT,
+        )
+        graph = validate_subgraph(
+            raw, expected_epic_id=epic, expected_project_key=getattr(project, "key", None),
+        )
+    except (EpicPreviewError, IssueUnavailableError, TrackerBindingError,
+            TrackerConflictError) as exc:
+        return Observation(epic=epic, read_error=f"{type(exc).__name__}: {exc}")
+    digest = structure_digest(graph)
+    categories = classify_nodes(graph)
+    tickets = tuple(
+        TicketFacts(
+            id=key, state=graph.nodes[key]["state"], category=categories[key][0],
+            reason=categories[key][1], depends_on=graph.dependencies.get(key, ()),
+            pr_url=graph.nodes[key]["pr_url"],
+        )
+        for key in sorted(graph.nodes, key=_id_key) if key != graph.value["root"]
+    )
+
+    status, detail, approved = "unchecked", None, None
+    try:
+        own = [r for r in approval.read_journal(journal) if r["epic"] == epic]
+        latest = max(own, key=lambda r: (r["approved_at"], r["record_digest"]), default=None)
+        approved = latest["structure_digest"] if latest else None
+        approval.check(
+            epic, latest["preview_digest"] if latest else "0" * 64, digest, now, journal,
+        )
+        status = "valid"
+    except approval.ApprovalError as exc:
+        status, detail = exc.code, str(exc)
+
+    focus, _problem = select_focus(tickets)
+    if focus is not None:
+        tickets = tuple(
+            _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store)
+            if t.id == focus else t for t in tickets
+        )
+    return Observation(
+        epic=epic, structure_observed=digest, structure_approved=approved,
+        approval_status=status, approval_detail=detail, tickets=tickets, focus=focus,
+    )
+
+
+def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store):
+    from dataclasses import replace
+
+    branch = _branch_for(refs(root), ticket.id)
+    if ticket.state in READY_STATES:  # `start` is the step whatever git holds
+        return replace(ticket, branch=branch is not None)
+    repo = codehost.resolve_repo(root)
+    pr, anomaly = _find_pr(codehost, repo, branch, ticket.pr_url)
+    facts = replace(ticket, branch=branch is not None, pr=pr, anomaly=anomaly)
+    if pr is None or pr.merged or pr.state != "open" or anomaly:
+        return facts
+    if proof_store is None:
+        from foundry.routing import AcceptanceProofStore, repository_identity
+
+        proof_store = AcceptanceProofStore(repository_identity(root))
+    review = _review_status(proof_store, tracker.get_issue(ticket.id), pr, root, diff_reader)
+    ci = _ci_status(codehost, repo, pr.head_sha) if review == "valid" and pr.head_sha else None
+    return replace(facts, review=review, ci=ci)
+
+
+def report(obs: Observation, decision: Decision) -> str:
+    """Canonical JSON of one pass: same observation, same bytes."""
+    payload = {
+        "contract": CADENCE_CONTRACT,
+        "epic": obs.epic,
+        "observation": {
+            "missing_capabilities": list(obs.missing_capabilities),
+            "read_error": obs.read_error,
+            "structure": {"observed": obs.structure_observed, "approved": obs.structure_approved},
+            "approval": {"status": obs.approval_status, "detail": obs.approval_detail},
+            "focus": obs.focus,
+            "tickets": [asdict(ticket) for ticket in obs.tickets],
+        },
+        "decision": asdict(decision),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Calcul à blanc de l'étape suivante d'une campagne")
+    sub = parser.add_subparsers(dest="verb", required=True)
+    nxt = sub.add_parser("next", help="observe, then print the one next step (no effect)")
+    nxt.add_argument("epic_id")
+    nxt.add_argument("--root", default=".")
+    args = parser.parse_args(argv)
+
+    import foundry
+    from foundry import registry
+
+    tracker = foundry.tracker()
+    missing = missing_capabilities(tracker)
+    if missing:  # before any read, even the binding resolution
+        obs = Observation(epic=args.epic_id, missing_capabilities=missing)
+        print(report(obs, decide(obs)))
+        return 2
+    resolver = getattr(tracker, "resolve_checkout_project", None)
+    project = (
+        resolver(args.root) if callable(resolver)
+        else tracker.resolve_project(registry.repo_basename(args.root))
+    )
+    obs = observe(
+        tracker, foundry.codehost(), project, args.epic_id, args.root,
+        datetime.now(timezone.utc),
+    )
+    print(report(obs, decide(obs)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
