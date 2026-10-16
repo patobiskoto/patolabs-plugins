@@ -443,6 +443,7 @@ def test_remarks_to_fix_then_a_partial_review_with_the_previous_round(env):
     env.world.reviews.append(result_text(fix=1, nits=1, report="## AC\nNIT fix before merge: typo"))
     first = step(env)
     assert first.effect["review"]["fix_before_merge"] == 1
+    assert step(env).decision.kind == "defer-remarks"  # the nit comes first (PAT-141)
     result = step(env)
     assert (result.decision.kind, result.decision.reason) == ("correct", "review_fix_before_merge")
     assert getattr(env.world, "escalations", []) == []  # a non-blocking verdict touches no state
@@ -645,3 +646,10 @@ def test_epic_of_two_tickets_with_a_blocking_first_review_reaches_the_verdict_aw
     assert routing_verbs(env.world).count("record-review-proof") == 3
     assert routing_verbs(env.world).count("claim-review") == 3
     assert not any(CLAIM_ID in line for line in journal_text(env).splitlines())
+
+
+def test_the_reviewer_contract_marks_the_two_never_deferrable_cases_fix_before_merge():
+    contract = " ".join(cr.review_contract().split())
+    assert "Always set fix_before_merge true on a remark about a page frozen after " in contract
+    assert "(release note, migration guide, CHANGELOG section of a published version)" in contract
+    assert "missing or generic documentation status under AGENTS.md#R5" in contract

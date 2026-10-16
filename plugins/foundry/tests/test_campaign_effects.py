@@ -50,6 +50,9 @@ class World:
         self.create_failure = None  # stderr of the next create-issue, or a callable
         self.create_effect_first = False  # the failing create still creates the issue
         self.search_failure = None
+        self.search_blind = set()  # titles the search does not list yet (read lag)
+        self.hide_clients = False  # the read of a client id finds nothing (yet)
+        self.clients = {}  # client id of a failed creation -> the issue it created
         self.write_failures = {}  # verb -> stderr of the next failure of that verb
         self.remarks_receipts = 0
 
@@ -140,6 +143,8 @@ def _edit(self, argv, input):
             if self.create_effect_first:
                 created = self.make_issue(spec)
                 failure = failure.replace("<ID>", created.id)
+                for client in [] if self.hide_clients else re.findall(r"client_id\W+([0-9a-f-]{36})", failure):
+                    self.clients[client] = created.id  # a client id resolves to its issue
             return fail(failure)
         return ok(f"🆕 {self.make_issue(spec).id} — {spec['title']}")
     if verb in self.write_failures:
@@ -154,7 +159,10 @@ def _edit(self, argv, input):
         self.issues[dst].links.append(Link("parent-of", "outward", src))
         return ok()
     if verb == "reconcile-create":
-        return ok(json.dumps({"validation": "accepted", "issue_id": args[0]}))
+        if re.fullmatch(r"[0-9a-f-]{36}", args[0]) and args[0] not in self.clients:
+            return fail("not found")  # a client id no issue was created with
+        return ok(json.dumps({"validation": "accepted",
+                              "issue_id": self.clients.get(args[0], args[0])}))
     raise AssertionError(argv)
 
 
@@ -280,7 +288,7 @@ class WorldTracker(FakeTracker):
         self.calls.append("search")
         if self.world.search_failure:
             raise self.world.search_failure
-        return list(self.world.issues.values())
+        return [i for i in self.world.issues.values() if i.title not in self.world.search_blind]
 
 
 class WorldCodeHost(FakeCodeHost):

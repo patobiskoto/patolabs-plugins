@@ -234,13 +234,15 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
     if ticket.review != "valid":
         reason = "review_unobservable" if ticket.review == "unobservable" else "review_missing"
         return _bounded(ticket, Decision("review", ticket.id, reason, evidence))
+    # The remarks come first, also beside "fix before merge" ones: the correction changes the
+    # head, and the next review (of another diff hash) need not list them again (PAT-141).
+    remarks = _remarks(ticket, evidence)
+    if remarks is not None:
+        return remarks
     if ticket.fix_before_merge > 0:
         return _bounded(ticket, Decision(
             "correct", ticket.id, "review_fix_before_merge",
             {**evidence, "fix_before_merge": ticket.fix_before_merge}))
-    remarks = _remarks(ticket, evidence)
-    if remarks is not None:
-        return remarks
     if ticket.ci == "green":
         return Decision("merge", ticket.id, "review_valid_ci_green", evidence)
     if ticket.ci == "red":

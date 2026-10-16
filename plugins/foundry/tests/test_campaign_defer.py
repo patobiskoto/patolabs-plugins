@@ -75,7 +75,11 @@ def test_a_validated_review_with_remarks_leaves_a_receipt_then_defers_then_merge
     assert "Pull request #12" in note and "issue APP-2" in note and "review round 1" in note
     assert len(follow_up.comments) == 1
     # the description cites the follow-up before the merge
-    assert env.world.bodies[-1].rstrip().endswith(f"Deferred remarks: {follow_up.id}")
+    line = env.world.bodies[-1].rstrip().splitlines()[-1]
+    assert line == (
+        f"Deferred remarks: {follow_up.id} (companion Epic {companion.id}, created by this "
+        "pull request; 2 remarks; writes: create companion Epic, create follow-up issue, "
+        "comment on the follow-up issue)")
     finished = [r for r in ce.read_attempts(env.kwargs["attempts"])
                 if r["kind"] == "defer-remarks" and r["event"] == "finished"][-1]
     assert finished["deferral"]["state"] == "done"
@@ -104,7 +108,9 @@ def test_an_existing_companion_and_open_follow_up_are_reused(env):
     assert step(env).outcome == "executed"
     assert verbs(env) == ["comment"] and env.world.edits[0][1] == ["APP-51"]
     assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
-    assert env.world.bodies[-1].rstrip().endswith("Deferred remarks: APP-51")
+    assert env.world.bodies[-1].rstrip().splitlines()[-1] == (
+        "Deferred remarks: APP-51 (companion Epic APP-50, already existing; 2 remarks; "
+        "writes: comment on the follow-up issue)")
 
 
 def test_a_started_follow_up_is_never_given_a_remark_a_new_one_is_created(env):
@@ -145,6 +151,21 @@ def test_a_capability_refusal_is_durable(env):
     result = step(env)
     assert result.effect["deferral"]["state"] == "refused" and result.outcome == "executed"
     assert step(env).decision.reason == "remarks_not_deferrable"
+
+
+def test_a_durable_refusal_is_told_in_the_description(env):
+    reviewed(env)
+    env.world.create_failure = (
+        "foundry.trackers.base.TrackerCapabilityUnavailableError: capability unavailable: "
+        "linear.issue-creation")
+    result = step(env)
+    assert result.effect["deferral"]["state"] == "refused"
+    assert env.world.bodies[-1].rstrip().splitlines()[-1] == (
+        "Remarks not deferred: durable refusal (foundry.trackers.base."
+        "TrackerCapabilityUnavailableError: capability unavailable: linear.issue-creation); "
+        "they are corrected before the merge.")
+    assert step(env).decision.reason == "remarks_not_deferrable"
+    assert "Remarks not deferred" in env.world.bodies[-1]  # kept by a later rewrite
 
 
 def test_a_missing_receipt_is_a_durable_refusal(env):
@@ -190,14 +211,41 @@ def test_a_creation_with_a_named_issue_is_reconciled_before_any_retry(env):
     assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
 
 
-def test_an_unnamed_unknown_effect_is_retried_only_after_reading_the_tracker(env):
+CLIENT = "0b9c1f3e-5a77-4c1e-9d2b-3f6a8e4d7c10"
+
+
+def test_an_unnamed_unknown_effect_is_reconciled_by_client_id_before_any_creation(env):
     reviewed(env)
     env.world.create_failure = json.dumps({
-        "client_id": "x", "issue_id": None, "reconciliation": "required"})
-    assert step(env).outcome == "waiting"
-    assert "reconcile-create" not in verbs(env)
-    assert step(env, LATER).outcome == "executed"
-    assert len(companions(env)) == 1  # created once: the second pass found nothing, created
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.create_effect_first = True  # the issue exists, the answer was lost
+    env.world.hide_clients = True  # the read of that client id finds nothing yet
+    env.world.search_blind = {"Nits APP-1"}  # nor does the search list the created Epic
+    first = step(env)
+    assert first.outcome == "waiting"
+    assert verbs(env) == ["create-issue", "reconcile-create"]  # tried at once, not yet readable
+    again = step(env, LATER)
+    assert again.outcome == "waiting" and again.effect["deferral"]["state"] == "transient"
+    assert verbs(env).count("create-issue") == 1  # never recreated while the effect is unknown
+    journaled = ce.read_attempts(env.kwargs["attempts"])[-1]["deferral"]["unknown"]
+    assert journaled == [{"title": "Nits APP-1", "client_id": CLIENT}]
+    env.world.clients[CLIENT] = companions(env)[0].id
+    final = step(env, LATER + timedelta(minutes=5))
+    assert final.outcome == "executed"
+    assert verbs(env).count("reconcile-create") >= 2
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1  # adopted, no duplicate
+    assert env.world.bodies[-1].rstrip().splitlines()[-1].startswith(
+        f"Deferred remarks: {follow_ups(env)[0].id} (companion Epic {companions(env)[0].id}, "
+        "created by this pull request;")
+
+
+def test_a_quota_error_naming_the_client_id_is_reconciled_by_it(env):
+    reviewed(env)
+    env.world.create_failure = f"{RATE_LIMITED} client_id={CLIENT} creation=unknown"
+    env.world.create_effect_first = True
+    assert step(env).outcome == "executed"  # reconciled at once by the client id
+    assert verbs(env)[:2] == ["create-issue", "reconcile-create"]
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
 
 
 def test_a_comment_that_went_through_is_not_posted_twice(env):
@@ -256,9 +304,31 @@ def test_a_ticket_without_an_origin_epic_gets_no_deferral_but_a_correction(env):
     assert env.world.edits == []
 
 
-def test_remarks_to_fix_stay_with_the_correction_loop_and_nits_are_deferred_after(env):
+def test_nits_beside_a_fix_before_merge_are_deferred_then_the_correction_and_re_review(env):
     reviewed(env, nits=1, fix=1)
-    assert step(env).decision.reason == "review_fix_before_merge"
+    deferral = step(env)  # the nit of round 1 first: a later review need not list it again
+    assert (deferral.decision.kind, deferral.decision.reason) == (
+        "defer-remarks", "non_blocking_remarks")
+    follow_up, = follow_ups(env)
+    assert verbs(env) == ["create-issue", "create-issue", "comment"]
+    assert "- nit: remark 0" in follow_up.comments[0]["text"]
+    correction = step(env)
+    assert (correction.decision.kind, correction.decision.reason) == (
+        "correct", "review_fix_before_merge")
+    assert step(env).decision.reason == "correction_not_pushed"
+    env.world.reviews.append(result_text())  # the partial review lists no remark
+    assert step(env).decision.kind == "review"
+    env.world.checks = [check()]
+    assert step(env).decision.kind == "merge"
+    assert verbs(env) == ["create-issue", "create-issue", "comment"]  # nothing deferred twice
+
+
+def test_nits_that_cannot_be_deferred_are_corrected_with_the_fix_before_merge_ones(env):
+    env.world.issues["APP-1"].type = "Task"
+    reviewed(env, nits=1, fix=1)
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason) == (
+        "correct", "remarks_not_deferrable")
     assert env.world.edits == []
 
 
@@ -399,7 +469,7 @@ def test_a_carried_proof_does_not_defer_the_same_remarks_twice(env):
     env.world.proof, env.world.carry_ok = "none", True
     carried = step(env)
     assert carried.decision.kind == "review" and carried.effect["review"]["carried"] is True
-    assert env.world.bodies[-1].rstrip().endswith(f"Deferred remarks: {follow_ups(env)[0].id}")
+    assert f"Deferred remarks: {follow_ups(env)[0].id} (" in env.world.bodies[-1]
     env.world.checks = [check()]
     assert step(env).decision.kind == "merge"
     assert verbs(env) == ["create-issue", "create-issue", "comment"]

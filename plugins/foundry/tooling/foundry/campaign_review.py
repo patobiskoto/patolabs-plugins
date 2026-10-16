@@ -170,7 +170,11 @@ def review_contract() -> str:
         "{\"text\",\"fix_before_merge\"} (a short non-empty text of at most "
         f"{MAX_REMARK_TEXT} characters, fix_before_merge true or false), so that the number "
         "of true entries equals fix_before_merge and the number of false entries equals "
-        "non_blocking. Never print the claim_id."
+        "non_blocking. Always set fix_before_merge true on a remark about a page frozen after "
+        "publication (release note, migration guide, CHANGELOG section of a published "
+        "version) and on a missing or generic documentation status under AGENTS.md#R5: the "
+        "campaign defers every false remark to a companion Epic and never those two cases. "
+        "Never print the claim_id."
     )
 
 
@@ -429,32 +433,50 @@ def round_line(number: int, review: dict) -> str:
     return line
 
 
-def deferred_follow_up(records: list[dict], epic: str, ticket: str) -> str | None:
-    """The follow-up issue of the last completed deferral of this ticket (PAT-141), if any."""
-    done = [r["deferral"]["follow_up"] for r in _mine(records, epic, ticket)
-            if r["event"] == "finished" and r["kind"] == "defer-remarks"
-            and r.get("deferral", {}).get("state") == "done"]
-    return done[-1] if done else None
+def deferral_lines(records: list[dict], epic: str, ticket: str,
+                   current: dict | None = None) -> list[str]:
+    """What R9 (b) asks the PR description to report (PAT-141): the follow-up issue, the
+    companion Epic and whether this PR created it, the number of deferred remarks and the
+    writes made; after a durable refusal, the refusal.  From the ``deferral`` fields of the
+    journal, then ``current`` (the one about to be journaled)."""
+    fields = [r["deferral"] for r in _mine(records, epic, ticket)
+              if r["event"] == "finished" and r["kind"] == "defer-remarks"
+              and "deferral" in r] + ([current] if current else [])
+    done = [f for f in fields if f["state"] == "done"]
+    lines = []
+    if done:
+        writes = list(dict.fromkeys(w for f in fields for w in f["writes"]))
+        total = sum({f["diff_hash"]: f["remarks"] or 0 for f in done}.values())
+        origin = "created by this pull request" if "create companion Epic" in writes \
+            else "already existing"
+        lines.append(
+            f"Deferred remarks: {done[-1]['follow_up']} (companion Epic {done[-1]['companion']}, "
+            f"{origin}; {total} remarks; writes: {', '.join(writes) or 'none'})")
+    if fields and fields[-1]["state"] == "refused":
+        lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}); they are "
+                     "corrected before the merge.")
+    return lines
 
 
 def pr_body(summary: str | None, records: list[dict], epic: str, ticket: str,
-            review: dict | None, deferred: str | None = None) -> str:
+            review: dict | None, deferral: dict | None = None) -> str:
     """The saved implementation summary and a ``Review rounds`` section from the journal.
 
     ``review`` is the round being recorded (``None`` when every round is already in the
-    journal); ``deferred`` the follow-up issue that carries the deferred remarks (PAT-141).
+    journal); ``deferral`` the ``deferral`` field about to be journaled (PAT-141).
     """
     rounds = [r["review"] for r in review_records(records, epic, ticket)]
     rounds += [review] if review is not None else []
     section = "## Review rounds\n" + "\n".join(
         round_line(number, one) for number, one in enumerate(rounds, 1))
-    if deferred:
-        section += f"\n\nDeferred remarks: {deferred}"
+    lines = deferral_lines(records, epic, ticket, deferral)
+    if lines:
+        section += "\n\n" + "\n".join(lines)
     return f"{summary.strip()}\n\n{section}" if summary and summary.strip() else section
 
 
 def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
-                   review: dict | None, deferred: str | None = None) -> str:
+                   review: dict | None, deferral: dict | None = None) -> str:
     """PAT-ADR-0022: say in the PR description that rounds took place; no extra session.
 
     ``issue openpr --summary-stdin`` on the open PR replaces its body.  Returns a detail text.
@@ -467,8 +489,7 @@ def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
     except OSError:
         summary = None
     done = fx._run(runtime, runtime.command("issue", "openpr", ticket.id, "--summary-stdin"),
-                   worktree, input=pr_body(summary, records, epic, ticket.id, review,
-                                           deferred or deferred_follow_up(records, epic, ticket.id)))
+                   worktree, input=pr_body(summary, records, epic, ticket.id, review, deferral))
     return "" if done.returncode == 0 else "pr_body_not_updated"
 
 

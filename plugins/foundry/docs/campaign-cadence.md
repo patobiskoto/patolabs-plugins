@@ -43,7 +43,7 @@ exit code is 2 when a capability is missing, 0 otherwise.
 | open PR, no review proof on the exact diff, or diff unobservable, fewer than `MAX_REVIEW_ROUNDS` (3) recorded rounds | `review` |
 | the same, at `MAX_REVIEW_ROUNDS` recorded rounds | `suspend` `review_rounds_exhausted` |
 | open PR, review proof not mergeable, fewer than `MAX_CORRECTIONS` (2) corrections started | `correct` `review_blocked` |
-| valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections | `correct` `review_fix_before_merge` |
+| valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections, and nothing to decide about the deferrable remarks (the rows below come first) | `correct` `review_fix_before_merge` |
 | either `correct` at `MAX_CORRECTIONS` corrections | `suspend` `corrections_exhausted` |
 | valid review with deferrable remarks (`DeferralFacts.deferrable` > 0, not marked "fix before merge"), no origin Epic, or the origin Epic is a companion Epic, or the last deferral ended in a durable refusal, fewer than `MAX_CORRECTIONS` corrections | `correct` `remarks_not_deferrable` |
 | the same remarks, an origin Epic that is not a companion Epic, deferral not done, last attempt transient and inside `DEFER_RETRY_SECONDS` | `wait` `deferral_transient_failure` |

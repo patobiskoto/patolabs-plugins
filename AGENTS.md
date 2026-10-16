@@ -366,7 +366,10 @@ changed "as few sentences as possible"; that the coordinator rightly classed a r
 deferrable. The reviewer judges through its "fix before merge" mark; the coordinator then
 applies the two other cases (a page frozen after publication, a missing or generic
 documentation status), and nobody re-reads that second step before the merge and no gate
-checks it: an accepted risk (maintainer decision of 2026-10-11).
+checks it: an accepted risk (maintainer decision of 2026-10-11). In an Epic campaign the
+reviewer contract (`review_contract`, `plugins/foundry/tooling/foundry/campaign_review.py`)
+asks the reviewer to mark those two cases "fix before merge", so the correction loop takes
+them; nothing checks that it did.
 `plugins/foundry/tests/test_skills.py` and `plugins/foundry/tests/test_process_contract.py`
 prove only that these rules are written in the skills and in this contract, not that they
 are followed (FOUNDRY-ADR-0018: a mechanical check never proves that documentation is

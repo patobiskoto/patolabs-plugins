@@ -292,7 +292,9 @@ Not mechanical:
   mark; the coordinator then applies the two other cases (a page frozen after
   publication, a missing or generic documentation status), and nobody re-reads that
   second step before the merge: an accepted risk (maintainer decision of 2026-10-11).
-  The rest is judged in review.
+  In an Epic campaign the reviewer contract (`review_contract`, `campaign_review.py`) asks
+  the reviewer to mark those two cases "fix before merge", so the correction loop takes
+  them; nothing checks that it did. The rest is judged in review.
 - No gate checks that a PR of a companion Epic deferred nothing (no second-level
   deferral), that the fourth write was made when needed, that the companion Epic has a
   single follow-up issue, or that the review after a correction was limited to what

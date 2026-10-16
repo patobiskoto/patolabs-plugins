@@ -314,8 +314,10 @@ For a `correct` decision with reason `review_blocked`, `review_fix_before_merge`
 
 Decided by `campaign_cadence._remarks` after a validated review of the exact PR head and base
 and before the CI wait: `deferrable` is the `non_blocking` count of that review (the remarks not
-marked "fix before merge"). Nothing is decided while `fix_before_merge` is above zero (the
-correction loop comes first).
+marked "fix before merge"). It comes before the `review_fix_before_merge` correction: that
+correction changes the head, and the review of the new diff hash need not list the remarks again.
+When they cannot be deferred, the `correct` `remarks_not_deferrable` decision corrects every
+remark, the marked ones included.
 
 | Facts (`DeferralFacts`) | Decision |
 | --- | --- |
@@ -332,8 +334,10 @@ The origin Epic and the companion test are read from the tracker only when defer
 remain (`origin_of`: `get_issue` of the ticket and of its parent). The effect (`run_deferral`)
 launches no session and holds no ceiling of `max_sessions`. Its intent is the `started` line of
 the attempt journal, written before the first write (`claim`); the `finished` line carries the
-`deferral` key `{state, follow_up, companion, reason, diff_hash}` (`state` is `done`, `refused` or
-`transient`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
+`deferral` key `{state, follow_up, companion, reason, diff_hash, remarks, writes, unknown}`
+(`DEFERRAL_KEYS`; `state` is `done`, `refused` or `transient`; `remarks` the number of deferred
+remarks; `writes` what this attempt wrote; `unknown` the creations whose effect is unknown, each
+`{title, client_id}`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
 
 1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
@@ -351,17 +355,24 @@ the attempt journal, written before the first write (`claim`); the `finished` li
    is skipped when a comment of the follow-up already contains that reference (a comment whose
    answer was lost). The tracker may return only the most recent comments
    (`docs/review-rounds.md`): a comment older than that window would be posted again (unknown).
-5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>`
-   after the `## Review rounds` section; the line is kept by the later rewrites
-   (`deferred_follow_up`).
+5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>
+   (companion Epic <ID>, created by this pull request|already existing; <N> remarks; writes:
+   ...)` after the `## Review rounds` section (R9 (b): the writes are reported in the PR
+   description); the line is kept by the later rewrites (`deferral_lines`, from the `deferral`
+   fields of the journal). After a durable refusal the same rewrite carries `Remarks not
+   deferred: durable refusal (<reason>); they are corrected before the merge.`
 6. The `finished` line with state `done`; the next pass decides `merge`.
 
 A failed `edit create-issue` is never retried inside the pass. When its standard error is the
 structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
-required`) and it names the created issue, `edit reconcile-create <ID> <spec>` runs
-(read-only); `validation: accepted` adopts that issue, anything else is transient. A creation
-whose effect is unknown without an issue identifier is transient: the next pass finds the issue
-by title, or creates it when none exists. The creation is therefore retried only after a read.
+required`), or is a quota error whose message names a `client_id=<UUID>`, `edit
+reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once; `validation:
+accepted` adopts that issue. Otherwise the effect stays unknown: the client id and the title go
+to the `unknown` key of the `finished` line (transient), and the next pass reconciles by that
+client id (`_create`) before any new creation, and never creates while the reconciliation is
+not accepted (PAT-ADR-0028); the bound is `MAX_DEFER_TRIES`. A search by title still precedes
+the creation and adopts an issue it lists. An error object that names neither an issue nor a
+client id is a durable refusal (`creation_effect_unreconcilable`).
 
 Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
 unavailable, a binding refusal, a `ValueError`, `SystemExit`, `type_unmapped`,

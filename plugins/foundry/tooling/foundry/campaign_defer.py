@@ -6,8 +6,9 @@ Every write is a Foundry command run as a subprocess (``edit create-issue``, ``e
 ``edit link``, ``edit reconcile-create``); the tracker is only read, through ``search`` and
 ``get_issue``, before each write, so a retry never duplicates one.  The effect launches no
 model session and the merge gate never reads the remarks receipt.  The intent is the
-``started`` line of the attempt journal, written before the first write.  See
-``docs/campaign-effects.md``.
+``started`` line of the attempt journal, written before the first write.  The ``finished``
+line keeps the client identifier of a creation whose effect is unknown, and the next pass
+reconciles by it before any new creation (PAT-ADR-0028).  See ``docs/campaign-effects.md``.
 """
 from __future__ import annotations
 
@@ -29,7 +30,13 @@ FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected o
 DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait; not measured
 MAX_DEFER_TRIES = 5  # attempts per diff; beyond them the campaign waits for a human
 STATES = ("pending", "done", "refused", "transient", "exhausted")
-DEFERRAL_KEYS = {"state", "follow_up", "companion", "reason", "diff_hash"}
+DEFERRAL_KEYS = {"state", "follow_up", "companion", "reason", "diff_hash", "remarks", "writes",
+                 "unknown"}
+WRITE_COMPANION = "create companion Epic"
+WRITE_FOLLOW_UP = "create follow-up issue"
+WRITE_ATTACH = "attach follow-up issue to the companion Epic"
+WRITE_COMMENT = "comment on the follow-up issue"
+_CLIENT = re.compile(r"client_id=([0-9A-Fa-f-]{36})")
 # What a Foundry command or a tracker read reports when the project cannot carry the write
 # (capability absent, Epic type refused, binding refused); anything else is transient.
 _DURABLE = re.compile(
@@ -65,6 +72,11 @@ def valid_deferral_field(value: object) -> bool:
         and value["state"] in ("done", "refused", "transient")
         and all(value[k] is None or isinstance(value[k], str)
                 for k in ("follow_up", "companion", "reason", "diff_hash"))
+        and (value["remarks"] is None or isinstance(value["remarks"], int))
+        and isinstance(value["writes"], list) and all(isinstance(w, str) for w in value["writes"])
+        and isinstance(value["unknown"], list) and all(
+            isinstance(u, dict) and set(u) == {"title", "client_id"}
+            and all(isinstance(v, str) for v in u.values()) for u in value["unknown"])
     )
 
 
@@ -143,30 +155,54 @@ def _write(runtime, cwd: Path, args: list[str], input: str | None = None):
     return done
 
 
-def _create(runtime, cwd: Path, spec: dict) -> str:
-    """``edit create-issue``; the id it prints.  A failure is never retried here: the next
-    pass reads the tracker first (and reconciles by the adapter's client identifier when the
-    adapter named the created issue)."""
+def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> str | None:
+    """``edit reconcile-create <issue id or client id> <spec>`` (read-only); the issue id it
+    accepts, else ``None``."""
+    with tempfile.TemporaryDirectory() as tmp:
+        spec_file = Path(tmp) / "spec.json"
+        spec_file.write_text(json.dumps(spec), encoding="utf-8")
+        check = _write(runtime, cwd, ["reconcile-create", ref, str(spec_file)])
+    verdict = review._json_object(check.stdout) if check.returncode == 0 else None
+    found = verdict.get("issue_id") if verdict and verdict.get("validation") == "accepted" else None
+    return found if isinstance(found, str) and found else None
+
+
+def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
+    """``edit create-issue``; the id it prints.  A failed creation is never retried while its
+    effect is unknown: the client identifier is kept in ``ledger["unknown"]`` (so in the
+    journal) and the next pass reconciles by it before any new creation (PAT-ADR-0028)."""
+    for entry in [u for u in ledger["unknown"] if u["title"] == spec["title"]]:
+        found = _reconcile(runtime, cwd, entry["client_id"], spec)
+        if found is None:
+            raise Transient("creation_effect_unknown")
+        ledger["unknown"].remove(entry)
+        ledger["writes"].append(label)
+        return found
     done = _write(runtime, cwd, ["create-issue", json.dumps(spec)])
     if done.returncode == 0:
         created = _CREATED.search(done.stdout or "")
         if created is None:
             raise Transient("create_output_unreadable")
+        ledger["writes"].append(label)
         return created.group(1)
-    details = review._json_object((done.stderr or "").strip().splitlines()[-1]
-                                  if (done.stderr or "").strip() else "")
+    stderr = done.stderr or ""
+    details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
-        issue_id = details.get("issue_id")
-        if isinstance(issue_id, str) and issue_id:
-            with tempfile.TemporaryDirectory() as tmp:
-                spec_file = Path(tmp) / "spec.json"
-                spec_file.write_text(json.dumps(spec), encoding="utf-8")
-                check = _write(runtime, cwd, ["reconcile-create", issue_id, str(spec_file)])
-            verdict = review._json_object(check.stdout) if check.returncode == 0 else None
-            if verdict and verdict.get("validation") == "accepted":
-                return issue_id
-        raise Transient("creation_effect_unknown")
-    raise classify(done.stderr or "")
+        named, client = details.get("issue_id"), details.get("client_id")
+    else:  # a quota error names the client identifier in its message (docs/linear-tracker.md)
+        named, found = None, _CLIENT.search(stderr[-400:])
+        client = found.group(1) if found else None
+        if not isinstance(classify(stderr), Transient) or client is None:
+            raise classify(stderr)
+    ref = next((v for v in (named, client) if isinstance(v, str) and v), None)
+    if ref is None:
+        raise Durable("creation_effect_unreconcilable")
+    found = _reconcile(runtime, cwd, ref, spec)
+    if found is not None:
+        ledger["writes"].append(label)
+        return found
+    ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
+    raise Transient("creation_effect_unknown")
 
 
 def _find_companion(tracker, project, name: str) -> str | None:
@@ -206,8 +242,11 @@ def comment_text(ticket, receipt_ref: str, pr: int, rounds: int, remarks: list[d
 
 
 def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
-                 worktree: Path, repository: str) -> dict:
-    """The six steps; raises ``Durable`` or ``Transient``; returns the ``deferral`` field."""
+                 worktree: Path, repository: str, ledger: dict) -> dict:
+    """The six steps; raises ``Durable`` or ``Transient``; returns the ``deferral`` field.
+
+    ``ledger`` is ``{"writes": [...], "unknown": [...]}``: what this attempt wrote and the
+    creations whose effect is still unknown; the caller journals it whatever the outcome."""
     facts = ticket.deferral
     receipt = review_remarks.ReviewRemarksStore(repository).find(ticket.id, facts.diff_hash)
     if receipt is None:
@@ -225,16 +264,18 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
             "title": name, "fields": {"Type": "Epic", "State": "backlog"},
             "body": f"Companion Epic of {origin}: holds the non-blocking review remarks "
                     "deferred from it (AGENTS.md#R9 (b)). No tracker link to the origin Epic.",
-        })
+        }, ledger, WRITE_COMPANION)
     title = FOLLOW_UP_TITLE.format(origin=origin)
     follow_up, attach = _find_follow_up(tracker, project, companion, title)
     if follow_up is None:
         follow_up = _create(runtime, worktree, {
-            "title": title, "body": FOLLOW_UP_BODY, "parent": companion})
+            "title": title, "body": FOLLOW_UP_BODY, "parent": companion},
+            ledger, WRITE_FOLLOW_UP)
     elif attach:  # write 4: the creation succeeded, the parent link was not set
         done = _write(runtime, worktree, ["link", follow_up, "subtask-of", companion])
         if done.returncode != 0:
             raise classify(done.stderr or "")
+        ledger["writes"].append(WRITE_ATTACH)
     ref = f"{ticket.id}@{facts.diff_hash[:16]}"
     existing = _read(tracker.get_issue, follow_up).comments
     if not any(ref in str(c.get("text", "")) for c in existing):
@@ -243,11 +284,19 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
             ticket.id, ref, ticket.pr.number, rounds, deferrable))
         if done.returncode != 0:
             raise classify(done.stderr or "")
-    if review.update_pr_body(runtime, epic, ticket, attempts, worktree, None,
-                             deferred=follow_up):
+        ledger["writes"].append(WRITE_COMMENT)
+    field = deferral_field("done", facts.diff_hash, ledger, follow_up=follow_up,
+                           companion=companion, remarks=len(deferrable))
+    if review.update_pr_body(runtime, epic, ticket, attempts, worktree, None, deferral=field):
         raise Transient("pr_body_not_updated")
-    return {"state": "done", "follow_up": follow_up, "companion": companion, "reason": None,
-            "diff_hash": facts.diff_hash}
+    return field
+
+
+def deferral_field(state: str, diff_hash: str, ledger: dict, *, follow_up=None,
+                   companion=None, reason=None, remarks=None) -> dict:
+    return {"state": state, "follow_up": follow_up, "companion": companion, "reason": reason,
+            "diff_hash": diff_hash, "remarks": remarks, "writes": list(ledger["writes"]),
+            "unknown": list(ledger["unknown"])}
 
 
 def launch(runtime, plan: dict, epic: str, ticket, attempts: Path, worktree: Path) -> dict:
@@ -255,14 +304,22 @@ def launch(runtime, plan: dict, epic: str, ticket, attempts: Path, worktree: Pat
     from foundry.routing import repository_identity
 
     fields = {"exit_code": None, "cost_usd": None, "duration_ms": None, "summary_file": None,
-              "branch_head": None, "error": None, "detail": ""}
+              "branch_head": None, "error": None, "detail": "", "status": "completed"}
+    diff_hash = ticket.deferral.diff_hash
+    earlier = [r["deferral"] for r in review._mine(fx.read_attempts(attempts), epic, ticket.id)
+               if r["event"] == "finished" and r["kind"] == KIND and "deferral" in r
+               and r["deferral"]["diff_hash"] == diff_hash]
+    ledger = {"writes": [], "unknown": list(earlier[-1]["unknown"]) if earlier else []}
     try:
         deferral = run_deferral(runtime, plan["tracker"], plan["project"], epic, ticket,
-                                attempts, worktree, repository_identity(runtime.root))
-        return {**fields, "status": "completed", "deferral": deferral}
+                                attempts, worktree, repository_identity(runtime.root), ledger)
+        return {**fields, "deferral": deferral}
     except Outcome as outcome:
-        deferral = {"state": outcome.state, "follow_up": None, "companion": None,
-                    "reason": outcome.reason, "diff_hash": ticket.deferral.diff_hash}
+        deferral = deferral_field(outcome.state, diff_hash, ledger, reason=outcome.reason)
+        if outcome.state == "refused" and review.update_pr_body(
+                runtime, epic, ticket, attempts, worktree, None, deferral=deferral):
+            deferral = deferral_field("transient", diff_hash, ledger, reason="pr_body_not_updated")
+            outcome = Transient("pr_body_not_updated")
         return {**fields, "status": "completed" if outcome.state == "refused" else "failed",
                 "error": None if outcome.state == "refused" else "transient",
                 "detail": outcome.reason, "deferral": deferral}
