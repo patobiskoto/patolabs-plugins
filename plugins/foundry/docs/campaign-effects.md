@@ -83,14 +83,19 @@ The session receives the child environment of `_claude_child_environment`
 (`command_runtime.py`: the `_CLAUDE_CHILD_ENV_ALLOWLIST` of AGENTS.md#R6 plus
 `FOUNDRY_RUNTIME_CONFIG_ISOLATED`), so no tracker or code-host token variable passes, and a
 Foundry command run by the session does not resolve secrets from host configuration
-(`config.get`, `_runtime_config_isolated`). `DISALLOWED_TOOLS` denies `git push`, `gh`, and
-the Foundry write verbs `issue`, `edit`, `adr` and `campaign-approval approve`; the plugin
+(`config.get`, `_runtime_config_isolated`). `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
+`gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve` (other
+Foundry verbs that write, such as `routing record-review-proof`, are not listed); the plugin
 guard (`hooks/guard_bash.py`) also denies `gh pr create/merge`, a push to the default branch
 and `campaign-approval approve` when the plugin is active, because `--plugin-dir` is passed.
 
 The limit, stated: the session runs as the same OS user as the cadencer. A token kept in the
 user's Foundry configuration file or keychain, or any credential of that user, is readable by
-a command the session writes outside the Foundry code paths. This is a discipline boundary,
+a command the session writes outside the Foundry code paths; a plain spelling outside the
+prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not denied (deduced);
+and the session can write the local Foundry state of `registry.data_dir()`, including the
+review-proof store, the approval journal and the attempt journal, so a forged review proof
+would let the cadencer merge without a real review. This is a discipline boundary,
 not a sandbox (the framing of `guard_bash.py`, whose `bash -c` indirection is out of scope by
 design). Whether the host matches the mid-command wildcards of `DISALLOWED_TOOLS` is not
 verified here (unknown); the tests pin the argv, not the host's matching.
@@ -131,8 +136,11 @@ unchanged, so the next `implement` is refused as a replay.
 
 ## Not executed yet
 
-`review` and `correct` (PAT-218); a Codex session; closing the Epic; any retry of a failed
-attempt. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
+`review` and `correct` (PAT-218); a Codex session; closing the Epic; the replay of a failed
+attempt with the same fingerprint. A failed `implement` session that committed changes the
+branch head, so the next pass launches a new session with a new identity: retries are
+bounded only by `max_sessions` and `max_sessions_per_issue`, so the worst-case spend is that
+ceiling times `--budget-usd`. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
 argv, the allowlisted environment, no replay including after a crash, ceilings, merge only on
 a `merge` decision, and a two-ticket Epic that reaches `await-verdict` on a tracker double,
 with the review proof and the CI result injected).
