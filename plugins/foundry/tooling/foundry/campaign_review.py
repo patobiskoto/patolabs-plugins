@@ -576,7 +576,7 @@ def body_summary(records: list[dict], epic: str, ticket: str) -> str | None:
     try:
         raw = Path(saved[-1]["summary_file"]).read_text(encoding="utf-8") \
             if saved[-1]["summary_file"] else None
-    except OSError:
+    except (OSError, UnicodeDecodeError):  # an undecodable file is read as no summary (PAT-236)
         raw = None
     return fx.published_summary(raw)
 

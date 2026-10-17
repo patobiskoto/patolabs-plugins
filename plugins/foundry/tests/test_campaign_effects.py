@@ -641,7 +641,7 @@ def test_same_identity_is_never_launched_twice_even_after_a_crash(env):
     assert len(env.world.calls) == before
 
 
-def test_claim_is_atomic_per_identity(tmp_path):
+def test_a_second_claim_of_one_identity_is_refused(tmp_path):
     path = tmp_path / "a.jsonl"
     record = {"schema_version": ce.EFFECTS_CONTRACT, "event": "started", "attempt": "x" * 64,
               "epic": "APP-1", "ticket": "APP-2", "kind": "start", "fingerprint": {},

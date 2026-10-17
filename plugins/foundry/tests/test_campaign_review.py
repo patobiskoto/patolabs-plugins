@@ -788,6 +788,16 @@ def test_the_summary_criterion_is_mechanical():
         assert ce.published_summary(bad) == ce.SUMMARY_UNUSABLE_BODY
 
 
+def test_an_undecodable_summary_file_is_read_as_no_summary(env, tmp_path):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    step(env)
+    records = ce.read_attempts(env.kwargs["attempts"])
+    saved = [r for r in records if r["event"] == "finished" and r.get("summary_file")]
+    Path(saved[-1]["summary_file"]).write_bytes("é".encode("utf-8")[:1])
+    assert cr.body_summary(records, "APP-1", "APP-2") == ce.SUMMARY_UNUSABLE_BODY
+
+
 def test_the_reviewer_contract_asks_each_remark_for_a_target():
     contract = cr.review_contract()
     assert 'target "diff"' in contract and '"description"' in contract
