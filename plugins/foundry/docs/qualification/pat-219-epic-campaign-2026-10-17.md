@@ -90,9 +90,9 @@ The estimate (comment on PAT-177, 2026-10-16) is about 75 requests per ticket wi
 round and about 120 with three rounds and two corrections. It counts start 13, open-pr 11 to
 15, merge 20 to 30, and a revalidation of about ⌈P/100⌉ before each effect.
 
-- The effects measured by their subcommand are close to their estimates, but only `start`
-  falls inside: start 13 (estimate 13), open-pr 10 to 13 (estimate 11 to 15), merge 33
-  (estimate 20 to 30).
+- The effects measured by their subcommand are close to their estimates: `start` 13 (estimate
+  13) and the first `open-pr` 13 (estimate 11 to 15) fall inside; the re-push after a
+  correction, 10, is below; `merge` 33 is above (estimate 20 to 30).
 - The total does not: run 1 alone is 1723 requests in the cadencer for less than two tickets,
   against about 150 to 200 estimated. Where the excess comes from is unknown (deduced lead: the
   deferral effect, above); measuring it is the subject of PAT-228.
