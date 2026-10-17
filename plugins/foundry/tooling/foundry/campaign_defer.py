@@ -272,8 +272,9 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
                  worktree: Path, repository: str, ledger: dict) -> dict:
     """The six steps; raises ``Durable`` or ``Transient``; returns the ``deferral`` field.
 
-    ``ledger`` is ``{"writes": [...], "unknown": [...]}``: what this attempt wrote and the
-    creations whose effect is still unknown; the caller journals it whatever the outcome."""
+    ``ledger`` is ``{"writes": [...], "unknown": [...], "companion": ...}``: what this attempt
+    wrote, the creations whose effect is still unknown and the companion Epic once found or
+    created; the caller journals it whatever the outcome."""
     facts = ticket.deferral
     receipt = review_remarks.ReviewRemarksStore(repository).find(ticket.id, facts.diff_hash)
     if receipt is None:
