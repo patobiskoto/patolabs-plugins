@@ -343,7 +343,24 @@ def _parse_session(stdout: object, session_id: str) -> dict:
     return result
 
 
+_REDACTED = "[REDACTED]"
+_CREDENTIAL_PATTERNS = (
+    re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@:]*:?[^\s/@]*@"),
+    re.compile(r"(?i)\b(authorization|proxy-authorization)(\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\"]+"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}"
+               r"|lin_api_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,})\b"),
+)
+
+
+def mask_credentials(text: str) -> str:
+    """Mask URL userinfo, authorization header values and well-known token shapes."""
+    text = _CREDENTIAL_PATTERNS[0].sub(lambda m: f"{m.group(1)}{_REDACTED}@", text)
+    text = _CREDENTIAL_PATTERNS[1].sub(lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", text)
+    return _CREDENTIAL_PATTERNS[2].sub(_REDACTED, text)
+
+
 def _save_summary(path: Path, attempt: str, text: str) -> str:
+    text = mask_credentials(text)
     target = path.parent / SUMMARIES_NAME / f"{attempt[:16]}.md"
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)

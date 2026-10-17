@@ -765,3 +765,17 @@ def test_real_git_branch_facts_and_worktree(tmp_path):
     assert cc._git_branch_facts(str(repo), "chore/app-9-x") == (None, None)
     fresh = ce.ensure_worktree(runtime, "APP-3", cc._git_refs)  # no branch yet: detached
     assert fresh.is_dir() and git("branch", "--show-current", cwd=fresh).stdout.strip() == ""
+
+
+def test_saved_summary_masks_credential_shaped_values(tmp_path):
+    text = (
+        "remote https://user:s3cret@example.com/org/repo.git and https://tok@host/x\n"
+        "http.extraHeader = Authorization: Bearer abc.def-123\n"
+        "Authorization: Basic dXNlcjpwYXNz\n"
+        "token ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2" + " done; see https://example.com/docs and a@b"
+    )
+    saved = Path(ce._save_summary(tmp_path / "attempts.jsonl", "a" * 16, text)).read_text()
+    for leaked in ("s3cret", "tok@", "abc.def-123", "dXNlcjpwYXNz", "ghp_A1b2"):
+        assert leaked not in saved
+    assert "https://[REDACTED]@example.com/org/repo.git" in saved
+    assert "https://example.com/docs" in saved and "a@b" in saved

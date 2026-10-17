@@ -210,6 +210,16 @@ home, the network, other hosts and versions.
   runs, and the network of the shell commands, which the sandbox policy governs and these
   settings do not open (deduced from the settings, which set no network key; not observed).
   A credential kept outside the home or in the keychain is not covered by the read rules.
+- Residual, observed from the settings (reads are re-allowed on `<common>/config`, `~/.gitconfig`
+  and `~/.config/git` so commits have an identity): the session can read a credential those
+  files hold (token in a remote URL, `http.extraHeader`, `url.*.insteadOf`), and its final summary
+  becomes the body of the pull request. Measure: `campaign_effects.mask_credentials` runs in
+  `_save_summary`, before the summary is stored, so before `issue openpr --summary-stdin`
+  and before the review sees it; it masks URL userinfo (`https://user:token@host`), the value of
+  an `Authorization` / `Proxy-Authorization` header and a few token shapes (GitHub, GitLab,
+  Linear, Slack, `sk-`) with `[REDACTED]` (unit test, observed). Unknown: a credential of
+  another shape (a bare password, a token without a known prefix outside a URL or header) is
+  not masked; the session's own files and commit contents are not filtered.
 
 The remaining limits, stated: `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
 `gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve`; a plain
