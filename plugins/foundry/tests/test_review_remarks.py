@@ -165,3 +165,17 @@ def test_the_target_of_a_remark_is_diff_or_description_and_required_from_a_revie
         _parse(_data(remarks=[{"text": "a", "fix_before_merge": True},
                               {"text": "b", "fix_before_merge": False},
                               {"text": "c", "fix_before_merge": False}]))
+
+
+def test_a_receipt_written_before_the_target_key_is_replayed_as_identical(tmp_path):
+    scenario, proof = _proof(tmp_path)
+    store = rr.ReviewRemarksStore(carry.REPOSITORY, scenario.state)
+    _record(scenario, proof)
+    path = store.directory / proof["proof_id"]
+    old = json.loads(path.read_text())
+    for remark in old["remarks"]:
+        del remark["target"]  # the shape written before PAT-227
+    path.write_text(json.dumps(old, sort_keys=True, separators=(",", ":")) + "\n")
+    assert _record(scenario, proof)["remarks"][0]["target"] == "diff"  # accepted, not refused
+    with pytest.raises(rr.ReviewRemarksError):
+        _record(scenario, proof, [{"text": "other", "fix_before_merge": False}])

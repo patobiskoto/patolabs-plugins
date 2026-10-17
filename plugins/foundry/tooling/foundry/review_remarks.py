@@ -59,6 +59,17 @@ def validate_remarks(remarks: object, *, require_target: bool = False) -> list[d
     return normalized
 
 
+def _normalized_text(text: str) -> str:
+    """A stored receipt as ``record`` would write it today: a remark without ``target`` (a
+    receipt written before PAT-227) reads as ``diff``; anything unreadable stays as it is."""
+    try:
+        stored = json.loads(text)
+        stored["remarks"] = validate_remarks(stored["remarks"])
+    except (ValueError, KeyError, TypeError):
+        return text
+    return json.dumps(stored, sort_keys=True, separators=(",", ":")) + "\n"
+
+
 class ReviewRemarksStore:
     """Private append-only receipts under the Foundry data directory, per repository."""
 
@@ -88,7 +99,7 @@ class ReviewRemarksStore:
         target = self.directory / proof["proof_id"]
         text = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
         if target.exists():
-            if target.read_text(encoding="utf-8") != text:
+            if _normalized_text(target.read_text(encoding="utf-8")) != text:
                 raise ReviewRemarksError("reçu de remarques déjà présent et différent")
             return receipt
         descriptor, temporary = tempfile.mkstemp(prefix=".remarks.", dir=self.directory)

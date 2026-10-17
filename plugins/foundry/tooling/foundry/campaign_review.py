@@ -52,11 +52,11 @@ def valid_review_field(review: object) -> bool:
     """Closed shape of the ``review`` key of a ``finished`` journal line."""
     return (
         isinstance(review, dict) and set(review) in (REVIEW_KEYS, REVIEW_KEYS | {DESCRIPTION_KEY})
-        and type(review.get(DESCRIPTION_KEY, 0)) is int
-        and 0 <= review.get(DESCRIPTION_KEY, 0) <= review["fix_before_merge"]
         and review["verdict"] in ("blocked", "validated")
         and all(type(review[k]) is int and review[k] >= 0
                 for k in ("fix_before_merge", "non_blocking"))
+        and type(review.get(DESCRIPTION_KEY, 0)) is int
+        and 0 <= review.get(DESCRIPTION_KEY, 0) <= review["fix_before_merge"]
         and all(isinstance(review[k], str) for k in ("diff_hash", "base", "head"))
         and all(type(review[k]) is bool for k in ("carried", "partial"))
     )
@@ -236,7 +236,8 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
     return "".join(parts)
 
 
-def description_prompt(epic: str, ticket: str, title: str, body: str, report: str) -> str:
+def description_prompt(epic: str, ticket: str, title: str, body: str, report: str,
+                       current: str | None = None) -> str:
     """PAT-227: every "fix before merge" remark targets the description; no code change."""
     return (
         f"{CORRECT_PROMPT_MARK}\n"
@@ -249,9 +250,11 @@ def description_prompt(epic: str, ticket: str, title: str, body: str, report: st
         "3. Every remark marked \"fix before merge\" is about the pull-request description, "
         "not the code. Change no file and make no commit. Read the diff of the branch against "
         "its base only as far as needed to write a correct description.\n"
-        "4. Your final message replaces the pull-request description as it is: write the whole "
-        "new description in Markdown (what changed, tests run, remaining risk) and settle "
-        "each remark. Follow AGENTS.md#R9(a): every sentence about what a tool launches, "
+        "4. The description now published, without its review rounds section:\n"
+        f"<description>\n{current or '(none)'}\n</description>\n"
+        "Your final message replaces it: write the whole new description in Markdown (what "
+        "changed, tests run, remaining risk) and settle each remark. Do not write a "
+        "`## Review rounds` section: the coordinator adds it. Follow AGENTS.md#R9(a): every sentence about what a tool launches, "
         "loads, calls or writes cites its source, and every cause is stated as observed, "
         "deduced or unknown.\n"
         f"Its first line is exactly `{fx.SUMMARY_MARK}`; a message without that first line is "
@@ -390,7 +393,8 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
         plan = fx.session_plan(runtime, route, policy)
         issue = tracker.get_issue(ticket.id)
         plan["prompt"] = description_prompt(
-            epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "", report)
+            epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "", report,
+            body_summary(records, epic, ticket.id))
         return {**plan, "description": True}
     if decision.reason == "review_blocked":
         worktree = runtime.worktrees_dir / ticket.id
@@ -591,9 +595,18 @@ def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
 
 
 def publish_description(runtime, epic: str, ticket, attempts: Path, worktree: Path,
-                        fields: dict) -> dict:
+                        fields: dict, refs) -> dict:
     """PAT-227: the summary of a description correction replaces the PR body (``issue openpr
-    --summary-stdin``) with the review rounds; unusable or unpublished, the attempt fails."""
+    --summary-stdin``) with the review rounds; unusable or unpublished, the attempt fails.
+
+    ``issue openpr`` pushes the branch the worktree HEAD names (PAT-220), and this session may
+    have moved that HEAD: before it, the HEAD must be the ticket branch (``fx.branch_mismatch``)
+    and the observed PR head (the session must commit nothing), else nothing is published.
+    """
+    if fx.branch_mismatch(runtime, worktree, ticket.id, refs) is not None:
+        return {**fields, "status": "failed", "error": "description_worktree_branch_mismatch"}
+    if fx.worktree_head_sha(runtime, worktree) != ticket.pr.head_sha:
+        return {**fields, "status": "failed", "error": "description_session_moved_head"}
     try:
         raw = Path(fields["summary_file"]).read_text(encoding="utf-8") \
             if fields["summary_file"] else None

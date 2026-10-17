@@ -719,8 +719,10 @@ def test_a_remark_on_the_diff_keeps_the_correction_session_with_commits(env):
     result = step(env)
     assert (result.decision.reason, result.outcome) == ("review_fix_before_merge", "executed")
     assert "Change no file" not in effects(env.world)[-1][3]
-    assert "description" not in [r.get("description") for r in
-                                 ce.read_attempts(env.kwargs["attempts"])]
+    done = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "correct"
+            and r["event"] == "finished"]
+    assert done and all("description" not in r for r in done)
+    assert len(getattr(env.world, "bodies", [])) == 1  # only the body of the review
 
 
 def test_a_description_correction_without_the_summary_line_is_not_published(env):
@@ -801,3 +803,51 @@ def test_a_later_body_update_keeps_the_corrected_description(env, tmp_path):
     body = env.world.bodies[-1]
     assert body.startswith("## Corrected\nthe new description\n\n## Review rounds")
     assert body.count("Description corrected per a remark") == 1
+
+
+def test_the_description_is_not_published_when_the_session_moved_the_worktree_head(env):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    env.world.worktree_head["APP-2"] = "main"  # the session switched the worktree HEAD
+    before = len(env.world.bodies)
+    result = step(env)
+    assert (result.decision.reason, result.outcome) == ("review_fix_description", "failed")
+    done = ce.read_attempts(env.kwargs["attempts"])[-1]
+    assert (done["status"], done["error"]) == ("failed", "description_worktree_branch_mismatch")
+    assert len(env.world.bodies) == before and "description" not in done
+    # the two `issue openpr` of the opening and of the review, none for the description
+    assert len([c for c in effects(env.world) if c[0][3:4] == ["openpr"]]) == 2
+
+
+def test_the_description_is_not_published_when_the_session_committed(env):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    env.world.head_sha["APP-2"] = "9" * 40  # a new commit on the ticket branch
+    before = len(env.world.bodies)
+    result = step(env)
+    assert result.outcome == "failed"
+    done = ce.read_attempts(env.kwargs["attempts"])[-1]
+    assert (done["status"], done["error"]) == ("failed", "description_session_moved_head")
+    assert len(env.world.bodies) == before and "description" not in done
+
+
+def test_a_corrupt_review_field_is_a_journal_error_not_a_type_error(env):
+    to_review(env)
+    env.world.reviews.append(result_text())
+    step(env)
+    path = env.kwargs["attempts"]
+    lines = path.read_text().splitlines()
+    record = json.loads(lines[-1])
+    for bad in ({"fix_description": "1"}, {"fix_before_merge": "1"}, {"fix_before_merge": None}):
+        record["review"] = {**json.loads(lines[-1])["review"], **bad}
+        path.write_text("\n".join(lines[:-1] + [json.dumps(record)]) + "\n")
+        with pytest.raises(ce.AttemptJournalInvalid):
+            ce.read_attempts(path)
+
+
+def test_the_description_prompt_carries_the_published_description(env):
+    _description_only(env)
+    step(env)
+    prompt = [c for c in effects(env.world) if c[0][0] == "claude"][-1][3]
+    assert "<description>\n## Summary\nAPP-2\n</description>" in prompt
+    assert "Do not write a `## Review rounds` section" in prompt

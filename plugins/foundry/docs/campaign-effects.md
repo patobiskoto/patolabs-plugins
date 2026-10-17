@@ -204,11 +204,15 @@ home, the network, other hosts and versions.
   push of `issue openpr` (deduced from those tests; `issue openpr` itself was not run).
 - `issue openpr` pushes the branch the worktree HEAD names (`openpr`, `issue.py`), and the
   session can move that HEAD (it writes the worktree's git directory, above). Before an `open-pr`, `review` or `defer-remarks` effect
-  (`PUSH_KINDS`: each may run `issue openpr`), `branch_mismatch` reads it with `git rev-parse
+  (`PUSH_KINDS`: each may run `issue openpr`) and, for the description correction (PAT-227), after its
+  session and before its `issue openpr` (`publish_description`), `branch_mismatch` reads it with `git rev-parse
   --abbrev-ref HEAD`; when it is not the ticket's branch (`campaign_cadence._branch_for`) or is
   the default branch (`registry.default_branch`, else `main`), the pass returns `suspend`
   `worktree_branch_mismatch`, claims no attempt and runs no `issue openpr`
-  (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`).
+  (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`); after a
+  description correction session the attempt is already claimed, so it fails with `error`
+  `description_worktree_branch_mismatch` and publishes nothing
+  (`test_the_description_is_not_published_when_the_session_moved_the_worktree_head`).
 - Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
   `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
   session could redirect the git directory to a repository of its own whose configuration
@@ -347,8 +351,10 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    section rebuilt from the journal (`round_line`: full, partial or carried, verdict, short
    head sha, and for a partial round the sentence on the reliance). It is a Foundry command,
    not a session, and is made after a carried proof too. A refusal leaves the verdict
-   recorded and sets the detail `pr_body_not_updated`. Without a saved summary the body is
-   the rounds section only. After a description correction (below) the section also holds one
+   recorded and sets the detail `pr_body_not_updated`. Without a completed implementation or
+   description correction in the journal the body is the rounds section only; with one whose
+   summary file is missing, unreadable or unusable it is `SUMMARY_UNUSABLE_BODY` and the section
+   (`body_summary`). After a description correction (below) the section also holds one
    line per correction (`description_lines`).
 
 The `finished` line carries the verdict (`review` key) and `summary_file` (the report). The
@@ -483,9 +489,16 @@ description was corrected per the remark and not re-reviewed because the diff is
 CI wait, merge) as for a validated round with nothing left to fix. A session that fails, an
 unusable message (`error` `description_summary_unusable`) or a refused `issue openpr` (`error`
 `description_not_published`) fails the attempt; the next pass then suspends
-`description_correction_not_settled` (not `attempt_already_made`). A session that commits despite
-the prompt leaves the branch ahead of the PR: the pass after that decides `open-pr`
-`correction_not_pushed` and a new review, as for any correction.
+`description_correction_not_settled` (not `attempt_already_made`). Before publishing,
+`publish_description` also refuses a worktree HEAD that is not the ticket branch
+(`description_worktree_branch_mismatch`, `branch_mismatch`) and one whose commit
+(`worktree_head_sha`) differs from the PR head observed before the session
+(`description_session_moved_head`: the session must commit nothing); nothing is pushed or
+published (`test_the_description_is_not_published_when_the_session_committed`). The attempt is
+`failed`, so no `open-pr` follows. The next pass decides `review_fix_description` again: with the
+same fingerprint (HEAD on another branch) it suspends `description_correction_not_settled`; with
+a new commit the branch head, hence the fingerprint, changed and a new description attempt is
+possible, bounded by `MAX_CORRECTIONS`; the local commit stays unpushed.
 
 Residual risk: a description corrected this way is not re-reviewed (deduced from the dedup by
 diff hash), and the merge gate never reads the PR description (`issue merge`, `write.py`).
@@ -662,11 +675,15 @@ reasons `non_blocking_remarks`, `remarks_not_deferrable`, `deferral_transient_fa
 `MAX_DEFER_TRIES`, `MAX_REMARKS`, `MAX_REMARK_TEXT`; the optional journal key `deferral`; the
 receipt directory `review-remarks`. No configuration key or routing table changed.
 
-R5 status (PAT-227): updated `docs/campaign-effects.md` and `docs/campaign-cadence.md`.
+R5 status (PAT-227): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md` and
+`docs/review-rounds.md`.
 Candidate artefacts: the `target` key of a remark (reviewer result, receipt, `routing
 record-review-remarks --remarks-file` help); the decision reason `review_fix_description` and
 the suspension `description_correction_not_settled`; the constants `SUMMARY_MARK`,
 `SUMMARY_UNUSABLE_BODY`, `TARGETS`, `DESCRIPTION_KEY`; the optional journal keys
-`fix_description` (in `review`) and `description`. `AGENTS.md`/`CLAUDE.md` R9: no sentence became
-false (the correction loop it describes is unchanged for a remark on the diff). No CLI verb or
-option, configuration key or routing table changed.
+`fix_description` (in `review`) and `description`; the errors `description_summary_unusable`,
+`description_not_published`, `description_worktree_branch_mismatch` and
+`description_session_moved_head`. Also updated: `docs/review-rounds.md` and the sentence of
+`AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign") on what the correction loop re-reviews,
+which the description correction made partly false. No CLI verb or option, configuration key or
+routing table changed.

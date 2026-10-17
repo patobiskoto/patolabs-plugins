@@ -371,6 +371,12 @@ def branch_mismatch(runtime: Runtime, worktree: Path, ticket: str, refs) -> dict
     return {"head": head, "expected": expected, "default": default}
 
 
+def worktree_head_sha(runtime: Runtime, worktree: Path) -> str | None:
+    """The commit the worktree HEAD names (``git rev-parse HEAD``), else ``None`` (PAT-227)."""
+    done = _run(runtime, ["git", "rev-parse", "HEAD"], worktree, timeout=GIT_TIMEOUT_SECONDS)
+    return (done.stdout or "").strip() or None if done.returncode == 0 else None
+
+
 def _parse_session(stdout: object, session_id: str) -> dict:
     try:
         result = json.loads(stdout) if isinstance(stdout, str) else None
@@ -568,7 +574,7 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
               "summary_file": saved, "branch_head": head, "error": None, "detail": ""}
     if ok and plan.get("description"):  # PAT-227: the correction is the new PR description
         return campaign_review.publish_description(runtime, epic, ticket, attempts, worktree,
-                                                   fields)
+                                                   fields, refs)
     return fields
 
 

@@ -45,6 +45,7 @@ class World:
         self.calls = []  # (argv, cwd, env, input)
         self.session_commits = True
         self.session_summary = None
+        self.head_sha = {}  # worktree HEAD commit overrides (PAT-227)
         self.reviews = []  # canned reviewer results, consumed in order
         self.human_required = False
         self.proofs = []  # outcomes files seen by record-review-proof
@@ -98,6 +99,9 @@ class World:
             assert neutral(env, self.hooks), argv
         if "--abbrev-ref" in argv:  # PAT-220: the branch the worktree HEAD names
             return ok(self.worktree_head.get(Path(cwd).name, self.branch(Path(cwd).name)) + "\n")
+        if argv == ["git", "rev-parse", "HEAD"]:  # PAT-227: the commit the worktree HEAD names
+            ticket = Path(cwd).name
+            return ok(self.head_sha.get(ticket, self.heads.get(ticket, "")) + "\n")
         if argv[:2] == ["git", "rev-parse"]:  # PAT-220: a linked worktree of the stand-in repository
             common = Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git"
             return ok(f"{common}\n{common}/worktrees/{Path(cwd).name}\n")
