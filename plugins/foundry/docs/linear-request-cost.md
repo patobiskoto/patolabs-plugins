@@ -414,7 +414,8 @@ count the tickets); only the first run's count was kept.
 
 Pinned by `tests/test_campaign_request_cost.py` (observation: `test_an_observation_costs_one_request_per_node`; lookups: the `test_*lookup*`, `test_a_journaled_*` and `before` tests; replay: `test_a_replayed_campaign_splits_its_requests`). Method: the transport double records every GraphQL call (`wire.calls`); the figures are the
 number of calls, by operation. Project: one closed Epic of 56 nodes (the Epic itself, 31 children
-and 24 prerequisites; the 55 nodes of `tests/test_epic_read_cost.py` are `N_CHILDREN + N_PREREQ`, the
+and 24 prerequisites; the 55 nodes of `tests/test_epic_read_cost.py` are
+`N_CHILDREN + N_PREREQ`, the
 Epic excluded), plus a companion Epic and its follow-up.
 
 | Read | Requests | Detail |
@@ -461,7 +462,8 @@ heading "Linear requests, per step").
 The `wait` part of the observation is 12 of 35. After PAT-228 the deferral effect is 59 of the 60
 effect requests; with the "before" reads (fixture `before`) it is 116 and the effects total 117,
 the observation unchanged. These are figures of a three-node Epic (the Epic and two tickets,
-`APP-1` to `APP-3` of `tests/test_campaign_effects.py`) and of a project holding one closed Epic of 56 nodes: they
+`APP-1` to `APP-3` of `tests/test_campaign_effects.py`) and of a project holding one closed Epic
+of 56 nodes: they
 show the split, not the cost of a real project (unknown).
 
 ### Reduction (PAT-228) and what it leaves
