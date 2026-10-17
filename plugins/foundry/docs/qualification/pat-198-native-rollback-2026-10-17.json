@@ -8,7 +8,7 @@
     "per_line": 1,
     "retries": 0
   },
-  "native_calls": 3,
+  "native_calls": 4,
   "rows": [
     {
       "line": "codex-scout",
@@ -280,24 +280,46 @@
         "model": "fable-5",
         "effort": "high"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "architect",
+        "tier": "apex",
+        "model": "fable-5",
+        "effort": "high"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "transmitted": {
+        "profile": "routed-readonly-high-fable-5",
+        "model": "claude-fable-5",
+        "effort": "high",
+        "effort_status": "requested",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-fable-5"
+        ],
+        "agent_types": [
+          "foundry:routed-readonly-high-fable-5"
+        ],
+        "efforts": [
+          "high"
+        ],
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "Marqueur lu depuis `/private/tmp/claude-501/pat198-runs/claude-architect/fixture/marker.txt` :\n\n```\nmarqueur-de-fixture-26759678\n```\n\nNote : le fichier contient en réalité une seconde ligne (`end`) alors que le packet annonçait une seule ligne ; la ligne marqueur est la première, retournée verbatim ci-dessus.",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "7b2f42e65c46419b10d252533a3b432ec50b1470bc84288239e0bbc1d4aa52cd",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only"
+      ]
     }
   ]
 }
