@@ -1172,15 +1172,20 @@ reread the current projection and remain unchanged.
 PAT-230 extends the same PAT-76 verification to the write itself. The bounded readback
 of the native `review` State (`_bounded_issue_update`, `_review_readback_regressed` in
 `tooling/foundry/trackers/linear.py`) accepts a native `in-progress` State instead of
-raising `Linear issue divergent after bounded write` only when `_review_regression_proven`
-finds the In Progress → Review → In Progress span, with Review reached after the latest
-`state-review` receipt. It is observation only: the State is not written again and there is
-no retry loop; any other divergence still fails closed. Observed on 2026-10-17 (campaign
-PAT-221): Foundry set In Review, and Linear moved the issue back to In Progress 292 ms later,
-which failed the `open-pr` effect. Observed the same day, read-only, with
-`_TEAM_GIT_AUTOMATION_STATES_QUERY`: the team's Git automation rules are `start` →
-In Progress and `review` → In Review. That `start` fires when the PR opens is deduced, not
-verified. No Linear configuration was changed (decision of PAT-230).
+raising `Linear issue divergent after bounded write` only when
+`_review_regression_proven` finds the In Progress → Review → In Progress span, with
+Review reached after the creation time of the latest generation's `state-review`
+receipt (`_receipt_created_at`, the same rule as the PAT-76 projection). It is
+observation only: the State is not written again and there is no retry, as PAT-ADR-0006
+S2 requires (one single write, no automatic or silent retry); any other divergence still
+fails closed. Observed on 2026-10-17 (campaign PAT-221): Foundry set In Review, and the
+native State was back to In Progress 292 ms later, which failed the `open-pr` effect.
+Deduced, not observed: that move is the work of the team's `start` automation, because
+`stateHistory` (query in `trackers/linear.py`) carries no author. Observed the same
+day, read-only, with `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the team's Git automation
+rules are `start` → In Progress and `review` → In Review. That `start` fires when the
+PR opens is also deduced, not verified. No Linear configuration was changed (decision
+of PAT-230).
 
 PAT-74 exercised the second path in the private PAT-61 Linear sandbox: its native
 history showed In Progress → In Review → In Progress after Foundry's start/review

@@ -3891,6 +3891,20 @@ class LinearTracker(Tracker):
         }
         return previous in rank and current in rank and rank[current] >= rank[previous]
 
+    @staticmethod
+    def _receipt_created_at(comments: list[dict], body: str | None) -> int | None:
+        """Creation time (epoch ms) of the lifecycle comment carrying ``body``."""
+        if body is None:
+            return None
+        return next(
+            (
+                _epoch_ms(comment.get("createdAt"))
+                for comment in comments
+                if comment.get("body") == body
+            ),
+            None,
+        )
+
     def _review_regression_proven(
         self,
         issue_id: str,
@@ -4392,13 +4406,8 @@ class LinearTracker(Tracker):
             native_state_id,
             issue_id=issue_id,
             native_issue_id=raw["id"],
-            review_receipt_at=next(
-                (
-                    _epoch_ms(comment.get("createdAt"))
-                    for comment in comments
-                    if reviews and comment.get("body") == reviews[-1][1]
-                ),
-                None,
+            review_receipt_at=self._receipt_created_at(
+                comments, reviews[-1][1] if reviews else None,
             ),
             pending_operation=pending_operation,
             acceptance_complete=acceptance_complete or acceptance_override is not None,
@@ -5990,14 +5999,22 @@ class LinearTracker(Tracker):
             raise TrackerConflictError("Linear issue changed before bounded write")
         receipt_at = None
         if state == "review":
-            # PAT-230: the creation time of the latest review receipt bounds the
-            # Review span that a tolerated regression must have reached after it.
-            times = []
-            for row in _connection(fresh.get("comments"), "lifecycle.comments"):
+            # PAT-230: same rule as PAT-76 (``_receipt_created_at``): the creation
+            # time of the latest generation's review receipt.
+            comments = _connection(fresh.get("comments"), "lifecycle.comments")
+            latest = None
+            for row in comments:
                 decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
-                if decoded is not None and decoded[0] == "state-review":
-                    times.append(_epoch_ms(row.get("createdAt")))
-            receipt_at = max((t for t in times if t is not None), default=None)
+                if decoded is None or decoded[0] != "state-review":
+                    continue
+                generation = decoded[1].get("generation")
+                if type(generation) is int and (
+                    latest is None or generation > latest[0]
+                ):
+                    latest = (generation, row.get("body"))
+            receipt_at = self._receipt_created_at(
+                comments, latest[1] if latest else None,
+            )
         return self._bounded_issue_update(
             issue_id, fresh, binding, values, expected,
             "issue.update.lifecycle-state", review_receipt_at=receipt_at,
