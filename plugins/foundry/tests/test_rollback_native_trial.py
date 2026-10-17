@@ -31,6 +31,7 @@ def _isolated(tmp_path, monkeypatch):
     (tmp_path / "default-policy.json").write_text('{"version": 1, "default": true}\n', encoding="utf-8")
     monkeypatch.setattr(rt, "default_guards", lambda: [tmp_path / "default-policy.json"])
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "data"))  # the reservation ledger never leaves the test
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))  # the real Codex home is never read
 
 
 def _fresh_matrix(path):
@@ -40,7 +41,8 @@ def _fresh_matrix(path):
 def _args(tmp_path, line, **kw):
     values = dict(line=line, work_dir=str(tmp_path / "work"), out=str(tmp_path / "result.json"),
                   matrix=str(tmp_path / "matrix.json"), claude="claude", parent_model="sonnet",
-                  projects_dir=str(tmp_path / "projects"), max_budget_usd=1.5, guard_policy=[str(tmp_path / "policy.json")],
+                  projects_dir=str(tmp_path / "projects"), codex="codex", codex_sessions_dir=str(tmp_path / "sessions"),
+                  max_budget_usd=1.5, guard_policy=[str(tmp_path / "policy.json")],
                   dry_run=False)
     values.update(kw)
     return SimpleNamespace(**values)
@@ -89,16 +91,19 @@ def test_dry_run_prints_the_plan_and_launches_and_writes_nothing(tmp_path, capsy
 
 
 @pytest.mark.parametrize("role", ["scout", "implementer", "reviewer", "architect"])
-def test_codex_lines_have_a_dry_run_plan_and_no_real_run(tmp_path, capsys, role):
+def test_codex_dry_run_prints_the_plan_and_launches_and_writes_nothing(tmp_path, capsys, role):
     line = f"codex-{role}"
-    assert rt.run(_args(tmp_path, line, dry_run=True)) == 0
+    before = (tmp_path / "matrix.json").read_bytes()
+    assert rt.run(_args(tmp_path, line, dry_run=True), codex_launch=_codex_host(tmp_path, calls=None)) == 0
     plan = json.loads(capsys.readouterr().out)
     model, effort = rt.ROLLBACK[("codex", role)]
     assert plan["command"][plan["command"].index("--model") + 1] == model
-    assert f'model_reasoning_effort="{effort}"' in plan["command"]
-    with pytest.raises(rt.RollbackTrialError):
-        rt.run(_args(tmp_path, line))
-    assert _matrix(tmp_path)["native_calls"] == 0
+    assert f'model_reasoning_effort="{effort}"' in plan["command"] and plan["command"][-1] == "-"
+    assert "--ephemeral" not in plan["command"] and plan["dry_run"] is True and plan["bounds"]["max_budget_usd"] is None
+    assert plan["requested"]["model"] == model and plan["transmitted"]["effort"] == effort
+    assert plan["would_write"][-1] == str(tmp_path / "work.backup" / "config.toml")
+    assert not (tmp_path / "work").exists() and not (tmp_path / "data").exists()
+    assert not (tmp_path / "work.backup").exists() and (tmp_path / "matrix.json").read_bytes() == before
 
 
 def test_a_run_records_the_four_separate_values_and_claims_its_row(tmp_path):
@@ -202,32 +207,39 @@ def test_masking_removes_secrets_home_and_opaque_tokens_and_bounds_the_length():
     assert out.startswith("open ~/x") and len(out) <= 2000
 
 
-RECORDED = {"claude-scout": ("unknown", ["claude-haiku-4-5-20251001"], "unknown"),
-            "claude-implementer": ("conforming", ["claude-sonnet-5"], ["medium"]),
-            "claude-reviewer": ("conforming", ["claude-opus-5"], ["high"]),
-            "claude-architect": ("conforming", ["claude-fable-5"], ["high"])}
+RECORDED = {"claude-scout": ("2026-10-17", "unknown", ["claude-haiku-4-5-20251001"], "unknown"),
+            "claude-implementer": ("2026-10-17", "conforming", ["claude-sonnet-5"], ["medium"]),
+            "claude-reviewer": ("2026-10-17", "conforming", ["claude-opus-5"], ["high"]),
+            "claude-architect": ("2026-10-17", "conforming", ["claude-fable-5"], ["high"]),
+            "codex-scout": ("2026-10-18", "conforming", ["gpt-5.6-luna"], ["low"]),
+            "codex-implementer": ("2026-10-18", "conforming", ["gpt-5.6-terra"], ["medium"]),
+            "codex-reviewer": ("2026-10-18", "conforming", ["gpt-5.6-sol"], ["high"]),
+            "codex-architect": ("2026-10-18", "conforming", ["gpt-5.6-sol"], ["max"])}
 
 
-def test_the_committed_matrix_records_the_four_claude_runs_and_leaves_the_codex_lines_not_run():
+def test_the_committed_matrix_records_the_eight_runs_four_claude_and_four_codex():
     matrix = json.loads((QUAL / "pat-198-native-rollback-2026-10-17.json").read_text())
     pat17 = json.loads((QUAL / "pat-17-config-rollback-2026-10-11.json").read_text())
     expected = {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in pat17["rows"]}
-    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 4
+    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 8
     assert {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in matrix["rows"]} == rt.ROLLBACK
+    assert {row["line"] for row in matrix["rows"]} == set(RECORDED)
     for row in matrix["rows"]:
-        if row["host"] == "codex":
-            assert row == {**rt.empty_row(row["line"]), "limits": row["limits"]}
-            assert any("PAT-245" in item for item in row["limits"])
-            assert any("2026-10-23" in item for item in row["limits"])
-            continue
-        verdict, models, efforts = RECORDED[row["line"]]
-        assert (row["status"], row["date"], row["verdict"]) == ("run", "2026-10-17", verdict)
+        date, verdict, models, efforts = RECORDED[row["line"]]
+        assert (row["status"], row["date"], row["verdict"]) == ("run", date, verdict)
         assert row["native_observation"]["models"] == models and row["native_observation"]["efforts"] == efforts
+        assert (row["account_availability"], row["policy_guard"], row["fixture_compliance"], row["errors"]) == (
+            "available_observed", "unchanged", "exact", [])
+        if row["host"] == "codex":
+            assert row["native_observation"]["agent_types"] == "not_applicable"
+            assert row["native_observation"]["host_version"] == "0.162.1"
+            assert (row["transmitted"]["model"], row["transmitted"]["effort"]) == (
+                row["rollback"]["model"], row["rollback"]["effort"])
+            assert not any("not run" in item or "not_run" in item for item in row["limits"])
+            continue
         assert row["native_observation"]["agent_types"] == [f"foundry:{PROFILE[row['line']]}"]
         assert row["native_observation"]["host_version"] == "2.1.302"
         assert row["transmitted"]["profile"] == PROFILE[row["line"]] and row["transmitted"]["model"] == WIRE[row["line"]]
-        assert (row["account_availability"], row["policy_guard"], row["fixture_compliance"], row["errors"]) == (
-            "available_observed", "unchanged", "exact", [])
     text = json.dumps(matrix, ensure_ascii=False)
     assert not re.search(r"/Users/|/home/|@", text)
 
@@ -243,9 +255,12 @@ def test_a_guard_policy_adds_to_the_default_guard_and_never_replaces_it(tmp_path
     assert body["verdict"] == "not_conforming" and body["policy_guard"]["unchanged"] is False
 
 
-def test_the_codex_plan_carries_the_flags_of_the_measurement_harness():
-    command = rt.codex_plan("scout", Path("/w"))["command"]
-    assert command[:7] == ["codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only"]
+def test_the_codex_command_is_the_measurement_harness_argv_minus_ephemeral_plus_cwd_flags():
+    command = rt.codex_command("codex", Path("/w"), "m", "low")
+    harness = ["codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--json",
+               "--model", "m", "-c", 'model_reasoning_effort="low"', "-"]  # measurement_harness_v2.codex_command_v2
+    assert [x for x in command if x not in ("--skip-git-repo-check", "-C", "/w")] == [x for x in harness if x != "--ephemeral"]
+    assert command[command.index("--skip-git-repo-check") + 1:command.index("--skip-git-repo-check") + 3] == ["-C", "/w"]
 
 
 def test_a_lock_file_refuses_a_second_launch_and_is_released_after_a_run(tmp_path):
@@ -466,3 +481,241 @@ def test_a_real_effort_logged_on_haiku_stays_divergent(tmp_path):
     rt.run(_args(tmp_path, "claude-scout"), launch=_host(tmp_path, "claude-scout", efforts=("medium",)))
     body = json.loads((tmp_path / "result.json").read_text())
     assert body["conformity"]["effort"] == "divergent" and body["verdict"] == "not_conforming"
+
+
+# --- Codex lines (PAT-245) ---------------------------------------------------------------------------------------
+CODEX_LINES = ["codex-scout", "codex-implementer", "codex-reviewer", "codex-architect"]
+THREAD = "019d0000-aaaa-bbbb-cccc-000000000001"
+
+
+def _codex_host(tmp_path, *, model=None, effort=None, completed=True, exit_code=0, stderr_text="", stream_errors=(),
+                session=True, timed_out=False, calls=None, reply=None, thread=THREAD):
+    """A fake ``codex exec --json``: a stream and, as the host does, a session file under the sessions directory."""
+    def launch(command, *, cwd, env, stdout, stderr: Path, stdin: Path):
+        calls is not None and calls.append((list(command), dict(env)))
+        marker = (cwd / "fixture" / "marker.txt").read_text().strip()
+        wanted_model = command[command.index("--model") + 1]
+        wanted_effort = command[command.index("-c") + 1].split('"')[1]
+        events = [{"type": "thread.started", "thread_id": thread}, {"type": "turn.started"}]
+        events += [{"type": "error", "message": m} for m in stream_errors]
+        if completed:
+            events += [{"type": "item.completed", "item": {"id": "i", "type": "agent_message",
+                                                          "text": reply if reply is not None else marker}},
+                       {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 2, "note": "x"}}]
+        else:
+            events += [{"type": "turn.failed", "error": {"message": "x"}}] if stream_errors else []
+        stdout.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        stderr.write_text(stderr_text)
+        if session:
+            folder = tmp_path / "sessions" / "2026" / "10" / "18"
+            folder.mkdir(parents=True, exist_ok=True)
+            records = [{"type": "session_meta", "payload": {"cli_version": "0.162.1", "id": thread}},
+                       {"type": "turn_context", "payload": {"model": model or wanted_model, "effort": effort or wanted_effort}}]
+            (folder / f"rollout-2026-10-18T00-00-00-{thread}.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return {"exit_code": exit_code, "timed_out": timed_out, "seconds": 1.0}
+    return launch
+
+
+def _codex_row(tmp_path, line):
+    return next(r for r in _matrix(tmp_path)["rows"] if r["line"] == line)
+
+
+@pytest.mark.parametrize("line", CODEX_LINES)
+def test_a_conforming_codex_run_records_the_values_and_claims_the_row(tmp_path, line):
+    calls = []
+    assert rt.run(_args(tmp_path, line), codex_launch=_codex_host(tmp_path, calls=calls)) == 0
+    assert len(calls) == 1
+    command, env = calls[0]
+    model, effort = rt.ROLLBACK[("codex", line.split("-")[1])]
+    assert command[:2] == ["codex", "exec"] and "--ignore-user-config" in command and "--ignore-rules" in command
+    assert command[command.index("--sandbox") + 1] == "read-only" and "--ephemeral" not in command
+    assert set(env) <= set(rt._claude_child_environment()) | {"CODEX_HOME"} and "OPENAI_API_KEY" not in env
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["verdict"] == "conforming" and body["observed"]["models"] == [model] and body["observed"]["efforts"] == [effort]
+    assert body["observed"]["usage"] == {"input_tokens": 10, "output_tokens": 2} and body["host"]["codex_cli_version"] == "0.162.1"
+    assert body["account_availability"] == "available_observed" and body["fixture_compliance"] == "exact"
+    assert THREAD not in json.dumps(body) and str(tmp_path) not in json.dumps(body)
+    row = _codex_row(tmp_path, line)
+    assert row["status"] == "run" and row["verdict"] == "conforming" and _matrix(tmp_path)["native_calls"] == 1
+    assert row["native_observation"]["models"] == [model] and row["transmitted"]["effort"] == effort
+    assert (tmp_path / "data" / rt.LEDGER_NAME).read_text().count(line) == 1
+    assert not list((tmp_path / "data").glob("*.lock")) and not (tmp_path / "matrix.json.lock").exists()
+
+
+def test_a_second_codex_run_of_the_same_line_is_refused_with_new_paths(tmp_path):
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=_codex_host(tmp_path))
+    calls = []
+    again = _args(tmp_path, "codex-scout", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json"))
+    with pytest.raises(rt.RollbackTrialError, match="no retry"):
+        rt.run(again, codex_launch=_codex_host(tmp_path, calls=calls))
+    (tmp_path / "matrix.json").unlink()
+    _fresh_matrix(tmp_path / "matrix.json")  # a reverted matrix: the ledger still refuses
+    with pytest.raises(rt.RollbackTrialError, match="ledger"):
+        rt.run(again, codex_launch=_codex_host(tmp_path, calls=calls))
+    assert calls == [] and not (tmp_path / "w2").exists()
+
+
+def test_the_ledger_is_shared_with_the_claude_lines_and_caps_the_total(tmp_path):
+    rt.run(_args(tmp_path, "claude-scout"), launch=_host(tmp_path, "claude-scout"))
+    ledger = tmp_path / "data" / rt.LEDGER_NAME
+    ledger.write_text(ledger.read_text() + "".join(json.dumps({"line": f"x{n}"}) + "\n" for n in range(7)))
+    calls = []
+    with pytest.raises(rt.RollbackTrialError, match="eight"):
+        rt.run(_args(tmp_path, "codex-architect", work_dir=str(tmp_path / "w3"), out=str(tmp_path / "r3.json")), codex_launch=_codex_host(tmp_path, calls=calls))
+    assert calls == [] and _codex_row(tmp_path, "codex-architect")["status"] == "not_run"
+
+
+def test_a_codex_lock_refuses_before_any_launch(tmp_path):
+    (tmp_path / "matrix.json.lock").write_text("")
+    calls = []
+    with pytest.raises(rt.RollbackTrialError, match="lock"):
+        rt.run(_args(tmp_path, "codex-scout"), codex_launch=_codex_host(tmp_path, calls=calls))
+    assert calls == [] and not (tmp_path / "work").exists()
+
+
+def test_a_divergent_codex_model_is_not_conforming(tmp_path):
+    assert rt.run(_args(tmp_path, "codex-reviewer"), codex_launch=_codex_host(tmp_path, model="gpt-5.6-terra")) == 1
+    row = _codex_row(tmp_path, "codex-reviewer")
+    assert row["verdict"] == "not_conforming" and row["native_observation"]["models"] == ["gpt-5.6-terra"]
+
+
+def test_a_divergent_codex_effort_is_not_conforming(tmp_path):
+    assert rt.run(_args(tmp_path, "codex-architect"), codex_launch=_codex_host(tmp_path, effort="xhigh")) == 1
+    row = _codex_row(tmp_path, "codex-architect")
+    assert row["verdict"] == "not_conforming" and row["native_observation"]["efforts"] == ["xhigh"]
+
+
+def test_an_unobserved_codex_session_is_unknown_never_conforming(tmp_path):
+    assert rt.run(_args(tmp_path, "codex-implementer"), codex_launch=_codex_host(tmp_path, session=False)) == 1
+    row = _codex_row(tmp_path, "codex-implementer")
+    assert row["verdict"] == "unknown" and row["native_observation"]["models"] == "unknown"
+    assert row["native_observation"]["efforts"] == "unknown" and row["account_availability"] == "unknown"
+
+
+def test_an_unavailable_codex_model_is_declared_with_the_masked_text_kept(tmp_path):
+    text = "The model `gpt-5.6-luna` does not exist or you do not have access to it. user@example.com sk-abcdefgh12345678"
+    host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=[text], model="gpt-5.6-luna")
+    assert rt.run(_args(tmp_path, "codex-scout"), codex_launch=host) == 1
+    body = json.loads((tmp_path / "result.json").read_text())
+    # the session file records the requested model, but no turn completed: it is not an observed model
+    assert body["observed"]["models"] == [] and body["observed"]["unconfirmed_models"] == ["gpt-5.6-luna"]
+    assert body["verdict"] == "unavailable" and body["account_availability"] == "unavailable_declared"
+    assert any("does not exist" in e for e in body["errors"])
+    assert "user@example.com" not in json.dumps(body) and "sk-abcdefgh" not in json.dumps(body)
+
+
+def test_a_completed_codex_turn_with_an_unrelated_error_text_is_never_unavailable(tmp_path):
+    host = _codex_host(tmp_path, stderr_text="model list refresh is not available")
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "available_observed"
+
+
+def test_a_local_codex_effort_refusal_is_not_an_unavailable_model(tmp_path):
+    text = "Error loading config: model_reasoning_effort: unknown variant `max`, expected one of `low`, `high`"
+    host = _codex_host(tmp_path, completed=False, exit_code=2, session=False, stderr_text=text)
+    assert rt.run(_args(tmp_path, "codex-architect"), codex_launch=host) == 1
+    row = _codex_row(tmp_path, "codex-architect")
+    assert row["account_availability"] == "unknown" and row["verdict"] != "unavailable"
+
+
+def test_a_completed_codex_turn_without_a_session_file_is_never_unavailable(tmp_path):
+    host = _codex_host(tmp_path, session=False, stderr_text="Model metadata for `gpt-5.6-luna` not found")
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    row = _codex_row(tmp_path, "codex-scout")
+    assert row["account_availability"] == "unknown" and row["verdict"] == "unknown"
+
+
+def test_a_codex_usage_limit_text_naming_the_model_is_never_unavailable(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
+                       stream_errors=["gpt-5.6-luna is not available: usage limit reached"])
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
+
+
+def test_a_missing_codex_binary_is_refused_before_any_reservation(tmp_path):
+    args = _args(tmp_path, "codex-scout", codex=str(tmp_path / "no-such-codex"))
+    before = (tmp_path / "matrix.json").read_bytes()
+    with pytest.raises(rt.RollbackTrialError, match="codex binary"):
+        rt.run(args)
+    assert (tmp_path / "matrix.json").read_bytes() == before and not (tmp_path / "data" / rt.LEDGER_NAME).exists()
+    assert not (tmp_path / "work").exists() and not (tmp_path / "result.json").exists()
+
+
+def test_the_codex_config_is_copied_beside_the_work_directory_before_the_call_and_never_printed(tmp_path, capsys):
+    config = tmp_path / "codex-home" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("secret_like = 1\n")
+    seen = []
+    base_host = _codex_host(tmp_path)
+
+    def host(command, *, cwd, **kw):
+        seen.append(((tmp_path / "work.backup" / "config.toml").read_text(), sorted(p.name for p in cwd.rglob("*"))))
+        return base_host(command, cwd=cwd, **kw)
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert seen == [("secret_like = 1\n", ["fixture", "marker.txt", "packet.txt"])]
+    assert "secret_like" not in capsys.readouterr().out and "secret_like" not in (tmp_path / "result.json").read_text()
+    assert not list((tmp_path / "work").rglob("auth.json")) and not list((tmp_path / "work.backup").rglob("auth.json"))
+
+
+def test_an_existing_codex_backup_directory_is_refused_before_any_reservation(tmp_path):
+    (tmp_path / "work.backup").mkdir()
+    before = (tmp_path / "matrix.json").read_bytes()
+    with pytest.raises(rt.RollbackTrialError, match="backup directory"):
+        rt.run(_args(tmp_path, "codex-scout"), codex_launch=_codex_host(tmp_path))
+    assert (tmp_path / "matrix.json").read_bytes() == before and not (tmp_path / "work").exists()
+
+
+def test_a_stderr_usage_limit_undoes_a_stream_error_naming_the_model(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
+                       stream_errors=["`gpt-5.6-luna` does not exist or you do not have access to it"],
+                       stderr_text="rate limit reached, try again in 20 minutes")
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["usage_limit_text"] is True and body["account_availability"] == "unknown"
+    assert body["verdict"] != "unavailable" and _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
+
+
+def test_a_usage_limit_is_a_spent_call_and_flagged_not_unavailable(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
+                       stream_errors=["You've hit your usage limit. Try again at Oct 23rd."])
+    assert rt.run(_args(tmp_path, "codex-scout"), codex_launch=host) == 1
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["usage_limit_text"] is True and body["account_availability"] == "unknown"
+    assert _matrix(tmp_path)["native_calls"] == 1 and any("usage-limit" in x for x in _codex_row(tmp_path, "codex-scout")["limits"])
+
+
+def test_a_codex_timeout_is_not_conforming_and_still_blocks_a_retry(tmp_path):
+    host = _codex_host(tmp_path, exit_code=-9, timed_out=True)
+    assert rt.run(_args(tmp_path, "codex-scout"), codex_launch=host) == 1
+    assert json.loads((tmp_path / "result.json").read_text())["verdict"] == "not_conforming"
+    with pytest.raises(rt.RollbackTrialError):
+        rt.run(_args(tmp_path, "codex-scout", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json")))
+
+
+def test_a_changed_codex_config_is_not_conforming(tmp_path):
+    config = tmp_path / "codex-home" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("a = 1\n")
+    base_host = _codex_host(tmp_path)
+
+    def host(*a, **kw):
+        config.write_text("a = 2\n")
+        return base_host(*a, **kw)
+    assert rt.run(_args(tmp_path, "codex-scout"), codex_launch=host) == 1
+    assert _codex_row(tmp_path, "codex-scout")["policy_guard"] == "CHANGED"
+    assert "a = 2" not in (tmp_path / "result.json").read_text()
+
+
+def test_the_codex_launcher_feeds_the_packet_on_stdin_and_keeps_the_streams(tmp_path):
+    (tmp_path / "in.txt").write_text("hello\n")
+    process = rt._launch_codex(["cat"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, stdout=tmp_path / "o", stderr=tmp_path / "e",
+                               stdin=tmp_path / "in.txt")
+    assert process["exit_code"] == 0 and (tmp_path / "o").read_text() == "hello\n"
+
+
+def test_the_codex_launcher_kills_the_process_group_at_the_bound(tmp_path, monkeypatch):
+    monkeypatch.setattr(base, "TIMEOUT_SECONDS", 0.5)
+    (tmp_path / "in.txt").write_text("")
+    process = rt._launch_codex(["sleep", "30"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, stdout=tmp_path / "o",
+                               stderr=tmp_path / "e", stdin=tmp_path / "in.txt")
+    assert process["timed_out"] is True and process["seconds"] < 10

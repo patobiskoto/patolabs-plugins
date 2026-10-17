@@ -8,7 +8,7 @@
     "per_line": 1,
     "retries": 0
   },
-  "native_calls": 4,
+  "native_calls": 8,
   "rows": [
     {
       "line": "codex-scout",
@@ -19,27 +19,41 @@
         "model": "gpt-5.6-luna",
         "effort": "low"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-18",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "scout",
+        "tier": "economy",
+        "model": "gpt-5.6-luna",
+        "effort": "low"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
+      "transmitted": {
+        "model": "gpt-5.6-luna",
+        "effort": "low",
+        "surface": "codex exec command line",
+        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"
+      },
+      "native_observation": {
+        "models": [
+          "gpt-5.6-luna"
+        ],
+        "agent_types": "not_applicable",
+        "efforts": [
+          "low"
+        ],
+        "host_version": "0.162.1"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-23987542",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "bb6e91b3977ababd8d7610425f9a32fc1eec7c01bd1ee29aef6ca55882f30fe7",
       "limits": [
-        "not run: the tool does not run a real Codex call",
-        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
-        "follow-up PAT-245"
+        "one call; not a sample",
+        "model and effort are those the host recorded for a completed turn; absence is unknown",
+        "account availability is observed for this account and this date only"
       ]
     },
     {
@@ -51,27 +65,41 @@
         "model": "gpt-5.6-terra",
         "effort": "medium"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-18",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "implementer",
+        "tier": "balanced",
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
+      "transmitted": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "surface": "codex exec command line",
+        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"
+      },
+      "native_observation": {
+        "models": [
+          "gpt-5.6-terra"
+        ],
+        "agent_types": "not_applicable",
+        "efforts": [
+          "medium"
+        ],
+        "host_version": "0.162.1"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-82620941",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "6301c1f14331440e074d84cdc035d4a67d69121f96ba70a8caa635235a8d43dd",
       "limits": [
-        "not run: the tool does not run a real Codex call",
-        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
-        "follow-up PAT-245"
+        "one call; not a sample",
+        "model and effort are those the host recorded for a completed turn; absence is unknown",
+        "account availability is observed for this account and this date only"
       ]
     },
     {
@@ -83,27 +111,41 @@
         "model": "gpt-5.6-sol",
         "effort": "high"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-18",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "reviewer",
+        "tier": "frontier",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
+      "transmitted": {
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "surface": "codex exec command line",
+        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"
+      },
+      "native_observation": {
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "agent_types": "not_applicable",
+        "efforts": [
+          "high"
+        ],
+        "host_version": "0.162.1"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-17180042",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "6a4bb56aa29b13f2d9c68b35bc1dc25dac4684a25f9a0982096dcf7386bc8869",
       "limits": [
-        "not run: the tool does not run a real Codex call",
-        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
-        "follow-up PAT-245"
+        "one call; not a sample",
+        "model and effort are those the host recorded for a completed turn; absence is unknown",
+        "account availability is observed for this account and this date only"
       ]
     },
     {
@@ -115,27 +157,41 @@
         "model": "gpt-5.6-sol",
         "effort": "max"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-18",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "architect",
+        "tier": "apex",
+        "model": "gpt-5.6-sol",
+        "effort": "max"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
+      "transmitted": {
+        "model": "gpt-5.6-sol",
+        "effort": "max",
+        "surface": "codex exec command line",
+        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"
+      },
+      "native_observation": {
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "agent_types": "not_applicable",
+        "efforts": [
+          "max"
+        ],
+        "host_version": "0.162.1"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-90698623",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "de78f3df2b5a76cb6f47e6854c739d93edf0e2e5055ad0caeb99bcc62f24ebad",
       "limits": [
-        "not run: the tool does not run a real Codex call",
-        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
-        "follow-up PAT-245"
+        "one call; not a sample",
+        "model and effort are those the host recorded for a completed turn; absence is unknown",
+        "account availability is observed for this account and this date only"
       ]
     },
     {

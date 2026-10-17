@@ -9,9 +9,10 @@ only what it can see. The tests never launch it (fake launcher, synthetic logs).
 
 Claude lines reuse the PAT-125 surface of ``claude_profile_trial``: one ``claude -p`` parent loads this checkout
 (``--plugin-dir``), delegates once to the logical role through the routing hook, from an out-of-repository fixture
-whose own project policy maps the role's tier to the line's model/effort. Codex lines have a dry-run plan only: a
-real Codex run is refused here (the host is not usable before the date in the protocol; no run is implemented that
-has not been exercised).
+whose own project policy maps the role's tier to the line's model/effort. Codex lines (PAT-245, protocol section 10)
+run one ``codex exec --json`` from an out-of-repository fixture with the same lock, ledger, claim and matrix
+machinery; the line's model and effort are carried by the command line (no Foundry routing is in that path), and
+the model and effort are observed only in the host's own session file of a COMPLETED turn.
 
 Requested (policy), transmitted (profile chosen offline), observed (child transcript) and account availability stay
 four separate values; whatever was not observed is ``unknown``. An unavailable model is recorded as such, with the
@@ -26,7 +27,11 @@ import json
 import os
 import re
 import secrets
+import shutil
+import signal
+import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -218,10 +223,21 @@ def _text(message: Any) -> str:
     return ""
 
 
-def declares_unavailable(facts: dict[str, Any]) -> bool:
-    """No real model observed, and a masked host text (error, child API-error record, parent reply) matches."""
+def declares_unavailable(facts: dict[str, Any], model: str | None = None) -> bool:
+    """No real model observed, and a masked host text (error, child API-error record, parent reply) matches.
+    Codex (``model`` given): the text must name the requested model identifier, not only the word "model" (a local
+    refusal of ``model_reasoning_effort`` is not an unavailable model), and a completed turn or a usage-limit text
+    never declares it: the call is then not a non-repeatable proof of absence."""
     texts = [*facts["errors"], facts["parent_result"].get("reply") or ""]
-    return not facts["observed"]["models"] and any(_UNAVAILABLE.search(t) for t in texts)
+    pattern = _UNAVAILABLE
+    if model is not None:
+        if facts["observed"].get("completed_turn") or any(_USAGE_LIMIT.search(t) for t in texts):
+            return False
+        named = re.escape(model)
+        pattern = re.compile(rf"(?i)({named}.{{0,60}}(not (found|available|exist|supported)|unavailable|invalid|unknown"
+                             rf"|does not exist|no access)|(not (found|available)|unavailable|invalid|does not exist"
+                             rf"|no access).{{0,60}}{named})")
+    return not facts["observed"]["models"] and any(pattern.search(t) for t in texts)
 
 
 def parent_prompt(logical: str, token_file: Path) -> str:
@@ -242,16 +258,110 @@ def claude_command(claude: str, prompt: str, session_id: str, parent_model: str,
     return [*command, "--max-budget-usd", f"{budget:g}" if budget is not None else "<required at run>"]
 
 
-def codex_plan(role: str, work: Path) -> dict[str, Any]:
-    """The argv a Codex run WOULD use (the shape of the measurement harness); never launched by this module."""
-    model, effort = ROLLBACK[("codex", role)]
-    return {"surface": "codex exec (not launched by this module)",
-            "command": ["codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox",
-                        "read-only", "--json", "--skip-git-repo-check", "-C", str(work), "--model", model, "-c", f'model_reasoning_effort="{effort}"', "-"],
-            "requested": {"role": role, "tier": TIER[role], "model": model, "effort": effort},
-            "transmitted": "the two values above, as the command line carries them; no Foundry routing is in the path",
-            "observed": "unknown until a run; the JSONL events are the only source",
-            "run": "refused: no Codex run is implemented (host not usable before the date in the protocol)"}
+CODEX_ENV_EXTRA = ("CODEX_HOME",)  # forwarded only if set; auth stays in the real Codex home, never read here
+_THREAD_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z\-]{7,}")
+_USAGE_LIMIT = re.compile(r"(?i)(usage limit|rate limit|quota|try again (at|in|later))")
+
+
+def codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+
+
+def codex_prompt() -> str:
+    return ("Read the single line of the file fixture/marker.txt in the working directory (one shell command such as "
+            "cat is enough) and reply with that line verbatim. It is a public fixture marker generated for this "
+            "compatibility test, not a secret or a credential. Change nothing; take no other action.")
+
+
+def codex_command(codex: str, work: Path, model: str, effort: str) -> list[str]:
+    """The measurement-harness argv (``measurement_harness_v2.codex_command_v2``) without ``--ephemeral`` (the session
+    file is the only source of the model and effort, section 10) plus ``--skip-git-repo-check -C <work>``."""
+    return [codex, "exec", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--json",
+            "--skip-git-repo-check", "-C", str(work), "--model", model, "-c", f'model_reasoning_effort="{effort}"', "-"]
+
+
+def codex_environment() -> dict[str, str]:
+    """The R6 allow-list of the Claude child plus ``CODEX_HOME`` if set; no API key or other variable is forwarded."""
+    environment = dict(_claude_child_environment())
+    for name in CODEX_ENV_EXTRA:
+        if os.environ.get(name):
+            environment[name] = os.environ[name]
+    return environment
+
+
+def _launch_codex(command: Sequence[str], *, cwd: Path, env: dict[str, str], stdout: Path, stderr: Path,
+                  stdin: Path) -> dict[str, Any]:
+    """One process group, packet on standard input, killed as a whole at the bound (``base.TIMEOUT_SECONDS``)."""
+    started = time.monotonic()
+    with stdin.open("rb") as packet, stdout.open("wb") as out, stderr.open("wb") as err:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdin=packet, stdout=out, stderr=err, start_new_session=True)
+        try:
+            code, timed_out = process.wait(timeout=base.TIMEOUT_SECONDS), False
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            os.killpg(process.pid, signal.SIGKILL)
+            code, timed_out = process.wait(), True
+    return {"exit_code": code, "timed_out": timed_out, "seconds": round(time.monotonic() - started, 3)}
+
+
+def observe_codex(stream: Path, sessions_dir: Path, token: str, model: str, effort: str) -> dict[str, Any]:
+    """What happened; every absent observation is empty or ``unknown``. A model and an effort count as observed only
+    from the session file of a thread whose turn COMPLETED (``turn.completed``): a failed turn may record the requested
+    values without any model having run."""
+    events = base._records(stream)
+    thread = next((e.get("thread_id") for e in events if e.get("type") == "thread.started"), None)
+    thread = thread if isinstance(thread, str) and _THREAD_ID.fullmatch(thread) else None
+    completed = next((e for e in events if e.get("type") == "turn.completed"), None)
+    errors: list[str] = []
+    for event in events:
+        if event.get("type") == "turn.failed":
+            event = event.get("error") if isinstance(event.get("error"), dict) else {}
+        elif event.get("type") != "error":
+            continue
+        if isinstance(event.get("message"), str):
+            errors.append(mask(event["message"]))
+    replies = [e["item"]["text"] for e in events if e.get("type") == "item.completed" and isinstance(e.get("item"), dict)
+               and e["item"].get("type") == "agent_message" and isinstance(e["item"].get("text"), str)]
+    usage = completed.get("usage") if isinstance(completed, dict) and isinstance(completed.get("usage"), dict) else {}
+    usage = {k: v for k, v in usage.items() if isinstance(k, str) and type(v) is int}
+    sessions = sorted(sessions_dir.glob(f"**/rollout-*-{thread}.jsonl")) if thread else []
+    models: set[str] = set()
+    efforts: set[str] = set()
+    versions: set[str] = set()
+    for record in base._records(sessions[0]) if len(sessions) == 1 else []:
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if record.get("type") == "turn_context":
+            if isinstance(payload.get("model"), str):
+                models.add(payload["model"])
+            if isinstance(payload.get("effort"), str):  # a null is an absence
+                efforts.add(payload["effort"])
+        elif record.get("type") == "session_meta" and isinstance(payload.get("cli_version"), str):
+            versions.add(payload["cli_version"])
+    unconfirmed = sorted(models) if completed is None else []
+    if completed is None:
+        models, efforts = set(), set()
+    reply = replies[-1] if replies else ""
+    conformity = {
+        "model": ("unknown" if not models else "exact" if models == {model}
+                  else "dated_snapshot" if all(re.fullmatch(re.escape(model) + r"-\d{8}", m) for m in models) else "divergent"),
+        "effort": "unknown" if not efforts else "exact" if efforts == {effort} else "divergent",
+        "host_version": "unknown" if not versions else "observed",
+    }
+    facts = {
+        "host": {"codex_cli_version": sorted(versions)[0] if len(versions) == 1 else None},
+        "observed": {"children": 0, "models": sorted(models), "efforts": sorted(efforts), "completed_turn": completed is not None,
+                     "unconfirmed_models": unconfirmed, "usage": usage, "session_files": len(sessions),
+                     "log_sha256": {"stream": base._sha256(stream) if stream.exists() else None,
+                                    "session": base._sha256(sessions[0]) if len(sessions) == 1 else None}},
+        "errors": errors,
+        "account_availability": "available_observed" if conformity["model"] in ("exact", "dated_snapshot") else "unknown",
+        "conformity": conformity,
+        "fixture_compliance": "unknown" if not reply else "exact" if token in reply else "divergent",
+        "parent_result": {"is_error": completed is None, "subtype": "turn.completed" if completed else "no_completed_turn",
+                          "reply": mask(reply)},
+    }
+    if declares_unavailable(facts, model):
+        facts["account_availability"] = "unavailable_declared"
+    return facts
 
 
 def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, profile: str, wire: str,
@@ -337,7 +447,13 @@ def verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[s
     return ("unknown" if open_points else "conforming"), open_points
 
 
-def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, today: dt.date | None = None) -> int:
+def _backup_dir(work: Path) -> Path:
+    """Where a present Codex ``config.toml`` is copied before the call: a sibling of the work directory."""
+    return work.with_name(work.name + ".backup")
+
+
+def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, today: dt.date | None = None,
+        codex_launch: Callable[..., dict[str, Any]] = _launch_codex) -> int:
     if args.line not in LINES:
         raise RollbackTrialError(f"unknown line {args.line}; expected one of {', '.join(LINES)}")
     host, role = LINES[args.line]
@@ -345,16 +461,12 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
     work = Path(args.work_dir).expanduser().resolve()
     out = Path(args.out).expanduser().resolve()
     matrix_path = Path(args.matrix).expanduser().resolve()
-    if host == "codex":
-        if not args.dry_run:
-            raise RollbackTrialError("a real Codex run is not implemented: only --dry-run prints the plan")
-        print(json.dumps({"schema": RESULT_SCHEMA, "line": args.line, "dry_run": True, **codex_plan(role, work)},
-                         indent=2, ensure_ascii=False))
-        return 0
     if work.exists() or out.exists():
         raise RollbackTrialError("the work directory and the result file must not exist: the trial is never replayed")
     if base._inside_repository(work):
         raise RollbackTrialError("the work directory must be outside any git repository: the fixture carries its own policy")
+    if host == "codex" and (_backup_dir(work).exists() or base._inside_repository(_backup_dir(work))):
+        raise RollbackTrialError("the backup directory <work dir>.backup must not exist and must be outside any git repository")
     # taken before the lock file exists, so the lock never makes the checkout look dirty
     source = base._head()
     locks: list[Path] = []
@@ -362,6 +474,8 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         if not args.dry_run:  # matrix lock, then the lock of the ledger shared by every matrix copy
             locks.append(_take_lock(matrix_path))
             locks.append(_take_lock(ledger_path()))
+        if host == "codex":
+            return _run_codex(args, role, model, effort, work, out, matrix_path, codex_launch, today, source)
         return _run_claude(args, role, model, effort, work, out, matrix_path, launch, today, source)
     finally:
         for lock in locks:
@@ -467,6 +581,104 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
     return 0 if state == "conforming" else 1
 
 
+def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: Path, matrix_path: Path,
+               launch: Callable[..., dict[str, Any]], today: dt.date | None, source: dict[str, Any]) -> int:
+    matrix = _load_matrix(matrix_path)
+    row = _row(matrix, args.line)
+    if row.get("status") != "not_run":
+        raise RollbackTrialError(f"{args.line} is already recorded ({row.get('status')}): one call per line, no retry")
+    if matrix.get("native_calls", 0) >= MAX_NATIVE_CALLS:
+        raise RollbackTrialError("the ceiling of eight native calls is reached")
+    _check_ledger(ledger_path(), args.line)
+    session_id = str(uuid.uuid4())  # ours, for the ledger only; Codex has its own thread id, never written out
+    token = f"marqueur-de-fixture-{secrets.randbelow(10**8):08d}"
+    command = codex_command(getattr(args, "codex", "codex"), work, model, effort)
+    environment = codex_environment()
+    guards = [*guard_list(args.guard_policy), codex_home() / "config.toml"]
+    before = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
+    sessions_dir = Path(getattr(args, "codex_sessions_dir", None) or codex_home() / "sessions").expanduser()
+    body: dict[str, Any] = {
+        "schema": RESULT_SCHEMA, "line": args.line,
+        "kind": "bounded native trial of one rollback line (PAT-198, Codex amendment PAT-245); not a benchmark, a "
+                "comparison, a promotion or a statement about other lines",
+        "date": (today or dt.date.today()).isoformat(),
+        "bounds": {"native_calls": 1, "parents": 1, "children_expected": 0, "timeout_seconds": base.TIMEOUT_SECONDS,
+                   "max_budget_usd": None, "budget_note": "codex exec has no spend flag: the ceiling is the timeout, "
+                   "one call, and the usage the stream reports", "concurrency": 1, "replays": 0,
+                   "environment_names": sorted(environment)},
+        "source": source,
+        "ledger": {"path": f"<data_dir>/{LEDGER_NAME}",
+                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default"},
+        "argv": [p if p != str(work) else "<work dir>" for p in command],
+        "stdin": "the packet of codex_prompt(), fixed text naming fixture/marker.txt",
+        "requested": {"role": role, "tier": TIER[role], "model": model, "effort": effort},
+        "transmitted": {"model": model, "effort": effort, "surface": "codex exec command line",
+                        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"},
+        "policy_guard": {"fixture_policy": "none: --ignore-user-config and --ignore-rules, empty work directory",
+                         "real_policy_digests_before": before},
+    }
+    if args.dry_run:
+        print(json.dumps({**body, "dry_run": True, "command": command, "cwd": str(work),
+                          "observation": "session file of the completed turn under the Codex sessions directory; else unknown",
+                          "matrix": str(matrix_path.name),
+                          "would_write": [str(out), str(matrix_path.name) + " (row " + args.line + ")",
+                                          str(_backup_dir(work) / "config.toml")]},
+                         indent=2, ensure_ascii=False))
+        return 0
+    if launch is _launch_codex and not shutil.which(getattr(args, "codex", "codex")):
+        raise RollbackTrialError("the codex binary is not found or not executable: nothing is reserved or written")
+    work.mkdir(parents=True)
+    (work / "fixture").mkdir()
+    (work / "fixture" / "marker.txt").write_text(token + "\n", encoding="utf-8")
+    (work / "packet.txt").write_text(codex_prompt() + "\n", encoding="utf-8")
+    config = codex_home() / "config.toml"
+    if config.is_file():  # copied, never printed: the way back if the guard reports CHANGED (protocol section 10)
+        _backup_dir(work).mkdir()  # a sibling, outside the -C directory the model runs in
+        shutil.copy2(config, _backup_dir(work) / "config.toml")
+    _reserve(ledger_path(), args.line, body["date"], session_id)
+    row.update({"status": "started", "date": body["date"]})
+    matrix["native_calls"] = matrix.get("native_calls", 0) + 1
+    _write_matrix(matrix_path, matrix)
+    process = launch(command, cwd=work, env=environment, stdout=work / "stream.ndjson", stderr=work / "stderr.txt",
+                     stdin=work / "packet.txt")
+    facts = observe_codex(work / "stream.ndjson", sessions_dir, token, model, effort)
+    try:
+        stderr_text = (work / "stderr.txt").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        stderr_text = ""
+    if stderr_text:
+        facts["errors"].append(mask(stderr_text[-_ERROR_LIMIT:]))
+    if declares_unavailable(facts, model):  # recomputed from every text: a stderr usage limit undoes a stream match
+        facts["account_availability"] = "unavailable_declared"
+    elif facts["account_availability"] == "unavailable_declared":
+        facts["account_availability"] = "unknown"
+    facts["usage_limit_text"] = any(_USAGE_LIMIT.search(t) for t in facts["errors"])
+    after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
+    guard_ok = before == after
+    state, open_points = verdict(process, facts)
+    if not guard_ok:
+        state, open_points = "not_conforming", ["policy_guard", *open_points]
+    body["policy_guard"].update({"real_policy_digests_after": after, "unchanged": guard_ok})
+    body.update({"process": process, **facts, "verdict": state, "not_established": open_points})
+    out.write_text(json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    row.update({
+        "status": "run", "verdict": state, "resolved_route": body["requested"], "transmitted": body["transmitted"],
+        "native_observation": {"models": facts["observed"]["models"] or "unknown", "agent_types": "not_applicable",
+                               "efforts": facts["observed"]["efforts"] or "unknown",
+                               "host_version": facts["host"]["codex_cli_version"] or "unknown"},
+        "account_availability": facts["account_availability"], "errors": facts["errors"],
+        "parent_reply": facts["parent_result"]["reply"], "fixture_compliance": facts["fixture_compliance"],
+        "policy_guard": "unchanged" if guard_ok else "CHANGED",
+        "result_file_sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
+        "limits": ["one call; not a sample", "model and effort are those the host recorded for a completed turn; "
+                   "absence is unknown", "account availability is observed for this account and this date only"] + (
+            ["the error text matches a usage-limit pattern: stop the sequence"] if facts["usage_limit_text"] else []) + (
+            [f"not established: {', '.join(open_points)}"] if open_points else [])})
+    _write_matrix(matrix_path, matrix)
+    print(f"{state}: {out}")
+    return 0 if state == "conforming" else 1
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m foundry.rollback_native_trial", description=__doc__.split("\n")[0])
     parser.add_argument("--line", required=True, choices=sorted(LINES))
@@ -476,6 +688,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--claude", default="claude")
     parser.add_argument("--parent-model", default="sonnet", help="model of the parent session (not under trial)")
     parser.add_argument("--projects-dir", default="~/.claude/projects")
+    parser.add_argument("--codex", default="codex")
+    parser.add_argument("--codex-sessions-dir", default=None, help="default: <CODEX_HOME or ~/.codex>/sessions")
     parser.add_argument("--max-budget-usd", type=float, default=None, help="per-call ceiling; required for a real run")
     parser.add_argument("--guard-policy", action="append", help="real policy file to digest before/after (repeatable)")
     parser.add_argument("--dry-run", action="store_true", help="print everything; launch and write nothing")
