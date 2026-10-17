@@ -533,8 +533,13 @@ the recorded, non-carried `review` verdicts, and the `started` `correct` lines. 
 decision at three rounds returns `suspend` `review_rounds_exhausted`; a `correct` decision at
 two corrections returns `suspend` `corrections_exhausted` (also for remarks to fix: they are
 never merged over). `decide` stays pure: the counts are facts of the observation
-(`TicketFacts`). Together with `human_required` these are the three ways the loop ends in a
-suspension that waits for a human; the approval ceilings (`refuse`) also apply.
+(`TicketFacts`). These two are not the only suspensions: the others are `human_required`,
+`technical_blocked` and any other `action` outside `CONTINUE_ACTIONS` (correction effect),
+`deferral_retries_exhausted`, `attempt_already_made`, `attempts_journal_invalid`,
+`ci_failing_not_executed`, `worktree_branch_mismatch`, and those of `campaign_cadence.decide`
+(`node_unreadable`, `structure_changed`, `dependency_state_behind`, `several_in_progress`,
+`merged_pr_state_behind`, `pr_closed_unmerged`, `pr_ambiguous`, `pr_head_unreadable`,
+`no_eligible_ticket`). The approval ceilings (`refuse`) also apply.
 
 ## Partial review and proof carry
 
