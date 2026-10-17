@@ -336,3 +336,17 @@ def test_real_cli_in_a_subprocess_refuses_without_terminal(tmp_path):
     assert result.returncode == 2, result.stderr
     assert json.loads(result.stderr)["refused"] == "approver_refused"
     assert not (tmp_path / "data" / ca.JOURNAL_NAME).exists()
+
+
+def test_symlinked_journal_is_refused_on_read_side(env, capsys):
+    # PAT-234: read_journal opens with O_NOFOLLOW, so status and check refuse
+    path, preview = preview_file(env)
+    target = env / "elsewhere"
+    target.write_text("")
+    journal = ca.journal_path()
+    journal.parent.mkdir(parents=True)
+    journal.symlink_to(target)
+    assert ca.main(["status", "PAT-100"]) == 2
+    assert json.loads(capsys.readouterr().err)["refused"] == "journal_invalid"
+    assert ca.main(["check", "PAT-100", "--preview-file", path]) == 2
+    assert json.loads(capsys.readouterr().err)["refused"] == "journal_invalid"

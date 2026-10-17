@@ -479,9 +479,24 @@ def test_campaign_approval_approve_is_denied_without_registry():
     assert _deny("python3 tooling/foundry_cli.py campaign-approval check PAT-1") is None
     assert _deny("python3 tooling/foundry_cli.py campaign-approval status PAT-1") is None
     assert _deny("echo 'campaign-approval approve'") is None
-    # PAT-234: the words as an argument of another program do not match
-    assert _deny("grep campaign-approval approve notes.txt") is None
-    assert _deny("git commit -m x && cat campaign_approval approve") is None
+    # PAT-234: rule (a), the PAT-215 adjacency, is kept on purpose: the words as arguments of
+    # grep/cat/echo are denied too (a deliberate false positive, see docs/campaign-approval.md)
+    assert _deny("grep campaign-approval approve notes.txt") is not None
+    assert _deny("git commit -m x && cat campaign_approval approve") is not None
+    assert _deny("echo campaign-approval approve") is not None
+    # the CLI path often comes from a variable, a function, $(...) or the skills selector
+    selector = ('python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}"'
+                ' || printf %s "<foundry-root>")/tooling/foundry_cli.py" ')
+    for command in (
+        'python3 "$CLI" campaign-approval approve PAT-1',
+        'python3 "$FOUNDRY_CLI" campaign-approval approve PAT-1',
+        'f() { python3 foundry_cli.py "$@"; }; f campaign-approval approve PAT-1',
+        "python3 $(which foundry_cli.py) campaign-approval approve PAT-1",
+        "python3 `which foundry_cli.py` campaign-approval approve PAT-1",
+        "./wrapper.sh campaign-approval approve PAT-1",
+        selector + "campaign-approval approve PAT-1",
+    ):
+        assert _deny(command) is not None, command
     # forms the reviewer verified denied, and the wrapper/flag forms it found allowed
     cli = "foundry_cli.py campaign-approval approve PAT-1"
     for command in (
@@ -498,7 +513,7 @@ def test_campaign_approval_approve_is_denied_without_registry():
         f"python3 -X utf8 {cli}", f"python3 -W ignore {cli}",
     ):
         assert _deny(command) is not None, command
-    # an indirection that never names the program stays out of scope
+    # gaps, documented: a quoted string is one word; a verb split across a variable
     assert _deny('bash -c "python3 foundry_cli.py campaign-approval approve PAT-1"') is None
     assert _deny("A=campaign-approval; python3 x.py $A approve") is None
 

@@ -15,7 +15,8 @@ commit messages, grep patterns — never trips the guard, and git/gh global
 flags (`git -C dir push`, `gh -R o/r pr merge`) can't slip past it.
 
 PAT-215 adds one unconditional denial, independent of the registry: a command invoking
-`campaign-approval approve` / `campaign_approval approve` (`approval_deny_reason()`), because
+the campaign approval (`approval_deny_reason()`, the union of two rules in
+`_approval_invocation`; a plain `grep` of the same two words is denied on purpose), because
 a campaign approval is a human act (docs/campaign-approval.md).
 
 Everything else passes, unregistered repos are untouched, and any internal
@@ -152,6 +153,7 @@ def _push_denies(args, defaults: set, current: str) -> bool:
 
 _CLI_NAMES = {"foundry_cli", "foundry_cli.py"}
 _MODULE_WORDS = {"foundry.campaign_approval"}
+_APPROVAL_WORDS = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
 
 
 def _follows(seg, start: int, word: str) -> int | None:
@@ -163,11 +165,20 @@ def _follows(seg, start: int, word: str) -> int | None:
 
 
 def _approval_invocation(seg) -> bool:
-    """True when the segment names `campaign-approval approve` the way it is run, at ANY
-    position (no dependence on wrappers or flags): a word whose basename is `foundry_cli`
-    then `campaign-approval` then `approve`; or the module (`foundry.campaign_approval`, the
-    script `campaign_approval.py`, or `campaign_approval` right after `-m`) then `approve`.
-    The words as arguments of a program that names neither (grep, git commit) do not match."""
+    """True when the segment matches the UNION of two rules, at any position (no
+    dependence on wrappers or flags):
+    (a) the PAT-215 rule: a word whose basename (without `.py`) is `campaign-approval`,
+        `campaign_approval` or `foundry.campaign_approval`, immediately followed by `approve`;
+    (b) the PAT-234 rule: a word whose basename is `foundry_cli`/`foundry_cli.py`, then
+        later `campaign-approval`, then later `approve`; or the module word
+        (`foundry.campaign_approval`, `campaign_approval.py`, or `campaign_approval` right
+        after `-m`) then later `approve`.
+    Rule (a) keeps a plain `grep campaign-approval approve x` denied: a deliberate false
+    positive, because the CLI path often comes from a variable, a function or `$(...)`."""
+    for index, token in enumerate(seg[:-1]):
+        if (os.path.basename(token).removesuffix(".py") in _APPROVAL_WORDS
+                and seg[index + 1] == "approve"):
+            return True
     for index, token in enumerate(seg):
         base = os.path.basename(token)
         if base in _CLI_NAMES:

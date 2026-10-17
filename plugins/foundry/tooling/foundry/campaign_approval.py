@@ -276,7 +276,9 @@ def _append(record: dict, path: Path) -> None:
             data = data[os.write(descriptor, data):]
         os.fsync(descriptor)
     except OSError as exc:
-        raise JournalInvalid("écriture du journal d'approbation non confirmée, l'enregistrement a pu être écrit") from exc
+        raise JournalInvalid(
+            "écriture du journal d'approbation non confirmée, l'enregistrement a pu être écrit"
+        ) from exc
     finally:
         os.close(descriptor)
 

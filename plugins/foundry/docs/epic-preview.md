@@ -52,7 +52,9 @@ an explicit human gate and unknown, never inferred completion.
 The `foundry-epic-preview.v1` result contains:
 
 - the graph's own contract, root, canonical snapshot digest and every node version
-  (`null` for a versionless node); `authority.tracker` is the `tracker_name` argument of `build_preview` (the CLI passes the tracker's name); omitted, it is `devhub` for `devhub-application.v1` and refused for `foundry-epic-subgraph.v1`;
+  (`null` for a versionless node); `authority.tracker` is the `tracker_name` argument of
+  `build_preview` (the CLI passes the tracker's name); omitted, it is `devhub` for
+  `devhub-application.v1` and refused for `foundry-epic-subgraph.v1`;
 - the effective routing policy, planned implementer/reviewer tier, model and effort;
 - eligible, blocked and omitted summaries plus explicit human gates;
 - stable topological waves, split deterministically by the concurrency ceiling;
