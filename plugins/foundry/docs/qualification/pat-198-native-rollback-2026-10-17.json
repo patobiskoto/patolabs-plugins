@@ -1,0 +1,341 @@
+{
+  "schema": "foundry.pat198-native-rollback.v1",
+  "date": "2026-10-17",
+  "evidence_kind": "native_trial_matrix",
+  "pat17_record": "pat-17-config-rollback-2026-10-11.json (configuration only; not native proof)",
+  "budget": {
+    "max_paid_native_calls": 8,
+    "per_line": 1,
+    "retries": 0
+  },
+  "native_calls": 4,
+  "rows": [
+    {
+      "line": "codex-scout",
+      "host": "codex",
+      "role": "scout",
+      "tier": "economy",
+      "rollback": {
+        "model": "gpt-5.6-luna",
+        "effort": "low"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
+    },
+    {
+      "line": "codex-implementer",
+      "host": "codex",
+      "role": "implementer",
+      "tier": "balanced",
+      "rollback": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
+    },
+    {
+      "line": "codex-reviewer",
+      "host": "codex",
+      "role": "reviewer",
+      "tier": "frontier",
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
+    },
+    {
+      "line": "codex-architect",
+      "host": "codex",
+      "role": "architect",
+      "tier": "apex",
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
+    },
+    {
+      "line": "claude-scout",
+      "host": "claude",
+      "role": "scout",
+      "tier": "economy",
+      "rollback": {
+        "model": "haiku-4.5",
+        "effort": null
+      },
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "unknown",
+      "resolved_route": {
+        "role": "scout",
+        "tier": "economy",
+        "model": "haiku-4.5",
+        "effort": null
+      },
+      "transmitted": {
+        "profile": "routed-readonly-none-haiku-4.5",
+        "model": "claude-haiku-4-5",
+        "effort": null,
+        "effort_status": "not_applicable",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-haiku-4-5-20251001"
+        ],
+        "agent_types": [
+          "foundry:routed-readonly-none-haiku-4.5"
+        ],
+        "efforts": "unknown",
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-38261135",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "2816440607d940d425d075ce69ed6e8c6884773fbdc0123b63df50a465016955",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only",
+        "not established: model, effort"
+      ]
+    },
+    {
+      "line": "claude-implementer",
+      "host": "claude",
+      "role": "implementer",
+      "tier": "balanced",
+      "rollback": {
+        "model": "sonnet-5",
+        "effort": "medium"
+      },
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "implementer",
+        "tier": "balanced",
+        "model": "sonnet-5",
+        "effort": "medium"
+      },
+      "transmitted": {
+        "profile": "routed-worker-medium-sonnet-5",
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+        "effort_status": "requested",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "agent_types": [
+          "foundry:routed-worker-medium-sonnet-5"
+        ],
+        "efforts": [
+          "medium"
+        ],
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-26145230\n\nFichier lu : `/private/tmp/claude-501/pat198-runs/claude-implementer/fixture/marker.txt`",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "4335c032ba436e9fdc6a364718b642a141f85b714ca99efa830a7e722cecd63b",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only"
+      ]
+    },
+    {
+      "line": "claude-reviewer",
+      "host": "claude",
+      "role": "reviewer",
+      "tier": "frontier",
+      "rollback": {
+        "model": "opus-5",
+        "effort": "high"
+      },
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "reviewer",
+        "tier": "frontier",
+        "model": "opus-5",
+        "effort": "high"
+      },
+      "transmitted": {
+        "profile": "routed-readonly-high-opus-5",
+        "model": "claude-opus-5",
+        "effort": "high",
+        "effort_status": "requested",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-opus-5"
+        ],
+        "agent_types": [
+          "foundry:routed-readonly-high-opus-5"
+        ],
+        "efforts": [
+          "high"
+        ],
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "Marqueur lu verbatim depuis `/private/tmp/claude-501/pat198-runs/claude-reviewer/fixture/marker.txt` :\n\n```\nmarqueur-de-fixture-68334211\n```\n\nFichier d'une seule ligne (newline final). Aucune écriture, aucune délégation, un seul appel Read.",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "0b50689c2b0d8caf807b64591e6cd620c1c63f69d47e3a4fdbd1c3eb0370825c",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only"
+      ]
+    },
+    {
+      "line": "claude-architect",
+      "host": "claude",
+      "role": "architect",
+      "tier": "apex",
+      "rollback": {
+        "model": "fable-5",
+        "effort": "high"
+      },
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "architect",
+        "tier": "apex",
+        "model": "fable-5",
+        "effort": "high"
+      },
+      "transmitted": {
+        "profile": "routed-readonly-high-fable-5",
+        "model": "claude-fable-5",
+        "effort": "high",
+        "effort_status": "requested",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-fable-5"
+        ],
+        "agent_types": [
+          "foundry:routed-readonly-high-fable-5"
+        ],
+        "efforts": [
+          "high"
+        ],
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "Marqueur lu depuis `/private/tmp/claude-501/pat198-runs/claude-architect/fixture/marker.txt` :\n\n```\nmarqueur-de-fixture-26759678\n```\n\nNote : le fichier contient en réalité une seconde ligne (`end`) alors que le packet annonçait une seule ligne ; la ligne marqueur est la première, retournée verbatim ci-dessus.",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "7b2f42e65c46419b10d252533a3b432ec50b1470bc84288239e0bbc1d4aa52cd",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only"
+      ]
+    }
+  ]
+}
