@@ -1169,13 +1169,14 @@ divergent histories still fail closed. This
 does not authorize review, AC, CI, Done or merge: their existing exact-coordinate gates
 reread the current projection and remain unchanged.
 
-PAT-230 extends the same PAT-76 verification to the write itself. The bounded readback
-of the native `review` State (`_bounded_issue_update`, `_review_readback_regressed` in
-`tooling/foundry/trackers/linear.py`) accepts a native `in-progress` State instead of
-raising `Linear issue divergent after bounded write` only when `_review_regression_proven`
-finds the In Progress → Review → In Progress span, with Review reached after the latest
-`state-review` receipt. It is observation only: the State is not written again and there is
-no retry loop; any other divergence still fails closed. Observed on 2026-10-17 (campaign
+PAT-230 extends the same PAT-76 verification to the write itself. When the bounded
+readback of the native `review` State (`_bounded_issue_update`, `_review_readback_regressed`
+in `tooling/foundry/trackers/linear.py`) finds a native `in-progress` State and
+`_review_regression_proven` finds the In Progress → Review → In Progress span, with Review
+reached after the latest `state-review` receipt, Foundry re-applies the same `review` State
+exactly once and reads back once. That second readback must match exactly, otherwise
+`Linear issue divergent after bounded write` is raised: no second tolerance, no loop. An
+unproven regression and any other divergence fail closed with no re-application. Observed on 2026-10-17 (campaign
 PAT-221): Foundry set In Review, and Linear moved the issue back to In Progress 292 ms later,
 which failed the `open-pr` effect. Observed the same day, read-only, with
 `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the team's Git automation rules are `start` →
