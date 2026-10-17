@@ -745,8 +745,9 @@ def test_cli_refuses_repeated_absent_or_unreadable_flags_before_any_read(
 def test_cli_reports_a_provider_refusal_with_the_status_command(monkeypatch, tmp_path):
     tracker, wire, _project = _graph(monkeypatch)
     issue_id = _issue(wire, state="blocked")
-    with pytest.raises(SystemExit, match="issue accept LIN-5 --status"):
+    with pytest.raises(SystemExit, match="issue accept LIN-5 --status") as raised:
         _cli(monkeypatch, tmp_path, tracker, issue_id, _doc(issue_id))
+    assert "selon ce que dit `--status`" in str(raised.value)
 
 
 def test_cli_flag_filter_knows_the_accept_flags():
