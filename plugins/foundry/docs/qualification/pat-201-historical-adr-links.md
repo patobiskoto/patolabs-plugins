@@ -1,6 +1,7 @@
 # PAT-201 - issue links of two historical native ADR bodies
 
-Status: qualified for exactly two source bodies; every other body keeps the PAT-85 profile.
+Status: qualified for exactly two source bodies (PAT-201; PAT-209 adds three, below); every other
+body keeps the PAT-85 profile.
 Profile: `_PAT_201_PROFILES` and `_linear_pat_201_readback_body`
 (`tooling/foundry/trackers/linear.py`). Tests: `pat201` in `tests/test_linear_tracker.py`,
 fixtures `tests/fixtures/pat201_foundry_adr_{0002,0018}_{source,readback}.md`.
@@ -107,11 +108,11 @@ markers become `* `, as in PAT-201):
   `humainement**`; the table delimiter row `|---|---:|---:|` becomes `| -- | -- | -- |`.
 
 The cause of the two "multiline inline" refusals was not traced to a clause of the model
-(unknown); the wording "multi-line inline code" for these two refusals was imprecise (this page's
-census writes "multiline inline"; its original author is not recorded here): the fixtures show the
-multi-line construct is bold, not inline code. Deduced, not observed: that Linear
-renders the version-1 Document written by `adr link-issue` the same way; the real link was
-not run (same limit as PAT-201).
+(unknown); the wording "multi-line inline code" for these two refusals was imprecise (this
+page's census writes "multiline inline"; the author of that wording is not recorded in the
+repository): the fixtures show the multi-line construct is bold, not inline code. Deduced,
+not observed: that Linear renders the version-1 Document written by `adr link-issue` the
+same way; the real link was not run (same limit as PAT-201).
 
 ## Profile and limits
 
