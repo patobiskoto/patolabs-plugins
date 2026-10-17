@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -109,6 +111,20 @@ def parse_codex_rate_limits(result: Any) -> list[dict[str, Any]]:
     return entries
 
 
+def _kill_group(proc: Any) -> None:
+    """Kill the child's whole process group (it leads its own session), then close stdin."""
+    pid = getattr(proc, "pid", None)
+    try:
+        if not isinstance(pid, int) or pid <= 1:  # never signal our own group
+            raise TypeError("no usable pid")
+        os.killpg(pid, signal.SIGKILL)
+    except (OSError, TypeError):
+        with contextlib.suppress(Exception):
+            proc.kill()
+    with contextlib.suppress(Exception):
+        proc.stdin.close()
+
+
 def read_codex(
     popen: Callable[..., Any] = subprocess.Popen,
     timeout: float = CODEX_TIMEOUT_S,
@@ -127,7 +143,7 @@ def read_codex(
         proc = popen(
             ["codex", "app-server", "--listen", "stdio://"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True,
+            text=True, start_new_session=True,
         )
     except OSError:
         return unknown("codex", source, "codex app-server could not start")
@@ -138,8 +154,9 @@ def read_codex(
             proc.stdin.write(json.dumps(message) + "\n")
         proc.stdin.flush()
         deadline = time.monotonic() + timeout
-        # A blocking readline cannot honour the deadline alone: a timer kills the child.
-        timer = threading.Timer(max(0.0, deadline - time.monotonic()), proc.kill)
+        # A blocking readline cannot honour the deadline alone: a timer kills the whole
+        # process group (a launcher may have a grandchild holding stdout) and closes stdin.
+        timer = threading.Timer(max(0.0, deadline - time.monotonic()), _kill_group, (proc,))
         timer.start()
         try:
             for line in proc.stdout:
@@ -159,7 +176,7 @@ def read_codex(
         error = "app-server pipe failed"
     finally:
         with contextlib.suppress(Exception):  # best-effort cleanup
-            proc.kill()
+            _kill_group(proc)
             proc.wait(timeout=5)
     if error:
         return unknown("codex", source, error)
@@ -284,7 +301,7 @@ def read_claude_probe(
         amount = float(budget_usd) if budget_usd is not None else 0.0
     except ValueError:
         amount = 0.0
-    if amount <= 0:
+    if not math.isfinite(amount) or amount <= 0:
         return unknown("claude", source, "probe refused: a positive --probe-budget-usd is required")
     if which("claude") is None:
         return unknown("claude", source, "claude executable not found")
@@ -358,29 +375,35 @@ def parse_github_usage(doc: Any) -> list[dict[str, Any]]:
     items = doc.get("usageItems") if isinstance(doc, dict) else None
     if not isinstance(items, list):
         return []
-    months: dict[str, dict[str, float]] = {}
+    # A field with no numeric value in any item of the month stays None (unknown), not 0.
+    months: dict[str, dict[str, float | None]] = {}
     for item in items:
         if not isinstance(item, dict) or item.get("product") != "actions":
             continue
         date = item.get("date")
         month = date[:7] if isinstance(date, str) and len(date) >= 7 else "unknown-month"
-        bucket = months.setdefault(month, {"minutes": 0.0, "gross": 0.0, "net": 0.0})
-        if item.get("unitType") == "Minutes" and _num(item.get("quantity")) is not None:
-            bucket["minutes"] += item["quantity"]
-        for key, field_name in (("gross", "grossAmount"), ("net", "netAmount")):
+        bucket = months.setdefault(month, {"minutes": None, "gross": None, "net": None})
+        pairs = [("gross", "grossAmount"), ("net", "netAmount")]
+        if item.get("unitType") == "Minutes":
+            pairs.append(("minutes", "quantity"))
+        for key, field_name in pairs:
             value = _num(item.get(field_name))
             if value is not None:
-                bucket[key] += value
+                bucket[key] = (bucket[key] or 0.0) + value
     return [
         {
             "label": month,
-            "minutes_used": round(b["minutes"], 2),
-            "gross_usd": round(b["gross"], 4),
-            "net_usd": round(b["net"], 4),
+            "minutes_used": _round(b["minutes"], 2),
+            "gross_usd": _round(b["gross"], 4),
+            "net_usd": _round(b["net"], 4),
             "included_quota": None,
         }
         for month, b in sorted(months.items())
     ]
+
+
+def _round(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)
 
 
 def read_github_actions(

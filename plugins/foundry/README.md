@@ -692,10 +692,12 @@ other cause of the earlier failure report was verified.
 Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tested in
 `scripts/test_ci_plan.py`), not by workflow expressions:
 
-- `ship-ios` and `catalogue` run on every push to `main` and every internal pull request.
-  On a fork pull request none of the four jobs runs, because all four carry the fork guard
-  (`test_required_checks_keep_their_names_and_fork_guard` in `scripts/test_ci_plan.py`;
-  FOUNDRY-ADR-0025).
+- `ship-ios`, `gauge` and `catalogue` run on every push to `main` and every internal pull
+  request. On a fork pull request none of the five jobs (`plan`, `foundry`, `ship-ios`,
+  `gauge`, `catalogue`) runs, because all five carry the fork guard
+  (`test_required_checks_keep_their_names_and_fork_guard` in `scripts/test_ci_plan.py`
+  asserts it for `plan`, `foundry`, `ship-ios` and `catalogue`; `gauge` carries it in
+  `.github/workflows/ci.yml`, not asserted by that test; FOUNDRY-ADR-0025).
 - `foundry` is skipped only when the `plan` job outputs `run_foundry=false`, which
   `scripts/ci_plan.py` does only when every changed file is under `plugins/ship-ios/` on a
   pull request. Except for the stale base case below, it runs in every other case: a push

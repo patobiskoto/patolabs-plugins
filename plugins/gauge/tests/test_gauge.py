@@ -4,8 +4,10 @@ from __future__ import annotations
 import io
 import json
 import re
+import signal
 import subprocess
 import sys
+import threading
 import unittest
 import urllib.error
 from pathlib import Path
@@ -27,11 +29,21 @@ def has_found(text: str) -> bool:
     return any(re.search(rf"\b{s}\b", text) for s in SECRETS)
 
 
+class _Stdin(io.StringIO):
+    """Keeps what was written after close(), as the real pipe is closed on cleanup."""
+
+    def close(self):
+        self.sent = self.getvalue()
+        super().close()
+
+
 class FakeProc:
     def __init__(self, lines: str):
-        self.stdin = io.StringIO()
+        self.stdin = _Stdin()
         self.stdout = io.StringIO(lines)
         self.killed = False
+
+    pid = None
 
     def kill(self):
         self.killed = True
@@ -51,9 +63,48 @@ class CodexTest(unittest.TestCase):
         self.assertTrue(r.entries[0]["resets_at"].startswith("2026-"))
         self.assertFalse(has_found(json.dumps(r.as_dict()) + render([r.as_dict()])))
         self.assertTrue(proc.killed)
-        sent = proc.stdin.getvalue()
+        sent = proc.stdin.sent
         self.assertIn("account/rateLimits/read", sent)
         self.assertIn('"method": "initialized"', sent)
+
+    def test_timeout_kills_the_process_group_and_closes_stdin(self):
+        class Hanging(FakeProc):
+            pid = 4242
+
+            def __init__(self):
+                super().__init__("")
+                self.stdout = self  # readline blocks until the group is killed
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.group_killed.wait(5)
+                raise StopIteration
+
+            group_killed = threading.Event()
+
+        proc = Hanging()
+        seen = {}
+
+        def killpg(pid, sig):
+            seen["call"] = (pid, sig)
+            proc.group_killed.set()
+
+        with mock.patch.object(readers.os, "killpg", side_effect=killpg):
+            r = readers.read_codex(popen=lambda *a, **k: seen.update(kw=k) or proc,
+                                   which=lambda n: "x", timeout=0.05)
+        self.assertEqual(r.status, "unknown")
+        self.assertEqual(seen["call"], (4242, signal.SIGKILL))
+        self.assertTrue(seen["kw"]["start_new_session"])
+        self.assertTrue(proc.stdin.closed)
+
+    def test_group_kill_never_targets_an_unusable_pid(self):
+        proc = FakeProc("")
+        with mock.patch.object(readers.os, "killpg") as killpg:
+            readers._kill_group(proc)
+        killpg.assert_not_called()
+        self.assertTrue(proc.killed)
 
     def test_missing_executable_is_unknown(self):
         r = readers.read_codex(which=lambda n: None)
@@ -106,7 +157,7 @@ class ClaudeTest(unittest.TestCase):
 
     def test_probe_refused_without_budget_and_runs_nothing(self):
         run = mock.Mock()
-        for budget in (None, "0", "-1", "abc"):
+        for budget in (None, "0", "-1", "abc", "nan", "inf", "-inf"):
             r = readers.read_claude_probe(budget, run=run, which=lambda n: "x")
             self.assertEqual(r.status, "unknown")
         run.assert_not_called()
@@ -212,6 +263,36 @@ class GithubTest(unittest.TestCase):
         self.assertFalse(has_found(text))
         self.assertIn("included quota unknown", text)
 
+    def test_missing_fields_are_unknown_not_zero(self):
+        body = json.dumps({"usageItems": [
+            {"product": "actions", "date": "2026-10-01", "unitType": "Minutes", "quantity": 10},
+            {"product": "actions", "date": "2026-10-02", "unitType": "Minutes"},
+            {"product": "actions", "date": "2026-09-01", "unitType": "Minutes", "quantity": 5,
+             "grossAmount": 0.5},
+            {"product": "actions", "date": "2026-08-01", "unitType": "Hours", "quantity": 3,
+             "netAmount": 0},
+        ]})
+        r = readers.read_github_actions(run=self.runner(usage=body), which=lambda n: "x")
+        by = {e["label"]: e for e in r.entries}
+        self.assertEqual(by["2026-10"]["minutes_used"], 10)
+        self.assertIsNone(by["2026-10"]["gross_usd"])
+        self.assertIsNone(by["2026-10"]["net_usd"])
+        self.assertEqual(by["2026-09"]["gross_usd"], 0.5)
+        self.assertIsNone(by["2026-09"]["net_usd"])
+        self.assertIsNone(by["2026-08"]["minutes_used"])  # unexpected unit: unknown
+        self.assertEqual(by["2026-08"]["net_usd"], 0)  # a real zero stays a value
+        text = render([r.as_dict()])
+        self.assertIn("gross unknown USD", text)
+        self.assertIn("unknown min", text)
+
+    def test_unreadable_login_is_unknown(self):
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, "  \n", "")
+
+        r = readers.read_github_actions(run=run, which=lambda n: "x")
+        self.assertEqual(r.status, "unknown")
+        self.assertIn("login unreadable", r.reason)
+
     def test_refused_is_unknown(self):
         r = readers.read_github_actions(run=self.runner(usage_rc=1), which=lambda n: "x")
         self.assertEqual(r.status, "unknown")
@@ -230,8 +311,11 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("used 0", text)
 
     def test_cli_status_json_runs_offline(self):
-        with mock.patch.object(readers, "which", create=True), \
-                mock.patch("shutil.which", return_value=None), \
+        # The readers' default dependencies are bound at definition, so patching
+        # shutil.which would miss them: replace the readers themselves (no subprocess, no HTTP).
+        with mock.patch.object(readers, "read_codex", return_value=readers.unknown("codex", "s", "r")), \
+                mock.patch.object(readers, "read_github_actions",
+                                  return_value=readers.unknown("github-actions", "s", "r")), \
                 mock.patch.dict("os.environ", {}, clear=True), \
                 mock.patch("builtins.print") as out:
             self.assertEqual(gauge_cli.main(["status", "--json"]), 0)
