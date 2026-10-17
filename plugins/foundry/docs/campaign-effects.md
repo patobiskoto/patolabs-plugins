@@ -251,6 +251,24 @@ review-proof store, the approval journal and the attempt journal. Whether the ho
 the mid-command wildcards of `DISALLOWED_TOOLS` is not verified here (unknown); the tests pin
 the argv, not the host's matching.
 
+## Provider requests of a pass (PAT-228)
+
+`step` records the provider requests of its pass in `StepResult.requests`, printed under
+`requests` of each step by `step` and `run`: `observation` (the tracker counter,
+`Tracker.request_count`, read before and after `cadence.observe`), `effect` (the same counter
+over the rest of the pass, that is the reads made in this process by the plan and the effect,
+the deferral included) and `subprocesses` (the sum of the `foundry linear_requests=N` lines
+that the Foundry subcommands of the pass printed on standard error, read by `_run` into
+`Runtime.subprocess_requests`; they need `FOUNDRY_REQUEST_COUNT=stderr`, and sessions
+do not receive it, `_CLAUDE_CHILD_ENV_ALLOWLIST`). A figure that is not counted is `null`: the
+counter exists on the Linear adapter only (`LinearTracker.request_count`, the PAT-145 counter
+of the process); `Tracker.request_count` returns `None` elsewhere. A pass that stops before the
+observation (`attempts_journal_invalid`, `git_hooks_dir_refused`) has `requests` `null`. For an
+effect, the same object is the `requests` key of its `finished` line. `run` and `step` also print
+a top-level `requests` (`request_summary`): `observation` (observations of all the passes), `wait`
+(the part of it spent on passes whose outcome is `wait-ci` or `waiting`) and `effects` (`effect` plus
+`subprocesses`). Measured figures: `docs/linear-request-cost.md`, "Epic campaign (PAT-228)".
+
 ## The attempt journal
 
 Append-only JSONL, `campaign-attempts.jsonl` in `registry.data_dir()` (`journal_path`, the
@@ -266,7 +284,10 @@ directory of `campaign-approvals.jsonl`), mode 0600, written under an exclusive 
   `partial`, and the optional `fix_description` (PAT-227: how many of the `fix_before_merge`
   remarks target the description; absent reads as 0); for a `correct` that replaced the PR
   description, the optional closed key `description` (`{head, base}`, `valid_description_field`).
-  A journal written before PAT-218 or PAT-227 stays valid (`_OPTIONAL`).
+  Every `finished` line may carry the optional closed key `requests` (PAT-228,
+  `valid_requests_field`, `REQUEST_KEYS`): `observation`, `effect`, `subprocesses`, see "Provider
+  requests of a pass" below. A journal written before PAT-218, PAT-227 or PAT-228 stays valid
+  (`_OPTIONAL`).
 
 The `attempt` identity is the sha256 of the Epic, the ticket, the step kind and the
 fingerprint (`identity`): tracker state, branch head sha, PR number and PR head sha
@@ -540,15 +561,23 @@ of a failed attempt is the companion Epic found or created before the failure, `
 
 1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
-2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>` (`tracker.search`,
-   then `get_issue` where `type` is absent). More than one: durable refusal
+2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>`. First the
+   companions that earlier deferral attempts of this Epic journaled (`journal_memory`, the
+   `companion` of their `deferral` field, most recent first) are read by identifier (`get_issue`)
+   and the first that is still an Epic with that title is kept; otherwise the project is listed
+   (`Listing`, `tracker.search`, at most once per attempt, then `get_issue` where `type` is
+   absent). Before PAT-228 the project was listed here and again in step 3. More than one: durable refusal
    `companion_epic_ambiguous`. None: `edit create-issue` with the field `Type: Epic`, state
    `backlog`, no `parent`; no link to the origin Epic is made.
 3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
    with the lowest identifier; a started or closed child is never used. Otherwise an issue titled
    `Review remarks deferred from <ORIGIN-EPIC-ID>` in `backlog` or `ready` with no parent is an
    orphan of a creation whose parent link failed: write 4, `edit link <FOLLOW-UP> subtask-of
-   <COMPANION>`. Otherwise `edit create-issue` with `parent` set to the companion Epic.
+   <COMPANION>`. This scan reads the listing of step 2; it is skipped (`_find_follow_up`
+   `scan_orphans`) only when step 2 did not need the listing (the companion came from the
+   journal) and no earlier attempt of this Epic can have created a follow-up (`journal_memory`:
+   none wrote `create follow-up issue`, none has `unknown` creations, none lacks a `deferral`
+   field on its `finished` line). Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
    ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: one
    comment per validated round, never one per remark (a correction changes the diff hash, so a
@@ -580,8 +609,9 @@ unreadable and the effect stays unknown: the client id and the title go to the `
 the `finished` line (transient), and the next pass reconciles by that client id (`_create`)
 before any new creation. The ADR only says a creation is retried after reconciliation
 (PAT-ADR-0028); this split is the reading of R9 (b) (`tests/test_campaign_defer.py`).
-The bound is `MAX_DEFER_TRIES`. A search by title still precedes
-the creation and adopts an issue it lists. An error object that names neither an issue nor a
+The bound is `MAX_DEFER_TRIES`. The read of steps 2 and 3 still precedes
+the creation and adopts an issue it finds; a companion that the journal names but that was
+renamed or retyped since is not trusted (the listing decides). An error object that names neither an issue nor a
 client id is a durable refusal (`creation_effect_unreconcilable`).
 
 Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
@@ -674,6 +704,14 @@ reasons `non_blocking_remarks`, `remarks_not_deferrable`, `deferral_transient_fa
 `deferral_retries_exhausted`; the step outcome `waiting`; the constants `DEFER_RETRY_SECONDS`,
 `MAX_DEFER_TRIES`, `MAX_REMARKS`, `MAX_REMARK_TEXT`; the optional journal key `deferral`; the
 receipt directory `review-remarks`. No configuration key or routing table changed.
+
+R5 status (PAT-228): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
+`docs/linear-request-cost.md` and `docs/qualification/pat-219-epic-campaign-2026-10-17.md`.
+Candidate artefacts: the optional journal key `requests` and its keys (`REQUEST_KEYS`), the
+`requests` field of a step and of a run report, `Tracker.request_count` and
+`LinearTracker.request_count`, `Runtime.subprocess_requests`, `request_summary`, and the new
+helpers `Listing` and `journal_memory` of the deferral. No CLI verb or option, configuration key
+or routing table changed.
 
 R5 status (PAT-227): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md` and
 `docs/review-rounds.md`.

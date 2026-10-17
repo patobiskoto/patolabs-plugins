@@ -281,6 +281,13 @@ class Tracker(ABC):
     def resolve_project(self, repo: str) -> Project:
         """Map a repo basename to its tracker project (raises if unknown)."""
 
+    def request_count(self) -> int | None:
+        """Provider requests made so far by this process, or ``None`` when not counted.
+
+        Diagnostic only (PAT-228): the campaign reports the difference before and after a step.
+        """
+        return None
+
     def observe_issue(self, issue_id: str) -> Issue:
         """Return the portable lifecycle observation used by query and resume.
 

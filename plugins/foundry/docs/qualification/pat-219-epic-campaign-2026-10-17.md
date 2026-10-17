@@ -109,7 +109,8 @@ round and about 120 with three rounds and two corrections. It counts start 13, o
   Deduced, not verified: the session ran the tests as a background command, and the
   `--print` result kept by the cadencer is the last turn, the reply to that notification,
   with that turn's duration only.
-- PAT-228: measure, then reduce, the Linear requests of a campaign.
+- PAT-228: measure, then reduce, the Linear requests of a campaign. Measurements and the
+  reduction of the deferral reads: `docs/linear-request-cost.md`, "Epic campaign (PAT-228)".
 - PAT-229: the deferral effect reads the last line of the standard error, which is the
   request counter when `FOUNDRY_REQUEST_COUNT=stderr` is set. The first failure of run 1
   recorded `foundry linear_requests=2` as its reason, and `companion: null`, although the

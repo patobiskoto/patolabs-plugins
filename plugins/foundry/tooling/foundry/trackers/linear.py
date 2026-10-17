@@ -5416,6 +5416,10 @@ class LinearTracker(Tracker):
         project = self._project()
         return self._to_issue(self._read_raw(issue_id), project)
 
+    def request_count(self) -> int:
+        """Linear HTTP attempts of this process so far (the PAT-145 counter)."""
+        return request_count()
+
     def observe_issue(self, issue_id: str) -> Issue:
         project = self._project()
         return self._to_issue(
