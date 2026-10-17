@@ -36,7 +36,7 @@ error and a non-zero exit code other than 2 (traceback, or the message of the `S
 | several tickets in `in-progress`/`review` | `suspend` `several_in_progress` |
 | the ticket's PR is merged but the tracker state is not `done`; PR closed unmerged; several open PRs; head sha unreadable | `suspend` `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_ambiguous`, `pr_head_unreadable` |
 | no ticket in progress and none startable, but some not terminal | `suspend` `no_eligible_ticket` |
-| any other approval refusal (`absent`, `expired`, `journal_invalid`, `preview_digest_mismatch`) | `refuse` `approval_<code>`, with `blocked_step` = the step the pass would return once approved |
+| any other approval refusal (`absent`, `expired`, `journal_invalid`; `preview_digest_mismatch` is unreachable on this path, see below) | `refuse` `approval_<code>`, with `blocked_step` = the step the pass would return once approved |
 | every required ticket `done`/`dropped` | `await-verdict` |
 | ticket `backlog`/`ready`, dependencies `done`, first by numeric id | `start` |
 | `in-progress`, branch present, no PR, the last implementation attempt ended on this branch head and the branch has commits beyond the remote default branch | `open-pr` |
@@ -86,8 +86,9 @@ Order: capabilities (flags only), one `get_epic_subgraph` (plus `validate_subgra
 `get_issue` for its body, the proof store, and `ci_gate` (`write.py`, both CI sources),
 the last one only when the review is valid. The approval is checked with the preview digest
 of the latest journal record of the Epic, for two reasons: the digest cannot be recomputed
-here, because the versions of the nodes it covers change at every write of the campaign
-(each state, comment or link it writes), and the policy that produced it is not observable.
+here, because it covers the version of every node (`snapshot.versions`, `epic_preview.py`),
+and these versions change when the campaign writes a node (deduced, not observed on a
+tracker), and the policy that produced it is not observable.
 The structure digest is the observed one, so a structure change is detected exactly. As the
 checked preview digest is always one of the journal's own records, `preview_digest_mismatch`
 is unreachable on this path (an Epic without a record gives `absent` first).
