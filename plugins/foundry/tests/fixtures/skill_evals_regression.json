@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.302",
+  "costUsd": 0.12,
+  "partial": false,
+  "suite": {
+    "ablation": "none",
+    "threshold": 1.0
+  },
+  "cases": [
+    {
+      "name": "open-pr",
+      "aggregates": {
+        "score": 1.0,
+        "passRate": 1.0
+      },
+      "arms": {
+        "with": [
+          {
+            "score": 1.0,
+            "passed": true,
+            "error": null,
+            "graders": [
+              {
+                "name": "skill-invoked",
+                "passed": true,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "merge-pr",
+      "aggregates": {
+        "score": 1.0,
+        "passRate": 1.0
+      },
+      "arms": {
+        "with": [
+          {
+            "score": 1.0,
+            "passed": true,
+            "error": null,
+            "graders": [
+              {
+                "name": "skill-invoked",
+                "passed": true,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "start-issue",
+      "aggregates": {
+        "score": 1.0,
+        "passRate": 1.0
+      },
+      "arms": {
+        "with": [
+          {
+            "score": 1.0,
+            "passed": true,
+            "error": null,
+            "graders": [
+              {
+                "name": "skill-invoked",
+                "passed": true,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "intake",
+      "aggregates": {
+        "score": 0.0,
+        "passRate": 0.0
+      },
+      "arms": {
+        "with": [
+          {
+            "score": 0.0,
+            "passed": false,
+            "error": null,
+            "graders": [
+              {
+                "name": "skill-invoked",
+                "passed": false,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "resume-issue",
+      "aggregates": {
+        "score": 1.0,
+        "passRate": 1.0
+      },
+      "arms": {
+        "with": [
+          {
+            "score": 1.0,
+            "passed": true,
+            "error": null,
+            "graders": [
+              {
+                "name": "skill-invoked",
+                "passed": true,
+                "weight": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 5
+  }
+}
