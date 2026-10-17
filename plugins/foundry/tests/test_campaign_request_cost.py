@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from foundry import campaign_cadence as cc
 from foundry import campaign_defer as cd
 from foundry import campaign_effects as ce
 import test_campaign_effects
@@ -54,7 +55,7 @@ def counted(env):
     return env
 
 
-def test_a_waiting_pass_reports_its_observation_and_no_effect(counted):
+def test_a_start_pass_reports_the_requests_of_its_observation(counted):
     result = step(counted)
     assert result.decision.kind == "start"
     assert result.requests == {"observation": 3, "effect": 0, "subprocesses": None}
@@ -152,6 +153,34 @@ def lookups(linear, known, maybe_created):
     return companion, found, operations
 
 
+@pytest.fixture
+def before(monkeypatch):
+    """The deferral reads as they were before PAT-228: no journal memory, and a listing that
+    every lookup reads again."""
+    def issues(self):
+        return cd._read(self.tracker.search, self.project)
+
+    monkeypatch.setattr(cd.Listing, "issues", issues)
+    monkeypatch.setattr(cd, "journal_memory", lambda attempts, epic: ([], True))
+
+
+def test_the_lookups_before_pat_228_listed_the_project_twice(linear, before):
+    assert lookups(linear, [], True)[2].total() == 59  # an unstarted child: one listing
+    linear.wire.issues["LIN-301"]["state"] = {"id": STATE_IDS["in-progress"], "name": "x"}
+    assert lookups(linear, [], True)[2].total() == 116  # none: the orphan scan lists again
+
+
+def test_an_observation_costs_one_request_per_node(monkeypatch, tmp_path):
+    monkeypatch.setattr("foundry.trackers.epic_intent.registry.data_dir", lambda: str(tmp_path))
+    for children, prerequisites, expected in ((6, 2, 9), (12, 4, 17), (31, 24, 56)):
+        open_ids = [f"LIN-{100 + i}" for i in range(children)]
+        tracker, wire, project, _ = _build(children, prerequisites, open_children=open_ids)
+        wire.calls.clear()
+        observed = cc.observe(tracker, None, project, "LIN-1", "/none", None,
+                              refs=lambda r: [], branch_facts=lambda r, b: (None, None))
+        assert observed.read_error is None and len(wire.calls) == expected
+
+
 def test_the_first_lookup_lists_the_project_once(linear):
     companion, found, operations = lookups(linear, [], False)
     assert (companion, found) == ("LIN-300", ("LIN-301", False))
@@ -170,6 +199,12 @@ def test_a_journaled_companion_without_open_follow_up_scans_only_when_a_creation
     assert lookups(linear, ["LIN-300"], False)[1:] == ((None, False), {"FoundryLinearIssue": 3})
     _c, found, operations = lookups(linear, ["LIN-300"], True)
     assert found == (None, False) and operations["FoundryLinearIssues"] == 1
+
+
+def test_a_journaled_companion_of_another_origin_is_ignored(linear):
+    listing = cd.Listing(linear.tracker, linear.project)
+    assert cd._find_companion(listing, "Nits LIN-9", ["LIN-300"]) is None
+    assert listing.loaded  # the title differs: the listing decides
 
 
 def test_a_journaled_companion_that_changed_is_not_trusted(linear):
@@ -213,3 +248,110 @@ def test_the_journal_names_the_companions_and_a_possible_creation(env):
     assert cd.journal_memory(path, "APP-1") == (["APP-50"], True)
     path.write_text(line("started", "a1") + "\n" + line("started", "a2") + "\n")
     assert cd.journal_memory(path, "APP-1") == ([], True)  # no finished line: it may have created
+
+
+# ---- a replayed campaign: the campaign test world, its reads counted on the Linear double
+
+
+class ShadowTracker(CountingTracker):
+    """The campaign world answers every read; the same read is also made on a ``LinearTracker``
+    over the transport double, whose project mirrors the world's issues (``APP-n`` is
+    ``LIN-(500+n)`` there) and holds one closed Epic.  The counter is the number of transport
+    calls of those shadow reads.  A shadow read that Linear refuses is ignored (its requests
+    were made and are counted)."""
+
+    def __init__(self, world, linear):
+        super().__init__(world)
+        self.linear = linear
+
+    @staticmethod
+    def shadow_id(issue_id):
+        return f"LIN-{500 + int(issue_id.split('-')[1])}"
+
+    def request_count(self):
+        return len(self.linear.wire.calls)
+
+    def _mirror(self):
+        wire, template, sid = self.linear.wire, self.linear.template, self.shadow_id
+        ref = lambda i: {"id": _native(int(sid(i).split("-")[1])), "identifier": sid(i)}  # noqa: E731
+        for issue in self.world.issues.values():
+            parents = [link.target for link in issue.links if link.type == "subtask-of"]
+            raw = copy.deepcopy(template)
+            raw.update(
+                id=ref(issue.id)["id"], identifier=sid(issue.id), title=issue.title,
+                description=issue.body or "",
+                state={"id": STATE_IDS[issue.state], "name": issue.state},
+                labels=connection([{"id": "label-epic", "name": "Epic"}] if issue.type == "Epic" else []),
+                comments=connection([]), relations=connection([]),
+                inverseRelations=connection(
+                    [{"type": "blocks", "issue": ref("APP-2")}] if issue.id == "APP-3" else []),
+                children=connection([ref(link.target) for link in issue.links
+                                     if link.type == "parent-of"]))
+            raw.pop("parent", None)
+            if parents:
+                raw["parent"] = ref(parents[0])
+            wire.issues[sid(issue.id)] = raw
+
+    def _shadow(self, call, *args, **kwargs):
+        self._mirror()
+        try:
+            call(*args, **kwargs)
+        except Exception:  # noqa: BLE001 - the requests are counted whatever the answer
+            pass
+
+    def get_epic_subgraph(self, project, epic, *, depth, nodes):
+        self._shadow(self.linear.tracker.get_epic_subgraph, self.linear.project,
+                     self.shadow_id(epic), depth=depth, nodes=nodes)
+        return WorldTracker.get_epic_subgraph(self, project, epic, depth=depth, nodes=nodes)
+
+    def get_issue(self, issue_id):
+        self._shadow(self.linear.tracker.get_issue, self.shadow_id(issue_id))
+        return WorldTracker.get_issue(self, issue_id)
+
+    def search(self, project, query=""):
+        self._shadow(self.linear.tracker.search, self.linear.project)
+        return WorldTracker.search(self, project, query)
+
+
+def replay(env, linear):
+    """Start, implement, open the PR, review (two non-blocking remarks), defer, three passes
+    that wait for CI, merge: ``run`` on the campaign world, its tracker reads counted on the
+    Linear double.  The fake runner prints no request line, so ``subprocesses`` stays ``None``."""
+    from test_campaign_cadence import check
+    from test_campaign_review import roomy
+
+    linear.template = copy.deepcopy(linear.wire.issues["LIN-100"])
+    env.tracker = ShadowTracker(env.world, linear)
+    roomy(env)
+    env.world.reviews.append(test_campaign_effects.result_text(nits=2))
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 3:
+            env.world.checks = [check()]
+
+    results, stopped = ce.run(
+        env.tracker, env.codehost, test_campaign_effects.PROJECT, "APP-1", env.runtime,
+        max_steps=9, poll_seconds=1, sleep=sleep, clock=lambda: test_campaign_effects.NOW,
+        **env.kwargs)
+    assert stopped == "max_steps"
+    return results
+
+
+KINDS = ["start", "implement", "open-pr", "review", "defer-remarks", "wait-ci", "wait-ci",
+         "wait-ci", "merge"]
+
+
+def test_a_replayed_campaign_splits_its_requests(env, linear):
+    results = replay(env, linear)
+    assert [r.decision.kind for r in results] == KINDS
+    assert [r.requests["observation"] for r in results] == [3, 3, 3, 4, 6, 4, 4, 4, 4]
+    assert [r.requests["effect"] for r in results] == [0, 1, 0, 0, 59, 0, 0, 0, 0]
+    assert ce.request_summary(results) == {"observation": 35, "wait": 12, "effects": 60}
+
+
+def test_the_same_replay_before_pat_228_costs_one_more_listing(env, linear, before):
+    results = replay(env, linear)
+    assert [r.requests["effect"] for r in results][4] == 116
+    assert ce.request_summary(results) == {"observation": 35, "wait": 12, "effects": 117}

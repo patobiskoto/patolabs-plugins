@@ -566,7 +566,7 @@ of a failed attempt is the companion Epic found or created before the failure, `
    `companion` of their `deferral` field, most recent first) are read by identifier (`get_issue`)
    and the first that is still an Epic with that title is kept; otherwise the project is listed
    (`Listing`, `tracker.search`, at most once per attempt, then `get_issue` where `type` is
-   absent). Before PAT-228 the project was listed here and again in step 3. More than one in that listing: durable refusal
+   absent). Before PAT-228 the project was listed here and again in step 3 when the companion had no unstarted child. More than one in that listing: durable refusal
    `companion_epic_ambiguous` (a companion kept from the journal is not compared with other Epics
    of the same name). None: `edit create-issue` with the field `Type: Epic`, state
    `backlog`, no `parent`; no link to the origin Epic is made.
@@ -578,7 +578,9 @@ of a failed attempt is the companion Epic found or created before the failure, `
    `scan_orphans`) only when step 2 did not need the listing (the companion came from the
    journal) and no earlier attempt of this Epic can have created a follow-up (`journal_memory`:
    none wrote `create follow-up issue`, none has `unknown` creations, none lacks a `deferral`
-   field on its `finished` line). Otherwise `edit create-issue` with `parent` set to the companion Epic.
+   field on its `finished` line). Residual risk: `journal_memory` reads the journal of this campaign Epic only
+   (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
+   in that case and a second follow-up can be created. Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
    ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: one
    comment per validated round, never one per remark (a correction changes the diff hash, so a

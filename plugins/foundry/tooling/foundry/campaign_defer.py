@@ -4,7 +4,8 @@ After a validated review the cadencer carries the deferrable remarks to the comp
 ``Nits <ORIGIN-EPIC-ID>`` with the four writes that AGENTS.md#R9 (b) authorizes in advance.
 Every write is a Foundry command run as a subprocess (``edit create-issue``, ``edit comment``,
 ``edit link``, ``edit reconcile-create``); the tracker is only read, through ``search`` and
-``get_issue``, before each write, so a retry never duplicates one.  The effect launches no
+``get_issue``, before each write, so that a retry finds what an earlier attempt of this journal
+or the listing shows (``journal_memory``, a limit: ``docs/campaign-effects.md``).  The effect launches no
 model session and the merge gate never reads the remarks receipt.  The intent is the
 ``started`` line of the attempt journal, written before the first write.  The ``finished``
 line keeps the client identifier of a creation whose effect is unknown, and the next pass
