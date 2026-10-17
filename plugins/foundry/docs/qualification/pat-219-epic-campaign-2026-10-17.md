@@ -34,14 +34,17 @@ runs below.
   `should_run: false`), and PR #173 merged through `issue merge`. PAT-223 was therefore not
   merged by the campaign.
 - Run 2 stop: the Linear state history of PAT-224 shows In Review at 09:25:12.746Z and back to
-  In Progress at 09:25:13.038Z (UTC), set by something other than Foundry. Cause: deduced,
-  not verified: the team's Git automation reacting to the PR opening (the `start` and `review`
-  rules are still active, `docs/linear-tracker.md`, "GitHub merge automation interlock").
+  In Progress at 09:25:13.038Z (UTC). The author of that change is not recorded here
+  (unknown). Cause: deduced, not verified: the team's Git automation reacting to the PR
+  opening (`docs/linear-tracker.md`, "GitHub merge automation interlock", allows the `start`
+  and `review` rules; whether they are active in the team was not read).
 - Run 3: the correction loop ran end to end: two corrections, each followed by a partial
   review (PAT-ADR-0022), then CI wait and merge.
 - Deferred remarks: 8 in total (3 + 2 + 3) to follow-up issue PAT-226 under the companion
-  Epic PAT-225 ("Nits PAT-221"), created by the first deferral. One companion and one
-  follow-up issue exist (Linear listing).
+  Epic PAT-225 ("Nits PAT-221"). PAT-226 was created by the second deferral attempt of
+  run 1 (`writes` of its report); PAT-225 by the first, failed attempt (deduced: the second
+  attempt reports no companion creation). One companion and one follow-up issue exist
+  (Linear listing).
 - The Epic was closed with `issue close-epic PAT-221 --human-verdict=accepted` after the
   test procedure of PAT-221. The maintainer delegated both the procedure and the command to
   the agent explicitly; the verdict comment on PAT-221 records this.
@@ -49,7 +52,7 @@ runs below.
 ## Cost
 
 Session cost (`total_cost_usd` of the sessions, journal `campaign-attempts.jsonl`): run 1
-2.13 USD, run 2 0.43 USD, run 3 2.45 USD, about 5.0 USD in total for 11 paid sessions
+2.13 USD, run 2 0.43 USD, run 3 2.44 USD, about 5.0 USD in total for 11 paid sessions
 (3 implementations, 5 reviews, 3 corrections; the correction stopped by
 `attempt_already_made` launched no session).
 
@@ -64,17 +67,22 @@ are not counted.
 
 | Measure | Run 1 | Run 2 | Run 3 |
 |---------|-------|-------|-------|
-| Cadencer process (one observation per step, plus the plan reads made in that process) | 1723 | unknown (the process ended on the exception, before printing its total) | 479 |
+| Cadencer process (one observation per step, plus every tracker read made in that process: plan reads, `get_issue` of `implement`, `plan_correct`, and the reads of the deferral effect) | 1723 | 13 | 479 |
 | Steps | 14 | 3 | 12 |
-| Average per step, cadencer process | 123 | unknown | 40 |
+| Average per step, cadencer process | 123 | 4 | 40 |
 
 Effects, from the subcommand lines: `issue start` 13 (×3), `issue openpr` 13 (×2) and 10
 (×2, the re-push after a correction), `issue merge` 33 (×2), first failed deferral 2, failed
 `openpr` of run 2 12. The review, correction and successful deferral effects recorded no
 count.
 
-Why the average per step differs between runs 1 and 3: unknown. A pass of `campaign-cadence
-next` was measured at 13 requests by PAT-216.
+Run 2 (three observations, no review, no deferral) gives about 4 requests per observation, so
+the observation alone does not explain runs 1 and 3. Deduced, not verified: the excess follows
+the deferral effect, which runs in the cadencer process and reads the whole project
+(`tracker.search(project)` in `_find_companion` and `_find_follow_up`, `campaign_defer.py`):
+run 1 has three deferral attempts and 1723 requests, run 3 one attempt and 479. The breakdown
+per effect is unknown. A pass of `campaign-cadence next` was measured at 13 requests by
+PAT-216.
 
 ### Comparison with the PAT-177 estimate
 
@@ -82,12 +90,12 @@ The estimate (comment on PAT-177, 2026-10-16) is about 75 requests per ticket wi
 round and about 120 with three rounds and two corrections. It counts start 13, open-pr 11 to
 15, merge 20 to 30, and a revalidation of about ⌈P/100⌉ before each effect.
 
-- The effects match their estimates: start 13 (estimate 13), open-pr 10 to 13 (11 to 15),
-  merge 33 (20 to 30, slightly above).
+- The effects measured by their subcommand are close to their estimates, but only `start`
+  falls inside: start 13 (estimate 13), open-pr 10 to 13 (estimate 11 to 15), merge 33
+  (estimate 20 to 30).
 - The total does not: run 1 alone is 1723 requests in the cadencer for less than two tickets,
-  against about 150 to 200 estimated. The gap is in the observation of every step, which the
-  estimate puts at ⌈P/100⌉ but which costs about 40 to 123 requests here. The breakdown is
-  unknown; it is the subject of PAT-228.
+  against about 150 to 200 estimated. Where the excess comes from is unknown (deduced lead: the
+  deferral effect, above); measuring it is the subject of PAT-228.
 - The estimate's recommendation (no tracker re-read while waiting for CI) is not followed:
   `run` observes at every step, `wait-ci` included (`campaign_effects.run`).
 
