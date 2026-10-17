@@ -12,6 +12,11 @@
       "name": "ship-ios",
       "source": "./plugins/ship-ios",
       "description": "Merge→live for iOS apps: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. Composes with Foundry by data."
+    },
+    {
+      "name": "gauge",
+      "source": "./plugins/gauge",
+      "description": "Read-only quota gauge: Codex, Claude, Linear and GitHub Actions counters with source and read time; unreadable data is unknown, never zero."
     }
   ]
 }
