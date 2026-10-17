@@ -603,6 +603,53 @@ def test_a_completed_codex_turn_with_an_unrelated_error_text_is_never_unavailabl
     assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "available_observed"
 
 
+def test_a_local_codex_effort_refusal_is_not_an_unavailable_model(tmp_path):
+    text = "Error loading config: model_reasoning_effort: unknown variant `max`, expected one of `low`, `high`"
+    host = _codex_host(tmp_path, completed=False, exit_code=2, session=False, stderr_text=text)
+    assert rt.run(_args(tmp_path, "codex-architect"), codex_launch=host) == 1
+    row = _codex_row(tmp_path, "codex-architect")
+    assert row["account_availability"] == "unknown" and row["verdict"] != "unavailable"
+
+
+def test_a_completed_codex_turn_without_a_session_file_is_never_unavailable(tmp_path):
+    host = _codex_host(tmp_path, session=False, stderr_text="Model metadata for `gpt-5.6-luna` not found")
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    row = _codex_row(tmp_path, "codex-scout")
+    assert row["account_availability"] == "unknown" and row["verdict"] == "unknown"
+
+
+def test_a_codex_usage_limit_text_naming_the_model_is_never_unavailable(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
+                       stream_errors=["gpt-5.6-luna is not available: usage limit reached"])
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
+
+
+def test_a_missing_codex_binary_is_refused_before_any_reservation(tmp_path):
+    args = _args(tmp_path, "codex-scout", codex=str(tmp_path / "no-such-codex"))
+    before = (tmp_path / "matrix.json").read_bytes()
+    with pytest.raises(rt.RollbackTrialError, match="codex binary"):
+        rt.run(args)
+    assert (tmp_path / "matrix.json").read_bytes() == before and not (tmp_path / "data" / rt.LEDGER_NAME).exists()
+    assert not (tmp_path / "work").exists() and not (tmp_path / "result.json").exists()
+
+
+def test_the_codex_config_is_copied_to_the_work_directory_before_the_call_and_never_printed(tmp_path, capsys):
+    config = tmp_path / "codex-home" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("secret_like = 1\n")
+    seen = []
+    base_host = _codex_host(tmp_path)
+
+    def host(command, *, cwd, **kw):
+        seen.append((cwd / "backup" / "config.toml").read_text())
+        return base_host(command, cwd=cwd, **kw)
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert seen == ["secret_like = 1\n"] and "secret_like" not in capsys.readouterr().out
+    assert "secret_like" not in (tmp_path / "result.json").read_text()
+    assert not list((tmp_path / "work").rglob("auth.json"))
+
+
 def test_a_usage_limit_is_a_spent_call_and_flagged_not_unavailable(tmp_path):
     host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
                        stream_errors=["You've hit your usage limit. Try again at Oct 23rd."])

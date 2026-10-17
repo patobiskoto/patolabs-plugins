@@ -27,6 +27,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -222,10 +223,21 @@ def _text(message: Any) -> str:
     return ""
 
 
-def declares_unavailable(facts: dict[str, Any]) -> bool:
-    """No real model observed, and a masked host text (error, child API-error record, parent reply) matches."""
+def declares_unavailable(facts: dict[str, Any], model: str | None = None) -> bool:
+    """No real model observed, and a masked host text (error, child API-error record, parent reply) matches.
+    Codex (``model`` given): the text must name the requested model identifier, not only the word "model" (a local
+    refusal of ``model_reasoning_effort`` is not an unavailable model), and a completed turn or a usage-limit text
+    never declares it: the call is then not a non-repeatable proof of absence."""
     texts = [*facts["errors"], facts["parent_result"].get("reply") or ""]
-    return not facts["observed"]["models"] and any(_UNAVAILABLE.search(t) for t in texts)
+    pattern = _UNAVAILABLE
+    if model is not None:
+        if facts["observed"].get("completed_turn") or any(_USAGE_LIMIT.search(t) for t in texts):
+            return False
+        named = re.escape(model)
+        pattern = re.compile(rf"(?i)({named}.{{0,60}}(not (found|available|exist|supported)|unavailable|invalid|unknown"
+                             rf"|does not exist|no access)|(not (found|available)|unavailable|invalid|does not exist"
+                             rf"|no access).{{0,60}}{named})")
+    return not facts["observed"]["models"] and any(pattern.search(t) for t in texts)
 
 
 def parent_prompt(logical: str, token_file: Path) -> str:
@@ -347,7 +359,7 @@ def observe_codex(stream: Path, sessions_dir: Path, token: str, model: str, effo
         "parent_result": {"is_error": completed is None, "subtype": "turn.completed" if completed else "no_completed_turn",
                           "reply": mask(reply)},
     }
-    if declares_unavailable(facts):
+    if declares_unavailable(facts, model):
         facts["account_availability"] = "unavailable_declared"
     return facts
 
@@ -605,10 +617,16 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
                           "would_write": [str(out), str(matrix_path.name) + " (row " + args.line + ")"]},
                          indent=2, ensure_ascii=False))
         return 0
+    if launch is _launch_codex and not shutil.which(getattr(args, "codex", "codex")):
+        raise RollbackTrialError("the codex binary is not found or not executable: nothing is reserved or written")
     work.mkdir(parents=True)
     (work / "fixture").mkdir()
     (work / "fixture" / "marker.txt").write_text(token + "\n", encoding="utf-8")
     (work / "packet.txt").write_text(codex_prompt() + "\n", encoding="utf-8")
+    config = codex_home() / "config.toml"
+    if config.is_file():  # copied, never printed: the way back if the guard reports CHANGED (protocol section 10)
+        (work / "backup").mkdir()
+        shutil.copy2(config, work / "backup" / "config.toml")
     _reserve(ledger_path(), args.line, body["date"], session_id)
     row.update({"status": "started", "date": body["date"]})
     matrix["native_calls"] = matrix.get("native_calls", 0) + 1
@@ -622,7 +640,7 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
         stderr_text = ""
     if stderr_text:
         facts["errors"].append(mask(stderr_text[-_ERROR_LIMIT:]))
-        if declares_unavailable(facts):
+        if declares_unavailable(facts, model):
             facts["account_availability"] = "unavailable_declared"
     facts["usage_limit_text"] = any(_USAGE_LIMIT.search(t) for t in facts["errors"])
     after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}

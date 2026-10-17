@@ -213,8 +213,10 @@ That is `codex_command_v2` of `measurement_harness_v2.py` (`--ephemeral --ignore
 read-only --json --model <model> -c model_reasoning_effort="<effort>" -`) with two differences, both deliberate:
 `--skip-git-repo-check -C <work>` (the work directory is not a repository), and NO `--ephemeral`, because
 `--ephemeral` persists no session file and the session file is the only source of the model and effort that the host
-recorded (below). The cost: the host writes one session file under its own sessions directory (host side, like the
-Claude project logs); the tool only reads it. The packet asks to read `fixture/marker.txt` (a public marker) and reply
+recorded (below). The cost: the host writes a session file under its own sessions directory (host side, like the
+Claude project logs); the tool only reads it. That the host writes only that file is unknown: it may also write logs,
+state, or a refreshed token in the authentication file under `CODEX_HOME` (deduced, not observed; the tool reads,
+hashes and copies none of it). The packet asks to read `fixture/marker.txt` (a public marker) and reply
 with it; no Foundry routing, role contract or policy is in this path, the model and effort are carried by the command
 line, so `resolved_route` and `transmitted` are the same pair and the "disposable policy" is `--ignore-user-config
 --ignore-rules` plus an empty work directory.
@@ -225,7 +227,12 @@ allow-list of the Claude child (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TM
 no API key or other variable is forwarded, so authentication through an environment key would not work (the local
 session is by the Codex home, deduced, not tested). The tool never reads, hashes or copies the authentication file;
 it records the sha256 of `<CODEX_HOME>/config.toml` before and after (`policy_guard`, with the guarded policies of
-section 6), and a change makes the line `not_conforming`.
+section 6), and a change makes the line `not_conforming`. Before the call a present `config.toml` is copied to
+`<work>/backup/config.toml` (never printed, never in the result). If the guard reports `CHANGED`, copy that file back
+over `<CODEX_HOME>/config.toml`, check the sha256 against the `before` digest of the result, and note it in the
+"Runs" amendment; `auth.json` is never copied, so a change of it has no restoration here (stop the sequence). Delete
+the work directory afterwards (the copy may hold the user's settings). A `codex` binary that is not found or not
+executable is refused before the reservation and the matrix write.
 
 **Ceilings and stops.** One call per line, no retry; the same matrix claim, matrix lock, ledger lock and
 out-of-checkout ledger as section 4, shared with the Claude lines (total 8). `codex exec` has no spend flag (none in
@@ -244,12 +251,16 @@ divergent or refused answer is recorded and nothing is retried or replaced.
   `session_meta` the `cli_version`. Their shape was read on a local session of 2026-10-18 (keys only). A model and an
   effort count as observed ONLY if the stream shows `turn.completed`; otherwise they are kept apart as
   `unconfirmed_models` and the line has no observed model. Exactly one session file must match, else unknown.
-- Unknown by construction: whether the backend served the model the host recorded; the effort level `max` on
+- Unknown by construction: whether `codex exec` retries HTTP or stream requests internally within the one call ("no
+  retry" holds at the level of this tool only); whether the backend served the model the host recorded; the effort level `max` on
   `gpt-5.6-sol` (if the host records another label, the effort is `divergent` and that is the result); account
   availability beyond this date; any rate-limit state (not read from the session file).
 - Account availability: `available_observed` only with an exact or dated-snapshot model from a completed turn;
-  `unavailable_declared` only when no real model was observed and a masked text matches the model-anchored pattern of
-  section 7; otherwise `unknown`. Verdict rules are those of section 7 (profile and children do not apply: `agent_types`
+  `unavailable_declared` only when no real model was observed, the stream shows no `turn.completed`, no
+  usage-limit text is present, and a masked text matches a pattern anchored on the requested model identifier
+  (for example `gpt-5.6-luna` ... `does not exist`), not on the word "model": a local refusal of
+  `model_reasoning_effort`, or a completed turn whose session file is missing or ambiguous, stays `unknown`;
+  otherwise `unknown`. Verdict rules are those of section 7 (profile and children do not apply: `agent_types`
   is `not_applicable`).
 
 **Commands.** From the root of the checkout, scratch outside any git repository, tool `foundry.rollback_native_trial`,
