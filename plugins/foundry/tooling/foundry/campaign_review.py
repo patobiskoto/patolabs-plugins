@@ -85,7 +85,7 @@ def _write_private(path: Path, text: str) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
-        handle.write(text.encode("utf-8"))
+        handle.write(text.encode("utf-8", "replace"))  # a lone surrogate becomes "?" (PAT-242)
 
 
 def _private_dir(path: Path) -> Path:

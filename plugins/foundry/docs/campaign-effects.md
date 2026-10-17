@@ -112,7 +112,7 @@ stripped, is not empty
 `tests/test_campaign_review.py`); the prompts ask the session for that line as its exact first line.
 A saved summary file that does not decode as UTF-8 is read as no summary (`_plan`) and published as
 `SUMMARY_UNUSABLE_BODY`, and `_save_summary` cuts the text on a character boundary so that its file
-decodes. The implementation and correction prompts ask for that line. `published_summary` returns
+decodes (a lone surrogate is written as `?`, PAT-242). The implementation and correction prompts ask for that line. `published_summary` returns
 the summary without that line, or, when it is empty, lacks the line or has nothing after it, the
 fixed text `SUMMARY_UNUSABLE_BODY` (`Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the
 review rounds.`); the `open-pr` effect (`_plan`) and `update_pr_body` publish only that, and the
@@ -269,6 +269,13 @@ home, the network, other hosts and versions.
 - Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
   `refs`; the objects are shared by all worktrees; the user scope of the host settings still
   loads (`--setting-sources user`) and can add to the sandbox arrays.
+- Residual, deduced (PAT-242): the sandbox governs the shell commands of a session, not the launch of
+  `claude` itself. Every later `claude` start in that worktree (each session, and its `--version`
+  probe when the pin declares a minimum host version) happens outside the sandbox, in a worktree the previous session wrote. With a directory-dependent shim (asdf, mise,
+  `.tool-versions`), a file that previous session wrote there could choose which binary is launched.
+  Not observed; scope: the shims that resolve `claude` from the working directory. The other launches
+  by name (the `python3` of the plugin hooks, the `git` of the cadencer) are not examined: unknown, and
+  whether a hook runs in the session directory is host behaviour, unverified.
 - Stays outside the sandbox: the `claude` process itself (model API network, its own
   credentials and the user's keychain access, `--plugin-dir` reads), the plugin hooks it
   runs, and the network of the shell commands, which the sandbox policy governs and these
