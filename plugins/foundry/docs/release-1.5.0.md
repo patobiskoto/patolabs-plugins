@@ -82,9 +82,9 @@ sequence ran on the test double only, never on a live workspace.
 - **Reporting (PAT-228):** every step of `campaign-cadence step|run` reports `requests`;
   details and the stated limit are in [linear-request-cost.md](linear-request-cost.md)
   ("Epic campaign (PAT-228)").
-- **Remarks (PAT-229, PAT-227):** a failed `defer-remarks` keeps its real error; a
-  "fix before merge" remark that targets only the PR description is corrected without a new review of the
-  diff, a residual risk stated in the changelog entry of PAT-227.
+- **Remarks (PAT-229, PAT-227):** a failed `defer-remarks` keeps its real error; in an Epic
+  campaign, a "fix before merge" remark that targets only the PR description is corrected without a new
+  review of the diff, a residual risk stated in the changelog entry of PAT-227.
 - **Approval record (PAT-222):** `approve` validates the whole record before appending.
 - **Historical ADR links (PAT-209):** `adr link-issue` accepts three more stored bodies
   ([qualification/pat-201-historical-adr-links.md](qualification/pat-201-historical-adr-links.md)).
@@ -198,6 +198,7 @@ documentation only.
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or skill
 instruction is changed by this release preparation, and no file under `tooling/`, `hooks/`
 or `agents/` is touched. Outside release metadata and these pages, the only changes are one
-comment line in `scripts/ci_plan.py` and the release paragraphs (and the version table row of the root one) of
-`README.md` and `plugins/foundry/README.md`. The mechanical documentation-status gate is not
+comment line in `scripts/ci_plan.py`, the release paragraphs of `README.md` and
+`plugins/foundry/README.md`, the version table row of the root `README.md`, and in
+`plugins/foundry/README.md` the migration-guide pointer and the version list of the Release rule. The mechanical documentation-status gate is not
 claimed shipped.
