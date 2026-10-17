@@ -55,7 +55,11 @@ repository (`default_worktrees_dir`, or `--worktrees-dir`), created by `git work
 detached at the remote default branch for a new ticket, or on the existing ticket branch.
 `issue start` then creates the branch from it, as it does in any linked worktree
 (`_prepare_branch`, `issue.py`). `issue openpr` pushes the branch itself (`openpr`,
-`issue.py`); the cadencer runs no `git push`.
+`issue.py`); the cadencer runs no `git push`. A worktree is never removed: nothing in
+`campaign_effects.py`, `campaign_review.py` or `campaign_defer.py` runs `git worktree remove`
+or deletes it (searched, PAT-236); a finished ticket keeps its directory under the worktrees
+directory until a human removes it, and `ensure_worktree` reuses an existing directory as is.
+`--worktrees-dir` is resolved against the current directory when the command starts.
 
 ## The implementation session
 
@@ -77,12 +81,14 @@ the same `_launch` and `session_argv`, so it has the same sandbox.
   translated by `claude_invocation_model` and `claude_effort_parameters`, as in
   `ClaudeCommandEffectProvider._invoke` (`command_runtime.py`); a pin with a minimum host
   version is checked by `claude_headless_host_version_requirement` before the attempt is
-  claimed. The route is recorded in the `started` line.
+  claimed (`session_plan`: it asks `claude --version` from the main checkout `runtime.root`,
+  while the session itself runs in the ticket worktree, `_launch`; AGENTS.md#R7). The route is
+  recorded in the `started` line.
 - The prompt (`implement_prompt`) goes through standard input: it carries the issue title
   and body read by the coordinator (`tracker.get_issue`, before the attempt is claimed),
   because the session's Foundry configuration is isolated and resolves no tracker
-  credential; the session implements its acceptance criteria, run the tests, commit locally, end with a
-  pull-request summary. The session may run the tests. The prompt asks for the exact first line
+  credential; the session implements its acceptance criteria, runs the tests, commits locally
+  and ends with a pull-request summary. The prompt asks for the exact first line
   `FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`, PAT-227; see "The summary criterion").
 - Budget: `--budget-usd`, default `IMPLEMENT_BUDGET_USD`, at most `MAX_BUDGET_USD`; the
   default is not measured (unknown). Timeout `IMPLEMENT_TIMEOUT_SECONDS`.
@@ -112,9 +118,12 @@ The session receives the child environment of `_claude_child_environment`
 (`command_runtime.py`: the `_CLAUDE_CHILD_ENV_ALLOWLIST` of AGENTS.md#R6 plus
 `FOUNDRY_RUNTIME_CONFIG_ISOLATED`), so no tracker or code-host token variable passes, and a
 Foundry command run by the session does not resolve secrets from host configuration
-(`config.get`, `_runtime_config_isolated`). `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
-`gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve` (other
-Foundry verbs that write, such as `routing record-review-proof`, are not listed); the plugin
+(`config.get`, `_runtime_config_isolated`). `DISALLOWED_TOOLS` denies, with `Bash(...)` rules
+(`DISALLOWED_TOOLS`: a prefix rule, `Bash(git push:*)` and `Bash(gh:*)`, or a rule with a `*`
+inside the command, `Bash(python3 *foundry_cli.py issue *)`, written for the two interpreter
+spellings `python3` and `python`), `git push`, `gh`, and the Foundry verbs `issue`, `edit`,
+`adr` and `campaign-approval approve` (other Foundry verbs that write, such as
+`routing record-review-proof`, are not listed); the plugin
 guard (`hooks/guard_bash.py`) also denies `gh pr create/merge`, a push to the default branch
 and `campaign-approval approve` when the plugin is active, because `--plugin-dir` is passed.
 
@@ -186,13 +195,17 @@ home, the network, other hosts and versions.
   `GIT_CONFIG_COUNT`, appended after existing entries (`campaign_cadence.git_neutral_env`,
   applied by `_run`); the `issue`, `edit` and `routing` commands it runs pass it to their
   git (deduced: they set no environment of their own). `Runtime.hooks_dir` reads that directory
-  once per `Runtime` (one `step` or `run` command), from the repository root, with `git rev-parse --path-format=absolute
+  once per `Runtime` (one `step` or `run` command), from `--root` (`Runtime.root`, the "main
+  checkout" of this page), with `git rev-parse --path-format=absolute
   --git-path hooks`: with git 2.54.0 it gave a relative `core.hooksPath` joined to the main
   checkout's top level, an absolute one as is, a `~/` one expanded, `<common dir>/hooks` unset
   (observed once, by hand). The session does not write it when it is the main checkout's
   `.githooks`, the common `hooks` or a global directory outside the paths it writes (deduced
-  from the settings above); one inside the worktrees directory makes the pass `refuse`
-  `git_hooks_dir_refused` before any other git command, while one in the temporary directory or in a
+  from the settings above); one inside the worktrees directory
+  (`git_hooks_dir_in_campaign_worktrees`), or a `git rev-parse` that fails or answers anything
+  but one absolute path (`git_hooks_dir_unreadable`), makes the pass `refuse`
+  `git_hooks_dir_refused` before any other git command (`_step`, the error code in
+  `evidence.error`), while one in the temporary directory or in a
   git path the session writes is not refused (residual). The read-only git calls of
   `campaign_cadence._git` (`for-each-ref`, `rev-parse`, `rev-list`, which run no hook) keep
   `core.hooksPath=/dev/null`. Observed in `tests/test_campaign_effects.py`, one git version:
@@ -212,7 +225,23 @@ home, the network, other hosts and versions.
   (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`); after a
   description correction session the attempt is already claimed, so it fails with `error`
   `description_worktree_branch_mismatch` and publishes nothing
-  (`test_the_description_is_not_published_when_the_session_moved_the_worktree_head`).
+  (`test_the_description_is_not_published_when_the_session_moved_the_worktree_head`). The check
+  is point-in-time (residual, deduced from the code): `issue openpr` reads the HEAD again
+  when it runs (`openpr`, `issue.py`, `rev-parse --abbrev-ref HEAD` then `git push`), after
+  `branch_mismatch`, and nothing holds the worktree between the two, so a
+  process that outlives the session (whether `claude` ends one it started is unknown) or the
+  reviewer session, which is not in the sandbox and writes the same worktree as the same OS
+  user (below), could move HEAD in that interval; a test of the interval has not been
+  written.
+- `.gitattributes` and `.lfsconfig` of the worktree are files the session writes (it holds the
+  worktree) and that no code of the campaign reads or checks (searched, PAT-236). Deduced from
+  git, not observed here: a `.gitattributes` can name a `filter`, `diff` or `textconv` driver
+  but its command comes from the configuration, which the sandbox protects (common `config`,
+  `~/.gitconfig`), so it runs only a driver that configuration already defines. If `git-lfs` is
+  installed and enabled for the user, its filter and `pre-push` hook run outside the sandbox
+  in the git commands of the cadencer (the push of `issue openpr` included), and a
+  `.lfsconfig` can change the endpoint it contacts. Unknown: whether `git-lfs` is installed
+  on the machine that runs the cadencer, and what it would do here; not tested.
 - Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
   `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
   session could redirect the git directory to a repository of its own whose configuration
@@ -242,10 +271,11 @@ home, the network, other hosts and versions.
   another shape (a bare password, a token without a known prefix outside a URL or header) is
   not masked; the session's own files and commit contents are not filtered.
 
-The remaining limits, stated: `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
-`gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve`; a plain
-spelling outside the prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not
-denied by them (deduced), and with the network of the shell not opened such a push has no
+The remaining limits, stated: `DISALLOWED_TOOLS` denies, with the prefix rules and the rules
+with an inner `*` described above, `git push`, `gh`, and the Foundry verbs `issue`, `edit`,
+`adr` and `campaign-approval approve`; a spelling outside those rules (`git -C . push`, an
+absolute path to `git` or `gh`, `python3.12 foundry_cli.py issue`) is not denied by them
+(deduced from the rule text), and with the network of the shell not opened such a push has no
 route (deduced). The sandbox, not these rules, is what keeps the session from writing the
 review-proof store, the approval journal and the attempt journal. Whether the host matches
 the mid-command wildcards of `DISALLOWED_TOOLS` is not verified here (unknown); the tests pin
@@ -269,6 +299,12 @@ a top-level `requests` (`request_summary`): `observation` (observations of all t
 (the part of it spent on passes whose outcome is `wait-ci` or `waiting`) and `effects` (`effect` plus
 `subprocesses`). Measured figures: `docs/linear-request-cost.md`, "Epic campaign (PAT-228)".
 
+The counts are held in memory and printed once, when `run` or `step` ends (`cli`). A pass
+that runs no effect writes no journal line, so the `requests` of a wait pass (`wait-ci`,
+`waiting`) exist only in that output: if `run` is interrupted (signal, crash, closed
+terminal), they are lost with the whole output. Only the `requests` of an effect pass
+survive, in its `finished` line.
+
 ## The attempt journal
 
 Append-only JSONL, `campaign-attempts.jsonl` in `registry.data_dir()` (`journal_path`, the
@@ -277,7 +313,8 @@ directory of `campaign-approvals.jsonl`), mode 0600, written under an exclusive 
 
 - `started`, written before the effect: `attempt`, `epic`, `ticket`, `kind`, `fingerprint`,
   `session_id`, `route`, `at`.
-- `finished`, after it: `attempt`, `status` (`completed` or `failed`), `exit_code`,
+- `finished`, after it: `attempt`, `epic`, `ticket`, `kind`, `status` (`completed` or `failed`),
+  `exit_code`,
   `cost_usd`, `duration_ms`, `summary_file`, `branch_head`, `error`, `at`; and, for a
   `review` only, the optional closed key `review` (`REVIEW_KEYS`): `verdict` (`blocked` or
   `validated`), `fix_before_merge`, `non_blocking`, `diff_hash`, `base`, `head`, `carried`,
@@ -679,8 +716,13 @@ Correcting a red CI; ADR
 selection for the reviewer packet; a Codex session; closing the Epic; the replay of a failed
 attempt with the same fingerprint. A failed `implement` session that committed changes the
 branch head, so the next pass launches a new session with a new identity: retries are
-bounded only by `max_sessions` and `max_sessions_per_issue`, so the worst-case spend is that
-ceiling times `--budget-usd`. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
+bounded only by `max_sessions` and `max_sessions_per_issue` of the approval (`refusal`: the
+`started` lines of `SESSION_KINDS` of the Epic, over every run, then of the ticket). Each
+session is launched with `--max-budget-usd` set to the `--budget-usd` of the run that launches
+it (`session_argv`), so the worst-case spend is the sum of those per-session values, that is
+`max_sessions` times the largest `--budget-usd` used, provided `claude` enforces the cap
+(whether it can be exceeded is not verified here: unknown). `defer-remarks` and `start` launch
+no session. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
 argv, the allowlisted environment, no replay including after a crash, ceilings, merge only on
 a `merge` decision) and `tests/test_campaign_review.py` (the review path, the reviewer argv,
 strict parsing, escalation, the correction prompt, bounds, partial review, carry, secrets, and
@@ -690,6 +732,16 @@ effect: companion Epic and follow-up created once, reuse, started follow-up, amb
 durable refusal and transient wait, reconciliation, orphan attach, the neutral subgraph and
 the closure graph unchanged, the merge gate) and `tests/test_review_remarks.py` (the receipt
 and the strict parsing of `remarks`).
+
+R5 status (PAT-236): updated `docs/campaign-effects.md` and `AGENTS.md`/`CLAUDE.md` R7 (the
+headless runners that apply `claude_headless_host_version_requirement()`: three, and the working
+directory of its `--version` call). Candidate artefacts: the `Bash(...)` rules of
+`DISALLOWED_TOOLS`, the refusal `git_hooks_dir_refused` and its two causes, the keys `epic`,
+`ticket`, `kind` of a `finished` line, the `requests` counts of an interrupted run, the
+worst-case spend, the residues of the branch check and of `.gitattributes`/`.lfsconfig`. Code
+behaviour changed without a new constant, CLI verb or option, configuration key or routing
+table: `--worktrees-dir` resolved, summary cut on a character boundary, git directories read
+before the claim.
 
 R5 status (PAT-218): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
 `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("What is not coded yet"),

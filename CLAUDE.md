@@ -183,13 +183,16 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   `RoutingConfigError` naming the required version: the launch is denied and nothing is
   substituted, neither Haiku 4.5 nor an alias. An unobservable version is `unknown`:
   the launch proceeds with `host_version.status = "unknown"` and the
-  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The headless
-  runners (`command_runtime.py`, `campaign_runtime.py`) apply the same rule through
+  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The three
+  headless runners (`command_runtime.py`, `campaign_runtime.py` and the effects of the Epic
+  campaign cadencer, `campaign_effects.py::session_plan`) apply the same rule through
   `claude_headless_host_version_requirement()`: for such a pin only, they ask the
-  `claude` they are about to launch its `--version` (local, unpaid, same runner, child
-  environment and working directory), refuse below the minimum, and on an unreadable
-  answer launch after writing one line with the same code to standard error, at every
-  launch. There a dated snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum;
+  `claude` they are about to launch its `--version` (local, unpaid, same runner and child
+  environment), refuse below the minimum, and on an unreadable answer launch after
+  writing one line with the same code to standard error, at every launch. The working
+  directory is the launch's in `command_runtime.py` (`self.root`) and `campaign_runtime.py`
+  (the worktree); in `campaign_effects.py` it is the main checkout (`runtime.root`) while
+  the session runs in the ticket worktree. There a dated snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum;
   the hook refuses such an identifier first because no preloaded pinned profile exists
   for it. `routing show`/`resolve` and `doctor` bind nothing and observe no host
   version.

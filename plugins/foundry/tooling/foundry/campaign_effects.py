@@ -455,7 +455,9 @@ def _save_summary(path: Path, attempt: str, text: str) -> str:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(target, flags, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
-        handle.write(text.encode("utf-8")[:MAX_SUMMARY_BYTES])
+        # cut on a character boundary, so that the saved file always decodes as UTF-8 (PAT-236)
+        handle.write(text.encode("utf-8")[:MAX_SUMMARY_BYTES].decode("utf-8", "ignore")
+                     .encode("utf-8"))
     return str(target)
 
 
@@ -497,7 +499,7 @@ def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
                 try:
                     raw = (Path(record["summary_file"]).read_text(encoding="utf-8")
                            if record["summary_file"] else None)
-                except OSError:
+                except (OSError, UnicodeDecodeError):  # an undecodable file is unusable (PAT-236)
                     raw = None
                 summary = published_summary(raw)
         if summary:
@@ -600,7 +602,7 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
 
         return launch_review(runtime, plan, epic, ticket, attempt, attempts, worktree)
     session_id = _session_id(attempt)
-    common, gitdir = git_dirs(runtime, worktree)
+    common, gitdir = plan.get("git_dirs") or git_dirs(runtime, worktree)
     settings = sandbox_settings(worktree, runtime.worktrees_dir, common, gitdir, plan["env"])
     argv = session_argv(runtime, plan, epic, ticket.id, session_id, settings)
     done = _run(runtime, argv, worktree, input=plan["prompt"], timeout=IMPLEMENT_TIMEOUT_SECONDS,
@@ -738,6 +740,9 @@ def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, mar
             plan["prompt"] = implement_prompt(
                 epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "",
             )
+        if plan.get("kind") == "session" and plan.get("role") != "reviewer":
+            # PAT-236: read before the claim, so that an error costs no attempt (see `_plan`)
+            plan["git_dirs"] = git_dirs(runtime, ensure_worktree(runtime, ticket.id, refs))
         if decision.kind in PUSH_KINDS:  # each may run `issue openpr`, which pushes
             mismatch = branch_mismatch(
                 runtime, ensure_worktree(runtime, ticket.id, refs), ticket.id, refs)
@@ -846,7 +851,7 @@ def cli(args) -> int:
     root = str(Path(args.root).resolve())
     runtime = Runtime(
         root=root, budget_usd=args.budget_usd,
-        worktrees_dir=Path(args.worktrees_dir) if args.worktrees_dir
+        worktrees_dir=Path(args.worktrees_dir).resolve() if args.worktrees_dir
         else default_worktrees_dir(root),
     )
     codehost = foundry.codehost()

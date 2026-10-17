@@ -851,3 +851,25 @@ def test_the_description_prompt_carries_the_published_description(env):
     prompt = [c for c in effects(env.world) if c[0][0] == "claude"][-1][3]
     assert "<description>\n## Summary\nAPP-2\n</description>" in prompt
     assert "Do not write a `## Review rounds` section" in prompt
+
+
+def test_a_correction_through_step_runs_in_the_native_sandbox(env):
+    """PAT-236 (220-6): the correction session launched by `step` -> `_launch` carries the
+    sandbox settings of its worktree, the unit test of the argv alone cannot show that."""
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    result = step(env)
+    assert (result.decision.kind, result.outcome) == ("correct", "executed")
+    argv, cwd, _env, _prompt = effects(env.world)[-1]
+    assert argv[0] == "claude" and "--tools" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert settings["sandbox"]["enabled"] is True
+    import os
+
+    assert os.path.realpath(cwd) in settings["sandbox"]["filesystem"]["allowWrite"]
+    common = str(Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git")
+    assert os.path.join(os.path.realpath(common), "objects") in (
+        settings["sandbox"]["filesystem"]["allowWrite"])
