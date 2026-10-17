@@ -742,7 +742,7 @@ masks it again). A quota error whose message carries `reset_at=<UTC time>`
 (`LinearQuotaExhaustedError`, `trackers/linear.py`) keeps that time in the reason, and the
 retry waits until the later of `DEFER_RETRY_SECONDS` after the `finished` line and that time
 (`reset_of`, `deferral_facts`, PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent,
-past or not a valid date changes nothing. The reset is honoured up to
+past or not a valid date changes nothing to the wait. The reset is honoured up to
 `MAX_RESET_WAIT_SECONDS` (3600) after the `finished` line, so a far date cannot hold a
 ticket for good; that cap is a Foundry choice, not measured (the Linear window is not
 established, `docs/linear-tracker.md`). That a real quota error reaches the cadencer with
