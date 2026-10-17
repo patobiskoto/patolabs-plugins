@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 import foundry
-from foundry import execution_receipts, registry, write
+from foundry import acceptance_decision, execution_receipts, registry, write
 from foundry.models import TransitionContext
 from foundry.routing import (
     AcceptanceProofStore,
@@ -1212,6 +1212,9 @@ def close_epic(issue_id, flags=()):
     )
 
 
+# Native states from which `issue accept` can replay a written receipt: the admitted
+# predecessors (the decision's `from_state` is one of them), then `done`.
+_ACCEPT_RETRY_STATES = acceptance_decision.FROM_STATES | {"done"}
 _ACCEPT_FLAG_PREFIXES = ("--human-verdict=", "--decision-file=")
 
 
@@ -1231,6 +1234,11 @@ def _accept_status(tracker, issue_id):
             f"reçu écrit, état non projeté · {issue_id} · décision {state.decision_digest} "
             f"· état natif {state.native_state} : relance exactement la même commande "
             "`issue accept` (aucun second reçu)"
+            if state.native_state in _ACCEPT_RETRY_STATES
+            else f"reçu écrit, état non projeté · {issue_id} · décision "
+            f"{state.decision_digest} · état natif {state.native_state} : cet état n'est "
+            "pas un état de reprise (backlog, ready, in-progress, done), `issue accept` "
+            "ne le projettera pas ; lis la cause avant d'agir"
         )
     elif state.kind == "unknown":
         print(f"inconnu · {issue_id} : lecture du cycle de vie impossible ou périmée")
@@ -1259,11 +1267,9 @@ def accept(issue_id, flags=()):
         raise SystemExit("⛔ Acceptation refusée : --decision-file ambigu ou répété.")
     if not files or not files[0]:
         raise SystemExit("⛔ Acceptation refusée : --decision-file=<chemin> requis.")
-    from foundry.acceptance_decision import MAX_BYTES
-
     try:
         with open(files[0], "rb") as handle:
-            data = handle.read(MAX_BYTES + 1)
+            data = handle.read(acceptance_decision.MAX_BYTES + 1)
     except OSError as exc:
         raise SystemExit(
             f"⛔ Acceptation refusée : fichier de décision illisible ({type(exc).__name__})."
@@ -1300,6 +1306,7 @@ def _default_branch():
 _KNOWN_FLAGS = {"start": set(), "openpr": {"--summary-stdin"},
                 "merge": {"--allow-no-ci", "--allow-incomplete-ac"},
                 "close-epic": set(), "accept": set()}
+_ACCEPT_ALLOWED = "--decision-file=<chemin>, --human-verdict=<verdict>, --status"
 
 if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
@@ -1324,7 +1331,7 @@ if __name__ == "__main__":
     )
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
-                         f"Autorisés : {', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
+                         f"Autorisés : {_ACCEPT_ALLOWED if cmd == 'accept' else ', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
     args = [a for a in rest if not a.startswith("--")]
     if cmd == "accept":  # keep repeated flags: a repeated verdict or file is refused
         flags = [a for a in rest if a.startswith("--")]

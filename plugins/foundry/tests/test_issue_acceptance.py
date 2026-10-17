@@ -214,7 +214,7 @@ def test_duplicate_keys_nonfinite_numbers_and_oversize_are_refused_before_any_re
     before = len(wire.calls)
     for data in (
         text.replace('"verdict": "accepted"', '"verdict": "accepted", "verdict": "accepted"', 1),
-        text.replace('"pr"', "NaN") if False else text[:-1] + ', "x": NaN}',
+        text[:-1] + ', "x": NaN}',
         b"not json",
         b"\xff\xfe",
         text.encode() + b" " * MAX_COMMENT_BYTES,
@@ -613,6 +613,16 @@ def test_a_body_modified_after_the_decision_makes_it_stale(monkeypatch):
     assert (seen.acceptance_status, seen.projection_status) == ("unknown", "unknown")
 
 
+def test_ticking_a_box_after_the_decision_makes_it_stale(monkeypatch):
+    """PAT-239 (206-8): body_sha256 binds the whole body, checkboxes included."""
+    tracker, wire, _project = _graph(monkeypatch)
+    issue_id = _issue(wire)
+    _accept(tracker, issue_id, _doc(issue_id))
+    wire.issues[issue_id]["description"] = BODY.replace("- [ ] first", "- [x] first")
+    with pytest.raises(TrackerConflictError, match="malformed or stale"):
+        tracker.get_issue(issue_id)
+
+
 def test_a_decision_receipt_next_to_a_pr_receipt_reads_as_conflict(monkeypatch):
     tracker, wire, project = _graph(monkeypatch)
     issue_id = _issue(wire)
@@ -742,3 +752,36 @@ def test_cli_reports_a_provider_refusal_with_the_status_command(monkeypatch, tmp
 def test_cli_flag_filter_knows_the_accept_flags():
     assert "accept" in issue_cli._KNOWN_FLAGS
     assert issue_cli._ACCEPT_FLAG_PREFIXES == ("--human-verdict=", "--decision-file=")
+
+
+def test_cli_status_names_a_native_state_that_is_not_a_replay_state(monkeypatch, capsys):
+    """PAT-239 (206-1): `relance` only for the states `accept` can replay from."""
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: object())
+    for native, replay in (("blocked", False), ("in-progress", True), ("done", True)):
+        monkeypatch.setattr(
+            write, "issue_acceptance_state",
+            lambda *_a, native=native: write.AcceptanceState("receipt-only", "d" * 64, native),
+        )
+        issue_cli.accept("LIN-5", flags=["--status"])
+        out = capsys.readouterr().out
+        assert ("relance exactement" in out) is replay
+        assert ("pas un état de reprise" in out) is (not replay)
+
+
+def test_cli_unknown_flag_for_accept_lists_the_real_flags(monkeypatch):
+    """PAT-239 (206-7): no `(aucun)` for a command that has flags."""
+    import runpy
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["issue.py", "accept", "LIN-5", "--bogus"])
+    with pytest.raises(SystemExit, match="--decision-file=<chemin>, --human-verdict"):
+        runpy.run_path(issue_cli.__file__, run_name="__main__")
+
+
+def test_the_linear_predecessors_are_the_decision_from_states():
+    """PAT-239 (206-4): one set, shared, value unchanged."""
+    from foundry import acceptance_decision as decisions
+    from foundry.trackers import linear
+
+    assert linear._HUMAN_ACCEPTANCE_PREDECESSORS is decisions.FROM_STATES
+    assert decisions.FROM_STATES == frozenset({"backlog", "ready", "in-progress"})

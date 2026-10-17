@@ -35,6 +35,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from foundry import acceptance_decision as _acceptance_decision
 from foundry import config, registry
 from foundry.models import (
     Adr,
@@ -136,7 +137,7 @@ _LIFECYCLE_OPERATIONS = frozenset(
 )
 # PAT-206 / PAT-ADR-0025: native states an issue may be accepted by a human decision
 # from, and the receipts of a PR path with which that decision is exclusive.
-_HUMAN_ACCEPTANCE_PREDECESSORS = frozenset({"backlog", "ready", "in-progress"})
+_HUMAN_ACCEPTANCE_PREDECESSORS = _acceptance_decision.FROM_STATES
 _DECISION_EXCLUSIVE_OPERATIONS = (
     "state-review", "state-done", "acceptance", "acceptance-override", "cockpit-evidence",
 )
@@ -5863,14 +5864,14 @@ class LinearTracker(Tracker):
         self._assert_issue_project(readback, binding)
         if not self._raw_matches(readback, expected):
             if review_receipt_at is not None and self._review_readback_regressed(
-                readback, binding, review_receipt_at,
+                issue_id, readback, binding, review_receipt_at,
             ):
                 return readback
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
 
     def _review_readback_regressed(
-        self, readback: dict, binding: dict, review_receipt_at: int,
+        self, issue_id: str, readback: dict, binding: dict, review_receipt_at: int,
     ) -> bool:
         """PAT-230: Linear's ``start`` automation moved Review back to In Progress.
 
@@ -5884,7 +5885,7 @@ class LinearTracker(Tracker):
         if native_state_id is None or native_state_id != state_ids.get("in-progress"):
             return False
         return self._review_regression_proven(
-            readback.get("identifier"), readback.get("id"), native_state_id,
+            issue_id, readback.get("id"), native_state_id,
             review_receipt_at, state_ids,
         )
 
@@ -6006,16 +6007,32 @@ class LinearTracker(Tracker):
             # PAT-230: same rule as PAT-76 (``_receipt_created_at``): the creation
             # time of the latest generation's review receipt.
             comments = _connection(fresh.get("comments"), "lifecycle.comments")
-            latest = None
+            reviews = []
             for row in comments:
                 decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
                 if decoded is None or decoded[0] != "state-review":
                     continue
                 generation = decoded[1].get("generation")
-                if type(generation) is int and (
-                    latest is None or generation > latest[0]
+                if type(generation) is not int or generation < 1:
+                    raise TrackerConflictError("Linear lifecycle state proof malformed")
+                reviews.append((generation, decoded[1], row.get("body")))
+            reviews.sort(key=lambda item: item[0])
+            previous_body = None
+            for expected_generation, (generation, payload, body) in enumerate(
+                reviews, start=1,
+            ):
+                previous_digest = (
+                    hashlib.sha256(previous_body.encode()).hexdigest()
+                    if previous_body is not None
+                    else None
+                )
+                if (
+                    generation != expected_generation
+                    or payload.get("previous_projection_digest") != previous_digest
                 ):
-                    latest = (generation, row.get("body"))
+                    raise TrackerConflictError("Linear lifecycle review chain invalid")
+                previous_body = body
+            latest = (reviews[-1][0], reviews[-1][2]) if reviews else None
             receipt_at = self._receipt_created_at(
                 comments, latest[1] if latest else None,
             )

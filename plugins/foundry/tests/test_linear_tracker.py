@@ -2661,6 +2661,43 @@ def test_linear_review_write_bounds_regression_by_latest_receipt(
             instance.set_state("LIN-2", "review", context=second, project=PROJECT)
 
 
+def test_linear_review_projection_refuses_a_broken_review_receipt_chain(tracker):
+    """PAT-239 (230-1): the latest receipt is chosen only on a valid generation chain."""
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    row = _lifecycle_rows(wire, "LIN-2", "state-review")[0]
+    first = json.loads(row["body"].splitlines()[2].removeprefix("coordinates: "))["payload"]
+    forged = {**first, "generation": 3}
+    _marker, body, _id = instance._lifecycle_marker("state-review", "LIN-2", forged)
+    wire.issues["LIN-2"]["comments"]["nodes"].append(
+        {**row, "id": "forged", "body": body},
+    )
+    binding = instance._activate(PROJECT)
+    with pytest.raises(TrackerConflictError, match="review chain invalid"):
+        instance._project_native_state("LIN-2", "review", PROJECT, binding)
+
+
+def test_linear_review_readback_uses_the_known_issue_id_not_the_readback_identifier(tracker):
+    """PAT-239 (230-3): the history is read and checked for the id the caller asked for."""
+    instance, wire = tracker
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    prove_native_review_regression(wire, "LIN-2")
+    binding = instance._activate(PROJECT)
+    readback = {
+        "id": wire.issues["LIN-2"]["id"], "identifier": "LIN-999",
+        "state": {"id": STATE_IDS["in-progress"]},
+    }
+    assert instance._review_readback_regressed(
+        "LIN-2", readback, binding, 0,
+    ) is True
+
+
 def test_linear_review_write_refuses_other_divergence(tracker):
     instance, wire = tracker
     review = TransitionContext(
