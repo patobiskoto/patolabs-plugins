@@ -36,7 +36,11 @@
       "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
     },
     {
       "line": "codex-implementer",
@@ -64,7 +68,11 @@
       "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
     },
     {
       "line": "codex-reviewer",
@@ -92,7 +100,11 @@
       "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
     },
     {
       "line": "codex-architect",
@@ -120,7 +132,11 @@
       "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "limits": [
+        "not run: the tool does not run a real Codex call",
+        "Codex usage limit until 2026-10-23 (maintainer's session log, not observed here)",
+        "follow-up PAT-245"
+      ]
     },
     {
       "line": "claude-scout",

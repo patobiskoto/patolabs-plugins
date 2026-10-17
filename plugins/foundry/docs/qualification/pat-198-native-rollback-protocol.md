@@ -1,8 +1,9 @@
 # PAT-198: native qualification of the eight rollback lines of PAT-17 (protocol)
 
-Status: written 2026-10-17, BEFORE any native call. No call has been made when this page is committed; the matrix
-[`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-10-17.json) holds `not_run` / `unknown` in
-every field. Whoever fills it records what a run showed, never what was expected.
+Status: sections 1 to 8 were written 2026-10-17, BEFORE any native call, and are kept as that protocol. The four
+Claude lines were then run once each on 2026-10-17 and the Codex lines were not: see section 9 (amendment) and the
+matrix [`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-10-17.json). Whoever fills it records
+what a run showed, never what was expected.
 
 ## 1. What this is and is not
 
@@ -164,3 +165,26 @@ module `foundry.rollback_native_trial` (CLI `--line`, `--work-dir`, `--out`, `--
 `--projects-dir`, `--max-budget-usd`, `--guard-policy`, `--dry-run`). Not changed, with reason: `claude_profile_trial`
 (imported helpers only, no surface changed); the PAT-17 record, the release notes and published changelog sections
 (frozen historical proofs, left untouched).
+
+## 9. Runs (2026-10-17), amendment written after the calls
+
+Four native calls, one per Claude line, run one after the other by the coordinator from one checkout, the matrix
+committed after each run (`native_calls: 4`). Per-call ceiling `--max-budget-usd 1`; total authorised by the
+maintainer for these four lines: 4 USD. `FOUNDRY_DATA` unset for all four (each result records
+`ledger.data_dir_from: default`). Guarded policies: the `.foundry/model-routing.json` of the checkout and, through
+`--guard-policy`, that of the main checkout; both `absent` before and after every call (`policy_guard: unchanged`).
+Host observed: Claude Code 2.1.302. Costs are the `total_cost_usd` of each parent stream (observed; whether it
+covers the child is unknown, section 4).
+
+| Line | Verdict | Observed model / effort | Availability | Fixture | Cost (USD) |
+| --- | --- | --- | --- | --- | --- |
+| `claude-scout` | `unknown` | `claude-haiku-4-5-20251001` (dated snapshot) / `unknown` (not logged) | `available_observed` | `exact` | 0.116 |
+| `claude-implementer` | `conforming` | `claude-sonnet-5` / `medium` | `available_observed` | `exact` | 0.132 |
+| `claude-reviewer` | `conforming` | `claude-opus-5` / `high` | `available_observed` | `exact` | 0.149 |
+| `claude-architect` | `conforming` | `claude-fable-5` / `high` | `available_observed` | `exact` | 0.193 |
+
+Total about 0.59 USD. Observed against section 7: `maigret` did not refuse the trivial task, so `claude-reviewer`'s
+`fixture_compliance` is `exact`, not the predicted `divergent`; the cause is unknown. The four Codex lines were not
+run (`not_run`, the reason in each row's `limits`): the tool does not run a real Codex call, and Codex is under a
+usage limit until 2026-10-23 (maintainer's session log, not observed here). The remaining four calls of the standing
+authorisation are left to the follow-up issue PAT-245.

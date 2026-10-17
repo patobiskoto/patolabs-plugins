@@ -3,7 +3,6 @@
 The trial itself is never run here (fake launcher, synthetic logs); no real policy file is read or written."""
 import json
 import re
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,13 +23,18 @@ _REAL_INSIDE = base._inside_repository
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
+    # A fresh matrix, never the committed one: its Claude rows are recorded runs, which the tool refuses to repeat.
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     monkeypatch.setattr(base, "_inside_repository", lambda work: _REAL_INSIDE(work, ceiling=tmp_path))
-    shutil.copy(QUAL / "pat-198-native-rollback-2026-10-17.json", tmp_path / "matrix.json")
+    _fresh_matrix(tmp_path / "matrix.json")
     (tmp_path / "policy.json").write_text('{"version": 1}\n', encoding="utf-8")
     (tmp_path / "default-policy.json").write_text('{"version": 1, "default": true}\n', encoding="utf-8")
     monkeypatch.setattr(rt, "default_guards", lambda: [tmp_path / "default-policy.json"])
     monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "data"))  # the reservation ledger never leaves the test
+
+
+def _fresh_matrix(path):
+    path.write_text(json.dumps(rt.empty_matrix(), indent=2) + "\n", encoding="utf-8")
 
 
 def _args(tmp_path, line, **kw):
@@ -198,17 +202,33 @@ def test_masking_removes_secrets_home_and_opaque_tokens_and_bounds_the_length():
     assert out.startswith("open ~/x") and len(out) <= 2000
 
 
-def test_the_committed_matrix_has_the_eight_pat17_lines_and_every_field_unknown_or_not_run():
+RECORDED = {"claude-scout": ("unknown", ["claude-haiku-4-5-20251001"], "unknown"),
+            "claude-implementer": ("conforming", ["claude-sonnet-5"], ["medium"]),
+            "claude-reviewer": ("conforming", ["claude-opus-5"], ["high"]),
+            "claude-architect": ("conforming", ["claude-fable-5"], ["high"])}
+
+
+def test_the_committed_matrix_records_the_four_claude_runs_and_leaves_the_codex_lines_not_run():
     matrix = json.loads((QUAL / "pat-198-native-rollback-2026-10-17.json").read_text())
     pat17 = json.loads((QUAL / "pat-17-config-rollback-2026-10-11.json").read_text())
     expected = {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in pat17["rows"]}
-    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 0
+    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 4
+    assert {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in matrix["rows"]} == rt.ROLLBACK
     for row in matrix["rows"]:
-        assert (row["status"], row["verdict"], row["account_availability"]) == ("not_run", "not_run", "unknown")
-        assert row["resolved_route"] == row["transmitted"] == row["errors"] == "unknown"
-        assert set(row["native_observation"].values()) == {"unknown"}
-    assert matrix == rt.empty_matrix()
-    text = json.dumps(matrix)
+        if row["host"] == "codex":
+            assert row == {**rt.empty_row(row["line"]), "limits": row["limits"]}
+            assert any("PAT-245" in item for item in row["limits"])
+            assert any("2026-10-23" in item for item in row["limits"])
+            continue
+        verdict, models, efforts = RECORDED[row["line"]]
+        assert (row["status"], row["date"], row["verdict"]) == ("run", "2026-10-17", verdict)
+        assert row["native_observation"]["models"] == models and row["native_observation"]["efforts"] == efforts
+        assert row["native_observation"]["agent_types"] == [f"foundry:{PROFILE[row['line']]}"]
+        assert row["native_observation"]["host_version"] == "2.1.302"
+        assert row["transmitted"]["profile"] == PROFILE[row["line"]] and row["transmitted"]["model"] == WIRE[row["line"]]
+        assert (row["account_availability"], row["policy_guard"], row["fixture_compliance"], row["errors"]) == (
+            "available_observed", "unchanged", "exact", [])
+    text = json.dumps(matrix, ensure_ascii=False)
     assert not re.search(r"/Users/|/home/|@", text)
 
 
@@ -256,7 +276,7 @@ def test_the_ledger_outside_the_checkout_blocks_a_line_even_if_the_matrix_is_rev
     assert not ledger.is_relative_to(ROOT)
     rt.run(_args(tmp_path, "claude-reviewer"), launch=_host(tmp_path, "claude-reviewer"))
     assert [json.loads(x)["line"] for x in ledger.read_text().splitlines()] == ["claude-reviewer"]
-    shutil.copy(QUAL / "pat-198-native-rollback-2026-10-17.json", tmp_path / "matrix.json")  # git revert / stash / other worktree
+    _fresh_matrix(tmp_path / "matrix.json")  # git revert / stash / other worktree
     calls = []
     with pytest.raises(rt.RollbackTrialError, match="ledger"):
         rt.run(_args(tmp_path, "claude-reviewer", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json")),
@@ -264,7 +284,7 @@ def test_the_ledger_outside_the_checkout_blocks_a_line_even_if_the_matrix_is_rev
     assert calls == [] and not (tmp_path / "w2").exists()
     # a matrix copy elsewhere is blocked the same way, and a different line is still free
     other = tmp_path / "copy.json"
-    shutil.copy(QUAL / "pat-198-native-rollback-2026-10-17.json", other)
+    _fresh_matrix(other)
     with pytest.raises(rt.RollbackTrialError, match="ledger"):
         rt.run(_args(tmp_path, "claude-reviewer", matrix=str(other), work_dir=str(tmp_path / "w3"),
                      out=str(tmp_path / "r3.json")), launch=_host(tmp_path, "claude-reviewer", calls=calls))
@@ -356,7 +376,7 @@ def test_the_result_records_the_anonymised_ledger_location_and_the_data_dir_sour
 
 def test_a_second_concurrent_launch_on_another_matrix_copy_is_refused_by_the_ledger_lock(tmp_path):
     other = tmp_path / "copy.json"
-    shutil.copy(QUAL / "pat-198-native-rollback-2026-10-17.json", other)
+    _fresh_matrix(other)
     inner, calls = [], []
 
     def launch(command, **kw):

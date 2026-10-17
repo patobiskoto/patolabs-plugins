@@ -1472,7 +1472,9 @@ fixes a bounded protocol ([page](qualification/pat-198-native-rollback-protocol.
 per line, no retry, disposable policies, the real policy digested before and after. Tool:
 `python3 -m foundry.rollback_native_trial --line <line> ...` (Claude lines run; Codex lines have a dry-run plan only).
 Run by hand by the coordinator, never by the tests. An unavailable model is recorded as such; nothing is substituted
-and no default changes.
+and no default changes. Runs of 2026-10-17 (section 9 of that page): each Claude line once, `claude-implementer`,
+`claude-reviewer` and `claude-architect` `conforming`, `claude-scout` `unknown` (dated snapshot, no effort logged),
+all four `available_observed`; the four Codex lines `not_run` (follow-up PAT-245).
 
 Documentation status (PAT-198, R5): updated here and in that page for the new module `foundry.rollback_native_trial`
 and its options; no existing public constant, routing rule or CLI surface changed.
