@@ -207,33 +207,39 @@ def test_masking_removes_secrets_home_and_opaque_tokens_and_bounds_the_length():
     assert out.startswith("open ~/x") and len(out) <= 2000
 
 
-RECORDED = {"claude-scout": ("unknown", ["claude-haiku-4-5-20251001"], "unknown"),
-            "claude-implementer": ("conforming", ["claude-sonnet-5"], ["medium"]),
-            "claude-reviewer": ("conforming", ["claude-opus-5"], ["high"]),
-            "claude-architect": ("conforming", ["claude-fable-5"], ["high"])}
+RECORDED = {"claude-scout": ("2026-10-17", "unknown", ["claude-haiku-4-5-20251001"], "unknown"),
+            "claude-implementer": ("2026-10-17", "conforming", ["claude-sonnet-5"], ["medium"]),
+            "claude-reviewer": ("2026-10-17", "conforming", ["claude-opus-5"], ["high"]),
+            "claude-architect": ("2026-10-17", "conforming", ["claude-fable-5"], ["high"]),
+            "codex-scout": ("2026-10-18", "conforming", ["gpt-5.6-luna"], ["low"]),
+            "codex-implementer": ("2026-10-18", "conforming", ["gpt-5.6-terra"], ["medium"]),
+            "codex-reviewer": ("2026-10-18", "conforming", ["gpt-5.6-sol"], ["high"]),
+            "codex-architect": ("2026-10-18", "conforming", ["gpt-5.6-sol"], ["max"])}
 
 
-def test_the_committed_matrix_records_the_four_claude_runs_and_leaves_the_codex_lines_not_run():
+def test_the_committed_matrix_records_the_eight_runs_four_claude_and_four_codex():
     matrix = json.loads((QUAL / "pat-198-native-rollback-2026-10-17.json").read_text())
     pat17 = json.loads((QUAL / "pat-17-config-rollback-2026-10-11.json").read_text())
     expected = {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in pat17["rows"]}
-    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 4
+    assert expected == rt.ROLLBACK and len(matrix["rows"]) == 8 and matrix["native_calls"] == 8
     assert {(r["host"], r["role"]): (r["rollback"]["model"], r["rollback"]["effort"]) for r in matrix["rows"]} == rt.ROLLBACK
+    assert {row["line"] for row in matrix["rows"]} == set(RECORDED)
     for row in matrix["rows"]:
-        if row["host"] == "codex":
-            assert row == {**rt.empty_row(row["line"]), "limits": row["limits"]}
-            assert any("PAT-245" in item for item in row["limits"])
-            assert not any("until 2026-10-23 (maintainer" in item for item in row["limits"])  # the stale limit claim
-            assert any("withdrawn" in item for item in row["limits"])
-            continue
-        verdict, models, efforts = RECORDED[row["line"]]
-        assert (row["status"], row["date"], row["verdict"]) == ("run", "2026-10-17", verdict)
+        date, verdict, models, efforts = RECORDED[row["line"]]
+        assert (row["status"], row["date"], row["verdict"]) == ("run", date, verdict)
         assert row["native_observation"]["models"] == models and row["native_observation"]["efforts"] == efforts
+        assert (row["account_availability"], row["policy_guard"], row["fixture_compliance"], row["errors"]) == (
+            "available_observed", "unchanged", "exact", [])
+        if row["host"] == "codex":
+            assert row["native_observation"]["agent_types"] == "not_applicable"
+            assert row["native_observation"]["host_version"] == "0.162.1"
+            assert (row["transmitted"]["model"], row["transmitted"]["effort"]) == (
+                row["rollback"]["model"], row["rollback"]["effort"])
+            assert not any("not run" in item or "not_run" in item for item in row["limits"])
+            continue
         assert row["native_observation"]["agent_types"] == [f"foundry:{PROFILE[row['line']]}"]
         assert row["native_observation"]["host_version"] == "2.1.302"
         assert row["transmitted"]["profile"] == PROFILE[row["line"]] and row["transmitted"]["model"] == WIRE[row["line"]]
-        assert (row["account_availability"], row["policy_guard"], row["fixture_compliance"], row["errors"]) == (
-            "available_observed", "unchanged", "exact", [])
     text = json.dumps(matrix, ensure_ascii=False)
     assert not re.search(r"/Users/|/home/|@", text)
 

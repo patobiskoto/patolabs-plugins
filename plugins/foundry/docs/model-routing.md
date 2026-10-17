@@ -1474,11 +1474,12 @@ per line, no retry, disposable policies, the real policy digested before and aft
 Run by hand by the coordinator, never by the tests. An unavailable model is recorded as such; nothing is substituted
 and no default changes. Runs of 2026-10-17 (section 9 of that page): each Claude line once, `claude-implementer`,
 `claude-reviewer` and `claude-architect` `conforming`, `claude-scout` `unknown` (dated snapshot, no effort logged),
-all four `available_observed`; the four Codex lines `not_run` (follow-up PAT-245).
+all four `available_observed`; the four Codex lines `not_run` that day. Runs of 2026-10-18 (PAT-245, section 11 of
+that page): each Codex line once, all four `conforming` and `available_observed` (`native_calls: 8`).
 
 Documentation status (PAT-198, R5): updated here and in that page for the new module `foundry.rollback_native_trial`
 and its options; no existing public constant, routing rule or CLI surface changed.
 
 Documentation status (PAT-245, R5): section 10 of that page fixes the Codex surface, ceilings and observation before any
 Codex call; options `--codex` and `--codex-sessions-dir` of `foundry.rollback_native_trial` are documented there; the
-Codex limit statement of the matrix rows is corrected. No routing rule, public constant or other CLI surface changed.
+four Codex rows of the matrix and section 11 record the runs of 2026-10-18. No routing rule, public constant or other CLI surface changed.

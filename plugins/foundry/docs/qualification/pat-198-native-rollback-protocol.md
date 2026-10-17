@@ -4,7 +4,8 @@ Status: sections 1 to 8 were written 2026-10-17, BEFORE any native call, and are
 Claude lines were then run once each on 2026-10-17 and the Codex lines were not: see section 9 (amendment) and the
 matrix [`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-10-17.json). Whoever fills it records
 what a run showed, never what was expected. Section 10 (2026-10-18) is the amendment written before the Codex calls;
-it withdraws the Codex usage-limit statement of sections 3 and 9, kept below as written.
+it withdraws the Codex usage-limit statement of sections 3 and 9, kept below as written. The four Codex lines were
+then run once each on 2026-10-18: see section 11 (amendment written after the calls).
 
 ## 1. What this is and is not
 
@@ -279,3 +280,37 @@ Options added for Codex: `--codex` (binary, default `codex`), `--codex-sessions-
 `packet.txt`, `stream.ndjson`, `stderr.txt`; result file; matrix row and `native_calls`; locks; one ledger line), the
 copy `<work>.backup/config.toml` and the host's session file. Run the four lines one after the other, commit the matrix after each, and add a dated
 "Runs" amendment after the calls, as section 9 did for Claude.
+
+## 11. Codex runs (2026-10-18), amendment written after the calls
+
+Four native calls, one per Codex line, run one after the other by the coordinator from one checkout between 01:26:03
+and 01:26:40 (Paris time), no retry, the matrix committed after each run; the matrix now records `native_calls: 8`,
+the whole standing authorisation of section 4. Each result records `source.dirty: false`, its `source.commit` being
+the commit of the previous run (the first one, the last commit before the runs).
+Ceilings applied (section 10, read from each result's `bounds`): one call, `timeout_seconds: 1200` (no run timed out;
+each process exited 0 within 4.6 to 5.6 seconds), `max_budget_usd: null` (no spend flag). `FOUNDRY_DATA` unset for
+all four (each result records `ledger.data_dir_from: default`). Child environment names recorded:
+`FOUNDRY_RUNTIME_CONFIG_ISOLATED`, `HOME`, `LOGNAME`, `PATH`, `TMPDIR`, `USER` (no `CODEX_HOME`, so it was unset,
+deduced from `codex_environment()`). Guarded files, the two each result lists: the checkout's
+`.foundry/model-routing.json` (`absent` before and after) and `<CODEX_HOME>/config.toml` (same sha256 before and
+after every call), so `policy_guard: unchanged` and no restoration was needed. Host observed: `codex-cli 0.162.1`
+(session file). Errors: none; `usage_limit_text: false` in every result.
+
+| Line | Verdict | Observed model / effort | Availability | Fixture | Input / cached input / output / reasoning tokens |
+| --- | --- | --- | --- | --- | --- |
+| `codex-scout` | `conforming` | `gpt-5.6-luna` / `low` | `available_observed` | `exact` | 29564 / 24832 / 114 / 18 |
+| `codex-implementer` | `conforming` | `gpt-5.6-terra` / `medium` | `available_observed` | `exact` | 30993 / 22016 / 119 / 15 |
+| `codex-reviewer` | `conforming` | `gpt-5.6-sol` / `high` | `available_observed` | `exact` | 30997 / 22016 / 127 / 45 |
+| `codex-architect` | `conforming` | `gpt-5.6-sol` / `max` | `available_observed` | `exact` | 30969 / 15232 / 99 / 0 |
+
+Tokens are the `usage` counters of each stream's `turn.completed`, kept as reported (observed); totals 122523 input,
+84096 cached input, 459 output, 78 reasoning. Model and effort are those of the session file's `turn_context` for a
+completed turn (section 10). `codex-architect` reports 0 reasoning tokens at effort `max` (observed; why is unknown);
+its effort verdict rests on the session file, not on that counter. Codex weekly window, read by the coordinator through
+`codex app-server` `account/rateLimits/read` (`read_codex`, `plugins/gauge/tooling/gauge/readers.py`) before and
+after the four calls: 9 per cent used both times, reset 2026-10-24 23:30 (Paris time); the share these four calls
+took of it is unknown.
+
+Unknown, not settled by these runs: the money cost (`codex exec` reports tokens only, no cost); whether `codex exec`
+retried HTTP or stream requests internally within any of the four calls; whether the backend served the model the
+host recorded; availability beyond this account and this date. One call per line is not a sample (section 7).
