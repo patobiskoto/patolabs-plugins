@@ -557,7 +557,8 @@ adapter print last (`REQUEST_COUNT_ENV`, `trackers/linear.py`) are dropped from 
 (`without_request_count`, `campaign_effects.py`), so the recorded `reason` and the `reconciliation` JSON are those of
 the error (observed: campaign PAT-221, first attempt of PAT-222, deduced cause: the last line was taken); `companion`
 of a failed attempt is the companion Epic found or created before the failure, `writes` what had gone through
-(`launch`, `campaign_defer.py`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
+(`launch`, `campaign_defer.py`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing
+that an earlier attempt of this journal or the project listing shows (limit in step 3):
 
 1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
