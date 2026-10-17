@@ -8,7 +8,7 @@
     "per_line": 1,
     "retries": 0
   },
-  "native_calls": 0,
+  "native_calls": 1,
   "rows": [
     {
       "line": "codex-scout",
@@ -131,24 +131,45 @@
         "model": "haiku-4.5",
         "effort": null
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "unknown",
+      "resolved_route": {
+        "role": "scout",
+        "tier": "economy",
+        "model": "haiku-4.5",
+        "effort": null
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "transmitted": {
+        "profile": "routed-readonly-none-haiku-4.5",
+        "model": "claude-haiku-4-5",
+        "effort": null,
+        "effort_status": "not_applicable",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-haiku-4-5-20251001"
+        ],
+        "agent_types": [
+          "foundry:routed-readonly-none-haiku-4.5"
+        ],
+        "efforts": "unknown",
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-38261135",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "2816440607d940d425d075ce69ed6e8c6884773fbdc0123b63df50a465016955",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only",
+        "not established: model, effort"
+      ]
     },
     {
       "line": "claude-implementer",
