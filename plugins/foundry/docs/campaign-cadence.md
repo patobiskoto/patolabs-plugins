@@ -190,11 +190,13 @@ claim publication, claim id, coordinates, head or content is invalid or inconsis
 `routing.py`) and `_review_status` returns `integrity`: `suspend` `review_proof_integrity`.
 `current_for_sync` validates every proof marker before it filters by issue, so a corrupt
 proof of another issue suspends the pass for the ticket in focus too (`issue merge` already
-fails closed in the same state, as `valid_for_merge` calls it). An advisory or terminal postmerge record found in the proof directory is the same
-`ProofIntegrityError`, requalified at the read path (`current_for_sync`), not in
-`_validate_proof`, which tracker adapters also call on caller input. An absent ledger marker,
-or an absent, stale, ambiguous or non-mergeable proof, stays a plain `RoutingConfigError`
-(`none` or `blocked`). Known limit: while the acceptance-proof directory does not exist,
-`current_for_sync` returns before it reads the ledger, so a corrupt ledger marker is then a
-plain `RoutingConfigError` (read as no review). Tests: `tests/test_campaign_cadence.py` (one per state, drift,
+fails closed in the same state, as `valid_for_merge` calls it). An advisory or terminal
+postmerge record found in the proof directory is the same `ProofIntegrityError`, requalified
+at the read path (`current_for_sync`), not in `_validate_proof`, which tracker adapters also
+call on caller input. An absent ledger marker, or an absent, stale, ambiguous or
+non-mergeable proof, stays a plain `RoutingConfigError` (`none` or `blocked`). Known limit:
+while the acceptance-proof directory does not exist, `current_for_sync` raises a plain
+`RoutingConfigError` before it reads the ledger, so a corrupt ledger marker is then read as
+no review.
+Tests: `tests/test_campaign_cadence.py` (one per state, drift,
 approval, capability, idempotence, fakes that fail on any effect).
