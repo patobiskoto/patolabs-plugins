@@ -299,6 +299,15 @@ def test_unwritable_journal_is_a_json_refusal_not_a_trace(env, monkeypatch, caps
     assert not (env / "elsewhere").exists()
 
 
+def test_huge_ttl_is_a_json_refusal_not_a_trace(env, capsys):
+    path, _ = preview_file(env)
+    code = ca.main(["approve", "PAT-100", "--preview-file", path, "--max-sessions", "2",
+                    "--ttl-hours", str(10**12)])
+    assert code == 2
+    assert json.loads(capsys.readouterr().err)["refused"] == "refused"
+    assert not ca.journal_path().exists()
+
+
 def test_read_waits_for_a_writer_holding_the_lock(env, monkeypatch):
     import fcntl
     import os

@@ -19,9 +19,10 @@ python3 tooling/foundry_cli.py campaign-approval check PAT-100 --preview-file pr
 file only: it recomputes `preview_digest` over the file's material with
 `epic_preview._digest` and refuses a hand-edited file, a file for another Epic, an Epic
 identifier outside the issue-id format (the complete record is validated before any append,
-nothing is written otherwise) and missing or non-hex digests (`digests_from_preview`, `campaign_approval.py`). It then prints the
-digests, the retained expiry and ceilings and requires the human to retype the first 12 hex
-characters of `preview_digest` (`CONFIRMATION_LENGTH`). Bounds: `--max-sessions` 1 to
+nothing is written otherwise) and missing or non-hex digests (`digests_from_preview`,
+`campaign_approval.py`). It then prints the digests, the retained expiry and ceilings and
+requires the human to retype the first 12 hex characters of `preview_digest`
+(`CONFIRMATION_LENGTH`). Bounds: `--max-sessions` 1 to
 `MAX_SESSIONS_CEILING`, `--max-sessions-per-issue` 1 to `--max-sessions`, a lifetime of at
 most `MAX_TTL` (default `DEFAULT_TTL`).
 
@@ -48,7 +49,7 @@ only with `journal_invalid`. An option that `argparse` rejects (`--max-sessions`
 `--max-sessions-per-issue` or `--ttl-hours` that is not a strictly positive integer,
 `_positive_int`) exits 2 with the `argparse` usage text, not JSON; the bounds checked by
 `approve` itself (`MAX_TTL`, `MAX_SESSIONS_CEILING`, per-issue above `--max-sessions`) are
-`refused` JSON.
+`refused` JSON, including a `--ttl-hours` too large for `timedelta` (checked in `main`).
 
 `check(epic, preview_digest, structure_digest, now)` is the function a cadencer calls
 before any effect. It only reads the journal, and returns the latest unexpired matching
@@ -78,8 +79,8 @@ path component (`O_NOFOLLOW`); a symbolic link earlier in the path, such as a sy
 (deduced from `_append`, not run): a write that fails after part of the line was written
 leaves a truncated line, so every later read is `journal_invalid` until someone repairs the
 file by hand; a failing `fsync` after the whole line was written leaves the complete line in
-place, so the approval is effective (`check` accepts it) while the human saw a refusal. A second approval adds a line. There is no revocation record yet: an approval ends
-by expiry.
+place, so the approval is effective (`check` accepts it) while the human saw a refusal. A
+second approval adds a line. There is no revocation record yet: an approval ends by expiry.
 
 ## An agent cannot approve (layers and limit)
 

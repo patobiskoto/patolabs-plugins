@@ -17,9 +17,9 @@ deliberate bypass is not stopped.
 
 Limit: this is not cryptography.  A process running as the same OS user can append to the
 journal directly.  ``check`` refuses a line whose ``record_digest`` does not verify (a
-malformed hand-append), but cannot detect a well-formed forged line.  An approval expires at
-the latest when the approved preview's ``policy.expires_at`` expires.  See
-``docs/campaign-approval.md``.
+malformed hand-append), but cannot detect a well-formed forged line.  An approval written by
+this version expires at the latest when the approved preview's ``policy.expires_at``
+expires; an older record keeps its own ``expires_at``.  See ``docs/campaign-approval.md``.
 """
 from __future__ import annotations
 
@@ -348,10 +348,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.verb == "approve":
+            try:
+                ttl = timedelta(hours=args.ttl_hours)
+            except OverflowError as exc:
+                raise ApprovalError(f"durée hors bornes (maximum {MAX_TTL.days} jours)") from exc
             result = approve(
                 args.epic, args.preview_file, max_sessions=args.max_sessions,
-                max_sessions_per_issue=args.max_sessions_per_issue,
-                ttl=timedelta(hours=args.ttl_hours),
+                max_sessions_per_issue=args.max_sessions_per_issue, ttl=ttl,
             )
         elif args.verb == "status":
             result = [r for r in read_journal() if r["epic"] == args.epic]
