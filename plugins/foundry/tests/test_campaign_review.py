@@ -834,6 +834,22 @@ def test_a_description_that_could_not_be_published_suspends_with_its_own_reason(
     assert step(env).decision.reason == "description_correction_not_settled"
 
 
+def test_the_request_counter_is_left_out_of_a_description_publication_error(env):
+    """PAT-238 (229-3): the `detail` of `description_not_published` has no counter line."""
+    _description_only(env)
+    runner = env.world.runner
+
+    def failing(argv, **kw):
+        done = runner(argv, **kw)
+        if argv[3:5] == ["openpr", "APP-2"] and "--summary-stdin" in argv:
+            done.returncode, done.stderr = 1, "publish refused\nfoundry linear_requests=2\n"
+        return done
+
+    env.runtime.runner = failing
+    result = step(env)
+    assert result.effect["detail"] == "publish refused"
+
+
 def test_an_unusable_implementation_summary_is_never_published_as_the_pr_body(env):
     env.world.session_summary = "Done. Waiting for the background command."
     step(env), step(env)

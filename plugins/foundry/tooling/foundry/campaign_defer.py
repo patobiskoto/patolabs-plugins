@@ -26,6 +26,9 @@ from foundry import review_remarks
 
 KIND = "defer-remarks"
 COMPANION_PREFIX = "Nits "
+# AGENTS.md#R9 (b): the companion Epic is named `Nits ` followed by the identifier of the origin
+# Epic (PAT-238); a title that only starts with `Nits ` is not a companion Epic.
+_COMPANION_NAME = re.compile(r"Nits [A-Za-z][A-Za-z0-9]*-[0-9]+")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
 DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait; not measured
@@ -48,6 +51,7 @@ _DURABLE = re.compile(
 # (`IssueUnavailableError`, "issue unavailable"); anything else leaves the effect unknown.
 _REFUSED = re.compile(r"TrackerConflictError|validation refused", re.I)
 _ABSENT = re.compile(r"IssueUnavailableError|issue unavailable", re.I)
+_RESET_AT = re.compile(r"reset_at=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)")
 _CREATED = re.compile(r"^\S+\s+(\S+)\s+—", re.M)
 
 
@@ -89,9 +93,21 @@ def valid_deferral_field(value: object) -> bool:
 def classify(text: str) -> Outcome:
     """Durable refusal or transient failure from the last 400 characters of an error."""
     tail = fx.without_request_count(text)[-400:]
-    reason = re.sub(r"[0-9a-f]{64}", "[hex]", tail.strip().splitlines()[-1] if tail.strip()
-                    else "error")[:200]
+    last = tail.strip().splitlines()[-1] if tail.strip() else "error"
+    # the reason becomes public (PR description, journal): credentials are masked first (PAT-238)
+    reason = re.sub(r"[0-9a-f]{64}", "[hex]", fx.mask_credentials(last))[:200]
+    reset = _RESET_AT.search(tail)
+    if reset and reset.group(0) not in reason:  # a quota reset stays readable past the cut
+        reason = f"{reason[:170]} {reset.group(0)}"
     return Durable(reason) if _DURABLE.search(tail) else Transient(reason)
+
+
+def reset_of(reason: str | None) -> datetime | None:
+    """The ``reset_at=<UTC time>`` that a quota error reports (``LinearQuotaExhaustedError``,
+    ``trackers/linear.py``), read back from the journaled reason; ``None`` when absent or
+    ``unknown``."""
+    found = _RESET_AT.search(reason or "")
+    return _moment(found.group(1)) if found else None
 
 
 # --------------------------------------------------------------------- observation
@@ -109,7 +125,7 @@ def origin_of(tracker, ticket: str) -> tuple[str | None, bool]:
     parent = tracker.get_issue(parents[0])
     if parent.type != "Epic":
         return None, False
-    return parent.id, parent.title.startswith(COMPANION_PREFIX)
+    return parent.id, _COMPANION_NAME.fullmatch(parent.title) is not None
 
 
 def _moment(stamp: str) -> datetime:
@@ -136,10 +152,12 @@ def deferral_facts(path: Path, epic: str):
                 return cadence.DeferralFacts(
                     **{**facts, "state": end["state"], "follow_up": end["follow_up"]})
         if started:
-            stamp = finished.get(started[-1]["attempt"], started[-1])["at"]
+            last_end = finished.get(started[-1]["attempt"], started[-1])
             facts["state"] = "exhausted" if len(started) >= MAX_DEFER_TRIES else "transient"
-            facts["cooling"] = bool(now) and _moment(stamp) + timedelta(
-                seconds=DEFER_RETRY_SECONDS) > now
+            until = _moment(last_end["at"]) + timedelta(seconds=DEFER_RETRY_SECONDS)
+            # a quota error reports when the quota resets: no retry before (PAT-ADR-0006)
+            reset = reset_of((last_end.get("deferral") or {}).get("reason"))
+            facts["cooling"] = bool(now) and max(until, reset or until) > now
         return cadence.DeferralFacts(**facts)
     return read
 
@@ -208,10 +226,12 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     stderr = fx.without_request_count(done.stderr)
     details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
-        if details.get("validation") == "refused" or details.get("automatic_retry") is True:
+        if details.get("validation") == "refused":  # the adapter refuses to replay
             if details.get("creation") == "created":
                 ledger["writes"].append(label)  # the issue exists: report the write (R9 b)
-            raise Durable("creation_replay_refused")  # the adapter refuses to replay
+                if label == WRITE_COMPANION and isinstance(details.get("issue_id"), str):
+                    ledger["companion"] = details["issue_id"]  # PAT-238: and name it
+            raise Durable("creation_replay_refused")
         named, client = details.get("issue_id"), details.get("client_id")
     else:  # a quota error names the client identifier in its message (docs/linear-tracker.md)
         named, found = None, _CLIENT.search(stderr[-400:])
@@ -256,7 +276,9 @@ def journal_memory(attempts: Path, epic: str) -> tuple[list[str], bool]:
     (the companion Epics they named, most recent first; whether one of them may have created a
     follow-up issue).  The current attempt is the last ``started`` line, claimed before the
     launch, and is left out.  An earlier attempt with no ``deferral`` field on its ``finished``
-    line, or none, counts as one that may have created it."""
+    line, or none, counts as one that may have created it, and so does one that did not end
+    ``done`` (PAT-238): a creation that failed with no reference to reconcile by leaves nothing
+    in ``writes`` or ``unknown``, and the journal cannot tell whether it happened."""
     records = [r for r in fx.read_attempts(attempts)
                if r["epic"] == epic and r["kind"] == KIND]
     started = [r for r in records if r["event"] == "started"][:-1]
@@ -270,7 +292,8 @@ def journal_memory(attempts: Path, epic: str) -> tuple[list[str], bool]:
             continue
         if end["companion"] and end["companion"] not in companions:
             companions.append(end["companion"])
-        maybe_created |= WRITE_FOLLOW_UP in end["writes"] or bool(end["unknown"])
+        maybe_created |= (end["state"] != "done" or WRITE_FOLLOW_UP in end["writes"]
+                          or bool(end["unknown"]))
     return companions, maybe_created
 
 

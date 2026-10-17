@@ -3,6 +3,7 @@ import json
 import sys
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -283,6 +284,7 @@ def test_an_adapter_that_refuses_the_replay_is_a_durable_refusal(env):
     assert verbs(env) == ["create-issue"]  # no substitute write, no reconciliation needed
     # the issue was created before the validation refused: the write is reported (R9 b)
     assert result.effect["deferral"]["writes"] == [cd.WRITE_COMPANION]
+    assert result.effect["deferral"]["companion"] == "APP-99"  # PAT-238 (229-1): and named
     assert step(env).decision.reason == "remarks_not_deferrable"
 
 
@@ -509,6 +511,16 @@ def test_the_new_follow_up_does_not_change_the_approved_structure(env):
     assert step(env).decision.kind == "merge"
 
 
+def test_a_new_child_of_the_origin_epic_does_stop_the_merge(env):
+    """PAT-238 (141-10): the check above depends on the issues of the world, not on states only:
+    a child added under the origin Epic changes the approved structure and stops the merge."""
+    reviewed(env)
+    step(env)
+    env.world.checks = [check()]
+    env.world.add_issue("APP-77", "A late child", "Task", "ready", parent="APP-1")
+    assert step(env).decision.kind != "merge"
+
+
 def test_the_origin_epic_closure_graph_ignores_the_companion(env):
     from foundry import write
 
@@ -560,8 +572,15 @@ def test_the_merge_gate_never_reads_the_receipt():
     # code path has no reference to it at all
 
 
-def test_the_proof_is_unchanged_by_the_receipt(env, tmp_path):
-    reviewed(env)
+def test_the_proof_is_unchanged_by_the_receipt(env):
+    """PAT-238 (141-2): the proof handed to ``record-review-proof`` is the criteria and the
+    quality alone, whatever the remarks; the receipt is a separate store."""
+    reviewed(env, nits=2)
+    assert env.world.proofs == [{"outcomes": [{**test_campaign_effects.CRITERION,
+                                               "verdict": "pass"}], "quality": "mergeable"}]
+    assert "remark" not in json.dumps(env.world.proofs)
+    verbs_ = [c[0][3] for c in env.world.calls if c[0][2:3] == ["routing"]]
+    assert verbs_.index("record-review-proof") < verbs_.index("record-review-remarks")
     data = Path(env.tmp / "data")
     assert (data / review_remarks.STORE_DIR).is_dir()
     assert not (data / "acceptance-proofs").exists()  # the double wrote no proof: separate store
@@ -607,7 +626,7 @@ def test_the_description_cites_every_follow_up_and_every_write_of_the_pull_reque
 def test_the_refusal_line_cites_writes_of_an_earlier_transient_attempt():
     from foundry import campaign_review as review
 
-    transient = {"state": "failed", "diff_hash": "a", "reason": "quota",
+    transient = {"state": "transient", "diff_hash": "a", "reason": "quota",
                  "writes": [cd.WRITE_COMPANION]}
     refused = {"state": "refused", "diff_hash": "a", "reason": "creation_replay_refused",
                "writes": []}
@@ -719,3 +738,140 @@ def test_the_tracker_comment_masks_a_credential_shaped_text_of_an_older_receipt(
     text = cd.comment_text("APP-2", "APP-2@dddd", 12, 1, [
         {"text": f"nit: leaked {fake}", "fix_before_merge": False, "target": "diff"}])
     assert fake not in text and "[REDACTED]" in text
+
+
+# ------------------------------------------------------------------------------ PAT-238
+
+
+def test_a_parent_whose_title_only_starts_with_nits_is_an_origin_epic(env):
+    """141-5: the companion naming rule is `Nits <ORIGIN-EPIC-ID>` (AGENTS.md#R9 (b))."""
+    env.world.issues["APP-1"].title = "Nits and polish of the sprint"
+    reviewed(env)
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason) == (
+        "defer-remarks", "non_blocking_remarks")
+    assert cd.origin_of(env.tracker, "APP-2") == ("APP-1", False)
+    env.world.issues["APP-1"].title = "Nits APP-0"
+    assert cd.origin_of(env.tracker, "APP-2") == ("APP-1", True)
+
+
+def test_only_the_defer_plan_carries_the_tracker_and_the_project(env, monkeypatch):
+    """141-7: `plan.update(tracker=..., project=...)` is for `defer-remarks` alone."""
+    plans = []
+    real = ce._launch
+    monkeypatch.setattr(ce, "_launch", lambda rt, plan, *a, **k: (
+        plans.append(plan), real(rt, plan, *a, **k))[1])
+    reviewed(env)
+    step(env)  # defer-remarks
+    assert [("tracker" in p, "project" in p) for p in plans[:3]] == [(False, False)] * 3
+    deferral, = [p for p in plans if p.get("kind") == "defer"]
+    assert deferral["tracker"] is env.tracker and deferral["project"] == PROJECT
+
+
+def test_the_public_refusal_reason_masks_a_credential(env):
+    """141-11: the reason is journaled and told in the PR description; credentials are masked."""
+    fake = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2"
+    reviewed(env)
+    env.world.create_failure = (
+        f"foundry.trackers.base.TrackerCapabilityUnavailableError: capability unavailable: {fake}")
+    result = step(env)
+    assert result.effect["deferral"]["state"] == "refused"
+    public = json.dumps(result.effect) + env.world.bodies[-1] + env.kwargs["attempts"].read_text()
+    assert fake not in public and "[REDACTED]" in env.world.bodies[-1]
+    from foundry import campaign_review as review
+
+    line, = review.deferral_lines([], "APP-1", "APP-2", {
+        "state": "refused", "reason": f"x {fake}", "writes": [], "diff_hash": "a"})
+    assert fake not in line
+
+
+def reset_text(moment):
+    return f"{RATE_LIMITED} remaining=0 reset_at={moment.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+
+def test_a_quota_error_is_not_retried_before_its_reset_time(env):
+    """141-12 (PAT-ADR-0006): the wait is the later of the usual delay and `reset_at`."""
+    reviewed(env)
+    env.world.create_failure = reset_text(NOW + timedelta(hours=1))
+    assert step(env).outcome == "waiting"
+    waiting = step(env, LATER)  # past DEFER_RETRY_SECONDS, before the reset
+    assert (waiting.decision.kind, waiting.decision.reason) == (
+        "wait", "deferral_transient_failure")
+    assert verbs(env) == ["create-issue"]
+    retry = step(env, NOW + timedelta(hours=1, minutes=1))
+    assert (retry.decision.kind, retry.outcome) == ("defer-remarks", "executed")
+
+
+def test_a_reset_time_in_the_past_or_unknown_changes_nothing(env):
+    reviewed(env)
+    env.world.create_failure = f"{RATE_LIMITED} remaining=0 reset_at=unknown"
+    assert step(env).outcome == "waiting"
+    assert step(env, LATER).decision.kind == "defer-remarks"
+    assert cd.reset_of("quota exhausted reset_at=unknown") is None
+    assert cd.reset_of(None) is None
+
+
+def test_the_reset_time_survives_a_long_error():
+    long_text = "LinearQuotaExhaustedError: " + "x" * 300 + " reset_at=2026-10-16T13:00:00Z"
+    reason = cd.classify(long_text).reason
+    assert len(reason) <= 200 and cd.reset_of(reason) == NOW + timedelta(hours=1)
+
+
+def test_an_automatic_retry_flag_is_no_refusal_the_creation_is_reconciled(env):
+    """141-13: only `validation: refused` is a refusal; the flag, if an adapter set it, is not."""
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required",
+        "automatic_retry": True})
+    env.world.create_effect_first = True
+    result = step(env)
+    assert result.outcome == "executed" and result.effect["deferral"]["state"] == "done"
+    assert verbs(env)[:2] == ["create-issue", "reconcile-create"]
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
+
+
+def test_a_plain_failed_follow_up_creation_makes_the_next_pass_look_for_an_orphan(env):
+    """228-2: nothing in `writes` or `unknown`, yet the issue may exist: the orphan scan runs."""
+    reviewed(env)
+    seed_companion(env)
+    make_issue = env.world.make_issue
+    env.world.make_issue = lambda spec: make_issue({k: v for k, v in spec.items()
+                                                    if k != "parent"})  # created, not linked
+    env.world.create_failure = "ConnectionError: transport_error"
+    env.world.create_effect_first = True
+    first = step(env)
+    assert first.outcome == "waiting" and first.effect["deferral"]["writes"] == []
+    assert first.effect["deferral"]["unknown"] == [] and len(follow_ups(env)) == 1
+    again = step(env, LATER)
+    assert again.outcome == "executed"
+    assert len(follow_ups(env)) == 1  # the orphan is attached, not created a second time
+    assert verbs(env) == ["create-issue", "link", "comment"]
+
+
+def test_the_orphan_scan_is_still_skipped_after_a_clean_earlier_attempt(monkeypatch):
+    records = [  # an earlier attempt that ended `done` with no follow-up creation
+        {"epic": "APP-1", "kind": "defer-remarks", "event": "started", "attempt": "a1"},
+        {"epic": "APP-1", "kind": "defer-remarks", "event": "finished", "attempt": "a1",
+         "deferral": {"state": "done", "companion": "APP-50", "writes": [], "unknown": []}},
+        {"epic": "APP-1", "kind": "defer-remarks", "event": "started", "attempt": "a2"},
+    ]
+    monkeypatch.setattr(ce, "read_attempts", lambda path: records)
+    assert cd.journal_memory(Path("unused"), "APP-1") == (["APP-50"], False)
+
+
+def test_the_request_counter_is_left_out_of_the_detail_of_a_failed_command(env):
+    """229-3: the site of `_launch` (campaign_effects.py) and `_foundry` (campaign_review.py)."""
+    base = env.world.runner
+
+    def failing(argv, **kw):
+        if argv[0] == sys.executable:
+            env.world.calls.append((argv, kw.get("cwd"), None, None))
+            return SimpleNamespace(returncode=1, stdout="", stderr=f"refused\n{COUNTER}\n")
+        return base(argv, **kw)
+
+    env.runtime.runner = failing
+    assert step(env).effect["detail"] == "refused"
+    from foundry import campaign_review as review
+
+    done, err = review._foundry(env.runtime, ["issue", "x"], env.tmp)
+    assert done.returncode == 1 and err == "refused"

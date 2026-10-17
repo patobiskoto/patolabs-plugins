@@ -412,9 +412,10 @@ re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campai
 a ticket with no origin Epic, a ticket
 of a companion Epic, and a durable refusal (capability absent, `Epic` type refused,
 several companion Epics with the same name, found only when the effect lists the project (`_find_companion`, not when `journal_memory` names the companion), an adapter that refuses to replay a
-creation). The orphan scan is skipped when the journal names the companion and no earlier attempt of the campaign Epic can have created a follow-up (`journal_memory`, `_find_follow_up`): an orphan follow-up of the same origin Epic created outside that journal (by hand, or by a campaign on another Epic with the same origin) is then not seen, and a second follow-up can be created. A transient failure, including a creation that the read shows did not
-happen, makes the campaign wait and retry, at most `MAX_DEFER_TRIES` times
-(`campaign_defer.py`), then suspend. Not changed by PAT-141: the coordinator of
+creation). The orphan scan is skipped when the journal names the companion and every earlier attempt of the campaign Epic ended `done` without creating a follow-up (`journal_memory`, `_find_follow_up`; an attempt that ended otherwise may have created one whose answer was lost, and makes the scan run): an orphan follow-up of the same origin Epic created outside that journal (by hand, or by a campaign on another Epic with the same origin) is then not seen, and a second follow-up can be created. A transient failure, including a creation that the read shows did not
+happen, makes the campaign wait and retry, up to `MAX_DEFER_TRIES` attempts in total for the diff, the
+first included (`campaign_defer.py`), then suspend; the wait lasts `DEFER_RETRY_SECONDS`, or until the
+`reset_at` that a quota error reports when that is later. Not changed by PAT-141: the coordinator of
 `plugins/foundry/tooling/foundry/campaign_runtime.py` (DevHub) reads only the structured
 proof in its review step (`_review_observation`) and has no issue-creation primitive: its
 mutating steps are `start`, `open-pr`, `merge`, `close-epic` and `sync-parent-acceptance`

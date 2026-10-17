@@ -469,8 +469,8 @@ show the split, not the cost of a real project (unknown).
 ### Reduction (PAT-228) and what it leaves
 
 - Done: the deferral lists the project at most once per attempt (before: up to twice), and not at
-  all when an earlier attempt of the same Epic journaled the companion Epic and no earlier attempt
-  can have created a follow-up (`campaign_defer.journal_memory`, `_find_companion`,
+  all when an earlier attempt of the same Epic journaled the companion Epic and every earlier attempt
+  ended `done` without creating a follow-up (PAT-238; `campaign_defer.journal_memory`, `_find_companion`,
   `_find_follow_up`). The tracker is still read before every write; only the way of finding the
   companion changed. Gain, measured on the double with the same method before and after: 59 or 116
   requests for the lookups become 59 (first attempt) or 3 (later attempts of the Epic); the "before" is re-created by the test fixture `before` (no journal memory, a listing read again at each use), not by the old code. Residual risk: the journal is that of the campaign Epic only, so an orphan follow-up created outside it is not seen when the scan is skipped (`docs/campaign-effects.md`, step 3). On the

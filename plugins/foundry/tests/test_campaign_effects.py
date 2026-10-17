@@ -79,7 +79,11 @@ class World:
         return self.issues[issue_id]
 
     def raw(self):
-        return graph([node(i, state=s) for i, s in self.states.items()],
+        """The Epic subgraph as the tracker serves it: the children the issues give APP-1 (PAT-238),
+        in state of ``states``; a child added to ``issues`` changes the observed structure."""
+        children = [link.target for link in self.issues["APP-1"].links
+                    if link.type == "parent-of"]
+        return graph([node(i, state=self.states.get(i, self.issues[i].state)) for i in children],
                      dependencies=[("APP-3", "APP-2")])
 
     @staticmethod
