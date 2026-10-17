@@ -688,7 +688,7 @@ def test_a_round_whose_remarks_were_all_deferred_before_writes_no_second_comment
     assert step(env).decision.kind == "merge"
 
 
-def test_nothing_left_after_the_dedup_touches_no_tracker(env, monkeypatch):
+def test_nothing_left_after_the_dedup_makes_no_deferral_write(env, monkeypatch):
     """PAT-237 (218-N3): no companion lookup, no follow-up, no comment when every remark was
     deferred before; the field still names the earlier follow-up and companion."""
     reviewed(env, nits=1, fix=1)

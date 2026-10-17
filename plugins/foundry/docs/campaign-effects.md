@@ -668,21 +668,23 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    field on its `finished` line). Residual risk: `journal_memory` reads the journal of this campaign Epic only
    (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
    in that case and a second follow-up can be created. Otherwise `edit create-issue` with `parent` set to the companion Epic.
-4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
-   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: at
-   most one comment per validated round, never one per remark (a correction changes the diff hash,
-   so a later validated round of the same pull request posts its own). A remark whose text equals
-   one of the deferrable remarks of the receipt of an earlier `done` deferral of the same ticket
-   (another diff hash) is left out (`already_deferred`, PAT-237: the partial review that follows a
-   correction may list it again); when nothing is left, no comment is posted and the `deferral`
-   field carries `remarks: 0`; the attempt then reads and writes nothing in the tracker
-   (`run_deferral` returns before step 2) and the field names the follow-up and companion of the
-   latest earlier `done` deferral. The comparison is the exact text: a reworded remark is deferred
-   again, and two distinct findings with the same text (for example `nit: typo`) are taken for one,
-   so the second is neither deferred nor fixed (known limit). The comment is also skipped when a
-   comment of the follow-up already contains that reference (a comment whose answer was lost). The
-   tracker may return only the most recent comments (`docs/review-rounds.md`): a comment older than
-   that window would be posted again (unknown).
+4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number,
+   the ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff
+   hash>`: at most one comment per validated round, never one per remark (a correction
+   changes the diff hash, so a later validated round of the same pull request posts its
+   own). A remark whose text equals one of the deferrable remarks of the receipt of an
+   earlier `done` deferral of the same ticket (another diff hash) is left out
+   (`already_deferred`, PAT-237: the partial review that follows a correction may list it
+   again); when nothing is left, no comment is posted and the `deferral` field carries
+   `remarks: 0`; the attempt then makes no deferral read or write in the tracker (no
+   companion lookup, follow-up or comment: `run_deferral` returns before step 2), while step
+   5 still runs and the field names the follow-up and companion of the latest earlier `done`
+   deferral. The comparison is the exact text: a reworded remark is deferred again, and two
+   distinct findings with the same text (for example `nit: typo`) are taken for one, so the
+   second is neither deferred nor fixed (known limit). The comment is also skipped when a
+   comment of the follow-up already contains that reference (a comment whose answer was
+   lost). The tracker may return only the most recent comments (`docs/review-rounds.md`): a
+   comment older than that window would be posted again (unknown).
 5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>[,
    <FOLLOW-UP-ID>...] (companion Epic <ID>, created by this pull request|already existing; <N>
    remarks; writes: ...)` after the `## Review rounds` section (R9 (b): the writes are reported
