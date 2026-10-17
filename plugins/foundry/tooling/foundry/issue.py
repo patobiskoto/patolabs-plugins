@@ -1212,8 +1212,8 @@ def close_epic(issue_id, flags=()):
     )
 
 
-# Native states from which `issue accept` can replay a written receipt: the admitted
-# predecessors (the decision's `from_state` is one of them), then `done`.
+# Native states `issue accept` replays a written receipt from: the decision's own
+# `from_state` (one of FROM_STATES; the status does not carry it) or `done`.
 _ACCEPT_RETRY_STATES = acceptance_decision.FROM_STATES | {"done"}
 _ACCEPT_FLAG_PREFIXES = ("--human-verdict=", "--decision-file=")
 
@@ -1230,16 +1230,24 @@ def _accept_status(tracker, issue_id):
     if state.kind == "accepted":
         print(f"accepté · {issue_id} · décision {state.decision_digest} · done aligné")
     elif state.kind == "receipt-only":
-        print(
-            f"reçu écrit, état non projeté · {issue_id} · décision {state.decision_digest} "
-            f"· état natif {state.native_state} : relance exactement la même commande "
-            "`issue accept` (aucun second reçu)"
-            if state.native_state in _ACCEPT_RETRY_STATES
-            else f"reçu écrit, état non projeté · {issue_id} · décision "
-            f"{state.decision_digest} · état natif {state.native_state} : cet état n'est "
-            "pas un état de reprise (backlog, ready, in-progress, done), `issue accept` "
-            "ne le projettera pas ; lis la cause avant d'agir"
+        head = (
+            f"reçu écrit, état non projeté · {issue_id} · décision "
+            f"{state.decision_digest} · état natif {state.native_state} : "
         )
+        if state.native_state == "done":
+            tail = "relance exactement la même commande `issue accept` (aucun second reçu)"
+        elif state.native_state in _ACCEPT_RETRY_STATES:
+            tail = (
+                "relance exactement la même commande `issue accept` (aucun second reçu) "
+                "si l'état natif est encore celui de la décision (`from_state`) ; sinon "
+                "elle est refusée"
+            )
+        else:
+            tail = (
+                "cet état n'est pas un état de reprise (backlog, ready, in-progress, "
+                "done), `issue accept` ne le projettera pas ; lis la cause avant d'agir"
+            )
+        print(head + tail)
     elif state.kind == "unknown":
         print(f"inconnu · {issue_id} : lecture du cycle de vie impossible ou périmée")
     else:

@@ -3914,7 +3914,7 @@ class LinearTracker(Tracker):
         review_receipt_at: int | None,
         state_ids: dict[str, str],
     ) -> bool:
-        """Prove the native Review span existed after its receipt and then regressed."""
+        """Prove the native Review span existed at or after its receipt and then regressed."""
         if review_receipt_at is None:
             return False
         data = self._graphql(
@@ -4282,20 +4282,7 @@ class LinearTracker(Tracker):
             ):
                 raise TrackerConflictError("Linear lifecycle state proof malformed")
             reviews.append((payload, body))
-        reviews.sort(key=lambda item: item[0]["generation"])
-        previous_body = None
-        for expected_generation, (payload, body) in enumerate(reviews, start=1):
-            previous_digest = (
-                hashlib.sha256(previous_body.encode()).hexdigest()
-                if previous_body is not None
-                else None
-            )
-            if (
-                payload["generation"] != expected_generation
-                or payload.get("previous_projection_digest") != previous_digest
-            ):
-                raise TrackerConflictError("Linear lifecycle review chain invalid")
-            previous_body = body
+        self._check_review_chain(reviews)
         review = reviews[-1][0] if reviews else None
         done = state_payload("done", merged=True)
         if done is not None:
@@ -5877,7 +5864,7 @@ class LinearTracker(Tracker):
 
         Observation only, never a second write: the native State must be
         ``in-progress`` and the bounded ``stateHistory`` must show In Progress,
-        then Review reached after the review receipt, then In Progress (PAT-76).
+        then Review reached at or after the review receipt, then In Progress (PAT-76).
         """
         state_ids = binding["state_ids"]
         state = readback.get("state")
@@ -5888,6 +5875,26 @@ class LinearTracker(Tracker):
             issue_id, readback.get("id"), native_state_id,
             review_receipt_at, state_ids,
         )
+
+    @staticmethod
+    def _check_review_chain(reviews: list[tuple[dict, str]]) -> None:
+        """Sort ``(payload, body)`` review receipts by generation, in place, and require
+        generations 1..n with each ``previous_projection_digest`` the sha256 of the
+        previous body (the projection and the review State write share this check)."""
+        reviews.sort(key=lambda item: item[0]["generation"])
+        previous_body = None
+        for expected_generation, (payload, body) in enumerate(reviews, start=1):
+            previous_digest = (
+                hashlib.sha256(previous_body.encode()).hexdigest()
+                if previous_body is not None
+                else None
+            )
+            if (
+                payload["generation"] != expected_generation
+                or payload.get("previous_projection_digest") != previous_digest
+            ):
+                raise TrackerConflictError("Linear lifecycle review chain invalid")
+            previous_body = body
 
     @staticmethod
     def _native_state_name(raw: dict, binding: dict) -> str:
@@ -6015,26 +6022,10 @@ class LinearTracker(Tracker):
                 generation = decoded[1].get("generation")
                 if type(generation) is not int or generation < 1:
                     raise TrackerConflictError("Linear lifecycle state proof malformed")
-                reviews.append((generation, decoded[1], row.get("body")))
-            reviews.sort(key=lambda item: item[0])
-            previous_body = None
-            for expected_generation, (generation, payload, body) in enumerate(
-                reviews, start=1,
-            ):
-                previous_digest = (
-                    hashlib.sha256(previous_body.encode()).hexdigest()
-                    if previous_body is not None
-                    else None
-                )
-                if (
-                    generation != expected_generation
-                    or payload.get("previous_projection_digest") != previous_digest
-                ):
-                    raise TrackerConflictError("Linear lifecycle review chain invalid")
-                previous_body = body
-            latest = (reviews[-1][0], reviews[-1][2]) if reviews else None
+                reviews.append((decoded[1], row.get("body")))
+            self._check_review_chain(reviews)
             receipt_at = self._receipt_created_at(
-                comments, latest[1] if latest else None,
+                comments, reviews[-1][1] if reviews else None,
             )
         return self._bounded_issue_update(
             issue_id, fresh, binding, values, expected,

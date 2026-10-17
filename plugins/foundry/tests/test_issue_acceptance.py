@@ -754,18 +754,33 @@ def test_cli_flag_filter_knows_the_accept_flags():
     assert issue_cli._ACCEPT_FLAG_PREFIXES == ("--human-verdict=", "--decision-file=")
 
 
-def test_cli_status_names_a_native_state_that_is_not_a_replay_state(monkeypatch, capsys):
-    """PAT-239 (206-1): `relance` only for the states `accept` can replay from."""
+def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, capsys):
+    """PAT-239 (206-1): `relance` is unconditional only for `done`."""
     monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: object())
-    for native, replay in (("blocked", False), ("in-progress", True), ("done", True)):
+    for native, hint in (
+        ("blocked", "pas un état de reprise"),
+        ("in-progress", "encore celui de la décision"),
+        ("done", "aucun second reçu)"),
+    ):
         monkeypatch.setattr(
             write, "issue_acceptance_state",
             lambda *_a, native=native: write.AcceptanceState("receipt-only", "d" * 64, native),
         )
         issue_cli.accept("LIN-5", flags=["--status"])
         out = capsys.readouterr().out
-        assert ("relance exactement" in out) is replay
-        assert ("pas un état de reprise" in out) is (not replay)
+        assert hint in out
+        assert ("encore celui de la décision" in out) is (native == "in-progress")
+        assert ("pas un état de reprise" in out) is (native == "blocked")
+
+
+def test_replay_refuses_a_native_state_other_than_the_decision_from_state(monkeypatch):
+    """PAT-239 (206-1): from_state ready, native in-progress (both in FROM_STATES)."""
+    tracker, wire, _project = _graph(monkeypatch)
+    issue_id = _issue(wire, state="ready")
+    _accept(tracker, issue_id, _doc(issue_id, from_state="ready"))
+    wire.issues[issue_id]["state"]["id"] = STATE_IDS["in-progress"]
+    with pytest.raises(TrackerConflictError, match="expected ready"):
+        _accept(tracker, issue_id, _doc(issue_id, from_state="ready"))
 
 
 def test_cli_unknown_flag_for_accept_lists_the_real_flags(monkeypatch):
@@ -785,3 +800,9 @@ def test_the_linear_predecessors_are_the_decision_from_states():
 
     assert linear._HUMAN_ACCEPTANCE_PREDECESSORS is decisions.FROM_STATES
     assert decisions.FROM_STATES == frozenset({"backlog", "ready", "in-progress"})
+
+
+def test_accept_allowed_text_names_every_accept_flag():
+    """PAT-239: `_ACCEPT_ALLOWED` is pinned to `_ACCEPT_FLAG_PREFIXES` and `--status`."""
+    for flag in (*issue_cli._ACCEPT_FLAG_PREFIXES, "--status"):
+        assert flag in issue_cli._ACCEPT_ALLOWED

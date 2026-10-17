@@ -1178,8 +1178,10 @@ Review reached at or after the creation time of the latest generation's `state-r
 receipt (`review_receipt_at <= review_start` in `_review_regression_proven`;
 `_receipt_created_at`, the same rule as the PAT-76 projection). That latest receipt is
 chosen in `_project_native_state` only after the generations 1..n and
-`previous_projection_digest` chain of the review receipts are checked, as the projection
-does, else `Linear lifecycle review chain invalid`. The readback looks the history up by the
+`previous_projection_digest` chain of the review receipts are checked, by the same
+helper as the projection (`_check_review_chain`): else `Linear lifecycle review chain
+invalid`, or `Linear lifecycle state proof malformed` for a non-integer or non-positive
+generation. The readback looks the history up by the
 issue id the command was given, not by the `identifier` of the readback. It is
 observation only: the State is not written again and there is no retry, as PAT-ADR-0006
 S2 requires (one single write, no automatic or silent retry); any other divergence still
@@ -1224,9 +1226,13 @@ foundry_cli.py issue accept <ID> --status
 the coordinator transmits. `--status` is read-only, takes no other flag and prints one of
 `aucune acceptation humaine`, `accepté`, `reçu écrit, état non projeté` or `inconnu`
 (`write.issue_acceptance_state`). `reçu écrit, état non projeté` tells to run the same
-command again only when the native state is `backlog`, `ready`, `in-progress` or `done`
-(`_ACCEPT_RETRY_STATES` in `issue.py`: `acceptance_decision.FROM_STATES` plus `done`); for any
-other native state it says the state is not a replay state. `FROM_STATES` is also the
+command again unconditionally only when the native state is `done`. For `backlog`, `ready` or
+`in-progress` (`_ACCEPT_RETRY_STATES` in `issue.py`: `acceptance_decision.FROM_STATES` plus
+`done`) it adds "si l'état natif est encore celui de la décision (`from_state`) ; sinon elle
+est refusée", because the replay refuses any other native state (`native state is ..., expected
+...` in `LinearTracker.accept_issue`) and the status does not carry `from_state`
+(`acceptance_coordinates` is unchanged, as PAT-ADR-0023 binds them). For any other native
+state it says the state is not a replay state. `FROM_STATES` is also the
 Linear set of admitted predecessors (`_HUMAN_ACCEPTANCE_PREDECESSORS`): one set, not two. A
 misspelled flag lists `--decision-file=<chemin>, --human-verdict=<verdict>, --status` as the
 allowed ones. A repeated `--human-verdict=` or `--decision-file=` is
@@ -1251,12 +1257,14 @@ unconfirmed or other-hash record is refused) and `issue` (`id`, an issue of the 
 project other than the accepted one, checked with `validate_issue_binding`). A checked box
 or a native state is not evidence. The only check on a criterion's evidence is structural
 (at least one item, and each item exists in the same project); nothing checks that the cited
-evidence supports that criterion, which stays the maintainer's judgement. Adding a type is a code and test change. The size bound
-is `advisory_schema.MAX_COMMENT_BYTES` (`acceptance_decision.MAX_BYTES`), one value applied to the file read, to the
-canonical document and to the final receipt body, so the receipt (document plus its
-marker) is the tightest of the three;
-it is the bound retained for advisory comments, not a qualification of Linear's maximum
-comment size (unknown).
+evidence supports that criterion, which stays the maintainer's judgement. Adding a type is a
+code and test change. The size bound is `advisory_schema.MAX_COMMENT_BYTES`
+(`acceptance_decision.MAX_BYTES`), one value applied to the file read, to the canonical
+document and to the final receipt body. Deduced: the receipt is always larger than the
+canonical document, as both are compact `ensure_ascii` JSON and the receipt embeds the document
+(`_lifecycle_marker`, `canonical`); a file written with indentation can exceed the bound
+while its compact receipt would not. The bound is retained for advisory comments, not a
+qualification of Linear's maximum comment size (unknown).
 
 **Refusals before any write** (`LinearTracker.accept_issue`; locally, before any read,
 `write.validate_acceptance_request`: missing or different verdict, other provider, invalid
@@ -1297,10 +1305,13 @@ conflict (`malformed or stale`), as for a review proof. Between the receipt and 
 projection the strict read refuses (`Linear native state changed outside lifecycle`);
 the recovery is to run exactly the same command, which converges on the receipt and writes
 only the State. That replay branch (`recorded` in `LinearTracker.accept_issue`) compares the
-decision digest, rereads the lifecycle projection (so a stale body is refused) and
-projects the State; it does not run `verify_evidence` again and does not repeat the Epic,
-closure audit, children, PR receipt or zero-criterion refusals (deduced from the code
-order; those run after the replay branch returns). The digest is the sha256 of the
+decision digest and rereads the lifecycle projection, which refuses a decision next to a
+`state-review`, `state-done`, `acceptance`, `acceptance-override` or `cockpit-evidence`
+receipt and any changed body or criteria (`check_against_body`, zero criteria included). It
+then requires the native state to be the decision's `from_state` or `done`, and projects the
+State. It does not run `verify_evidence` again and does not repeat the Epic, closure audit
+and children refusals (deduced from the code order; those run after the replay branch
+returns). The digest is the sha256 of the
 canonical JSON with `ensure_ascii=True` (`canonical` in `acceptance_decision.py`) and the
 comparison is exact, with no Unicode normalization (no such call in the module): a replay file
 whose text differs in any code point, including a composed versus a decomposed accent in
