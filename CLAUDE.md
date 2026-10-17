@@ -403,7 +403,7 @@ still accepts exactly the keys `outcomes` and `quality`, and neither `issue.py` 
 are not marked "fix before merge", the cadencer decides `defer-remarks` before `merge`
 when the direct parent Epic of the ticket exists and is not itself a companion Epic. The
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
-`edit link` and `edit comment`, posts one comment per validated round, never one per
+`edit link` and `edit comment`, posts at most one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
 its attempt journal. The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round

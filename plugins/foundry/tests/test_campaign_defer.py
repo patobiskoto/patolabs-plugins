@@ -647,3 +647,50 @@ def test_next_announces_defer_remarks_where_step_will_do_it(env, monkeypatch, ca
     assert out["observation"]["tickets"][0]["deferral"]["deferrable"] == 2
     assert env.world.edits == []  # `next` wrote nothing
     assert step(env).decision.kind == "defer-remarks"
+
+
+def test_a_remark_already_deferred_in_an_earlier_round_is_not_deferred_again(env):
+    """PAT-237 (141-3): the partial review after a correction lists the same nit again (another
+    diff hash): it is not posted a second time; the new one is."""
+    reviewed(env, nits=1, fix=1)
+    assert step(env).decision.kind == "defer-remarks"
+    follow_up, = follow_ups(env)
+    assert step(env).decision.reason == "review_fix_before_merge"
+    assert step(env).decision.reason == "correction_not_pushed"
+    env.world.diff_hash = "e" * 64  # the corrected diff has another hash
+    again = result_text(nits=2)  # "nit: remark 0" again, and "nit: remark 1" which is new
+    env.world.reviews.append(again)
+    assert step(env).decision.kind == "review"
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason) == ("defer-remarks", "non_blocking_remarks")
+    assert len(follow_ups(env)) == 1 and len(follow_up.comments) == 2
+    assert "- nit: remark 1" in follow_up.comments[1]["text"]
+    assert "nit: remark 0" not in follow_up.comments[1]["text"]
+    field = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["event"] == "finished"
+             and r["kind"] == "defer-remarks"][-1]["deferral"]
+    assert field["state"] == "done" and field["remarks"] == 1
+
+
+def test_a_round_whose_remarks_were_all_deferred_before_writes_no_second_comment(env):
+    reviewed(env, nits=1, fix=1)
+    step(env), step(env), step(env)
+    env.world.diff_hash = "e" * 64
+    env.world.reviews.append(result_text(nits=1))
+    step(env)
+    follow_up, = follow_ups(env)
+    result = step(env)
+    assert result.decision.kind == "defer-remarks" and result.outcome == "executed"
+    assert len(follow_up.comments) == 1  # still the comment of round 1
+    field = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["event"] == "finished"
+             and r["kind"] == "defer-remarks"][-1]["deferral"]
+    assert field["state"] == "done" and field["remarks"] == 0
+    env.world.checks = [check()]
+    assert step(env).decision.kind == "merge"
+
+
+def test_the_tracker_comment_masks_a_credential_shaped_text_of_an_older_receipt():
+    """PAT-237 (141-1): defence in depth, a receipt written by hand is not trusted either."""
+    fake = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2"
+    text = cd.comment_text("APP-2", "APP-2@dddd", 12, 1, [
+        {"text": f"nit: leaked {fake}", "fix_before_merge": False, "target": "diff"}])
+    assert fake not in text and "[REDACTED]" in text

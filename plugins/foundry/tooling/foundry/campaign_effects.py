@@ -166,8 +166,10 @@ def valid_requests_field(value: object) -> bool:
 
 
 def usable_summary(text: object) -> str | None:
-    """The summary without its ``SUMMARY_MARK`` first line, or ``None`` when it is unusable:
-    empty, without that exact first line, or with nothing after it (PAT-227)."""
+    """The summary without its ``SUMMARY_MARK`` line, stripped, or ``None`` when it is unusable
+    (PAT-227): not a string, or, once the leading line breaks are dropped (``lstrip("\n")``), a
+    first line that is not ``SUMMARY_MARK`` once its surrounding whitespace is stripped, or
+    nothing but whitespace after that line (PAT-237)."""
     if not isinstance(text, str):
         return None
     first, _, rest = text.lstrip("\n").partition("\n")

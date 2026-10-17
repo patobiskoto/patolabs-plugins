@@ -101,21 +101,24 @@ the same `_launch` and `session_argv`, so it has the same sandbox.
 
 ### The summary criterion (PAT-227)
 
-Observed 2026-10-17 (`docs/qualification/pat-219-epic-campaign-2026-10-17.md`): the final
-summary of an implementation session was the reply to a background-command notification and was
-published as the PR body unchanged; the cause is deduced (the session ran its tests as a
-background command and `claude --print` returned its last turn), not observed. The criterion is
-mechanical (`usable_summary`): a summary is usable when its first line is exactly
-`FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`) and something follows. A saved summary file that does
-not decode as UTF-8 is read as no summary (`_plan`) and published as `SUMMARY_UNUSABLE_BODY`,
-and `_save_summary` cuts the text on a character boundary so that its file decodes. The implementation and correction
-prompts ask for that line. `published_summary` returns the summary without that line, or, when
-it is empty, lacks the line or has nothing after it, the fixed text `SUMMARY_UNUSABLE_BODY`
-(`Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the review rounds.`); the
-`open-pr` effect (`_plan`) and `update_pr_body` publish only that, and the reviewer prompt of a
-description that is that placeholder says so (`review_prompt`, `placeholder`). The saved file
-keeps the summary as the session wrote it. Whether a session that follows the prompt always
-prints the line is unknown.
+Observed 2026-10-17 (`docs/qualification/pat-219-epic-campaign-2026-10-17.md`): the final summary of
+an implementation session was the reply to a background-command notification and was published as
+the PR body unchanged; the cause is deduced (the session ran its tests as a background command and
+`claude --print` returned its last turn), not observed. The criterion is mechanical
+(`usable_summary`): once its leading line breaks are dropped, a summary is usable when its first
+line, stripped of surrounding whitespace, is `FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`) and the rest,
+stripped, is not empty
+(`test_the_summary_criterion_tolerates_blank_lines_and_edge_spaces_around_the_mark`,
+`tests/test_campaign_review.py`); the prompts ask the session for that line as its exact first line.
+A saved summary file that does not decode as UTF-8 is read as no summary (`_plan`) and published as
+`SUMMARY_UNUSABLE_BODY`, and `_save_summary` cuts the text on a character boundary so that its file
+decodes. The implementation and correction prompts ask for that line. `published_summary` returns
+the summary without that line, or, when it is empty, lacks the line or has nothing after it, the
+fixed text `SUMMARY_UNUSABLE_BODY` (`Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the
+review rounds.`); the `open-pr` effect (`_plan`) and `update_pr_body` publish only that, and the
+reviewer prompt of a description that is that placeholder says so (`review_prompt`, `placeholder`).
+The saved file keeps the summary as the session wrote it. Whether a session that follows the prompt
+always prints the line is unknown.
 
 ### Authority and its limit
 
@@ -358,12 +361,17 @@ without a session (proof carried, claim not granted): the count errs on the safe
 that goes through implement, three reviews and two corrections uses six sessions, so the
 per-issue ceiling of the approval must allow them (`campaign-approval.md`).
 
-"Implementation finished" is observable through this journal: the last `finished` line of
-kind `implement` or `correct`, `completed`, whose `branch_head` is the current branch head
-(`last_implementation`), makes the decision `open-pr` when there is no PR and the branch has
-commits beyond the remote default branch, and `open-pr` `correction_not_pushed` when a PR is
-open and its head is not the branch head (`campaign_cadence._ticket_step`). A session that commits nothing leaves the fingerprint
-unchanged, so the next `implement` is refused as a replay.
+"Implementation finished" is observable through this journal: the last `finished` line of kind
+`implement` or `correct`, `completed`, whose `branch_head` is the current branch head
+(`last_implementation`), makes the decision `open-pr` when there is no PR and the branch has commits
+beyond the remote default branch, and `open-pr` `correction_not_pushed` when a PR is open, its head
+is not the branch head and the PR head is an ancestor of the branch head
+(`campaign_cadence._ticket_step`; `branch_contains_pr`, observed by `_git_contains` with one
+read-only `git merge-base --is-ancestor <PR head> <branch head>`, only when the two heads differ).
+When it is not (the PR head moved on the remote only, the two diverged, or the PR head is unknown to
+the local repository: the three read `False`), the pass suspends `pr_head_not_in_branch` instead of
+pushing; that a push would then be refused by the remote is deduced, not run here. A session that
+commits nothing leaves the fingerprint unchanged, so the next `implement` is refused as a replay.
 
 ## The review effect
 
@@ -387,44 +395,56 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    reviewer sees the ADR index (`adr-index.json`) and the repository files only; that is a
    limit, not a decision.
 4. One fresh `claude --print` reviewer session, see below. Its final message must end with the
-   marker line `FOUNDRY_REVIEW_RESULT_V1` (`RESULT_SENTINEL`) and one JSON object. `parse_result` accepts exactly the keys
-   `outcomes` (non-empty list of `{id, digest (64 hex), verdict}` with `verdict` in `pass`,
-   `fail`, `not_covered`, `contradicted`), `quality` (`mergeable` or `blocked`),
+   marker line `FOUNDRY_REVIEW_RESULT_V1` (`RESULT_SENTINEL`) and one JSON object. `parse_result`
+   accepts the keys `outcomes` (non-empty list of `{id, digest (64 hex), verdict}` with `verdict` in
+   `pass`, `fail`, `not_covered`, `contradicted`), `quality` (`mergeable` or `blocked`),
    `fix_before_merge` and `non_blocking` (integers from 0 to `MAX_REMARK_COUNT`), `remarks`
    (PAT-141: a list of at most `MAX_REMARKS` entries `{text, fix_before_merge, target}`, `text`
    non-empty and at most `MAX_REMARK_TEXT` characters, `fix_before_merge` a boolean, `target`
    (PAT-227) `diff` or `description` (`review_remarks.TARGETS`), required from the reviewer; the
    number of `true` entries must equal `fix_before_merge` and the number of `false` entries
    `non_blocking`; `review_remarks.validate_remarks`; a receipt written before PAT-227 has no
-   `target` and reads as `diff`), a non-empty
-   report before the marker, and refuses `mergeable` with a verdict other than `pass`. Anything
-   else makes the attempt `failed` (`reviewer_output_invalid`) and records no proof.
-5. The report (the text before the marker, `claim_id` and token replaced by `[redacted]`) is
-   saved with `_save_summary`; the list-form file `{"outcomes": [...], "quality": ...}` (exactly
-   those two keys: `record-review-proof` refuses any other shape, `routing.py`) is written 0600
-   and `routing record-review-proof --root --base --issue --diff-hash --claim-id
-   --outcomes-file` records the proof; the issue criteria are re-read there, so ids and digests
-   that differ from the issue's are refused (attempt `failed`, `proof_refused`, claim left
-   active, `campaign-reviews/<attempt>/` kept for a human; recovery is `routing recover-review`,
-   a human decision, `skills/review-pr/SKILL.md`). After a recorded proof of a validated round
-   (quality `mergeable`), `routing record-review-remarks --root --base --issue --diff-hash
-   --proof-id --remarks-file` records the receipt of the remarks (`_record_remarks`; section "The
-   remarks receipt"); a refusal leaves the verdict recorded and sets the detail
-   `remarks_receipt_not_recorded`. Then the directory (claim, packet, outcomes and remarks files)
-   is removed.
-6. PAT-ADR-0022 asks the PR description to say that a partial review took place and that the
-   proof relies on the previous round. `update_pr_body` runs `issue openpr <ID>
-   --summary-stdin` on the open PR (`_reuse_or_open_pr` replaces the body when a summary is
-   supplied, `issue.py`), with the last saved summary among the completed implementation and
-   description corrections (`body_summary`, after the criterion above) and a `## Review rounds`
-   section rebuilt from the journal (`round_line`: full, partial or carried, verdict, short
-   head sha, and for a partial round the sentence on the reliance). It is a Foundry command,
-   not a session, and is made after a carried proof too. A refusal leaves the verdict
-   recorded and sets the detail `pr_body_not_updated`. Without a completed implementation or
-   description correction in the journal the body is the rounds section only; with one whose
-   summary file is missing, unreadable or unusable it is `SUMMARY_UNUSABLE_BODY` and the section
-   (`body_summary`). After a description correction (below) the section also holds one
-   line per correction (`description_lines`).
+   `target` and reads as `diff`), a non-empty report before the marker, and refuses `mergeable` with
+   a verdict other than `pass`. and, optionally, `full_review` (PAT-237, `FULL_REVIEW_KEY`: a
+   boolean, `true` when a partial review read the whole diff; see "Partial review and proof carry");
+   any other key is refused. Anything else makes the attempt `failed` (`reviewer_output_invalid`)
+   and records no proof.
+5. The report (the text before the marker, `claim_id` and token replaced by `[redacted]`) is saved
+   with `_save_summary`; the list-form file `{"outcomes": [...], "quality": ...}` (exactly those two
+   keys: `record-review-proof` refuses any other shape, `routing.py`) is written 0600 and `routing
+   record-review-proof --root --base --issue --diff-hash --claim-id --outcomes-file` records the
+   proof; the issue criteria are re-read there, so ids and digests that differ from the issue's are
+   refused (attempt `failed`, `proof_refused`, claim left active, `campaign-reviews/<attempt>/` kept
+   for a human; recovery is `routing recover-review`, a human decision,
+   `skills/review-pr/SKILL.md`). The other failures after a granted claim, `claim_malformed`,
+   `prepare_refused`, `reviewer_session_failed` and `reviewer_output_invalid`, return the same way:
+   `launch_review` has no call that releases the claim, and `campaign-reviews/<attempt>/` is removed
+   only once a proof is recorded, so it is kept for them too. The claim stays active in the review
+   ledger, and an unchanged diff already claimed whose verdict is unavailable stops the workflow for
+   recovery (`docs/model-routing.md`), so the way out is the same human `routing recover-review`;
+   for `claim_malformed` the claim identifier may be unreadable, and whether recovery is then
+   possible is unknown. The text of each remark is scrubbed like the report before the receipt
+   (`scrub_remarks`, PAT-237: `claim_id` and token replaced by `[redacted]`, the credential shapes
+   of `mask_credentials` by `[REDACTED]`, the text cut back to `MAX_REMARK_TEXT`), and
+   `comment_text` of the deferral masks the credential shapes again, so that a receipt recorded by
+   hand is not trusted either. After a recorded proof of a validated round (quality `mergeable`),
+   `routing record-review-remarks --root --base --issue --diff-hash --proof-id --remarks-file`
+   records the receipt of the remarks (`_record_remarks`; section "The remarks receipt"); a refusal
+   leaves the verdict recorded and sets the detail `remarks_receipt_not_recorded`. Then the
+   directory (claim, packet, outcomes and remarks files) is removed.
+6. PAT-ADR-0022 asks the PR description to say that a partial review took place and that the proof
+   relies on the previous round. `update_pr_body` runs `issue openpr <ID> --summary-stdin` on the
+   open PR (`_reuse_or_open_pr` replaces the body when a summary is supplied, `issue.py`), with the
+   last saved summary among the completed implementation and description corrections
+   (`body_summary`, after the criterion above) and a `## Review rounds` section rebuilt from the
+   journal (`round_line`: full, partial or carried, verdict, short head sha, and for a partial round
+   the sentence on the reliance; a round is recorded partial only when its review was a partial one
+   and its result does not carry `full_review`). It is a Foundry command, not a session, and is made
+   after a carried proof too. A refusal leaves the verdict recorded and sets the detail
+   `pr_body_not_updated`. Without a completed implementation or description correction in the
+   journal the body is the rounds section only; with one whose summary file is missing, unreadable
+   or unusable it is `SUMMARY_UNUSABLE_BODY` and the section (`body_summary`). After a description
+   correction (below) the section also holds one line per correction (`description_lines`).
 
 The `finished` line carries the verdict (`review` key) and `summary_file` (the report). The
 step output (`effect.review`, `effect.report_file`) exposes the verdict, the number of remarks
@@ -453,7 +473,7 @@ claude --print --output-format json --model <routed model> --max-budget-usd <bud
   --permission-mode dontAsk --tools Read,Grep,Glob,Bash --add-dir <packet directory>
   --setting-sources user --strict-mcp-config --mcp-config '{"mcpServers":{}}'
   --name foundry-campaign-<EPIC>-<ID>-review [--effort <routed effort>]
-  --session-id <uuid5 of the attempt identity>
+  --no-session-persistence --session-id <uuid5 of the attempt identity>
   --allowedTools Read Grep Glob "Bash(python3 <cli> routing read-review *)"
   "Bash(python3 <cli> routing search-review *)" "Bash(python3 <cli> routing list-review *)"
 ```
@@ -461,22 +481,27 @@ claude --print --output-format json --model <routed model> --max-budget-usd <bud
 (`reviewer_argv`). Model and effort come from `RoutingPolicy.resolve("reviewer", "claude",
 minimum_tier=<escalation floor>)`: the reviewer is a gate role, so the route cannot be below
 `GATE_FLOORS["reviewer"]` (`frontier`) and effort `GATE_EFFORT_FLOORS["reviewer"]` (`high`,
-`routing.py`; FOUNDRY-ADR-0006); `tests/test_campaign_review.py` asserts the argv against
-that resolution. The budget is `--budget-usd` (the same value as an implementer session);
-timeout `REVIEW_TIMEOUT_SECONDS`; the child environment is that of the implementer session
-(`_claude_child_environment`) plus `FOUNDRY_DATA` when it is set (`plan_review`): the read
-verbs find the claim under `registry.data_dir()`, which reads that variable (`registry.py`);
-without it, deduced, they would look in the default directory. The implementer session does
-not receive it. `--setting-sources user --strict-mcp-config --mcp-config` (the flags are listed
-by the installed `claude --help`; the last two are used by `campaign_runtime.py`) keep the
-`.claude/settings*.json` of the worktree, which the diff or an earlier session may have
-written, and any project MCP server out of the reviewer session; the `session_argv` of the
-implementer session carries the same three flags (`session_argv`, `campaign_effects.py`). The prompt (`review_prompt`, standard input) carries the
-reviewer contract of `skills/review-pr/SKILL.md` (stages, output, marker), the exact
-`read-review` command, and the send text written by `prepare-review`, followed by a sentence
-saying that the output contract overrides that text (which asks to load `review-pr` and to
-return its JSON; `review_packet.py` is unchanged, for the manual workflow); it carries `claim_id`
-because the reviewer needs it to read the diff, and the argv of the session does not.
+`routing.py`; FOUNDRY-ADR-0006); `tests/test_campaign_review.py` asserts the argv against that
+resolution. The budget is `--budget-usd` (the same value as an implementer session); timeout
+`REVIEW_TIMEOUT_SECONDS`; the child environment is that of the implementer session
+(`_claude_child_environment`) plus `FOUNDRY_DATA` when it is set (`plan_review`): the read verbs
+find the claim under `registry.data_dir()`, which reads that variable (`registry.py`); without it,
+deduced, they would look in the default directory. The implementer session does not receive it.
+`--setting-sources user --strict-mcp-config --mcp-config` (the flags are listed by the installed
+`claude --help`; the last two are used by `campaign_runtime.py`) keep the `.claude/settings*.json`
+of the worktree, which the diff or an earlier session may have written, and any project MCP server
+out of the reviewer session; the `session_argv` of the implementer session carries the same three
+flags (`session_argv`, `campaign_effects.py`). `--no-session-persistence` (PAT-237, also carried by
+`campaign_runtime.py`) is on the reviewer only: nothing resumes a reviewer session and
+`launch_review` reads its result from standard output (deduced from the code). The implementation
+and correction sessions are left as they were, because the routing hook reads the session transcript
+to observe the host version (AGENTS.md#R7) and whether the flag leaves such a transcript is unknown.
+The prompt (`review_prompt`, standard input) carries the reviewer contract of
+`skills/review-pr/SKILL.md` (stages, output, marker), the exact `read-review` command, and the send
+text written by `prepare-review`, followed by a sentence saying that the output contract overrides
+that text (which asks to load `review-pr` and to return its JSON; `review_packet.py` is unchanged,
+for the manual workflow); it carries `claim_id` because the reviewer needs it to read the diff, and
+the argv of the session does not.
 
 Why `dontAsk`: a tool call that no rule pre-approves is refused without a prompt, so with the
 `--allowedTools` list above the session can only read files, search, and run the three
@@ -503,23 +528,26 @@ For a `correct` decision with reason `review_blocked`, `review_fix_before_merge`
 
 1. The report saved for the exact PR head and base is read from the journal; without one (for
    example a proof recorded by hand) the pass fails at the plan phase and nothing is launched.
-2. For a blocking review only, `routing escalation failure <ID> implementer --kind
-   review_blocking` (`review_blocking_after_fix` only when the blocked PR head is the
-   `branch_head` of a completed `correct` attempt: "a correction was reviewed and blocked
-   again", `model-routing.md`) `--current-tier <routed tier without the escalation floor> --idempotency-key campaign-<EPIC>-<ID>-<kind>-<head>
-   --root <worktree> --base <PR base sha>`. It runs before the claim because its answer decides
-   whether and at which tier the session runs; the key and the tier sent are stable (the floor is not
-   added: `record_failure` raises the tier to it), so a replay after `escalated` sends the same
-   signal and writes nothing more (`escalation.py`, `record_failure`). Before it, `plan_correct` applies the refusals of
-   `claim` (`refusal`: attempt already made, session ceilings), so a signal is not recorded for
-   an attempt the claim would refuse. `human_required: true` (the command also exits
-   2) returns `suspend` `human_required`; `action: technical_blocked` returns `suspend`
-   `technical_blocked`; any `action` outside `CONTINUE_ACTIONS` (`failure_recorded`,
-   `escalated`, `remediation_continued`; for example `authority_ambiguous`) returns `suspend`
-   with the action as reason; no session is launched and no attempt is claimed. Otherwise the
-   session runs at the tier of `final_tier`. A validated review with remarks marked "fix before merge"
-   records no escalation failure (`skills/review-pr/SKILL.md`: a non-blocking verdict touches
-   no escalation state).
+2. For a blocking review only, `routing escalation failure <ID> implementer --kind review_blocking`
+   (`review_blocking_after_fix` only when the blocked PR head is the `branch_head` of a completed
+   `correct` attempt: "a correction was reviewed and blocked again", `model-routing.md`)
+   `--current-tier <routed tier without the escalation floor> --idempotency-key
+   campaign-<EPIC>-<ID>-<kind>-<head> --root <worktree> --base <PR base sha>`. It runs before the
+   claim because its answer decides whether and at which tier the session runs; the key and the tier
+   sent are stable (the floor is not added: `record_failure` raises the tier to it; when no model is
+   available at the tier without the floor, `_tier_without_floor` sends the tier resolved with the
+   active floor instead of failing the plan, PAT-237; a replay whose first signal was sent at
+   another tier is then refused by the escalation command and the plan fails with `échec d'escalade
+   non enregistré`, deduced from `record_failure`), so a replay after `escalated` sends the same
+   signal and writes nothing more (`escalation.py`, `record_failure`). Before it, `plan_correct`
+   applies the refusals of `claim` (`refusal`: attempt already made, session ceilings), so a signal
+   is not recorded for an attempt the claim would refuse. `human_required: true` (the command also
+   exits 2) returns `suspend` `human_required`; `action: technical_blocked` returns `suspend`
+   `technical_blocked`; any `action` outside `CONTINUE_ACTIONS` (`failure_recorded`, `escalated`,
+   `remediation_continued`; for example `authority_ambiguous`) returns `suspend` with the action as
+   reason; no session is launched and no attempt is claimed. Otherwise the session runs at the tier
+   of `final_tier`. A validated review with remarks marked "fix before merge" records no escalation
+   failure (`skills/review-pr/SKILL.md`: a non-blocking verdict touches no escalation state).
 3. One fresh implementer session (`session_argv`, the argv of "The implementation session")
    whose prompt (`correct_prompt`) carries the issue and the saved report, asks to fix only the
    blocking findings, or only the remarks marked "fix before merge", or (reason
@@ -527,11 +555,12 @@ For a `correct` decision with reason `review_blocked`, `review_fix_before_merge`
    AGENTS.md#R9(c): change as few sentences as possible and re-check every new sentence
    against the code. Except for `remarks_not_deferrable`, the other non-blocking remarks are
    left untouched: the coordinator defers them.
-4. The session commits locally only. The next pass sees the branch ahead of the PR head and
-   decides `open-pr` `correction_not_pushed`: `issue openpr <ID>` pushes the branch and reuses
-   the open PR without replacing its body (`_reuse_or_open_pr`, `issue.py`). That the `review`
-   transition accepts a repeat on a ticket already in `review` is not exercised here (unknown).
-   A new head has no proof, so the pass after that decides `review`.
+4. The session commits locally only. The next pass sees the branch ahead of the PR head and decides
+   `open-pr` `correction_not_pushed` (`suspend` `pr_head_not_in_branch` when the PR head is not in
+   the branch, see "The attempt journal"): `issue openpr <ID>` pushes the branch and reuses the open
+   PR without replacing its body (`_reuse_or_open_pr`, `issue.py`). That the `review` transition
+   accepts a repeat on a ticket already in `review` is not exercised here (unknown). A new head has
+   no proof, so the pass after that decides `review`.
 
 ## The description correction (PAT-227)
 
@@ -554,20 +583,28 @@ The effect (`plan_correct`, `_launch`, `publish_description`) runs one implement
 description, starting with `FOUNDRY_SUMMARY_V1`. A usable message replaces the PR body through
 `issue openpr <ID> --summary-stdin`, with the `## Review rounds` section and a line saying the
 description was corrected per the remark and not re-reviewed because the diff is unchanged; the
-`finished` line then carries `description: {head, base}` and the next pass goes on (deferral,
-CI wait, merge) as for a validated round with nothing left to fix. A session that fails, an
-unusable message (`error` `description_summary_unusable`) or a refused `issue openpr` (`error`
+`finished` line then carries `description: {head, base}` and the next pass goes on (deferral, CI
+wait, merge) as for a validated round with nothing left to fix. A session that fails, an unusable
+message (`error` `description_summary_unusable`) or a refused `issue openpr` (`error`
 `description_not_published`) fails the attempt; the next pass then suspends
-`description_correction_not_settled` (not `attempt_already_made`). Before publishing,
-`publish_description` also refuses a worktree HEAD that is not the ticket branch
-(`description_worktree_branch_mismatch`, `branch_mismatch`) and one whose commit
-(`worktree_head_sha`) differs from the PR head observed before the session
-(`description_session_moved_head`: the session must commit nothing); nothing is pushed or
-published (`test_the_description_is_not_published_when_the_session_committed`). The attempt is
-`failed`, so no `open-pr` follows. The next pass decides `review_fix_description` again: with the
-same fingerprint (HEAD on another branch) it suspends `description_correction_not_settled`; with
-a new commit the branch head, hence the fingerprint, changed and a new description attempt is
-possible, bounded by `MAX_CORRECTIONS`; the local commit stays unpushed.
+`description_correction_not_settled` (not `attempt_already_made`). Before the session,
+`plan_correct` compares the commit the worktree HEAD names (`worktree_head_sha`, one `git rev-parse
+HEAD`) with the PR head: if they differ it suspends `description_worktree_head_moved` (evidence
+`head` and `pr_head`) with no attempt claimed and no session launched; if the read fails the plan
+fails (`phase: plan`) and no attempt is consumed (PAT-237;
+`test_a_worktree_head_that_is_not_the_pr_head_launches_no_paid_session`,
+`test_an_unreadable_worktree_head_is_its_own_failure_before_and_after_the_session`). Before
+publishing, `publish_description` also refuses a worktree HEAD that is not the ticket branch
+(`description_worktree_branch_mismatch`, `branch_mismatch`), one whose commit differs from the PR
+head observed before the session (`description_session_moved_head`: the session must commit nothing)
+and one it cannot read (`description_head_unreadable`: a failed read, not a commit of the session);
+nothing is pushed or published (`test_the_description_is_not_published_when_the_session_committed`).
+The attempt is `failed`, so no `open-pr` follows. The next pass decides `review_fix_description`
+again: with the same fingerprint (HEAD on another branch, or an unreadable HEAD) it suspends
+`description_correction_not_settled`; after a session that committed, the branch head, hence the
+fingerprint, changed, but the worktree HEAD is not the PR head, so the pass suspends
+`description_worktree_head_moved` before any new session until a human brings the worktree back to
+the PR head; the local commit stays unpushed.
 
 Residual risk: a description corrected this way is not re-reviewed (deduced from the dedup by
 diff hash), and the merge gate never reads the PR description (`issue merge`, `write.py`).
@@ -631,10 +668,15 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
    in that case and a second follow-up can be created. Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number, the
-   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: one
-   comment per validated round, never one per remark (a correction changes the diff hash, so a
-   later validated round of the same pull request posts its own). It is skipped when a comment of the follow-up already contains that reference (a comment whose
-   answer was lost). The tracker may return only the most recent comments
+   ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff hash>`: at
+   most one comment per validated round, never one per remark (a correction changes the diff hash,
+   so a later validated round of the same pull request posts its own). A remark whose text equals
+   one of the deferrable remarks of the receipt of an earlier `done` deferral of the same ticket
+   (another diff hash) is left out (`already_deferred`, PAT-237: the partial review that follows a
+   correction may list it again); when nothing is left, no comment is posted and the `deferral`
+   field carries `remarks: 0`. The comparison is the exact text: a reworded remark is deferred again
+   (known limit). The comment is also skipped when a comment of the follow-up already contains that
+   reference (a comment whose answer was lost). The tracker may return only the most recent comments
    (`docs/review-rounds.md`): a comment older than that window would be posted again (unknown).
 5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>[,
    <FOLLOW-UP-ID>...] (companion Epic <ID>, created by this pull request|already existing; <N>
@@ -685,33 +727,41 @@ are unchanged by the deferral (`tests/test_campaign_defer.py`).
 
 ## Bounds
 
-Constants `MAX_REVIEW_ROUNDS` (3) and `MAX_CORRECTIONS` (2) in `campaign_cadence.py`, chosen
-and not measured (unknown), counted per ticket from the attempt journal (`campaign_review.history`):
-the recorded, non-carried `review` verdicts, and the `started` `correct` lines. A `review`
-decision at three rounds returns `suspend` `review_rounds_exhausted`; a `correct` decision at
-two corrections returns `suspend` `corrections_exhausted` (also for remarks to fix: they are
-never merged over). `decide` stays pure: the counts are facts of the observation
-(`TicketFacts`). These two are not the only suspensions: the others are `human_required`,
-`technical_blocked` and any other `action` outside `CONTINUE_ACTIONS` (correction effect),
-`deferral_retries_exhausted`, `description_correction_not_settled`, `attempt_already_made`,
-`attempts_journal_invalid`,
-`ci_failing_not_executed`, `worktree_branch_mismatch`, and those of `campaign_cadence.decide`
-(`node_unreadable`, `structure_changed`, `dependency_state_behind`, `several_in_progress`,
-`merged_pr_state_behind`, `pr_closed_unmerged`, `pr_ambiguous`, `pr_head_unreadable`,
-`no_eligible_ticket`). The approval ceilings (`refuse`) also apply.
+Constants `MAX_REVIEW_ROUNDS` (3) and `MAX_CORRECTIONS` (2) in `campaign_cadence.py`, chosen and not
+measured (unknown), counted per ticket from the attempt journal (`campaign_review.history`): the
+recorded, non-carried `review` verdicts, and the `started` `correct` lines. A `review` decision at
+three rounds returns `suspend` `review_rounds_exhausted`; a `correct` decision at two corrections
+returns `suspend` `corrections_exhausted` (also for remarks to fix: they are never merged over).
+`decide` stays pure: the counts are facts of the observation (`TicketFacts`). These two are not the
+only suspensions: the others are `human_required`, `technical_blocked` and any other `action`
+outside `CONTINUE_ACTIONS` (correction effect), `deferral_retries_exhausted`,
+`description_correction_not_settled`, `description_worktree_head_moved`, `attempt_already_made`,
+`attempts_journal_invalid`, `ci_failing_not_executed`, `worktree_branch_mismatch`, and those of
+`campaign_cadence.decide` (`node_unreadable`, `structure_changed`, `dependency_state_behind`,
+`several_in_progress`, `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_head_not_in_branch`,
+`pr_ambiguous`, `pr_head_unreadable`, `no_eligible_ticket`). The approval ceilings (`refuse`) also
+apply.
 
 ## Partial review and proof carry
 
 Decided from the journal by `campaign_review.review_mode`, for the review attempt:
 
-- `partial` (PAT-ADR-0022, `AGENTS.md#R9`): the last recorded round is `validated` and the
-  last correction session ended on exactly the head now reviewed. The prompt says so, and
+- `partial` (PAT-ADR-0022, `AGENTS.md#R9`): the last recorded round is `validated` and the last
+  correction session ended on exactly the head now reviewed. The prompt says so, and
   `--declarations-file` carries the previous verdict, the previous report (at most
-  `MAX_PREVIOUS_REPORT_BYTES`) and the commit range `<previous head>..<head>` to the packet
-  as unverified coordinator assertions (`docs/review-packet.md`); the reviewer returns a verdict
-  on all criteria for the exact diff and may ask for a full review with a reason. A round after
-  a blocking review is always `full`. The proof is the same as a full one and relies on the
-  previous round for the unchanged parts; no mechanical check tells them apart (`review-rounds.md`).
+  `MAX_PREVIOUS_REPORT_BYTES`) and the commit range `<previous head>..<head>` to the packet as
+  unverified coordinator assertions (`docs/review-packet.md`); the reviewer returns a verdict on all
+  criteria for the exact diff and may ask for a full review with a reason: a reviewer that read the
+  whole diff adds `"full_review": true` to its result (PAT-237), the round is then recorded
+  `partial: false` and `round_line` calls it a full review. Without that key the round stays
+  partial, whatever the reviewer read (`tests/test_campaign_review.py`,
+  `test_a_partial_review_the_reviewer_widened_is_recorded_as_a_full_round`). The prompt
+  (`review_prompt`) says that the remarks to correct of the previous round are those marked "fix
+  before merge" or, when none of them could be deferred (`remarks_not_deferrable`), every
+  non-blocking one, and asks not to list again a remark the correction was not asked to settle, so
+  that a later deferral does not carry it a second time. A round after a blocking review is always
+  `full`. The proof is the same as a full one and relies on the previous round for the unchanged
+  parts; no mechanical check tells them apart (`review-rounds.md`).
 - `carry` (PAT-ADR-0021, `review-rounds.md`, "Carrying a terminal proof"): the last round is
   validated with no remark to fix, no correction since, and only the base differs. The effect
   runs `routing carry-review-proof --issue --root --base <new base> --from-base <old base>
@@ -746,6 +796,17 @@ durable refusal and transient wait, reconciliation, orphan attach, the neutral s
 the closure graph unchanged, the merge gate) and `tests/test_review_remarks.py` (the receipt
 and the strict parsing of `remarks`).
 
+R5 status (PAT-237): updated `docs/campaign-effects.md` and `docs/campaign-cadence.md`. Candidate
+artefacts: the optional key `full_review` of the reviewer result (`FULL_REVIEW_KEY`); the decision
+reason `pr_head_not_in_branch`, the key `branch_contains_pr` of an observed ticket and the
+`contains` argument of `observe`; the suspension `description_worktree_head_moved` and the error
+`description_head_unreadable`; the argv flag `--no-session-persistence` of the reviewer session; the
+helpers `scrub_remarks` and `already_deferred`. No CLI verb or option, configuration key or routing
+table changed. Code behaviour changed without a new constant: remark texts scrubbed before the
+receipt and the tracker comment, the tier sent to the escalation command when the tier without the
+floor is unavailable, a remark deferred once is not deferred again, the wording of the
+partial-review prompt.
+
 R5 status (PAT-236): updated `docs/campaign-effects.md`, `docs/model-routing.md` and
 `AGENTS.md`/`CLAUDE.md` R7 (the headless runners that apply
 `claude_headless_host_version_requirement()`: three, and the working directory of its `--version`
@@ -759,13 +820,14 @@ before the claim, and the `claude --version` probe run in the directory of the s
 (`session_plan`).
 
 R5 status (PAT-218): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
-`docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("What is not coded yet"),
-`README.md`. Candidate artefacts: new constants `MAX_REVIEW_ROUNDS`, `MAX_CORRECTIONS`,
-`REVIEWER_TOOLS`, `RESULT_SENTINEL`, `SESSION_KINDS`; new decision reasons
-`correction_not_pushed`, `review_fix_before_merge`, `review_rounds_exhausted`,
-`corrections_exhausted`, `human_required`, `technical_blocked`, `ci_failing_not_executed`;
-the optional journal key `review`. No CLI verb or option, configuration key or routing table
-changed.
+`docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("What is not coded yet"), `README.md`.
+Candidate artefacts: new constants `MAX_REVIEW_ROUNDS`, `MAX_CORRECTIONS`, `REVIEWER_TOOLS`,
+`RESULT_SENTINEL`, `SESSION_KINDS`; new decision reasons `correction_not_pushed`,
+`review_fix_before_merge`, `review_rounds_exhausted`, `corrections_exhausted`, `human_required`,
+`technical_blocked`, `ci_failing_not_executed`; the optional journal key `review`; the step output
+keys `effect.review` and `effect.report_file`; the step outcome `awaiting_review_execution`
+(PAT-217: a `review` or `correct` decision stopped the run) is removed (commit `1a1bacf`, PAT-218:
+such a decision is now executed). No CLI verb or option, configuration key or routing table changed.
 
 R5 status (PAT-141): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
 `docs/review-rounds.md`, `skills/merge-pr/SKILL.md`, `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic
@@ -793,7 +855,7 @@ the suspension `description_correction_not_settled`; the constants `SUMMARY_MARK
 `SUMMARY_UNUSABLE_BODY`, `TARGETS`, `DESCRIPTION_KEY`; the optional journal keys
 `fix_description` (in `review`) and `description`; the errors `description_summary_unusable`,
 `description_not_published`, `description_worktree_branch_mismatch` and
-`description_session_moved_head`. Also updated: `docs/review-rounds.md` and the sentence of
+`description_session_moved_head`. Also updated: the sentence of
 `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign") on what the correction loop re-reviews,
 which the description correction made partly false. No CLI verb or option, configuration key or
 routing table changed.
