@@ -35,7 +35,9 @@ def test_the_receipt_is_bound_to_the_proof_the_diff_and_the_generation(tmp_path)
     assert receipt["proof_id"] == proof["proof_id"] and receipt["generation"] == 1
     assert (receipt["diff_hash"], receipt["base"]) == (scenario.old_hash, scenario.old_base)
     store = rr.ReviewRemarksStore(carry.REPOSITORY, scenario.state)
-    assert store.find(carry.ISSUE, scenario.old_hash)["remarks"] == REMARKS
+    # PAT-227: a remark without ``target`` reads as ``diff``
+    assert store.find(carry.ISSUE, scenario.old_hash)["remarks"] == [
+        {**remark, "target": "diff"} for remark in REMARKS]
     assert store.find(carry.ISSUE, "0" * 64) is None and store.find("OTHER-1", scenario.old_hash) is None
     path = store.directory / proof["proof_id"]
     assert oct(path.stat().st_mode & 0o777) == "0o600"
@@ -149,3 +151,17 @@ def test_the_reviewer_contract_names_the_remarks_key():
     contract = cr.review_contract()
     assert "remarks" in contract and "fix_before_merge" in contract
     assert str(cr.MAX_REMARK_TEXT) in contract
+
+
+def test_the_target_of_a_remark_is_diff_or_description_and_required_from_a_reviewer():
+    assert rr.validate_remarks([{"text": "a", "fix_before_merge": True, "target": "description"}]
+                               )[0]["target"] == "description"
+    assert rr.validate_remarks(REMARKS)[0]["target"] == "diff"
+    with pytest.raises(rr.ReviewRemarksError):
+        rr.validate_remarks([{"text": "a", "fix_before_merge": True, "target": "code"}])
+    with pytest.raises(rr.ReviewRemarksError):
+        rr.validate_remarks(REMARKS, require_target=True)
+    with pytest.raises(cr.ReviewOutputInvalid):
+        _parse(_data(remarks=[{"text": "a", "fix_before_merge": True},
+                              {"text": "b", "fix_before_merge": False},
+                              {"text": "c", "fix_before_merge": False}]))

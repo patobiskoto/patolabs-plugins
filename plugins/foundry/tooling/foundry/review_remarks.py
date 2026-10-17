@@ -5,7 +5,7 @@ diff hash and the review generation of that proof, it is written by ``routing
 record-review-remarks`` next to ``record-review-proof``, and the merge gate never reads it
 (``issue merge`` and ``write.py`` do not import this module; ``tests/test_review_remarks.py``
 checks it).  It lists the non-blocking remarks of one review round, each marked deferrable
-or "fix before merge".  Append-only: a receipt is written once per proof; an identical replay
+or "fix before merge" and carrying a ``target`` (PAT-227).  Append-only: a receipt is written once per proof; an identical replay
 is accepted, a different one is refused.
 """
 from __future__ import annotations
@@ -23,6 +23,9 @@ SCHEMA_VERSION = 1
 STORE_DIR = "review-remarks"
 MAX_REMARKS = 1000
 MAX_REMARK_TEXT = 2000
+# PAT-227: what a remark is about; a remark without ``target`` (a receipt written before
+# PAT-227) reads as ``diff``.
+TARGETS = ("diff", "description")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -30,19 +33,29 @@ class ReviewRemarksError(ValueError):
     """The remarks or their receipt are refused (closed failure)."""
 
 
-def validate_remarks(remarks: object) -> list[dict]:
-    """Closed shape: a bounded list of {text, fix_before_merge}; returns a normalized copy."""
+def validate_remarks(remarks: object, *, require_target: bool = False) -> list[dict]:
+    """Closed shape: a bounded list of {text, fix_before_merge[, target]}; a normalized copy.
+
+    ``target`` is ``diff`` or ``description`` (PAT-227) and defaults to ``diff`` when absent,
+    unless ``require_target`` (the strict parsing of a reviewer result).
+    """
     if not isinstance(remarks, list) or len(remarks) > MAX_REMARKS:
         raise ReviewRemarksError("remarques hors contrat")
+    allowed = [{"text", "fix_before_merge", "target"}]
+    if not require_target:
+        allowed.append({"text", "fix_before_merge"})
     normalized = []
     for remark in remarks:
-        if (not isinstance(remark, dict) or set(remark) != {"text", "fix_before_merge"}
+        if (not isinstance(remark, dict)
+                or set(remark) not in allowed
                 or not isinstance(remark["text"], str) or not remark["text"].strip()
                 or len(remark["text"]) > MAX_REMARK_TEXT
-                or type(remark["fix_before_merge"]) is not bool):
+                or type(remark["fix_before_merge"]) is not bool
+                or remark.get("target", "diff") not in TARGETS):
             raise ReviewRemarksError("remarque hors contrat")
         normalized.append({"text": remark["text"].strip(),
-                           "fix_before_merge": remark["fix_before_merge"]})
+                           "fix_before_merge": remark["fix_before_merge"],
+                           "target": remark.get("target", "diff")})
     return normalized
 
 

@@ -82,12 +82,29 @@ the same `_launch` and `session_argv`, so it has the same sandbox.
   and body read by the coordinator (`tracker.get_issue`, before the attempt is claimed),
   because the session's Foundry configuration is isolated and resolves no tracker
   credential; the session implements its acceptance criteria, run the tests, commit locally, end with a
-  pull-request summary. The session may run the tests.
+  pull-request summary. The session may run the tests. The prompt asks for the exact first line
+  `FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`, PAT-227; see "The summary criterion").
 - Budget: `--budget-usd`, default `IMPLEMENT_BUDGET_USD`, at most `MAX_BUDGET_USD`; the
   default is not measured (unknown). Timeout `IMPLEMENT_TIMEOUT_SECONDS`.
 - The summary (the session `result`) is saved under `campaign-summaries/` next to the
   journal (`_save_summary`, mode 0600, at most `MAX_SUMMARY_BYTES`) and reaches
-  `issue openpr` on standard input.
+  `issue openpr` on standard input, after the criterion below.
+
+### The summary criterion (PAT-227)
+
+Observed 2026-10-17 (`docs/qualification/pat-219-epic-campaign-2026-10-17.md`): the final
+summary of an implementation session was the reply to a background-command notification and was
+published as the PR body unchanged; the cause is deduced (the session ran its tests as a
+background command and `claude --print` returned its last turn), not observed. The criterion is
+mechanical (`usable_summary`): a summary is usable when its first line is exactly
+`FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`) and something follows. The implementation and correction
+prompts ask for that line. `published_summary` returns the summary without that line, or, when
+it is empty, lacks the line or has nothing after it, the fixed text `SUMMARY_UNUSABLE_BODY`
+(`Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the review rounds.`); the
+`open-pr` effect (`_plan`) and `update_pr_body` publish only that, and the reviewer prompt of a
+description that is that placeholder says so (`review_prompt`, `placeholder`). The saved file
+keeps the summary as the session wrote it. Whether a session that follows the prompt always
+prints the line is unknown.
 
 ### Authority and its limit
 
@@ -242,7 +259,10 @@ directory of `campaign-approvals.jsonl`), mode 0600, written under an exclusive 
   `cost_usd`, `duration_ms`, `summary_file`, `branch_head`, `error`, `at`; and, for a
   `review` only, the optional closed key `review` (`REVIEW_KEYS`): `verdict` (`blocked` or
   `validated`), `fix_before_merge`, `non_blocking`, `diff_hash`, `base`, `head`, `carried`,
-  `partial`. A journal written before PAT-218 stays valid (`_OPTIONAL`).
+  `partial`, and the optional `fix_description` (PAT-227: how many of the `fix_before_merge`
+  remarks target the description; absent reads as 0); for a `correct` that replaced the PR
+  description, the optional closed key `description` (`{head, base}`, `valid_description_field`).
+  A journal written before PAT-218 or PAT-227 stays valid (`_OPTIONAL`).
 
 The `attempt` identity is the sha256 of the Epic, the ticket, the step kind and the
 fingerprint (`identity`): tracker state, branch head sha, PR number and PR head sha
@@ -298,10 +318,12 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    `outcomes` (non-empty list of `{id, digest (64 hex), verdict}` with `verdict` in `pass`,
    `fail`, `not_covered`, `contradicted`), `quality` (`mergeable` or `blocked`),
    `fix_before_merge` and `non_blocking` (integers from 0 to `MAX_REMARK_COUNT`), `remarks`
-   (PAT-141: a list of at most `MAX_REMARKS` entries `{text, fix_before_merge}`, `text` non-empty
-   and at most `MAX_REMARK_TEXT` characters, `fix_before_merge` a boolean; the number of `true`
-   entries must equal `fix_before_merge` and the number of `false` entries `non_blocking`;
-   `review_remarks.validate_remarks`), a non-empty
+   (PAT-141: a list of at most `MAX_REMARKS` entries `{text, fix_before_merge, target}`, `text`
+   non-empty and at most `MAX_REMARK_TEXT` characters, `fix_before_merge` a boolean, `target`
+   (PAT-227) `diff` or `description` (`review_remarks.TARGETS`), required from the reviewer; the
+   number of `true` entries must equal `fix_before_merge` and the number of `false` entries
+   `non_blocking`; `review_remarks.validate_remarks`; a receipt written before PAT-227 has no
+   `target` and reads as `diff`), a non-empty
    report before the marker, and refuses `mergeable` with a verdict other than `pass`. Anything
    else makes the attempt `failed` (`reviewer_output_invalid`) and records no proof.
 5. The report (the text before the marker, `claim_id` and token replaced by `[redacted]`) is
@@ -320,12 +342,14 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
 6. PAT-ADR-0022 asks the PR description to say that a partial review took place and that the
    proof relies on the previous round. `update_pr_body` runs `issue openpr <ID>
    --summary-stdin` on the open PR (`_reuse_or_open_pr` replaces the body when a summary is
-   supplied, `issue.py`), with the saved implementation summary and a `## Review rounds`
+   supplied, `issue.py`), with the last saved summary among the completed implementation and
+   description corrections (`body_summary`, after the criterion above) and a `## Review rounds`
    section rebuilt from the journal (`round_line`: full, partial or carried, verdict, short
    head sha, and for a partial round the sentence on the reliance). It is a Foundry command,
    not a session, and is made after a carried proof too. A refusal leaves the verdict
    recorded and sets the detail `pr_body_not_updated`. Without a saved summary the body is
-   the rounds section only.
+   the rounds section only. After a description correction (below) the section also holds one
+   line per correction (`description_lines`).
 
 The `finished` line carries the verdict (`review` key) and `summary_file` (the report). The
 step output (`effect.review`, `effect.report_file`) exposes the verdict, the number of remarks
@@ -399,7 +423,8 @@ its rules (the coordinator records the proof, as in the manual workflow).
 ## The correction effect
 
 For a `correct` decision with reason `review_blocked`, `review_fix_before_merge` or
-`remarks_not_deferrable` (`campaign_review.plan_correct`, before the attempt is claimed):
+`remarks_not_deferrable` (`campaign_review.plan_correct`, before the attempt is claimed; reason
+`review_fix_description`: see "The description correction" below):
 
 1. The report saved for the exact PR head and base is read from the journal; without one (for
    example a proof recorded by hand) the pass fails at the plan phase and nothing is launched.
@@ -432,6 +457,39 @@ For a `correct` decision with reason `review_blocked`, `review_fix_before_merge`
    the open PR without replacing its body (`_reuse_or_open_pr`, `issue.py`). That the `review`
    transition accepts a repeat on a ticket already in `review` is not exercised here (unknown).
    A new head has no proof, so the pass after that decides `review`.
+
+## The description correction (PAT-227)
+
+Observed 2026-10-17 (record cited above): a remark marked "fix before merge" that targeted only
+the PR description got a correction session that made no commit, so the fingerprint of the next
+pass was unchanged and the pass suspended `attempt_already_made`; a new review of the same diff
+was not possible (deduced: the review ledger dedups by diff hash, `routing claim-review`).
+
+`decide` (`campaign_cadence._ticket_step`) returns `correct` `review_fix_description` when the
+validated review of this head and base has remarks marked "fix before merge" and all of them
+target `description` (`TicketFacts.fix_description` equals `fix_before_merge`, from the
+`fix_description` key of the `review` line), and no correction has yet replaced the description
+for this head and base (`description_corrected`, from the `description` key of a completed
+`correct` line, `campaign_review.description_facts`). If any marked remark targets `diff`, the
+decision stays `review_fix_before_merge`. It counts as a correction (`MAX_CORRECTIONS`,
+`corrections_exhausted`).
+
+The effect (`plan_correct`, `_launch`, `publish_description`) runs one implementer session with
+`description_prompt`: no file change, no commit, and a final message that is the whole new
+description, starting with `FOUNDRY_SUMMARY_V1`. A usable message replaces the PR body through
+`issue openpr <ID> --summary-stdin`, with the `## Review rounds` section and a line saying the
+description was corrected per the remark and not re-reviewed because the diff is unchanged; the
+`finished` line then carries `description: {head, base}` and the next pass goes on (deferral,
+CI wait, merge) as for a validated round with nothing left to fix. A session that fails, an
+unusable message (`error` `description_summary_unusable`) or a refused `issue openpr` (`error`
+`description_not_published`) fails the attempt; the next pass then suspends
+`description_correction_not_settled` (not `attempt_already_made`). A session that commits despite
+the prompt leaves the branch ahead of the PR: the pass after that decides `open-pr`
+`correction_not_pushed` and a new review, as for any correction.
+
+Residual risk: a description corrected this way is not re-reviewed (deduced from the dedup by
+diff hash), and the merge gate never reads the PR description (`issue merge`, `write.py`).
+Whether the new description settles the remark is not checked by any gate.
 
 ## The defer-remarks effect (PAT-141, PAT-ADR-0028)
 
@@ -540,7 +598,8 @@ two corrections returns `suspend` `corrections_exhausted` (also for remarks to f
 never merged over). `decide` stays pure: the counts are facts of the observation
 (`TicketFacts`). These two are not the only suspensions: the others are `human_required`,
 `technical_blocked` and any other `action` outside `CONTINUE_ACTIONS` (correction effect),
-`deferral_retries_exhausted`, `attempt_already_made`, `attempts_journal_invalid`,
+`deferral_retries_exhausted`, `description_correction_not_settled`, `attempt_already_made`,
+`attempts_journal_invalid`,
 `ci_failing_not_executed`, `worktree_branch_mismatch`, and those of `campaign_cadence.decide`
 (`node_unreadable`, `structure_changed`, `dependency_state_behind`, `several_in_progress`,
 `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_ambiguous`, `pr_head_unreadable`,
@@ -602,3 +661,12 @@ reasons `non_blocking_remarks`, `remarks_not_deferrable`, `deferral_transient_fa
 `deferral_retries_exhausted`; the step outcome `waiting`; the constants `DEFER_RETRY_SECONDS`,
 `MAX_DEFER_TRIES`, `MAX_REMARKS`, `MAX_REMARK_TEXT`; the optional journal key `deferral`; the
 receipt directory `review-remarks`. No configuration key or routing table changed.
+
+R5 status (PAT-227): updated `docs/campaign-effects.md` and `docs/campaign-cadence.md`.
+Candidate artefacts: the `target` key of a remark (reviewer result, receipt, `routing
+record-review-remarks --remarks-file` help); the decision reason `review_fix_description` and
+the suspension `description_correction_not_settled`; the constants `SUMMARY_MARK`,
+`SUMMARY_UNUSABLE_BODY`, `TARGETS`, `DESCRIPTION_KEY`; the optional journal keys
+`fix_description` (in `review`) and `description`. `AGENTS.md`/`CLAUDE.md` R9: no sentence became
+false (the correction loop it describes is unchanged for a remark on the diff). No CLI verb or
+option, configuration key or routing table changed.

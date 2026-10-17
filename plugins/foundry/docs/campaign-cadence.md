@@ -47,6 +47,8 @@ error and a non-zero exit code other than 2 (traceback, or the message of the `S
 | the same, at `MAX_REVIEW_ROUNDS` recorded rounds | `suspend` `review_rounds_exhausted` |
 | open PR, review proof not mergeable, fewer than `MAX_CORRECTIONS` (2) corrections started | `correct` `review_blocked` |
 | valid review whose report on this head and base has remarks marked "fix before merge" (`fix_before_merge` > 0), fewer than `MAX_CORRECTIONS` corrections, and nothing to decide about the deferrable remarks (the rows below come first) | `correct` `review_fix_before_merge` |
+| the same, every such remark targets the description (`fix_description` = `fix_before_merge`, PAT-227) and no correction has replaced the description for this head and base | `correct` `review_fix_description` |
+| the same, the description already replaced for this head and base | none of the two rows above: the rows below apply |
 | either `correct` at `MAX_CORRECTIONS` corrections | `suspend` `corrections_exhausted` |
 | valid review with deferrable remarks (`DeferralFacts.deferrable` > 0, not marked "fix before merge"), no origin Epic, or the origin Epic is a companion Epic, or the last deferral ended in a durable refusal, fewer than `MAX_CORRECTIONS` corrections | `correct` `remarks_not_deferrable` |
 | the same remarks, an origin Epic that is not a companion Epic, deferral not done, last attempt transient and inside `DEFER_RETRY_SECONDS` | `wait` `deferral_transient_failure` |

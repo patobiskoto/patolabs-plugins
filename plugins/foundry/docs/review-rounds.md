@@ -331,6 +331,10 @@ steps, its journal record and its refusals:
   companion Epic (no second-level deferral) and a durable refusal are corrected by the
   correction loop of the campaign and re-reviewed as stated in "Partial review on every
   pull request"; a transient failure makes the campaign wait and retry.
+  Exception (PAT-227): when every remark of the round marked "fix before merge" targets the
+  PR description alone, the correction replaces the description and is not re-reviewed, the
+  diff being unchanged (`plugins/foundry/docs/campaign-effects.md`, "The description
+  correction").
 - The companion Epic and its follow-up issue are outside the subgraph of the campaign's
   Epic: no tracker link joins them to it, so the structure digest of the approval and the
   closure graph of the origin Epic do not include them (`tests/test_campaign_defer.py`).

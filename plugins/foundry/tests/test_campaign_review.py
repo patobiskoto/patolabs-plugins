@@ -599,12 +599,14 @@ def test_journal_review_field_is_a_closed_shape(env):
     path = env.kwargs["attempts"]
     lines = path.read_text().splitlines()
     record = json.loads(lines[-1])
-    assert record["event"] == "finished" and set(record["review"]) == cr.REVIEW_KEYS
+    assert record["event"] == "finished" and set(record["review"]) == cr.REVIEW_KEYS | {cr.DESCRIPTION_KEY}
     record["review"]["extra"] = 1
     path.write_text("\n".join(lines[:-1] + [json.dumps(record)]) + "\n")
     with pytest.raises(ce.AttemptJournalInvalid):
         ce.read_attempts(path)
-    record["review"] = {k: record["review"][k] for k in cr.REVIEW_KEYS}
+    record["review"] = {k: record["review"][k] for k in cr.REVIEW_KEYS}  # no description key: PAT-227 optional
+    path.write_text("\n".join(lines[:-1] + [json.dumps(record)]) + "\n")
+    assert ce.read_attempts(path)  # a line journaled before PAT-227 stays valid
     record["kind"] = "implement"  # a verdict belongs to a review
     path.write_text("\n".join(lines[:-1] + [json.dumps(record)]) + "\n")
     with pytest.raises(ce.AttemptJournalInvalid):
@@ -653,3 +655,149 @@ def test_the_reviewer_contract_marks_the_two_never_deferrable_cases_fix_before_m
     assert "Always set fix_before_merge true on a remark about a page frozen after " in contract
     assert "(release note, migration guide, CHANGELOG section of a published version)" in contract
     assert "missing or generic documentation status under AGENTS.md#R5" in contract
+
+
+# ---------------------------------------------------------------- PAT-227
+
+
+def _description_only(env):
+    """A validated review whose only remark to fix targets the description."""
+    to_review(env)
+    env.world.session_commits = False  # a description correction commits nothing
+    roomy(env)
+    env.world.reviews.append(result_text(fix=1, description=1))
+    assert step(env).effect["review"]["fix_description"] == 1
+
+
+def test_a_description_only_remark_is_settled_by_a_new_description_without_a_commit(env):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "correct", "review_fix_description", "executed")
+    prompt = [c for c in effects(env.world) if c[0][0] == "claude"][-1][3]
+    assert "pull-request description" in prompt and "Change no file and make no commit" in prompt
+    assert ce.SUMMARY_MARK in prompt
+    body = env.world.bodies[-1]
+    assert body.startswith("## Corrected\nthe new description\n\n## Review rounds")
+    assert "Description corrected per a remark" in body and "not re-reviewed" in body
+    assert ce.SUMMARY_MARK not in body
+    assert effects(env.world)[-1][0] == [sys.executable, CLI, "issue", "openpr", "APP-2",
+                                         "--summary-stdin"]
+    done = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "correct"
+            and r["event"] == "finished"][-1]
+    assert done["status"] == "completed" and set(done["description"]) == {"head", "base"}
+    # the next pass neither corrects again nor reviews again: no attempt_already_made
+    env.world.checks = [check()]
+    nxt = step(env)
+    assert (nxt.decision.kind, nxt.decision.reason) == ("merge", "review_valid_ci_green")
+    assert len(reviewer_calls(env.world)) == 1
+
+
+def test_decide_is_pure_over_the_description_facts():
+    pr = cc.PullFacts(5, "open", False, "a" * 40, "b" * 40)
+    ticket = cc.TicketFacts(
+        id="APP-2", state="review", category="eligible", reason="", branch=True,
+        branch_sha="a" * 40, pr=pr, review="valid", ci="green", fix_before_merge=2,
+        fix_description=2)
+    assert cc._ticket_step(ticket).reason == "review_fix_description"
+    done = cc.TicketFacts(**{**ticket.__dict__, "description_corrected": True})
+    assert cc._ticket_step(done).kind == "merge"
+    mixed = cc.TicketFacts(**{**ticket.__dict__, "fix_description": 1})
+    assert cc._ticket_step(mixed).reason == "review_fix_before_merge"
+    mixed_done = cc.TicketFacts(**{**mixed.__dict__, "description_corrected": True})
+    assert cc._ticket_step(mixed_done).reason == "review_fix_before_merge"
+    spent = cc.TicketFacts(**{**ticket.__dict__, "corrections": cc.MAX_CORRECTIONS})
+    assert cc._ticket_step(spent).reason == "corrections_exhausted"
+
+
+def test_a_remark_on_the_diff_keeps_the_correction_session_with_commits(env):
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(fix=2, description=1))
+    step(env)
+    result = step(env)
+    assert (result.decision.reason, result.outcome) == ("review_fix_before_merge", "executed")
+    assert "Change no file" not in effects(env.world)[-1][3]
+    assert "description" not in [r.get("description") for r in
+                                 ce.read_attempts(env.kwargs["attempts"])]
+
+
+def test_a_description_correction_without_the_summary_line_is_not_published(env):
+    _description_only(env)
+    env.world.session_summary = "I ran the tests as a background command."
+    result = step(env)
+    assert (result.decision.reason, result.outcome) == ("review_fix_description", "failed")
+    done = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "correct"
+            and r["event"] == "finished"][-1]
+    assert (done["status"], done["error"]) == ("failed", "description_summary_unusable")
+    assert len(getattr(env.world, "bodies", [])) == 1  # only the body of the review
+    again = step(env)
+    assert (again.decision.kind, again.decision.reason) == (
+        "suspend", "description_correction_not_settled")
+
+
+def test_a_description_that_could_not_be_published_suspends_with_its_own_reason(env):
+    _description_only(env)
+    runner = env.world.runner
+
+    def failing(argv, **kw):
+        done = runner(argv, **kw)
+        if argv[3:5] == ["openpr", "APP-2"] and "--summary-stdin" in argv:
+            done.returncode = 1
+        return done
+
+    env.runtime.runner = failing
+    result = step(env)
+    assert result.outcome == "failed"
+    assert ce.read_attempts(env.kwargs["attempts"])[-1]["error"] == "description_not_published"
+    assert step(env).decision.reason == "description_correction_not_settled"
+
+
+def test_an_unusable_implementation_summary_is_never_published_as_the_pr_body(env):
+    env.world.session_summary = "Done. Waiting for the background command."
+    step(env), step(env)
+    result = step(env)
+    assert result.decision.kind == "open-pr"
+    assert effects(env.world)[2][3] == ce.SUMMARY_UNUSABLE_BODY
+    env.world.reviews.append(result_text())
+    step(env)
+    assert env.world.bodies[-1].startswith(ce.SUMMARY_UNUSABLE_BODY + "\n\n## Review rounds")
+    assert "placeholder" in reviewer_calls(env.world)[-1][3]
+
+
+def test_a_usable_implementation_summary_loses_its_marker_and_the_prompt_is_not_a_placeholder(env):
+    to_review(env)
+    assert effects(env.world)[2][3] == "## Summary\nAPP-2"
+    env.world.reviews.append(result_text())
+    step(env)
+    assert "placeholder" not in reviewer_calls(env.world)[-1][3]
+    assert ce.SUMMARY_MARK in effects(env.world)[1][3]  # asked of the implementation session
+
+
+def test_the_summary_criterion_is_mechanical():
+    mark = ce.SUMMARY_MARK
+    assert ce.usable_summary(f"{mark}\nbody\n") == "body"
+    assert ce.usable_summary(f"\n{mark}\nbody") == "body"
+    for bad in (None, "", "  \n", "body", f"{mark}", f"{mark}\n \n", f"x\n{mark}\nbody",
+                f"{mark}x\nbody"):
+        assert ce.usable_summary(bad) is None
+        assert ce.published_summary(bad) == ce.SUMMARY_UNUSABLE_BODY
+
+
+def test_the_reviewer_contract_asks_each_remark_for_a_target():
+    contract = cr.review_contract()
+    assert 'target "diff"' in contract and '"description"' in contract
+
+
+def test_a_later_body_update_keeps_the_corrected_description(env, tmp_path):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    step(env)
+    records = ce.read_attempts(env.kwargs["attempts"])
+    assert cr.body_summary(records, "APP-1", "APP-2") == "## Corrected\nthe new description"
+    ticket = type("T", (), {"id": "APP-2"})()
+    cr.update_pr_body(env.runtime, "APP-1", ticket, env.kwargs["attempts"], tmp_path, None)
+    body = env.world.bodies[-1]
+    assert body.startswith("## Corrected\nthe new description\n\n## Review rounds")
+    assert body.count("Description corrected per a remark") == 1

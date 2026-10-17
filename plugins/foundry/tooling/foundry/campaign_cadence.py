@@ -102,6 +102,10 @@ class TicketFacts:
     review_rounds: int = 0
     corrections: int = 0
     deferral: DeferralFacts | None = None
+    # PAT-227: how many of those "fix before merge" remarks target the PR description, and
+    # whether a correction already replaced the description for this PR head and base.
+    fix_description: int = 0
+    description_corrected: bool = False
 
 
 @dataclass(frozen=True)
@@ -241,9 +245,14 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
     if remarks is not None:
         return remarks
     if ticket.fix_before_merge > 0:
-        return _bounded(ticket, Decision(
-            "correct", ticket.id, "review_fix_before_merge",
-            {**evidence, "fix_before_merge": ticket.fix_before_merge}))
+        # PAT-227: only the description is to fix and the diff stays: the description is
+        # replaced once (no new review: the diff hash is unchanged), then the pass goes on.
+        description_only = ticket.fix_description == ticket.fix_before_merge
+        if not (description_only and ticket.description_corrected):
+            return _bounded(ticket, Decision(
+                "correct", ticket.id,
+                "review_fix_description" if description_only else "review_fix_before_merge",
+                {**evidence, "fix_before_merge": ticket.fix_before_merge}))
     if ticket.ci == "green":
         return Decision("merge", ticket.id, "review_valid_ci_green", evidence)
     if ticket.ci == "red":
@@ -448,6 +457,7 @@ def observe(
     history: Callable[[str, str | None, str | None], tuple[int, int, int]] | None = None,
     deferral: Callable[..., DeferralFacts] | None = None,
     origin: Callable[[str], tuple[str | None, bool]] | None = None,
+    description: Callable[[str, str | None, str | None], tuple[int, bool]] | None = None,
 ) -> Observation:
     """Gather one observation with declared capabilities and read-only calls only."""
     missing = missing_capabilities(tracker)
@@ -494,7 +504,7 @@ def observe(
     if focus is not None:
         tickets = tuple(
             _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store,
-                         branch_facts, implemented, history, deferral, origin, now)
+                         branch_facts, implemented, history, deferral, origin, now, description)
             if t.id == focus else t for t in tickets
         )
     return Observation(
@@ -505,7 +515,7 @@ def observe(
 
 def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store,
                  branch_facts, implemented, history=None, deferral=None, origin=None,
-                 now=None):
+                 now=None, description=None):
     from dataclasses import replace
 
     branch = _branch_for(refs(root), ticket.id)
@@ -532,8 +542,11 @@ def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store
         if remarks.deferrable > 0 and remarks.state != "done" and origin is not None:
             found, companion = origin(ticket.id)  # tracker reads, only when remarks remain
             remarks = replace(remarks, origin=found, origin_is_companion=companion)
+    fix_description, corrected = description(ticket.id, pr.head_sha, pr.base_sha) \
+        if description and review == "valid" else (0, False)
     return replace(facts, review=review, ci=ci, fix_before_merge=fix if review == "valid" else 0,
-                   review_rounds=rounds, corrections=corrections, deferral=remarks)
+                   review_rounds=rounds, corrections=corrections, deferral=remarks,
+                   fix_description=fix_description, description_corrected=corrected)
 
 
 def report(obs: Observation, decision: Decision) -> str:

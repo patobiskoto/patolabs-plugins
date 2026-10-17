@@ -44,6 +44,7 @@ class World:
         self.proof, self.checks = "none", []
         self.calls = []  # (argv, cwd, env, input)
         self.session_commits = True
+        self.session_summary = None
         self.reviews = []  # canned reviewer results, consumed in order
         self.human_required = False
         self.proofs = []  # outcomes files seen by record-review-proof
@@ -119,7 +120,7 @@ class World:
                 self.ahead[ticket] = 1
             return ok(json.dumps({
                 "session_id": sid, "total_cost_usd": 0.5,
-                "duration_ms": 1200, "is_error": False, "result": f"## Summary\n{ticket}",
+                "duration_ms": 1200, "is_error": False, "result": self.session_summary or f"{ce.SUMMARY_MARK}\n## Summary\n{ticket}",
             }))
         assert argv[0] == sys.executable and argv[1] == CLI, argv
         if argv[2] == "routing":
@@ -263,15 +264,18 @@ def _routing(self, argv, cwd, ok):
 World.routing = _routing
 
 
-def remarks_of(fix=0, nits=0):
-    return ([{"text": f"fix before merge: remark {n}", "fix_before_merge": True}
-             for n in range(fix)]
-            + [{"text": f"nit: remark {n}", "fix_before_merge": False} for n in range(nits)])
+def remarks_of(fix=0, nits=0, description=0):
+    """``description`` of the ``fix`` remarks target the PR description (PAT-227)."""
+    return ([{"text": f"fix before merge: remark {n}", "fix_before_merge": True,
+              "target": "description" if n < description else "diff"} for n in range(fix)]
+            + [{"text": f"nit: remark {n}", "fix_before_merge": False, "target": "diff"}
+               for n in range(nits)])
 
 
-def result_text(quality="mergeable", fix=0, nits=0, verdict="pass", report="## AC table\nok"):
+def result_text(quality="mergeable", fix=0, nits=0, verdict="pass", report="## AC table\nok",
+                description=0):
     body = {"outcomes": [{**CRITERION, "verdict": verdict}], "quality": quality,
-            "fix_before_merge": fix, "non_blocking": nits, "remarks": remarks_of(fix, nits)}
+            "fix_before_merge": fix, "non_blocking": nits, "remarks": remarks_of(fix, nits, description)}
     return f"{report}\nAC: PASS · QUALITY: OK to merge\n{ce.campaign_review.RESULT_SENTINEL}\n" \
         + json.dumps(body)
 

@@ -38,6 +38,10 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _FENCE = re.compile(r"\A```(?:json)?\s*\n(.*?)\n```\Z", re.S)
 REVIEW_KEYS = {"verdict", "fix_before_merge", "non_blocking", "diff_hash", "base", "head",
                "carried", "partial"}
+# PAT-227: how many "fix before merge" remarks target the PR description; absent (a line
+# journaled before PAT-227) reads as 0
+DESCRIPTION_KEY = "fix_description"
+DESCRIPTION_REASON = "review_fix_description"
 
 
 class ReviewOutputInvalid(ValueError):
@@ -47,7 +51,9 @@ class ReviewOutputInvalid(ValueError):
 def valid_review_field(review: object) -> bool:
     """Closed shape of the ``review`` key of a ``finished`` journal line."""
     return (
-        isinstance(review, dict) and set(review) == REVIEW_KEYS
+        isinstance(review, dict) and set(review) in (REVIEW_KEYS, REVIEW_KEYS | {DESCRIPTION_KEY})
+        and type(review.get(DESCRIPTION_KEY, 0)) is int
+        and 0 <= review.get(DESCRIPTION_KEY, 0) <= review["fix_before_merge"]
         and review["verdict"] in ("blocked", "validated")
         and all(type(review[k]) is int and review[k] >= 0
                 for k in ("fix_before_merge", "non_blocking"))
@@ -111,6 +117,22 @@ def history(path: Path, epic: str):
     return read
 
 
+def description_facts(path: Path, epic: str):
+    """``cadence.observe(description=...)`` (PAT-227): (number of "fix before merge" remarks of
+    the validated review of this exact head and base that target the description, whether a
+    correction already replaced the description for this head and base)."""
+    def read(ticket: str, head: str | None, base: str | None) -> tuple[int, bool]:
+        records = fx.read_attempts(path)
+        last = review_on(records, epic, ticket, head, base)
+        count = last["review"].get(DESCRIPTION_KEY, 0) if last and (
+            last["review"]["verdict"] == "validated") else 0
+        done = any(r["event"] == "finished" and r["kind"] == "correct"
+                   and r["status"] == "completed" and r.get("description")
+                   == {"head": head, "base": base} for r in _mine(records, epic, ticket))
+        return count, done
+    return read
+
+
 def review_mode(records: list[dict], epic: str, ticket: str, head: str, base: str) -> dict:
     """``full``, ``partial`` (PAT-ADR-0022) or ``carry`` (PAT-ADR-0021), from the journal only.
 
@@ -167,8 +189,10 @@ def review_contract() -> str:
         "blocked (mergeable only if every verdict is pass and nothing blocks); "
         "fix_before_merge is the number of nits you marked \"fix before merge\"; "
         "non_blocking is the number of other nits; remarks lists every nit once, as "
-        "{\"text\",\"fix_before_merge\"} (a short non-empty text of at most "
-        f"{MAX_REMARK_TEXT} characters, fix_before_merge true or false), so that the number "
+        "{\"text\",\"fix_before_merge\",\"target\"} (a short non-empty text of at most "
+        f"{MAX_REMARK_TEXT} characters, fix_before_merge true or false, target \"diff\" for a "
+        "remark that only a change of the code or files fixes, \"description\" for a remark "
+        "that only a new pull-request description fixes), so that the number "
         "of true entries equals fix_before_merge and the number of false entries equals "
         "non_blocking. Always set fix_before_merge true on a remark about a page frozen after "
         "publication (release note, migration guide, CHANGELOG section of a published "
@@ -179,7 +203,7 @@ def review_contract() -> str:
 
 
 def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
-                  partial: dict | None) -> str:
+                  partial: dict | None, placeholder: bool = False) -> str:
     parts = [
         f"{REVIEW_PROMPT_MARK}\nEpic campaign {epic}, review of issue {ticket}, pull request "
         f"#{pr}. You are a fresh reviewer session in the worktree of the branch.\n",
@@ -190,6 +214,11 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
         f"`review-pr` skill and do not return another JSON shape; print `{RESULT_SENTINEL}` "
         "and the five-key object only.\n",
     ]
+    if placeholder:
+        parts.append(
+            "\nThe pull-request description is a placeholder: the implementation session's "
+            f"summary was unusable (it lacked the `{fx.SUMMARY_MARK}` first line) and was not "
+            "published. Judge the diff; do not mark the placeholder itself as a remark.\n")
     if partial:
         parts.append(
             "\nPARTIAL REVIEW (PAT-ADR-0022). The previous round was validated (every criterion "
@@ -205,6 +234,33 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
     else:
         parts.append("\nThis is a FULL review of the whole diff.")
     return "".join(parts)
+
+
+def description_prompt(epic: str, ticket: str, title: str, body: str, report: str) -> str:
+    """PAT-227: every "fix before merge" remark targets the description; no code change."""
+    return (
+        f"{CORRECT_PROMPT_MARK}\n"
+        f"Epic campaign {epic}, correction of the pull-request description of issue {ticket}. "
+        "You are a fresh session in the worktree of this issue's branch, which already holds a "
+        "pull request.\n"
+        f"1. The issue, as read by the coordinator (do not query the tracker):\n"
+        f"<issue id=\"{ticket}\">\n# {title}\n\n{body}\n</issue>\n"
+        f"2. The reviewer's report on the current head:\n<review>\n{report}\n</review>\n"
+        "3. Every remark marked \"fix before merge\" is about the pull-request description, "
+        "not the code. Change no file and make no commit. Read the diff of the branch against "
+        "its base only as far as needed to write a correct description.\n"
+        "4. Your final message replaces the pull-request description as it is: write the whole "
+        "new description in Markdown (what changed, tests run, remaining risk) and settle "
+        "each remark. Follow AGENTS.md#R9(a): every sentence about what a tool launches, "
+        "loads, calls or writes cites its source, and every cause is stated as observed, "
+        "deduced or unknown.\n"
+        f"Its first line is exactly `{fx.SUMMARY_MARK}`; a message without that first line is "
+        "not published. It is the last thing you print, after every command has ended (never "
+        "answer a background-command notification instead of it).\n"
+        "You hold no authority over the tracker or the code host: never push, never open or "
+        "merge a pull request, never write the tracker, never run `issue`, `edit`, `adr` or "
+        "`campaign-approval`."
+    )
 
 
 def correct_prompt(epic: str, ticket: str, title: str, body: str, report: str,
@@ -233,7 +289,8 @@ def correct_prompt(epic: str, ticket: str, title: str, body: str, report: str,
         "merge a pull request, never write the tracker, never run `issue`, `edit`, `adr` or "
         "`campaign-approval`. The coordinator pushes your commits and asks for a new review.\n"
         "Finish with a short summary in Markdown (what changed, tests run, remaining risk). "
-        "It is the last thing you print."
+        f"Its first line is exactly `{fx.SUMMARY_MARK}`. It is the last thing you print, after "
+        "every command has ended."
     )
 
 
@@ -271,7 +328,7 @@ def parse_result(text: object) -> tuple[str, dict]:
         if type(data[key]) is not int or not 0 <= data[key] <= MAX_REMARK_COUNT:
             raise ReviewOutputInvalid("comptage de remarques hors contrat")
     try:
-        remarks = review_remarks.validate_remarks(data["remarks"])
+        remarks = review_remarks.validate_remarks(data["remarks"], require_target=True)
     except review_remarks.ReviewRemarksError as exc:
         raise ReviewOutputInvalid("remarques du verdict hors contrat") from exc
     if (sum(r["fix_before_merge"] for r in remarks) != data["fix_before_merge"]
@@ -318,6 +375,10 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
     attempt = fx.identity(epic, ticket.id, "correct", fx.fingerprint(ticket))
     refused = fx.refusal(records, attempt, epic, ticket.id, "correct", ceilings)
     if refused is not None:
+        if refused == "attempt_already_made" and decision.reason == DESCRIPTION_REASON:
+            # PAT-227: the description correction was made and did not settle the remark
+            return {"suspend": ("description_correction_not_settled",
+                                {"attempt": attempt, "step": "correct"})}
         key = "suspend" if refused == "attempt_already_made" else "refuse"
         return {key: (refused, {"attempt": attempt, "step": "correct"})}
     report_record = review_on(records, epic, ticket.id, pr.head_sha, pr.base_sha)
@@ -325,6 +386,12 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
         raise OSError("aucun rapport de relecture de la campagne pour cette tête")
     report = Path(report_record["summary_file"]).read_text(encoding="utf-8")
     route, policy = _session_route(runtime, "implementer", ticket.id)
+    if decision.reason == DESCRIPTION_REASON:
+        plan = fx.session_plan(runtime, route, policy)
+        issue = tracker.get_issue(ticket.id)
+        plan["prompt"] = description_prompt(
+            epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "", report)
+        return {**plan, "description": True}
     if decision.reason == "review_blocked":
         worktree = runtime.worktrees_dir / ticket.id
         # "a correction was reviewed and blocked again": the blocked head is the end of a
@@ -462,8 +529,21 @@ def deferral_lines(records: list[dict], epic: str, ticket: str,
     return lines
 
 
+def description_lines(records: list[dict], epic: str, ticket: str,
+                      current: dict | None = None) -> list[str]:
+    """PAT-227: one line per correction that replaced the description (from the ``description``
+    fields of the journal, then ``current``, the one about to be journaled)."""
+    fields = [r["description"] for r in _mine(records, epic, ticket)
+              if r["event"] == "finished" and r["kind"] == "correct" and "description" in r]
+    fields += [current] if current else []
+    return [f"Description corrected per a remark marked \"fix before merge\" on the "
+            f"description (head `{f['head'][:7]}`); not re-reviewed, because the diff is "
+            "unchanged." for f in fields]
+
+
 def pr_body(summary: str | None, records: list[dict], epic: str, ticket: str,
-            review: dict | None, deferral: dict | None = None) -> str:
+            review: dict | None, deferral: dict | None = None,
+            description: dict | None = None) -> str:
     """The saved implementation summary and a ``Review rounds`` section from the journal.
 
     ``review`` is the round being recorded (``None`` when every round is already in the
@@ -473,10 +553,28 @@ def pr_body(summary: str | None, records: list[dict], epic: str, ticket: str,
     rounds += [review] if review is not None else []
     section = "## Review rounds\n" + "\n".join(
         round_line(number, one) for number, one in enumerate(rounds, 1))
-    lines = deferral_lines(records, epic, ticket, deferral)
+    lines = description_lines(records, epic, ticket, description) + deferral_lines(
+        records, epic, ticket, deferral)
     if lines:
         section += "\n\n" + "\n".join(lines)
     return f"{summary.strip()}\n\n{section}" if summary and summary.strip() else section
+
+
+def body_summary(records: list[dict], epic: str, ticket: str) -> str | None:
+    """What the PR description holds besides the review rounds: the last saved summary among the
+    completed implementation and description corrections, as ``fx.published_summary`` makes it
+    publishable; ``None`` when there is none (PAT-227)."""
+    saved = [r for r in _mine(records, epic, ticket) if r["event"] == "finished"
+             and r["status"] == "completed"
+             and (r["kind"] == "implement" or (r["kind"] == "correct" and "description" in r))]
+    if not saved:
+        return None
+    try:
+        raw = Path(saved[-1]["summary_file"]).read_text(encoding="utf-8") \
+            if saved[-1]["summary_file"] else None
+    except OSError:
+        raw = None
+    return fx.published_summary(raw)
 
 
 def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
@@ -486,15 +584,34 @@ def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
     ``issue openpr --summary-stdin`` on the open PR replaces its body.  Returns a detail text.
     """
     records = fx.read_attempts(attempts)
-    saved = [r for r in _mine(records, epic, ticket.id) if r["event"] == "finished"
-             and r["kind"] == "implement" and r["status"] == "completed" and r["summary_file"]]
-    try:
-        summary = Path(saved[-1]["summary_file"]).read_text(encoding="utf-8") if saved else None
-    except OSError:
-        summary = None
+    summary = body_summary(records, epic, ticket.id)
     done = fx._run(runtime, runtime.command("issue", "openpr", ticket.id, "--summary-stdin"),
                    worktree, input=pr_body(summary, records, epic, ticket.id, review, deferral))
     return "" if done.returncode == 0 else "pr_body_not_updated"
+
+
+def publish_description(runtime, epic: str, ticket, attempts: Path, worktree: Path,
+                        fields: dict) -> dict:
+    """PAT-227: the summary of a description correction replaces the PR body (``issue openpr
+    --summary-stdin``) with the review rounds; unusable or unpublished, the attempt fails."""
+    try:
+        raw = Path(fields["summary_file"]).read_text(encoding="utf-8") \
+            if fields["summary_file"] else None
+    except OSError:
+        raw = None
+    summary = fx.usable_summary(raw)
+    if summary is None:
+        return {**fields, "status": "failed", "error": "description_summary_unusable"}
+    pr = ticket.pr
+    marker = {"head": pr.head_sha, "base": pr.base_sha}
+    records = fx.read_attempts(attempts)
+    done = fx._run(runtime, runtime.command("issue", "openpr", ticket.id, "--summary-stdin"),
+                   worktree, input=pr_body(summary, records, epic, ticket.id, None,
+                                           description=marker))
+    if done.returncode != 0:
+        return {**fields, "status": "failed", "error": "description_not_published",
+                "detail": fx.without_request_count(done.stderr)[-300:]}
+    return {**fields, "description": marker}
 
 
 def _record_remarks(runtime, root: Path, ticket, base: str, diff_hash: str, proof: dict,
@@ -565,7 +682,9 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
     send = (packet / "reviewer-send.txt").read_text(encoding="utf-8")
     command = (f"python3 {runtime.cli} routing read-review --diff-hash {diff_hash} "
                f"--claim-id {claim_id} --root {root} --base {pr.base_sha}")
-    prompt = review_prompt(epic, ticket.id, pr.number, send, command, partial)
+    placeholder = body_summary(fx.read_attempts(attempts), epic, ticket.id) == \
+        fx.SUMMARY_UNUSABLE_BODY
+    prompt = review_prompt(epic, ticket.id, pr.number, send, command, partial, placeholder)
     session_id = fx._session_id(attempt)
     argv = reviewer_argv(runtime, plan, epic, ticket.id, session_id, packet)
     done = fx._run(runtime, argv, root, input=prompt, timeout=REVIEW_TIMEOUT_SECONDS,
@@ -600,6 +719,8 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         "fix_before_merge": verdict["fix_before_merge"], "non_blocking": verdict["non_blocking"],
         "diff_hash": diff_hash, "base": pr.base_sha, "head": pr.head_sha, "carried": False,
         "partial": partial is not None,
+        DESCRIPTION_KEY: sum(r["fix_before_merge"] and r["target"] == "description"
+                             for r in verdict["remarks"]) if verdict["quality"] == "mergeable" else 0,
     }
     detail = update_pr_body(runtime, epic, ticket, attempts, root, review) or note
     return {"status": "completed", "exit_code": done.returncode, "cost_usd": cost,
