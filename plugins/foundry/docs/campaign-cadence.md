@@ -18,7 +18,10 @@ FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py campaign-cadence next PAT-
 It prints one JSON object (`CADENCE_CONTRACT`): the observation (capabilities, structure
 digest observed and approved, approval status, the ticket in focus, the tickets) and the
 `decision`. The same observation gives byte-identical output (`report`: sorted keys). The
-exit code is 2 when a capability is missing, 0 otherwise.
+exit code is 2 when a capability is missing, and 0 once a decision is printed. An error that
+`observe` does not convert into `node_unreadable` (a network error, an error of the code host,
+the `SystemExit` of a tracker binding) is not caught by `main`: the command ends with that
+error and a non-zero exit code other than 2 (traceback, or the message of the `SystemExit`).
 
 ## Decision table
 
@@ -82,9 +85,12 @@ Order: capabilities (flags only), one `get_epic_subgraph` (plus `validate_subgra
 (or `get_pr` from the tracker PR link) and `get_pr` for each PR that is not open, one
 `get_issue` for its body, the proof store, and `ci_gate` (`write.py`, both CI sources),
 the last one only when the review is valid. The approval is checked with the preview digest
-of the latest journal record of the Epic, because the policy that produced the preview
-digest is not observable; the structure digest is the observed one, so a structure change
-is detected exactly.
+of the latest journal record of the Epic, for two reasons: the digest cannot be recomputed
+here, because the versions of the nodes it covers change at every write of the campaign
+(each state, comment or link it writes), and the policy that produced it is not observable.
+The structure digest is the observed one, so a structure change is detected exactly. As the
+checked preview digest is always one of the journal's own records, `preview_digest_mismatch`
+is unreachable on this path (an Epic without a record gives `absent` first).
 
 The re-read of a closed PR is needed because the jq of `GitHubCodeHost.list_prs` selects
 `merged`; deduced, not re-verified here: the list endpoint of the code host returns
