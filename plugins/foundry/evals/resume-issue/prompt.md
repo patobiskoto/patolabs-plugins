@@ -1,5 +1,5 @@
 ---
-max_turns: 3
+max_turns: 1
 timeout_seconds: 120
 runs: 1
 allowed_tools: [Skill]

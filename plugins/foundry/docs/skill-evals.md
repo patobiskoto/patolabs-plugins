@@ -12,7 +12,7 @@ It builds no runner. It uses the `claude plugin eval` command of Claude Code (ob
 
 `evals/<case>/prompt.md` plus `evals/<case>/graders/skill-invoked.md`, one case per skill:
 `open-pr`, `merge-pr`, `start-issue`, `intake`, `resume-issue`. Each case has `runs: 1`,
-`max_turns: 3`, `allowed_tools: [Skill]`, no tracker and no Bash. Each prompt is written
+`max_turns: 1` and `allowed_tools: [Skill]`; no case needs a tracker or Bash. Each prompt is written
 from the `USE WHEN` trigger of the skill (`skills/<skill>/SKILL.md`, `description`).
 
 The only grader is `type: tool_used` on the `Skill` tool, with an `input_match` regular
@@ -29,6 +29,10 @@ python3 scripts/skill_evals.py --dry-run                 # plan and exact argv, 
 python3 scripts/skill_evals.py --max-cost-usd 2          # launch (terminal only)
 python3 scripts/skill_evals.py --read evals/results/skill-evals.json   # re-read a result
 ```
+
+`--out <path>` sets the result file passed as `--json` (default `DEFAULT_OUT`,
+`evals/results/skill-evals.json`); `main` deletes that file before a launch, so a stale result
+is never read.
 
 The launched command is built by `build_argv` in `scripts/skill_evals.py`:
 `claude plugin eval <plugin dir> --model <model> --ablation none --runs 1 --no-publish
@@ -66,7 +70,7 @@ Those of `claude plugin eval` itself are not used for the verdict.
 
 Deduced, not observed: the plugin hooks run during an eval (`hooks/hooks.json`), but they do not
 fail these cases. `route_agent.py` and `observe_agent.py` match `Agent|Task` only and
-`guard_bash.py` and `guard_routed_readonly.py` match `Bash` only, and no case uses those tools.
+`guard_bash.py` and `guard_routed_readonly.py` match `Bash` only, and the cases allow only `Skill`.
 `session_start.py` stays silent when the working directory has no registry entry
 (`registry.entry_for`), which is expected in an isolated working directory.
 
@@ -77,6 +81,11 @@ fail these cases. `route_agent.py` and `observe_agent.py` match `Agent|Task` onl
   none should be called. Not observed.
 - Whether `Skill` calls appear in the trace under `foundry:<skill>` or `<skill>`: the
   `input_match` accepts both; no run has been made.
+- Whether a loaded skill's own `allowed-tools` reopens Bash inside an eval run is unknown. All
+  five target skills declare `Bash(python3:*)`, four add `Bash(git:*)`, and `open-pr`, `merge-pr`
+  and `resume-issue` add `Bash(gh:*)` (`skills/<skill>/SKILL.md`), so a case could reach `git` or
+  `gh` with the operator's credentials. Deduced, not observed: `max_turns: 1` leaves the model no
+  turn after the `Skill` call that the grader checks.
 - Codex: `claude plugin eval` is a Claude Code command; no equivalent is provided.
 - No eval has been run when this page was written: it is not shown that the five prompts
   make the model invoke their skill.
