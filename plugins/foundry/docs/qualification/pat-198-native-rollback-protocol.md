@@ -193,7 +193,8 @@ authorisation are left to the follow-up issue PAT-245.
 
 ## 10. Codex lines (2026-10-18), amendment before the Codex calls
 
-Written BEFORE any Codex call (PAT-245). Sections 1 to 8 stand; this section fixes only what the Codex lines add. The
+Written BEFORE any Codex call (PAT-245). Sections 1 to 8 stand, except the Codex paragraph of section 3, which this
+section replaces (kept as written); this section fixes only what the Codex lines add. The
 remaining four calls of the standing authorisation (4 of 8) are the four Codex lines, one each, no retry.
 
 **Correction.** Sections 3 and 9 say Codex is under a usage limit until 2026-10-23. That came from a stale
@@ -275,6 +276,6 @@ PYTHONPATH=plugins/foundry/tooling python3 -m foundry.rollback_native_trial --li
 
 Options added for Codex: `--codex` (binary, default `codex`), `--codex-sessions-dir` (default
 `<CODEX_HOME or ~/.codex>/sessions`). A real run writes the same items as section 6 (work directory with `fixture/`,
-`packet.txt`, `stream.ndjson`, `stderr.txt`; result file; matrix row and `native_calls`; locks; one ledger line) and
-the host's session file. Run the four lines one after the other, commit the matrix after each, and add a dated
+`packet.txt`, `stream.ndjson`, `stderr.txt`; result file; matrix row and `native_calls`; locks; one ledger line), the
+copy `<work>.backup/config.toml` and the host's session file. Run the four lines one after the other, commit the matrix after each, and add a dated
 "Runs" amendment after the calls, as section 9 did for Claude.

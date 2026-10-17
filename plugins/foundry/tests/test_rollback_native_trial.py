@@ -101,8 +101,9 @@ def test_codex_dry_run_prints_the_plan_and_launches_and_writes_nothing(tmp_path,
     assert f'model_reasoning_effort="{effort}"' in plan["command"] and plan["command"][-1] == "-"
     assert "--ephemeral" not in plan["command"] and plan["dry_run"] is True and plan["bounds"]["max_budget_usd"] is None
     assert plan["requested"]["model"] == model and plan["transmitted"]["effort"] == effort
+    assert plan["would_write"][-1] == str(tmp_path / "work.backup" / "config.toml")
     assert not (tmp_path / "work").exists() and not (tmp_path / "data").exists()
-    assert (tmp_path / "matrix.json").read_bytes() == before
+    assert not (tmp_path / "work.backup").exists() and (tmp_path / "matrix.json").read_bytes() == before
 
 
 def test_a_run_records_the_four_separate_values_and_claims_its_row(tmp_path):

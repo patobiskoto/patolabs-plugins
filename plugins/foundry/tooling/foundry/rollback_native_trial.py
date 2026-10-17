@@ -621,7 +621,8 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
         print(json.dumps({**body, "dry_run": True, "command": command, "cwd": str(work),
                           "observation": "session file of the completed turn under the Codex sessions directory; else unknown",
                           "matrix": str(matrix_path.name),
-                          "would_write": [str(out), str(matrix_path.name) + " (row " + args.line + ")"]},
+                          "would_write": [str(out), str(matrix_path.name) + " (row " + args.line + ")",
+                                          str(_backup_dir(work) / "config.toml")]},
                          indent=2, ensure_ascii=False))
         return 0
     if launch is _launch_codex and not shutil.which(getattr(args, "codex", "codex")):
