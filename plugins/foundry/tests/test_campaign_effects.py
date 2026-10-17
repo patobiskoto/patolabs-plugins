@@ -899,3 +899,10 @@ def test_unreadable_git_dirs_cost_no_attempt(env):
     env.world.git_dirs_unreadable = False
     again = step(env)
     assert (again.decision.kind, again.outcome) == ("implement", "executed")
+
+
+def test_saved_summary_survives_a_lone_surrogate(tmp_path):
+    """PAT-242: ``json.loads`` accepts "\\ud800"; ``encode("utf-8")`` raised after a paid session."""
+    text = json.loads('"avant \\ud800 apres"')
+    saved = Path(ce._save_summary(tmp_path / "attempts.jsonl", "c" * 16, text))
+    assert saved.read_bytes().decode("utf-8") == "avant ? apres"

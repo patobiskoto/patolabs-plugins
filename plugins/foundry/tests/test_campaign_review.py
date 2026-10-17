@@ -1142,3 +1142,10 @@ def test_an_unreadable_worktree_head_is_its_own_failure_before_and_after_the_ses
     done = ce.read_attempts(env.kwargs["attempts"])[-1]
     assert (done["status"], done["error"]) == ("failed", "description_head_unreadable")
     assert "description" not in done
+
+
+def test_write_private_survives_a_lone_surrogate(tmp_path):
+    """PAT-242: a lone surrogate becomes "?", the file stays valid UTF-8."""
+    target = tmp_path / "x.txt"
+    cr._write_private(target, "a\ud800b")
+    assert target.read_bytes().decode("utf-8") == "a?b"

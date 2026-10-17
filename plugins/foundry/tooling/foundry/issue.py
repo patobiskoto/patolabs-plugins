@@ -1315,6 +1315,9 @@ _KNOWN_FLAGS = {"start": set(), "openpr": {"--summary-stdin"},
                 "merge": {"--allow-no-ci", "--allow-incomplete-ac"},
                 "close-epic": set(), "accept": set()}
 _ACCEPT_ALLOWED = "--decision-file=<chemin>, --human-verdict=<verdict>, --status"
+_CLOSE_EPIC_ALLOWED = ("--accept-dropped=<ids>, --accept-override=<ids>, "
+                       "--human-verdict=<verdict>, --status")
+_ALLOWED_TEXT = {"accept": _ACCEPT_ALLOWED, "close-epic": _CLOSE_EPIC_ALLOWED}
 
 if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
@@ -1339,7 +1342,7 @@ if __name__ == "__main__":
     )
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
-                         f"Autorisés : {_ACCEPT_ALLOWED if cmd == 'accept' else ', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
+                         f"Autorisés : {_ALLOWED_TEXT.get(cmd) or ', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
     args = [a for a in rest if not a.startswith("--")]
     if cmd == "accept":  # keep repeated flags: a repeated verdict or file is refused
         flags = [a for a in rest if a.startswith("--")]

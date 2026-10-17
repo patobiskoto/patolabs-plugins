@@ -807,3 +807,17 @@ def test_accept_allowed_text_names_every_accept_flag():
     """PAT-239: `_ACCEPT_ALLOWED` is pinned to `_ACCEPT_FLAG_PREFIXES` and `--status`."""
     for flag in (*issue_cli._ACCEPT_FLAG_PREFIXES, "--status"):
         assert flag in issue_cli._ACCEPT_ALLOWED
+
+
+def test_cli_unknown_flag_for_close_epic_lists_the_real_flags(monkeypatch):
+    """PAT-242: no `(aucun)` for `close-epic`, which accepts four flags."""
+    import runpy
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["issue.py", "close-epic", "LIN-5", "--bogus"])
+    with pytest.raises(SystemExit) as raised:
+        runpy.run_path(issue_cli.__file__, run_name="__main__")
+    message = str(raised.value)
+    assert "(aucun)" not in message
+    for flag in ("--status", "--human-verdict=", "--accept-override=", "--accept-dropped="):
+        assert flag in message

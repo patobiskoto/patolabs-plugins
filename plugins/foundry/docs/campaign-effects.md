@@ -269,6 +269,11 @@ home, the network, other hosts and versions.
 - Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
   `refs`; the objects are shared by all worktrees; the user scope of the host settings still
   loads (`--setting-sources user`) and can add to the sandbox arrays.
+- Residual, deduced (PAT-242): the sandbox governs the shell commands of a session, not the launch of
+  `claude` itself. The reviewer session and the next correction session start `claude` outside the
+  sandbox, in a worktree the previous session wrote. With a directory-dependent shim (asdf, mise,
+  `.tool-versions`), a file that previous session wrote there could choose which binary is launched.
+  Not observed; scope: the shims that resolve `claude` from the working directory, no other launch.
 - Stays outside the sandbox: the `claude` process itself (model API network, its own
   credentials and the user's keychain access, `--plugin-dir` reads), the plugin hooks it
   runs, and the network of the shell commands, which the sandbox policy governs and these

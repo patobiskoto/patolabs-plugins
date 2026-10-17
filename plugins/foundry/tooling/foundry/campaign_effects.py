@@ -457,8 +457,9 @@ def _save_summary(path: Path, attempt: str, text: str) -> str:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(target, flags, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
-        # cut on a character boundary, so that the saved file always decodes as UTF-8 (PAT-236)
-        handle.write(text.encode("utf-8")[:MAX_SUMMARY_BYTES].decode("utf-8", "ignore")
+        # cut on a character boundary, so that the saved file always decodes as UTF-8 (PAT-236);
+        # a lone surrogate (``json.loads`` accepts "\ud800") becomes "?", never an error (PAT-242)
+        handle.write(text.encode("utf-8", "replace")[:MAX_SUMMARY_BYTES].decode("utf-8", "ignore")
                      .encode("utf-8"))
     return str(target)
 
