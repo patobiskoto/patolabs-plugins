@@ -479,11 +479,28 @@ def test_campaign_approval_approve_is_denied_without_registry():
     assert _deny("python3 tooling/foundry_cli.py campaign-approval check PAT-1") is None
     assert _deny("python3 tooling/foundry_cli.py campaign-approval status PAT-1") is None
     assert _deny("echo 'campaign-approval approve'") is None
-    # PAT-234: the words as an argument of another program do not match; a direct run does
+    # PAT-234: the words as an argument of another program do not match
     assert _deny("grep campaign-approval approve notes.txt") is None
     assert _deny("git commit -m x && cat campaign_approval approve") is None
-    assert _deny("./tooling/foundry_cli.py campaign-approval approve PAT-1") is not None
-    assert _deny("python3 -u -m foundry.campaign_approval approve PAT-1") is not None
+    # forms the reviewer verified denied, and the wrapper/flag forms it found allowed
+    cli = "foundry_cli.py campaign-approval approve PAT-1"
+    for command in (
+        f"python3 {cli}", f"./{cli}", f"/opt/x/tooling/{cli}", f"env python3 {cli}",
+        f"VAR=1 python3 {cli}", "python3 -m foundry.campaign_approval approve PAT-1",
+        "python3 -u -m foundry.campaign_approval approve PAT-1",
+        "python3 -m campaign_approval approve PAT-1",
+        f"echo PAT-1 | xargs python3 {cli}", 'python3 foundry_cli.py "campaign-approval" "approve"',
+        f"timeout 60 python3 {cli}", f"xargs -n 1 python3 {cli}", f"xargs -I {{}} python3 {cli}",
+        f"sudo -u x python3 {cli}", f"env -u CLAUDECODE python3 {cli}",
+        f"/usr/bin/env python3 {cli}", f"nice python3 {cli}", f"nice -n 5 python3 {cli}",
+        f"exec python3 {cli}", f"uv run python {cli}", f"poetry run python {cli}",
+        f"pypy3 {cli}", f"script -q /dev/null python3 {cli}",
+        f"python3 -X utf8 {cli}", f"python3 -W ignore {cli}",
+    ):
+        assert _deny(command) is not None, command
+    # an indirection that never names the program stays out of scope
+    assert _deny('bash -c "python3 foundry_cli.py campaign-approval approve PAT-1"') is None
+    assert _deny("A=campaign-approval; python3 x.py $A approve") is None
 
 
 def test_campaign_approval_denied_by_main_outside_any_repo(tmp_path):

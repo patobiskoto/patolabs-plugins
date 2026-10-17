@@ -17,8 +17,9 @@ python3 tooling/foundry_cli.py campaign-approval check PAT-100 --preview-file pr
 
 `preview.json` is the output of `epic-preview` (`PREVIEW_CONTRACT`). `approve` reads that
 file only: it recomputes `preview_digest` over the file's material with
-`epic_preview._digest` and refuses a hand-edited file, a file for another Epic, an Epic identifier outside the issue-id format (the complete record is validated before any append, nothing is written otherwise) and missing
-or non-hex digests (`digests_from_preview`, `campaign_approval.py`). It then prints the
+`epic_preview._digest` and refuses a hand-edited file, a file for another Epic, an Epic
+identifier outside the issue-id format (the complete record is validated before any append,
+nothing is written otherwise) and missing or non-hex digests (`digests_from_preview`, `campaign_approval.py`). It then prints the
 digests, the retained expiry and ceilings and requires the human to retype the first 12 hex
 characters of `preview_digest` (`CONFIRMATION_LENGTH`). Bounds: `--max-sessions` 1 to
 `MAX_SESSIONS_CEILING`, `--max-sessions-per-issue` 1 to `--max-sessions`, a lifetime of at
@@ -34,20 +35,24 @@ is refused and nothing is written. The ceilings count every session of the ticke
 is deduced from `refusal` and not run, a per-issue ceiling of 3 stops after the first
 correction, before the second review.
 
-Every refusal of `approve`, `check` and `status` exits 2 with a JSON object on stderr whose
-`refused` is the `code` of the refusing class: `absent`, `expired`, `preview_digest_mismatch`,
+Every `ApprovalError` raised by `approve`, `check` and `status` exits 2 with a JSON object on
+stderr whose `refused` is the `code` of the refusing class: `absent`, `expired`, `preview_digest_mismatch`,
 `structure_digest_mismatch`, `journal_invalid` (also an unreadable or unwritable journal),
 `approver_refused` (`approve` only: no terminal, agent marker, wrong confirmation) or
-`refused` (the base `ApprovalError`: a preview or a bound outside the contract, a naive
-`now`). `status` has no `absent` refusal: it prints `[]` when the Epic has no record, and
-refuses only with `journal_invalid`.
+`refused` (the base `ApprovalError`: a preview outside the contract). `status` has no
+`absent` refusal: it prints `[]` when the Epic has no record, and refuses only with
+`journal_invalid`. An option that `argparse` rejects (`--max-sessions` or `--ttl-hours` that is
+not a strictly positive integer, `_positive_int`) exits 2 with the `argparse` usage text, not
+JSON; the bounds checked by `approve` itself (`MAX_TTL`, `MAX_SESSIONS_CEILING`, per-issue
+above `--max-sessions`) are `refused` JSON.
 
 `check(epic, preview_digest, structure_digest, now)` is the function a cadencer calls
 before any effect. It only reads the journal, and returns the latest unexpired matching
 record or raises a typed refusal: absent (no record for the Epic), a different preview
 digest, a different structure digest, expired, or an invalid journal. One line that fails
 validation makes the whole journal invalid: nothing is trusted then. `now` must carry a
-time zone: a naive `now` is refused (`refused`), never read as local time.
+time zone: a naive `now` is refused with `ApprovalError` (code `refused`), never read as local
+time. That is an API refusal only: the CLI always passes `now=None`.
 
 ## Record and storage
 
@@ -62,9 +67,15 @@ The journal is `campaign-approvals.jsonl` (`JOURNAL_NAME`) in `registry.data_dir
 FOUNDRY-ADR-0016). It is append-only: `_append` opens it `O_APPEND`, mode 0600, under an
 exclusive `flock`, writes until the whole line is written (`os.write` may be partial), and
 never rewrites or truncates. `read_journal` reads under a shared `flock`, so it waits for an
-append in progress. Neither opens through a symbolic link (`O_NOFOLLOW`); an open or write
-failure is a `journal_invalid` refusal, not a trace. A second approval adds a line. There is no
-revocation record yet: an approval ends by expiry.
+append in progress. Both open the journal file without following a symbolic link in its last
+path component (`O_NOFOLLOW`); a symbolic link earlier in the path, such as a symlinked
+`FOUNDRY_DATA`, is followed. An open, directory-creation or write failure is a
+`journal_invalid` refusal, not a trace. Two write failures leave a trace in the file: a
+write that fails after part of the line was written leaves a truncated line, so every later
+read is `journal_invalid` until someone repairs the file by hand; a failing `fsync` after the
+whole line was written leaves the line in place while the human is told the write was not
+confirmed. A second approval adds a line. There is no revocation record yet: an approval ends
+by expiry.
 
 ## An agent cannot approve (layers and limit)
 
@@ -77,13 +88,19 @@ revocation record yet: an approval ends by expiry.
    or any name starting with `CODEX_` (`agent_markers`). The refusal names the variable,
    never its value. Status: the marker names are an assumption, not observed on every host
    version, and the test is by name only. Any `CODEX_*` variable counts, so a human whose
-   terminal exports `CODEX_HOME` is refused too (observed in `agent_markers`); unset it for
+   terminal exports `CODEX_HOME` is refused too (deduced from `agent_markers`); unset it for
    that command. An agent that unsets the marker passes this layer.
 3. The Claude `PreToolUse` Bash hook denies a command invoking `campaign-approval approve`
    or `campaign_approval approve` (`approval_deny_reason`, `hooks/guard_bash.py`), in any
-   repository, registered or not. Only a segment that runs the program is denied (after
-   wrappers, `python*` and its flags, `foundry_cli` or the module followed by `approve`);
-   the same words as arguments of another command (`grep`, `git commit`) pass. `bash -c '...'` indirection is out of scope, as for R1.
+   repository, registered or not. Rule (`_approval_invocation`), per command segment and at
+   any position, with no dependence on wrappers or flags: a word whose basename is
+   `foundry_cli` or `foundry_cli.py`, followed later by `campaign-approval` and then
+   `approve`; or the word `foundry.campaign_approval`, a word whose basename is
+   `campaign_approval.py`, or `campaign_approval` right after `-m`, followed later by
+   `approve`. The same words as arguments of a command that names neither (`grep`,
+   `git commit`) pass. Gaps: an indirection that never names `foundry_cli` or the module in
+   the command text (a variable, an alias, a script that calls it) and `bash -c '...'`, whose
+   string is one word, are out of scope, as for R1.
    Codex: `.codex-plugin/plugin.json` declares no hook (observed); whether Codex runs this
    guard on its shell through the shared `hooks/hooks.json` is unknown.
 
@@ -95,6 +112,6 @@ Limit, stated plainly: the three layers stop an accidental or cooperative call b
 not a deliberate bypass (unsetting the marker, a pseudo-terminal, `bash -c`); like
 `guard_bash.py`, they are a discipline tool, not a sandbox. This is not a cryptographic
 guarantee either. A process running as the same OS user can append to the journal file
-directly. `check` refuses a line whose
-`record_digest` does not verify, so a malformed or edited hand-append is refused, but a
-well-formed forged line, with a correct digest, cannot be detected.
+directly. `check` refuses a line whose `record_digest` does not verify, so a malformed or
+edited hand-append is refused, but a well-formed forged line, with a correct digest, cannot
+be detected.

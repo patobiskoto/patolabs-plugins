@@ -278,7 +278,11 @@ def test_naive_now_is_a_typed_refusal(env, monkeypatch):
 def test_partial_os_write_is_completed(env, monkeypatch):
     path, preview = preview_file(env)
     real = __import__("os").write
-    monkeypatch.setattr(ca.os, "write", lambda fd, data: real(fd, bytes(data)[:7]))
+
+    def short_write(fd, data):  # only the journal line is cut short; other writes pass
+        data = bytes(data)
+        return real(fd, data[:7] if data.endswith(b"}\n") else data)
+    monkeypatch.setattr(ca.os, "write", short_write)
     record = do_approve(env, monkeypatch, preview, path)
     assert ca.read_journal() == [record]
 
@@ -302,15 +306,17 @@ def test_read_waits_for_a_writer_holding_the_lock(env, monkeypatch):
     path, preview = preview_file(env)
     do_approve(env, monkeypatch, preview, path)
     holder = os.open(ca.journal_path(), os.O_WRONLY)
-    fcntl.flock(holder, fcntl.LOCK_EX)
     done = threading.Event()
-    thread = threading.Thread(target=lambda: (ca.read_journal(), done.set()))
-    thread.start()
-    assert not done.wait(0.3)
-    fcntl.flock(holder, fcntl.LOCK_UN)
-    os.close(holder)
+    thread = threading.Thread(target=lambda: (ca.read_journal(), done.set()), daemon=True)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        thread.start()
+        assert not done.wait(0.3)
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
     assert done.wait(5)
-    thread.join()
+    thread.join(5)
 
 
 def test_real_cli_in_a_subprocess_refuses_without_terminal(tmp_path):

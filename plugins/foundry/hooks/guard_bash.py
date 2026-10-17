@@ -150,28 +150,35 @@ def _push_denies(args, defaults: set, current: str) -> bool:
     return False
 
 
-_APPROVAL_MODULES = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
+_CLI_NAMES = {"foundry_cli", "foundry_cli.py"}
+_MODULE_WORDS = {"foundry.campaign_approval"}
+
+
+def _follows(seg, start: int, word: str) -> int | None:
+    """Index of the first `word` strictly after `start`, else None."""
+    for index in range(start + 1, len(seg)):
+        if seg[index] == word:
+            return index
+    return None
 
 
 def _approval_invocation(seg) -> bool:
-    """True when the segment *runs* `campaign-approval approve`: the program (after
-    wrappers, then `python*` and its flags) is the module or `foundry_cli`, and `approve`
-    is its verb.  The words in an argument of another program (grep, git commit...) do not
-    match."""
-    cmd, args = _command_and_args(seg)
-    if cmd is None:
-        return False
-    chain = [cmd, *args]
-    if os.path.basename(cmd).startswith("python"):
-        chain = chain[1:]
-        while chain and chain[0].startswith("-"):
-            chain = chain[1:]
-    if not chain:
-        return False
-    program, rest = os.path.basename(chain[0]).removesuffix(".py"), chain[1:]
-    if program == "foundry_cli":
-        return len(rest) >= 2 and rest[0] in _APPROVAL_MODULES and rest[1] == "approve"
-    return program in _APPROVAL_MODULES and bool(rest) and rest[0] == "approve"
+    """True when the segment names `campaign-approval approve` the way it is run, at ANY
+    position (no dependence on wrappers or flags): a word whose basename is `foundry_cli`
+    then `campaign-approval` then `approve`; or the module (`foundry.campaign_approval`, the
+    script `campaign_approval.py`, or `campaign_approval` right after `-m`) then `approve`.
+    The words as arguments of a program that names neither (grep, git commit) do not match."""
+    for index, token in enumerate(seg):
+        base = os.path.basename(token)
+        if base in _CLI_NAMES:
+            sub = _follows(seg, index, "campaign-approval")
+            if sub is not None and _follows(seg, sub, "approve") is not None:
+                return True
+        elif (token in _MODULE_WORDS or base == "campaign_approval.py"
+              or (token == "campaign_approval" and index > 0 and seg[index - 1] == "-m")):
+            if _follows(seg, index, "approve") is not None:
+                return True
+    return False
 
 
 def approval_deny_reason(command: str) -> str | None:
@@ -179,7 +186,8 @@ def approval_deny_reason(command: str) -> str | None:
 
     Independent of any repository binding (no registry read): the approval journal is
     global to the user. Layer 3 of docs/campaign-approval.md; `bash -c` indirection stays
-    out of scope, as for R1. PAT-234: only a segment that runs the program is denied."""
+    out of scope, as for R1. PAT-234: a segment is denied when it names the program and
+    `approve` as in `_approval_invocation`."""
     for seg in _segments(_tokens(command)):
         if _approval_invocation(seg):
             return ("campaign-approval approve est un acte humain : lance-le toi-même "

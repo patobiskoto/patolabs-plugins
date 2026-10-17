@@ -81,10 +81,10 @@ edges, the internal `depends-on` edges, the sorted external blocker pairs
 the two graph contracts therefore has two different structure digests. A new child, an
 internal edge, a type or an external blocker changes it; a state, a version, a title or a
 label does not, nor, for `foundry-epic-subgraph.v1`, an external blocker turning `done`
-(tests: `tests/test_epic_subgraph.py`). Whether the `devhub-application.v1` projection lists
-a `done` external blocker is unknown here: that projection is read as served and no test or
-fixture of this repository shows it. If it omits one, that pair leaves the projection and the
-digest changes.
+(tests: `tests/test_epic_subgraph.py`). For `devhub-application.v1`, `validate_subgraph`
+refuses a `done` blocker (`epic_preview.py`, "état blocker incohérent"). If the served
+projection lists one, the preview is refused; if it omits one, that pair leaves the projection
+and the digest changes. Which of the two the server does is unknown here.
 The parent component is the Epic's `parent_validation_digest` for
 `foundry-epic-subgraph.v1`; `devhub-application.v1` carries no parent body, so it is the
 named absence `{"unavailable": ...}`. Detecting drift from this digest is not implemented
