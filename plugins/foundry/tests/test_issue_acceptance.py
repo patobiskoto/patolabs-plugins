@@ -819,5 +819,9 @@ def test_cli_unknown_flag_for_close_epic_lists_the_real_flags(monkeypatch):
         runpy.run_path(issue_cli.__file__, run_name="__main__")
     message = str(raised.value)
     assert "(aucun)" not in message
-    for flag in ("--status", "--human-verdict=", "--accept-override=", "--accept-dropped="):
+    for flag in (*issue_cli._CLOSE_EPIC_FLAG_PREFIXES, "--status"):
         assert flag in message
+    # the help text covers exactly the parser's flags (as PAT-239 did for `accept`)
+    listed = {part.split("=")[0] for part in issue_cli._CLOSE_EPIC_ALLOWED.split(", ")
+              if part.startswith("--")}
+    assert {flag.rstrip("=") for flag in (*issue_cli._CLOSE_EPIC_FLAG_PREFIXES, "--status")} == listed
