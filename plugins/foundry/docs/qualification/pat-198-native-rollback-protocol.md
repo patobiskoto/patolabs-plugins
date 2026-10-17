@@ -3,7 +3,8 @@
 Status: sections 1 to 8 were written 2026-10-17, BEFORE any native call, and are kept as that protocol. The four
 Claude lines were then run once each on 2026-10-17 and the Codex lines were not: see section 9 (amendment) and the
 matrix [`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-10-17.json). Whoever fills it records
-what a run showed, never what was expected.
+what a run showed, never what was expected. Section 10 (2026-10-18) is the amendment written before the Codex calls;
+it withdraws the Codex usage-limit statement of sections 3 and 9, kept below as written.
 
 ## 1. What this is and is not
 
@@ -162,7 +163,8 @@ the child is unknown.
 
 Updated: this page (new), the matrix file (new), `model-routing.md` (pointer), `changelog.d/PAT-198.md`, and the new
 module `foundry.rollback_native_trial` (CLI `--line`, `--work-dir`, `--out`, `--matrix`, `--claude`, `--parent-model`,
-`--projects-dir`, `--max-budget-usd`, `--guard-policy`, `--dry-run`). Not changed, with reason: `claude_profile_trial`
+`--projects-dir`, `--max-budget-usd`, `--guard-policy`, `--dry-run`). PAT-245 adds `--codex` and `--codex-sessions-dir`
+and the Codex run (section 10; `model-routing.md` pointer, `changelog.d/PAT-245.md`). Not changed, with reason: `claude_profile_trial`
 (imported helpers only, no surface changed); the PAT-17 record, the release notes and published changelog sections
 (frozen historical proofs, left untouched).
 
@@ -188,3 +190,79 @@ Total about 0.59 USD. Observed against section 7: `maigret` did not refuse the t
 run (`not_run`, the reason in each row's `limits`): the tool does not run a real Codex call, and Codex is under a
 usage limit until 2026-10-23 (maintainer's session log, not observed here). The remaining four calls of the standing
 authorisation are left to the follow-up issue PAT-245.
+
+## 10. Codex lines (2026-10-18), amendment before the Codex calls
+
+Written BEFORE any Codex call (PAT-245). Sections 1 to 8 stand; this section fixes only what the Codex lines add. The
+remaining four calls of the standing authorisation (4 of 8) are the four Codex lines, one each, no retry.
+
+**Correction.** Sections 3 and 9 say Codex is under a usage limit until 2026-10-23. That came from a stale
+2026-10-13 session log and is withdrawn. A `codex app-server` `account/rateLimits/read` of 2026-10-18 showed the weekly
+window at about 1 to 4 per cent used (the coordinator's reading; this page's author did not repeat it). Whether a
+call succeeds stays unknown until it is made; a usage-limit text in a run is a spent call and stops the sequence.
+
+**Surface and argv.** `codex exec` (local `codex-cli 0.162.1`), from a fresh work directory outside any git
+repository, packet on standard input from `packet.txt` of the work directory:
+
+```
+codex exec --ignore-user-config --ignore-rules --sandbox read-only --json --skip-git-repo-check -C <work>
+  --model <model> -c model_reasoning_effort="<effort>" -
+```
+
+That is `codex_command_v2` of `measurement_harness_v2.py` (`--ephemeral --ignore-user-config --ignore-rules --sandbox
+read-only --json --model <model> -c model_reasoning_effort="<effort>" -`) with two differences, both deliberate:
+`--skip-git-repo-check -C <work>` (the work directory is not a repository), and NO `--ephemeral`, because
+`--ephemeral` persists no session file and the session file is the only source of the model and effort that the host
+recorded (below). The cost: the host writes one session file under its own sessions directory (host side, like the
+Claude project logs); the tool only reads it. The packet asks to read `fixture/marker.txt` (a public marker) and reply
+with it; no Foundry routing, role contract or policy is in this path, the model and effort are carried by the command
+line, so `resolved_route` and `transmitted` are the same pair and the "disposable policy" is `--ignore-user-config
+--ignore-rules` plus an empty work directory.
+
+**Isolation of the account.** The child keeps the real Codex home for authentication only (`--ignore-user-config`:
+"Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`", `codex exec --help`). Its environment is the R6
+allow-list of the Claude child (`HOME`, `LANG`, `LC_ALL`, `LOGNAME`, `PATH`, `TMPDIR`, `USER`) plus `CODEX_HOME` if set;
+no API key or other variable is forwarded, so authentication through an environment key would not work (the local
+session is by the Codex home, deduced, not tested). The tool never reads, hashes or copies the authentication file;
+it records the sha256 of `<CODEX_HOME>/config.toml` before and after (`policy_guard`, with the guarded policies of
+section 6), and a change makes the line `not_conforming`.
+
+**Ceilings and stops.** One call per line, no retry; the same matrix claim, matrix lock, ledger lock and
+out-of-checkout ledger as section 4, shared with the Claude lines (total 8). `codex exec` has no spend flag (none in
+`codex exec --help`, read 2026-10-18): the ceiling is the time bound of section 4 (20 minutes, process group killed)
+and the usage the stream reports; `--max-budget-usd` does not apply and is recorded as `null`. Stop the sequence on an
+authentication failure, a usage-limit or rate-limit text (`usage_limit_text`), or a changed guard. An unavailable,
+divergent or refused answer is recorded and nothing is retried or replaced.
+
+**Observation (what is observed, what stays unknown).**
+
+- Stream (`--json`): `thread.started` (the thread id locates the session file and is never written to the result),
+  `item.completed` of type `agent_message` (the reply), `turn.completed` with `usage` (integer counters kept as
+  reported), `turn.failed` / `error` messages (kept after masking). The event names are those parsed by
+  `measurement_harness_v2.py`; the tool was not run against a real stream before this amendment.
+- Session file (`<CODEX_HOME>/sessions/**/rollout-*-<thread id>.jsonl`): `turn_context` records `model` and `effort`,
+  `session_meta` the `cli_version`. Their shape was read on a local session of 2026-10-18 (keys only). A model and an
+  effort count as observed ONLY if the stream shows `turn.completed`; otherwise they are kept apart as
+  `unconfirmed_models` and the line has no observed model. Exactly one session file must match, else unknown.
+- Unknown by construction: whether the backend served the model the host recorded; the effort level `max` on
+  `gpt-5.6-sol` (if the host records another label, the effort is `divergent` and that is the result); account
+  availability beyond this date; any rate-limit state (not read from the session file).
+- Account availability: `available_observed` only with an exact or dated-snapshot model from a completed turn;
+  `unavailable_declared` only when no real model was observed and a masked text matches the model-anchored pattern of
+  section 7; otherwise `unknown`. Verdict rules are those of section 7 (profile and children do not apply: `agent_types`
+  is `not_applicable`).
+
+**Commands.** From the root of the checkout, scratch outside any git repository, tool `foundry.rollback_native_trial`,
+`<line>` one of `codex-scout`, `codex-implementer`, `codex-reviewer`, `codex-architect`:
+
+```
+S=$(mktemp -d)
+PYTHONPATH=plugins/foundry/tooling python3 -m foundry.rollback_native_trial --line <line> \
+  --work-dir "$S/<line>" --out "$S/<line>.json" [--dry-run]
+```
+
+Options added for Codex: `--codex` (binary, default `codex`), `--codex-sessions-dir` (default
+`<CODEX_HOME or ~/.codex>/sessions`). A real run writes the same items as section 6 (work directory with `fixture/`,
+`packet.txt`, `stream.ndjson`, `stderr.txt`; result file; matrix row and `native_calls`; locks; one ledger line) and
+the host's session file. Run the four lines one after the other, commit the matrix after each, and add a dated
+"Runs" amendment after the calls, as section 9 did for Claude.
