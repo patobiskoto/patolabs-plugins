@@ -91,6 +91,9 @@ class TicketFacts:
     # True when the last implementation or correction attempt ended on this very branch head
     # (PAT-217, PAT-218).
     implemented: bool = False
+    # PAT-237: whether the branch head holds the PR head as an ancestor (the branch is ahead of
+    # the PR), observed only when the branch head and the PR head differ; ``None`` otherwise.
+    branch_contains_pr: bool | None = None
     pr: PullFacts | None = None
     review: str | None = None  # none | valid | blocked | unobservable | integrity
     ci: str | None = None  # green | pending | red | none
@@ -236,6 +239,11 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
     if not pr.head_sha:
         return Decision("suspend", ticket.id, "pr_head_unreadable", evidence)
     if ticket.implemented and ticket.branch_sha and ticket.branch_sha != pr.head_sha:
+        if ticket.branch_contains_pr is not True:
+            # The PR head is not in the branch (it moved on the remote, or the two diverged):
+            # a push would be refused, and the branch is not what the PR holds (PAT-237).
+            return Decision("suspend", ticket.id, "pr_head_not_in_branch", {
+                **evidence, "branch_sha": ticket.branch_sha, "pr_head": pr.head_sha})
         # A correction session committed locally: the PR still holds the reviewed head.
         return Decision("open-pr", ticket.id, "correction_not_pushed", evidence)
     if ticket.review == "integrity":  # a corrupt proof or ledger is not "no review" (PAT-235)
@@ -348,14 +356,29 @@ def git_neutral_env(environ, hooks: str) -> dict:
     return env
 
 
-def _git(root: str, *args: str, check: bool = True) -> str:
-    """The one read-only git call of this module; empty on a refused, unchecked call.  Its
-    verbs (``for-each-ref``, ``rev-parse``, ``rev-list``) run no hook: hooks stay off."""
-    result = subprocess.run(
+def _git_run(root: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    """The one read-only git call of this module.  Its verbs (``for-each-ref``, ``rev-parse``,
+    ``rev-list``, ``merge-base``) run no hook: hooks stay off."""
+    return subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=check,
         env=git_neutral_env(os.environ, os.devnull),
     )
+
+
+def _git(root: str, *args: str, check: bool = True) -> str:
+    """Its output, stripped; empty on a refused, unchecked call."""
+    result = _git_run(root, *args, check=check)
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_contains(root: str, branch_sha: str, pr_head: str) -> bool:
+    """Whether ``pr_head`` is an ancestor of ``branch_sha`` (``git merge-base --is-ancestor``,
+    read-only); an unknown commit, an unreadable repository or a refusal is ``False``."""
+    try:
+        done = _git_run(root, "merge-base", "--is-ancestor", pr_head, branch_sha, check=False)
+    except OSError:
+        return False
+    return done.returncode == 0
 
 
 def _git_refs(root: str) -> list[str]:
@@ -465,6 +488,7 @@ def observe(
     journal: Path | None = None, refs: Callable[[str], list[str]] = _git_refs,
     diff_reader: Callable[[str, str, str], bytes] = _default_diff, proof_store=None,
     branch_facts: Callable[[str, str], tuple[str | None, int | None]] = _git_branch_facts,
+    contains: Callable[[str, str, str], bool] = _git_contains,
     implemented: Callable[[str, str | None], bool] | None = None,
     history: Callable[[str, str | None, str | None], tuple[int, int, int]] | None = None,
     deferral: Callable[..., DeferralFacts] | None = None,
@@ -516,7 +540,8 @@ def observe(
     if focus is not None:
         tickets = tuple(
             _focus_facts(t, tracker, codehost, root, refs, diff_reader, proof_store,
-                         branch_facts, implemented, history, deferral, origin, now, description)
+                         branch_facts, implemented, history, deferral, origin, now, description,
+                         contains)
             if t.id == focus else t for t in tickets
         )
     return Observation(
@@ -527,7 +552,7 @@ def observe(
 
 def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store,
                  branch_facts, implemented, history=None, deferral=None, origin=None,
-                 now=None, description=None):
+                 now=None, description=None, contains=_git_contains):
     from dataclasses import replace
 
     branch = _branch_for(refs(root), ticket.id)
@@ -541,6 +566,8 @@ def _focus_facts(ticket, tracker, codehost, root, refs, diff_reader, proof_store
     facts = replace(ticket, **known, pr=pr, anomaly=anomaly)
     if pr is None or pr.merged or pr.state != "open" or anomaly:
         return facts
+    if done and sha and pr.head_sha and sha != pr.head_sha:  # PAT-237
+        facts = replace(facts, branch_contains_pr=contains(root, sha, pr.head_sha))
     if proof_store is None:
         from foundry.routing import AcceptanceProofStore, repository_identity
 

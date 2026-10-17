@@ -109,6 +109,9 @@ def test_reviewer_argv_is_routed_at_the_gate_floor_and_read_only(env):
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
     assert argv.index("--setting-sources") < argv.index("--allowedTools")
+    # PAT-237: a one-shot reviewer session leaves no resumable session behind
+    assert "--no-session-persistence" in argv and argv.index("--no-session-persistence") < (
+        argv.index("--session-id"))
 
 
 def test_foundry_data_is_forwarded_to_the_reviewer_only_when_set(env, monkeypatch):
@@ -313,31 +316,70 @@ def test_escalation_is_not_signalled_when_the_claim_would_refuse(env):
     assert plan["suspend"][0] == "attempt_already_made" and _escalations(env) == []
 
 
-def test_an_escalation_replay_with_an_active_floor_sends_the_same_signal(env, monkeypatch):
-    """A floor raised by `escalated` must not change the tier sent on a replay (same identity)."""
+def _real_floor(env):
+    """PAT-237 (218-11): drive a real `escalated` state of the store `plan_correct` reads (the
+    escalation CLI itself is a double here), returning the base tier and the floor it raised."""
     from foundry.escalation import EscalationStore
-    from foundry.routing import LEVELS, RoutingPolicy
+    from foundry.routing import RoutingPolicy
 
+    base = RoutingPolicy.load(env.runtime.root).resolve("implementer", "claude").selected_tier
+    store = EscalationStore.for_root(env.runtime.root)
+    assert store.active_floor("APP-2", "implementer") is None
+    store.record_failure("APP-2", "implementer", "test_red", base)
+    outcome = store.record_failure("APP-2", "implementer", "review_blocking", base)
+    assert outcome.action == "escalated"
+    floor = store.active_floor("APP-2", "implementer")
+    assert floor is not None and floor != base
+    return base, floor
+
+
+def _blocked_ticket(env):
     to_review(env)
     env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
     step(env)
-    ticket = next(t for t in cc.observe(
+    return next(t for t in cc.observe(
         env.tracker, env.codehost, PROJECT, "APP-1", env.runtime.root, NOW,
         journal=env.kwargs["journal"], refs=env.kwargs["refs"],
         branch_facts=env.kwargs["branch_facts"], diff_reader=env.kwargs["diff_reader"],
-        proof_store=env.kwargs["proof_store"]).tickets if t.id == "APP-2")
+        proof_store=env.kwargs["proof_store"], contains=env.kwargs["contains"]).tickets
+        if t.id == "APP-2")
+
+
+def test_an_escalation_replay_with_an_active_floor_sends_the_same_signal(env):
+    """A floor raised by `escalated` must not change the tier sent on a replay (same identity)."""
+    ticket = _blocked_ticket(env)
     decision = cc.Decision("correct", "APP-2", "review_blocked")
-    base = RoutingPolicy.load(env.runtime.root).resolve("implementer", "claude").selected_tier
-    higher = LEVELS[min(LEVELS.index(base) + 1, len(LEVELS) - 1)]
-    floors = iter([None, higher])  # first call: no floor; replay: the floor `escalated` raised
-    monkeypatch.setattr(EscalationStore, "active_floor",
-                        lambda self, issue, role: next(floors) if role == "implementer" else None)
     attempts = env.kwargs["attempts"]
     cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
+    base, _floor = _real_floor(env)  # `escalated` happens between the two plans
     cr.plan_correct(env.runtime, decision, "APP-1", ticket, attempts, env.tracker, None)
     first, replay = _escalations(env)
     assert first == replay
     assert replay[replay.index("--current-tier") + 1] == base
+
+
+def test_a_tier_without_the_floor_that_is_no_longer_available_falls_back_to_the_floored_one(
+        env, monkeypatch):
+    """PAT-237 (218-12): resolving the implementer without the floor can raise
+    `RoutingUnavailableError` once the floor is up; the plan then sends the tier resolved with
+    the floor instead of failing."""
+    from foundry.routing import RoutingPolicy, RoutingUnavailableError
+
+    ticket = _blocked_ticket(env)
+    _base, floor = _real_floor(env)
+    real = RoutingPolicy.resolve
+
+    def resolve(self, role, host, **kwargs):
+        if role == "implementer" and kwargs.get("minimum_tier") is None:
+            raise RoutingUnavailableError("the unfloored tier is not available")
+        return real(self, role, host, **kwargs)
+
+    monkeypatch.setattr(RoutingPolicy, "resolve", resolve)
+    decision = cc.Decision("correct", "APP-2", "review_blocked")
+    cr.plan_correct(env.runtime, decision, "APP-1", ticket, env.kwargs["attempts"], env.tracker,
+                    None)
+    signal, = _escalations(env)
+    assert signal[signal.index("--current-tier") + 1] == floor
 
 
 def test_a_halted_state_that_is_not_a_continue_action_launches_no_session(env, monkeypatch):
@@ -431,11 +473,44 @@ def test_a_pushed_correction_is_an_open_pr_decision_not_a_review():
     pr = cc.PullFacts(5, "open", False, "a" * 40, "b" * 40)
     ticket = cc.TicketFacts(id="APP-2", state="review", category="eligible", reason="",
                             branch=True, branch_sha="c" * 40, implemented=True, pr=pr,
-                            review="blocked")
+                            review="blocked", branch_contains_pr=True)
     decision = cc._ticket_step(ticket)
     assert (decision.kind, decision.reason) == ("open-pr", "correction_not_pushed")
     pushed = cc.TicketFacts(**{**ticket.__dict__, "branch_sha": "a" * 40})
     assert cc._ticket_step(pushed).kind == "correct"
+
+
+@pytest.mark.parametrize("contains", [False, None])
+def test_a_pr_head_that_moved_only_on_the_remote_is_not_a_push_to_make(contains):
+    """PAT-237 (218-2): the branch head differs from the PR head, but the PR head is not in the
+    branch (someone pushed to the PR, or the two diverged): `open-pr` would be refused by the
+    remote; the pass suspends instead, and says why."""
+    pr = cc.PullFacts(5, "open", False, "a" * 40, "b" * 40)
+    ticket = cc.TicketFacts(id="APP-2", state="review", category="eligible", reason="",
+                            branch=True, branch_sha="c" * 40, implemented=True, pr=pr,
+                            review="blocked", branch_contains_pr=contains)
+    decision = cc._ticket_step(ticket)
+    assert (decision.kind, decision.reason) == ("suspend", "pr_head_not_in_branch")
+    assert decision.evidence["pr_head"] == "a" * 40 and decision.evidence["branch_sha"] == "c" * 40
+
+
+def test_the_ancestry_of_the_pr_head_is_observed_only_when_the_heads_differ(env):
+    to_review(env)
+    roomy(env)
+    asked = []
+    env.kwargs["contains"] = lambda root, branch, pr: asked.append((branch, pr)) or False
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    assert step(env).decision.kind == "review"  # the branch head is the PR head: not asked
+    assert asked == []
+    assert step(env).decision.kind == "correct"  # the session commits: the branch is ahead
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "suspend", "pr_head_not_in_branch", "stopped")
+    assert asked == [(env.world.heads["APP-2"], env.world.prs[-1].sha)]
+    pushes = len([c for c in effects(env.world) if c[0][3:4] == ["openpr"]])
+    env.kwargs["contains"] = lambda root, branch, pr: True
+    assert step(env).decision.reason == "correction_not_pushed"
+    assert len([c for c in effects(env.world) if c[0][3:4] == ["openpr"]]) == pushes + 1
 
 
 def test_remarks_to_fix_then_a_partial_review_with_the_previous_round(env):
@@ -459,6 +534,9 @@ def test_remarks_to_fix_then_a_partial_review_with_the_previous_round(env):
     new_head = env.world.prs[-1].sha
     assert "PARTIAL REVIEW (PAT-ADR-0022)" in prompt and f"{previous_head}..{new_head}" in prompt
     assert "ALL criteria for the exact current diff" in prompt
+    # PAT-237: the wording holds after `remarks_not_deferrable` too, and says what not to relist
+    assert "or, when none of its remarks could be deferred" in prompt
+    assert "do not list it again" in prompt and '"full_review": true' in prompt
     declared = env.world.declarations
     assert declared["partial_review"] is True and declared["commit_range"] == f"{previous_head}..{new_head}"
     assert "typo" in declared["previous_report"] and declared["previous_fix_before_merge"] == 1
@@ -833,7 +911,7 @@ def test_the_description_is_not_published_when_the_session_moved_the_worktree_he
 def test_the_description_is_not_published_when_the_session_committed(env):
     _description_only(env)
     env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
-    env.world.head_sha["APP-2"] = "9" * 40  # a new commit on the ticket branch
+    env.world.session_commits = True  # the session commits on the ticket branch
     before = len(env.world.bodies)
     result = step(env)
     assert result.outcome == "failed"
@@ -909,3 +987,143 @@ def test_the_version_probe_runs_where_and_as_the_session_launches(env, monkeypat
         assert child_env == launch[2]
         pairs += 1
     assert pairs >= 3  # implementation, review, correction
+
+
+# ---------------------------------------------------------------- PAT-237
+
+
+def _with_body(text, **changes):
+    head, _, tail = text.partition(f"{cr.RESULT_SENTINEL}\n")
+    return f"{head}{cr.RESULT_SENTINEL}\n" + json.dumps({**json.loads(tail), **changes})
+
+
+def test_parse_result_accepts_the_optional_full_review_key_as_a_boolean_only():
+    assert cr.parse_result(_with_body(result_text(), full_review=True))[1]["full_review"] is True
+    assert "full_review" not in cr.parse_result(result_text())[1]
+    for bad in (1, "true", None):
+        with pytest.raises(cr.ReviewOutputInvalid):
+            cr.parse_result(_with_body(result_text(), full_review=bad))
+    with pytest.raises(cr.ReviewOutputInvalid):
+        cr.parse_result(_with_body(result_text(), other=True))
+    contract = cr.review_contract()
+    assert '"full_review": true' in contract and "PARTIAL REVIEW" in contract
+
+
+def _partial_round(env, **changes):
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(fix=1, report="## AC\nNIT fix before merge: typo"))
+    step(env)
+    step(env)  # the correction
+    step(env)  # its push
+    env.world.reviews.append(_with_body(result_text(), **changes))
+    return step(env)
+
+
+def test_a_partial_review_stays_partial_unless_the_reviewer_read_the_whole_diff(env):
+    """PAT-237 (218-3)."""
+    kept = _partial_round(env)
+    assert kept.effect["review"]["partial"] is True
+    assert "Partial review (PAT-ADR-0022)" in cr.round_line(2, kept.effect["review"])
+
+
+def test_a_partial_review_the_reviewer_widened_is_recorded_as_a_full_round(env):
+    widened = _partial_round(env, full_review=True)
+    assert "PARTIAL REVIEW" in reviewer_calls(env.world)[-1][3]
+    assert widened.effect["review"]["partial"] is False
+    line = cr.round_line(2, widened.effect["review"])
+    assert "full review" in line and "Partial review" not in line
+    journaled = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "review"][-1]
+    assert journaled["review"]["partial"] is False
+
+
+def test_remark_texts_are_scrubbed_before_the_receipt_and_the_report(env):
+    """PAT-237 (141-1): the claim capability and a credential-shaped value never reach the
+    receipt (hence the tracker comment) as the reviewer wrote them."""
+    from foundry import review_remarks
+    from test_campaign_effects import REPOSITORY
+
+    fake = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2"
+    to_review(env)
+    remarks = [{"text": f"nit: the token {fake} and claim {CLAIM_ID} appear in a log",
+                "fix_before_merge": False, "target": "diff"},
+               {"text": "nit: https://user:s3cret@example.com/x is committed",
+                "fix_before_merge": False, "target": "diff"}]
+    env.world.reviews.append(_with_body(result_text(nits=2), remarks=remarks))
+    step(env)
+    receipt = review_remarks.ReviewRemarksStore(REPOSITORY).find("APP-2", DIFF_HASH)
+    stored = " ".join(r["text"] for r in receipt["remarks"])
+    for secret in (fake, CLAIM_ID, "s3cret"):
+        assert secret not in stored
+    assert "[redacted]" in stored and "[REDACTED]" in stored
+    assert len(receipt["remarks"]) == 2
+
+
+def test_scrubbed_remarks_stay_within_the_bound_and_keep_their_flags():
+    long_text = "https://u:p@h/" + "x" * (cr.MAX_REMARK_TEXT - 14)
+    out = cr.scrub_remarks([{"text": long_text, "fix_before_merge": True, "target": "description"}],
+                           ("",))
+    assert len(out[0]["text"]) <= cr.MAX_REMARK_TEXT
+    assert out[0]["fix_before_merge"] is True and out[0]["target"] == "description"
+    assert "u:p@" not in out[0]["text"]
+
+
+def test_the_summary_criterion_tolerates_blank_lines_and_edge_spaces_around_the_mark():
+    """PAT-237 (227-2): `usable_summary` drops leading line breaks and strips the mark line and
+    the rest; it does not demand byte-for-byte equality."""
+    mark = ce.SUMMARY_MARK
+    assert ce.usable_summary(f"\n\n{mark}\nbody") == "body"
+    assert ce.usable_summary(f"  {mark}\t\n  body  \n\n") == "body"
+    assert ce.usable_summary(f"{mark}\r\nbody") == "body"
+    assert ce.usable_summary(f" \n{mark}\nbody") is None  # a first line of spaces is a line
+
+
+def _moved_head_world(env):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+
+
+def test_a_worktree_head_that_is_not_the_pr_head_launches_no_paid_session(env):
+    """PAT-237 (227-1): a stray commit from an earlier attempt would make the session fail at
+    `publish_description`: stop before it, with no attempt claimed and nothing spent."""
+    _moved_head_world(env)
+    env.world.head_sha["APP-2"] = "9" * 40  # a stray local commit, already there
+    sessions = len([c for c in env.world.calls if c[0][0] == "claude"])
+    started = len([r for r in ce.read_attempts(env.kwargs["attempts"]) if r["event"] == "started"])
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "suspend", "description_worktree_head_moved", "stopped")
+    assert result.decision.evidence == {"head": "9" * 40, "pr_head": env.world.prs[-1].sha}
+    assert len([c for c in env.world.calls if c[0][0] == "claude"]) == sessions
+    assert len([r for r in ce.read_attempts(env.kwargs["attempts"])
+                if r["event"] == "started"]) == started
+    del env.world.head_sha["APP-2"]  # the worktree is back on the PR head: the pass goes on
+    assert step(env).outcome == "executed"
+
+
+def test_an_unreadable_worktree_head_is_its_own_failure_before_and_after_the_session(env):
+    """PAT-237 (227-4): a failed `git rev-parse HEAD` is not a commit of the session."""
+    _moved_head_world(env)
+    env.world.head_failures = 1  # the read before the session
+    sessions = len([c for c in env.world.calls if c[0][0] == "claude"])
+    before = step(env)
+    assert (before.outcome, before.effect["phase"]) == ("failed", "plan")
+    assert len([c for c in env.world.calls if c[0][0] == "claude"]) == sessions
+    assert not [r for r in ce.read_attempts(env.kwargs["attempts"])
+                if r["kind"] == "correct"]  # no attempt consumed
+    runner = env.world.runner
+    reads = []
+
+    def second_read_fails(argv, **kw):  # the read before the session answers, the one after fails
+        if argv == ["git", "rev-parse", "HEAD"]:
+            reads.append(argv)
+            if len(reads) == 2:
+                return type("D", (), {"returncode": 128, "stdout": "", "stderr": "fatal"})()
+        return runner(argv, **kw)
+
+    env.runtime.runner = second_read_fails
+    result = step(env)
+    assert result.outcome == "failed"
+    done = ce.read_attempts(env.kwargs["attempts"])[-1]
+    assert (done["status"], done["error"]) == ("failed", "description_head_unreadable")
+    assert "description" not in done
