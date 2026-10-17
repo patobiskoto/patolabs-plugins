@@ -634,7 +634,7 @@ def test_a_missing_codex_binary_is_refused_before_any_reservation(tmp_path):
     assert not (tmp_path / "work").exists() and not (tmp_path / "result.json").exists()
 
 
-def test_the_codex_config_is_copied_to_the_work_directory_before_the_call_and_never_printed(tmp_path, capsys):
+def test_the_codex_config_is_copied_beside_the_work_directory_before_the_call_and_never_printed(tmp_path, capsys):
     config = tmp_path / "codex-home" / "config.toml"
     config.parent.mkdir()
     config.write_text("secret_like = 1\n")
@@ -642,12 +642,30 @@ def test_the_codex_config_is_copied_to_the_work_directory_before_the_call_and_ne
     base_host = _codex_host(tmp_path)
 
     def host(command, *, cwd, **kw):
-        seen.append((cwd / "backup" / "config.toml").read_text())
+        seen.append(((tmp_path / "work.backup" / "config.toml").read_text(), sorted(p.name for p in cwd.rglob("*"))))
         return base_host(command, cwd=cwd, **kw)
     rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
-    assert seen == ["secret_like = 1\n"] and "secret_like" not in capsys.readouterr().out
-    assert "secret_like" not in (tmp_path / "result.json").read_text()
-    assert not list((tmp_path / "work").rglob("auth.json"))
+    assert seen == [("secret_like = 1\n", ["fixture", "marker.txt", "packet.txt"])]
+    assert "secret_like" not in capsys.readouterr().out and "secret_like" not in (tmp_path / "result.json").read_text()
+    assert not list((tmp_path / "work").rglob("auth.json")) and not list((tmp_path / "work.backup").rglob("auth.json"))
+
+
+def test_an_existing_codex_backup_directory_is_refused_before_any_reservation(tmp_path):
+    (tmp_path / "work.backup").mkdir()
+    before = (tmp_path / "matrix.json").read_bytes()
+    with pytest.raises(rt.RollbackTrialError, match="backup directory"):
+        rt.run(_args(tmp_path, "codex-scout"), codex_launch=_codex_host(tmp_path))
+    assert (tmp_path / "matrix.json").read_bytes() == before and not (tmp_path / "work").exists()
+
+
+def test_a_stderr_usage_limit_undoes_a_stream_error_naming_the_model(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, session=False,
+                       stream_errors=["`gpt-5.6-luna` does not exist or you do not have access to it"],
+                       stderr_text="rate limit reached, try again in 20 minutes")
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["usage_limit_text"] is True and body["account_availability"] == "unknown"
+    assert body["verdict"] != "unavailable" and _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
 
 
 def test_a_usage_limit_is_a_spent_call_and_flagged_not_unavailable(tmp_path):

@@ -447,6 +447,11 @@ def verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[s
     return ("unknown" if open_points else "conforming"), open_points
 
 
+def _backup_dir(work: Path) -> Path:
+    """Where a present Codex ``config.toml`` is copied before the call: a sibling of the work directory."""
+    return work.with_name(work.name + ".backup")
+
+
 def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, today: dt.date | None = None,
         codex_launch: Callable[..., dict[str, Any]] = _launch_codex) -> int:
     if args.line not in LINES:
@@ -460,6 +465,8 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         raise RollbackTrialError("the work directory and the result file must not exist: the trial is never replayed")
     if base._inside_repository(work):
         raise RollbackTrialError("the work directory must be outside any git repository: the fixture carries its own policy")
+    if host == "codex" and (_backup_dir(work).exists() or base._inside_repository(_backup_dir(work))):
+        raise RollbackTrialError("the backup directory <work dir>.backup must not exist and must be outside any git repository")
     # taken before the lock file exists, so the lock never makes the checkout look dirty
     source = base._head()
     locks: list[Path] = []
@@ -625,8 +632,8 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
     (work / "packet.txt").write_text(codex_prompt() + "\n", encoding="utf-8")
     config = codex_home() / "config.toml"
     if config.is_file():  # copied, never printed: the way back if the guard reports CHANGED (protocol section 10)
-        (work / "backup").mkdir()
-        shutil.copy2(config, work / "backup" / "config.toml")
+        _backup_dir(work).mkdir()  # a sibling, outside the -C directory the model runs in
+        shutil.copy2(config, _backup_dir(work) / "config.toml")
     _reserve(ledger_path(), args.line, body["date"], session_id)
     row.update({"status": "started", "date": body["date"]})
     matrix["native_calls"] = matrix.get("native_calls", 0) + 1
@@ -640,8 +647,10 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
         stderr_text = ""
     if stderr_text:
         facts["errors"].append(mask(stderr_text[-_ERROR_LIMIT:]))
-        if declares_unavailable(facts, model):
-            facts["account_availability"] = "unavailable_declared"
+    if declares_unavailable(facts, model):  # recomputed from every text: a stderr usage limit undoes a stream match
+        facts["account_availability"] = "unavailable_declared"
+    elif facts["account_availability"] == "unavailable_declared":
+        facts["account_availability"] = "unknown"
     facts["usage_limit_text"] = any(_USAGE_LIMIT.search(t) for t in facts["errors"])
     after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
     guard_ok = before == after

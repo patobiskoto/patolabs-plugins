@@ -228,10 +228,11 @@ no API key or other variable is forwarded, so authentication through an environm
 session is by the Codex home, deduced, not tested). The tool never reads, hashes or copies the authentication file;
 it records the sha256 of `<CODEX_HOME>/config.toml` before and after (`policy_guard`, with the guarded policies of
 section 6), and a change makes the line `not_conforming`. Before the call a present `config.toml` is copied to
-`<work>/backup/config.toml` (never printed, never in the result). If the guard reports `CHANGED`, copy that file back
+`<work>.backup/config.toml`, a sibling outside the `-C` directory the model runs in, which must not exist and must be
+outside any git repository like the work directory (never printed, never in the result). If the guard reports `CHANGED`, copy that file back
 over `<CODEX_HOME>/config.toml`, check the sha256 against the `before` digest of the result, and note it in the
 "Runs" amendment; `auth.json` is never copied, so a change of it has no restoration here (stop the sequence). Delete
-the work directory afterwards (the copy may hold the user's settings). A `codex` binary that is not found or not
+the work and backup directories afterwards (the copy may hold the user's settings). A `codex` binary that is not found or not
 executable is refused before the reservation and the matrix write.
 
 **Ceilings and stops.** One call per line, no retry; the same matrix claim, matrix lock, ledger lock and
