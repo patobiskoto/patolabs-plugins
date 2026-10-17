@@ -392,7 +392,7 @@ def _failed(error: str, detail: str = "", **extra) -> dict:
 
 def _foundry(runtime, args: list[str], cwd, hidden=()):
     done = fx._run(runtime, runtime.command(*args), cwd)
-    return done, _scrub((done.stderr or "")[-300:], hidden)
+    return done, _scrub(fx.without_request_count(done.stderr)[-300:], hidden)
 
 
 def _json_object(text: object) -> dict | None:

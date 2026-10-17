@@ -460,7 +460,12 @@ the attempt journal, written before the first write (`claim`); the `finished` li
 `deferral` key `{state, follow_up, companion, reason, diff_hash, remarks, writes, unknown}`
 (`DEFERRAL_KEYS`; `state` is `done`, `refused` or `transient`; `remarks` the number of deferred
 remarks; `writes` what this attempt wrote; `unknown` the creations whose effect is unknown, each
-`{title, client_id}`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
+`{title, client_id}`). The `foundry linear_requests=N` lines that `FOUNDRY_REQUEST_COUNT=stderr` makes the Linear
+adapter print last (`REQUEST_COUNT_ENV`, `trackers/linear.py`) are dropped from every error tail the cadencer reads
+(`without_request_count`, `campaign_effects.py`), so the recorded `reason` and the `reconciliation` JSON are those of
+the error (observed: campaign PAT-221, first attempt of PAT-222, deduced cause: the last line was taken); `companion`
+of a failed attempt is the companion Epic found or created before the failure, `writes` what had gone through
+(`launch`, `campaign_defer.py`). Steps, each preceded by a read of the tracker, so that a retry duplicates nothing:
 
 1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
