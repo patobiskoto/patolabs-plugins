@@ -368,7 +368,7 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
     origin = facts.origin
     if origin is None or facts.origin_is_companion:
         raise Durable("no_deferral_case")
-    if not deferrable and last is not None:  # PAT-237: nothing left, no tracker read or write
+    if not deferrable and last is not None:  # PAT-237: nothing left, no deferral read or write
         field = deferral_field("done", facts.diff_hash, ledger, follow_up=last["follow_up"],
                                companion=last["companion"], remarks=0)
         if review.update_pr_body(runtime, epic, ticket, attempts, worktree, None, deferral=field):

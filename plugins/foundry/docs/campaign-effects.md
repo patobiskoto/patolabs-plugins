@@ -803,17 +803,19 @@ durable refusal and transient wait, reconciliation, orphan attach, the neutral s
 the closure graph unchanged, the merge gate) and `tests/test_review_remarks.py` (the receipt
 and the strict parsing of `remarks`).
 
-R5 status (PAT-237): updated `docs/campaign-effects.md` and `docs/campaign-cadence.md`. Candidate
-artefacts: the optional key `full_review` of the reviewer result (`FULL_REVIEW_KEY`); the decision
-reason `pr_head_not_in_branch`, the key `branch_contains_pr` of an observed ticket and the
-`contains` argument of `observe`; the suspension `description_worktree_head_moved` and the error
-`description_head_unreadable`; the helpers `scrub_remarks` and `already_deferred`; the public
-constant `RESULT_KEYS` (`campaign_review.py`); the sentence of AGENTS.md and CLAUDE.md (R9) on the
-comment of the deferral, now "at most one comment per validated round". No CLI verb or option,
-configuration key or routing table changed. Code behaviour changed without a new constant: remark
-texts scrubbed before the receipt and the tracker comment, the tier sent to the escalation command
-when the tier without the floor is unavailable, a remark deferred once is not deferred again (and an
-attempt with nothing left touches no tracker), the wording of the partial-review prompt.
+R5 status (PAT-237): updated `docs/campaign-effects.md` and `docs/campaign-cadence.md`.
+Candidate artefacts: the optional key `full_review` of the reviewer result
+(`FULL_REVIEW_KEY`); the decision reason `pr_head_not_in_branch`, the key
+`branch_contains_pr` of an observed ticket and the `contains` argument of `observe`; the
+suspension `description_worktree_head_moved` and the error `description_head_unreadable`;
+the helpers `scrub_remarks` and `already_deferred`; the public constant `RESULT_KEYS`
+(`campaign_review.py`); the sentence of AGENTS.md and CLAUDE.md (R9) on the comment of the
+deferral, now "at most one comment per validated round". No CLI verb or option,
+configuration key or routing table changed. Code behaviour changed without a new constant:
+remark texts scrubbed before the receipt and the tracker comment, the tier sent to the
+escalation command when the tier without the floor is unavailable, a remark deferred once is
+not deferred again (and an attempt with nothing left makes no deferral read or write in the
+tracker), the wording of the partial-review prompt.
 
 R5 status (PAT-236): updated `docs/campaign-effects.md`, `docs/model-routing.md` and
 `AGENTS.md`/`CLAUDE.md` R7 (the headless runners that apply
