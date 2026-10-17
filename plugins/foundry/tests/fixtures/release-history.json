@@ -7,7 +7,7 @@
       "changelog_sha256": "89c90177d19246b984510a3031600f58ebc562bc5270c8ad3e5d48ed346034f0",
       "documents": {
         "docs/migration-1.5.0.md": "3fdf1d0e4758f8d4663473125d2a32ce70cc9883835920b082d30af9298cc951",
-        "docs/release-1.5.0.md": "6f919768f755a609f166861ae049259c397ff4255419b179d1fe20c6616f08a1"
+        "docs/release-1.5.0.md": "90d4ebfa63f881dc718c02c5cdf71134e92a49339c3830ab331a39f195366868"
       }
     },
     "1.4.0": {

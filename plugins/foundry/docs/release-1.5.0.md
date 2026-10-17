@@ -188,7 +188,7 @@ documentation only.
 | Dated Foundry changelog | `1.5.0 — 2026-10-17` section opened from the 19 fragments, which are deleted; empty `Unreleased` above it |
 | Release note and migration guide | New: this page and migration-1.5.0.md |
 | `tests/fixtures/release-history.json` | Updated: the `1.5.0` entry, with the digests of the changelog section and of the two pages |
-| Root and Foundry README | Updated: pointers to these two pages, the statement that the tag, the installation and the loaded-version readback are not done here, and the Release rule's version list in the Foundry README |
+| Root and Foundry README | Updated: pointers to these two pages, the statement that the tag, the installation and the loaded-version readback are not done here, the Release rule's version list in the Foundry README, and the version table row of the root README |
 | `scripts/ci_plan.py` comment | Updated: its list of release versions includes 1.5.0; no behaviour changes |
 | `changelog.d/README.md` | Not necessary: unchanged, the fragment convention is already documented there (PAT-210) |
 | Ship-iOS manifests, README and changelog | Not necessary: no file under `plugins/ship-ios` is changed and its version does not move |
