@@ -1506,7 +1506,7 @@ class ReviewDeduplicator:
         self._validate_claim_id(claim_id)
         generation = record.get("generation")
         if type(generation) is not int or generation < 1:
-            raise ProofIntegrityError(
+            raise RoutingConfigError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
         namespace = hashlib.sha256(self.__repository.encode("utf-8")).hexdigest()
@@ -2452,7 +2452,13 @@ class AcceptanceProofStore:
         for marker in self.directory.iterdir():
             if not marker.is_file() or marker.name.startswith("."):
                 continue
-            proof = self._validated_proof(marker)
+            try:
+                proof = self._validated_proof(marker)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                # An advisory or terminal record in the proof directory is corrupt state here.
+                raise ProofIntegrityError(str(exc)) from exc
             issue = proof["issue"]
             coordinates = proof["coordinates"]
             review = proof["review"]

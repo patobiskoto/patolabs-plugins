@@ -2,7 +2,8 @@
 
 One pass re-reads the tracker, git and the PR, and returns exactly one ``Decision``.  It
 produces no effect: no tracker write, no git mutation, no PR mutation, no session launch.
-The state lives in the tracker, git, the PR and the local attempt journal, never here.  ``decide`` is pure over an
+The state lives in the tracker, git, the PR, the local attempt journal, the approval journal
+and the review ledger with its acceptance-proof store, never here.  ``decide`` is pure over an
 immutable ``Observation``; ``observe`` gathers it through declared capabilities only.
 Executing a decision is ``campaign_effects`` (PAT-217, PAT-218); this module stays effect-free.
 """

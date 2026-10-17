@@ -5,8 +5,9 @@ returns exactly one decision. This page covers that computation only
 (`tooling/foundry/campaign_cadence.py`). Nothing here executes the decision: no tracker
 write, no git mutation, no PR mutation, no session launch. Executing a decision is
 [`campaign-effects.md`](campaign-effects.md) (PAT-217, and PAT-218 for `review` and
-`correct`). The state lives in the tracker, git, the PR and the local attempt journal
-(`campaign_effects.journal_facts`, read-only here); the module keeps none. The frozen Dev
+`correct`). The state lives in the tracker, git, the PR, the local attempt journal
+(`campaign_effects.journal_facts`, read-only here), the approval journal and the review
+ledger with its acceptance-proof store (`routing.py`); the module keeps none. The frozen Dev
 Hub coordinator (`campaign_coordinator.py`, `campaign_runtime.py`) is not used.
 
 ## Command
@@ -29,8 +30,8 @@ that error and a non-zero exit code other than 2 (traceback, or the message of t
 
 `decide` is pure over an `Observation`. The first matching row wins, except that every
 `suspend` and every `await-verdict` is returned before the approval refusal row (`decide`),
-including the `suspend` rows listed below it; only an effect can be refused for lack of
-approval.
+including the `suspend` rows listed below it; every other step, `wait-ci` and `wait`
+included, is refused for lack of approval.
 
 | Situation | Decision |
 | --- | --- |
@@ -189,7 +190,11 @@ claim publication, claim id, coordinates, head or content is invalid or inconsis
 `routing.py`) and `_review_status` returns `integrity`: `suspend` `review_proof_integrity`.
 `current_for_sync` validates every proof marker before it filters by issue, so a corrupt
 proof of another issue suspends the pass for the ticket in focus too (`issue merge` already
-fails closed in the same state, as `valid_for_merge` calls it). An absent ledger marker, or
-an absent, stale, ambiguous or non-mergeable proof, stays a plain `RoutingConfigError`
-(`none` or `blocked`). Tests: `tests/test_campaign_cadence.py` (one per state, drift,
+fails closed in the same state, as `valid_for_merge` calls it). An advisory or terminal postmerge record found in the proof directory is the same
+`ProofIntegrityError`, requalified at the read path (`current_for_sync`), not in
+`_validate_proof`, which tracker adapters also call on caller input. An absent ledger marker,
+or an absent, stale, ambiguous or non-mergeable proof, stays a plain `RoutingConfigError`
+(`none` or `blocked`). Known limit: while the acceptance-proof directory does not exist,
+`current_for_sync` returns before it reads the ledger, so a corrupt ledger marker is then a
+plain `RoutingConfigError` (read as no review). Tests: `tests/test_campaign_cadence.py` (one per state, drift,
 approval, capability, idempotence, fakes that fail on any effect).

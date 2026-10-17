@@ -592,3 +592,40 @@ def test_cli_next_prints_one_decision(monkeypatch, capsys, tmp_path):
     assert out["decision"]["kind"] == "refuse"  # no approval in the fresh data dir
     assert out["decision"]["blocked_step"]["kind"] == "start"
     assert out["observation"]["approval"]["status"] == "absent"
+
+
+def _store_with_valid_completed_record(tmp_path):
+    from foundry.routing import AcceptanceProofStore, ReviewDeduplicator, review_diff_hash
+
+    state = tmp_path / "state"
+    store = AcceptanceProofStore("o/r", state)
+    store.directory.mkdir(parents=True)
+    ledger = ReviewDeduplicator("o/r", state)
+    ledger.directory.mkdir(parents=True, exist_ok=True)
+    diff_hash = review_diff_hash(b"d")
+    record = {
+        "schema_version": 1, "diff_hash": diff_hash, "state": "completed", "generation": 1,
+        "claim": {"id": "a" * 64}, "recoveries": [], "completed_at": "2026-10-16T12:00:00Z",
+        "acceptance_proof_id": "b" * 64, "coordinates": {"root": "/r", "base": BASE},
+        "head": SHA,
+    }
+    (ledger.directory / diff_hash).write_text(json.dumps(record))
+    return store
+
+
+def test_a_corrupt_proof_file_on_a_real_store_is_an_integrity_error(tmp_path):
+    store = _store_with_valid_completed_record(tmp_path)
+    (store.directory / ("c" * 64)).write_text("{not json")
+    with pytest.raises(ProofIntegrityError):
+        store.current_for_sync(
+            issue_id="APP-2", issue_body="- [ ] a", head=SHA, diff=b"d", base=BASE)
+
+
+def test_an_advisory_record_in_the_proof_directory_is_an_integrity_error(tmp_path):
+    from foundry.routing import ADVISORY_SCHEMA
+
+    store = _store_with_valid_completed_record(tmp_path)
+    (store.directory / ("c" * 64)).write_text(json.dumps({"schema": ADVISORY_SCHEMA}))
+    with pytest.raises(ProofIntegrityError, match="advisory postmerge"):
+        store.current_for_sync(
+            issue_id="APP-2", issue_body="- [ ] a", head=SHA, diff=b"d", base=BASE)
