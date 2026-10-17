@@ -15,7 +15,8 @@ commit messages, grep patterns — never trips the guard, and git/gh global
 flags (`git -C dir push`, `gh -R o/r pr merge`) can't slip past it.
 
 PAT-215 adds one unconditional denial, independent of the registry: a command invoking
-`campaign-approval approve` / `campaign_approval approve` (`approval_deny_reason()`), because
+the campaign approval (`approval_deny_reason()`, the union of two rules in
+`_approval_invocation`; a plain `grep` of the same two words is denied on purpose), because
 a campaign approval is a human act (docs/campaign-approval.md).
 
 Everything else passes, unregistered repos are untouched, and any internal
@@ -150,7 +151,45 @@ def _push_denies(args, defaults: set, current: str) -> bool:
     return False
 
 
-_APPROVAL_MODULES = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
+_CLI_NAMES = {"foundry_cli", "foundry_cli.py"}
+_MODULE_WORDS = {"foundry.campaign_approval"}
+_APPROVAL_WORDS = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
+
+
+def _follows(seg, start: int, word: str) -> int | None:
+    """Index of the first `word` strictly after `start`, else None."""
+    for index in range(start + 1, len(seg)):
+        if seg[index] == word:
+            return index
+    return None
+
+
+def _approval_invocation(seg) -> bool:
+    """True when the segment matches the UNION of two rules, at any position (no
+    dependence on wrappers or flags):
+    (a) the PAT-215 rule: a word whose basename (without `.py`) is `campaign-approval`,
+        `campaign_approval` or `foundry.campaign_approval`, immediately followed by `approve`;
+    (b) the PAT-234 rule: a word whose basename is `foundry_cli`/`foundry_cli.py`, then
+        later `campaign-approval`, then later `approve`; or the module word
+        (`foundry.campaign_approval`, `campaign_approval.py`, or `campaign_approval` right
+        after `-m`) then later `approve`.
+    Rule (a) keeps a plain `grep campaign-approval approve x` denied: a deliberate false
+    positive, because the CLI path often comes from a variable, a function or `$(...)`."""
+    for index, token in enumerate(seg[:-1]):
+        if (os.path.basename(token).removesuffix(".py") in _APPROVAL_WORDS
+                and seg[index + 1] == "approve"):
+            return True
+    for index, token in enumerate(seg):
+        base = os.path.basename(token)
+        if base in _CLI_NAMES:
+            sub = _follows(seg, index, "campaign-approval")
+            if sub is not None and _follows(seg, sub, "approve") is not None:
+                return True
+        elif (token in _MODULE_WORDS or base == "campaign_approval.py"
+              or (token == "campaign_approval" and index > 0 and seg[index - 1] == "-m")):
+            if _follows(seg, index, "approve") is not None:
+                return True
+    return False
 
 
 def approval_deny_reason(command: str) -> str | None:
@@ -158,14 +197,13 @@ def approval_deny_reason(command: str) -> str | None:
 
     Independent of any repository binding (no registry read): the approval journal is
     global to the user. Layer 3 of docs/campaign-approval.md; `bash -c` indirection stays
-    out of scope, as for R1."""
+    out of scope, as for R1. PAT-234: a segment is denied when it names the program and
+    `approve` as in `_approval_invocation`."""
     for seg in _segments(_tokens(command)):
-        for index, token in enumerate(seg[:-1]):
-            if os.path.basename(token).removesuffix(".py") in _APPROVAL_MODULES:
-                if seg[index + 1] == "approve":
-                    return ("campaign-approval approve est un acte humain : lance-le toi-même "
-                            "dans un terminal, pas depuis une session d'agent "
-                            "(docs/campaign-approval.md).")
+        if _approval_invocation(seg):
+            return ("campaign-approval approve est un acte humain : lance-le toi-même "
+                    "dans un terminal, pas depuis une session d'agent "
+                    "(docs/campaign-approval.md).")
     return None
 
 
