@@ -55,13 +55,18 @@ until a later step adds and exercises that run; this page then gets a dated amen
 - One call per line: the tool refuses a line whose row is not `not_run`. It claims the row (`status: started`)
   BEFORE the call, so a killed, failed or timed-out run also blocks a second one. A new work directory or result path
   does not bypass this. Two further guards do not rest on the matrix of one checkout. An exclusive lock file
-  `<matrix>.lock` (created with `O_EXCL` next to the matrix before it is loaded, removed at the end of the run) refuses
-  a second concurrent launch; a lock left by a killed run also refuses, and only the maintainer removes it. A
+  `<matrix>.lock` (created with `O_EXCL` next to the matrix before it is loaded) and a second one,
+  `pat198-native-rollback-ledger.jsonl.lock`, next to the ledger below (taken right after it, so it is common to every
+  matrix copy), are both held from before the checks to the end of the run and removed then. A second launch that finds
+  either file, on the same matrix or on another copy of it, is refused before any check or launch; a lock left by a
+  killed run also refuses, and only the maintainer removes it. A
   reservation ledger, `pat198-native-rollback-ledger.jsonl` in the Foundry data directory (`registry.data_dir()`, outside
-  any checkout, append-only, one line per reservation, written before the call), refuses a line already reserved even if
+  any checkout, append-only, one line per reservation, written before the call; its location follows `FOUNDRY_DATA`, else the default data directory), refuses a line already reserved even if
   the matrix was copied, reverted, stashed or read from another worktree, and refuses past eight lines. Retrying a line
-  needs a new maintainer decision, a hand edit of the matrix and of the ledger, recorded here. Run all lines from one
-  checkout, one after the other, and commit the matrix right after each run.
+  needs a new maintainer decision, a hand edit of the matrix and of the ledger, recorded here. `FOUNDRY_DATA` must stay the same
+  (or unset) for all eight runs: the ledger guarantee holds only then, since another value points at another ledger
+  (each result records `ledger.path` as `<data_dir>/<name>` and `ledger.data_dir_from`, no absolute path). Run all
+  lines from one checkout, one after the other, and commit the matrix right after each run.
 - Per-call spend ceiling: `--max-budget-usd <AMOUNT>` is passed to `claude -p` (the flag exists in the installed host's
   `--help`, read 2026-10-17; whether it covers the child's spend is unknown). The tool refuses a real run without it.
   `<AMOUNT>` is the maintainer's figure; none is fixed here.
@@ -103,7 +108,7 @@ Written by a real run, and only these:
 1. the work directory (outside the repository): fixture, raw stream `stream.ndjson`, `stderr.txt`;
 2. the result file `--out` (schema `foundry.pat198-native-trial.v1`);
 3. the row of its line in the matrix, plus `native_calls` (a first write before the call, a second after it), the
-   lock file `<matrix>.lock` during the run, and one line in the reservation ledger (Foundry data directory);
+   lock files `<matrix>.lock` and `<ledger>.lock` during the run, and one line in the reservation ledger (Foundry data directory);
 4. host-side session logs under the host's own projects directory (written by the host; the tool only reads them).
 
 A dry run writes nothing. The user's real policy files are never touched: the fixture carries its own policy and the
@@ -124,10 +129,12 @@ Four values stay separate, per line, in the result and the matrix:
   plus the hook's own statement when the host kept it in the parent log (`hook`);
 - native observation: models from the child's assistant records, agent type from the child's `.meta.json`, efforts
   only if the host logs `effort`/`perTurnEffort`, host version from the logs. Absent = `unknown`. For `haiku-4.5`
-  an absent effort never proves non-applicability;
+  an absent effort never proves non-applicability, and a logged `effort: null` counts as absent; if the host logs a
+  real effort for it (for example the parent's, inherited), it differs from the expected none and the effort is
+  `divergent`, so the line is `not_conforming` (current behaviour; whether the host does so is unknown);
 - account availability: `available_observed` only when the child's model was observed (exact or dated snapshot);
   `unavailable_declared` only when no real model was observed and a masked host text (parent error, child API-error
-  record, parent final reply, stderr) matches a model-unavailable pattern (a heuristic, `_UNAVAILABLE`; the texts and the
+  record, parent final reply, stderr) matches a model-unavailable pattern (a heuristic, `_UNAVAILABLE`, each phrase tied to the word "model"; the texts and the
   parent's reply are always kept so a reader can overrule it); otherwise `unknown`. A child record with model
   `<synthetic>` or `isApiErrorMessage` is read as a host API error, never as a model (that record shape is deduced from
   Claude Code, not observed here).
@@ -140,7 +147,7 @@ coordinate (`agents/`), so `claude-architect`, `claude-scout` and `claude-implem
 `vauban` is scoped to an architectural question and what it does with this task is unknown.
 
 Verdicts: `conforming` (everything exact), `not_conforming` (any divergent value, wrong process exit, several
-children, changed guard), `unavailable`, `unknown` (anything not observed, a dated snapshot included). Errors are kept
+children, changed guard), `unavailable` (unless the launched profile is divergent, which is `not_conforming`), `unknown` (anything not observed, a dated snapshot included). Errors are kept
 verbatim after masking: secrets, e-mail addresses, opaque tokens of 32 characters or more, home directory, 2000
 characters at most.
 

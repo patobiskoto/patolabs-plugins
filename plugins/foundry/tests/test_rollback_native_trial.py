@@ -340,3 +340,88 @@ def test_a_refused_fixture_does_not_decide_the_model_verdict(tmp_path):
     body = json.loads((tmp_path / "result.json").read_text())
     assert body["fixture_compliance"] == "divergent" and "fixture" not in body["conformity"]
     assert body["verdict"] == "conforming"
+
+
+def test_the_result_records_the_anonymised_ledger_location_and_the_data_dir_source(tmp_path, monkeypatch):
+    rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer"))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["ledger"] == {"path": f"<data_dir>/{rt.LEDGER_NAME}", "data_dir_from": "FOUNDRY_DATA"}
+    assert str(tmp_path) not in json.dumps(body["ledger"])
+    monkeypatch.delenv("FOUNDRY_DATA")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    rt.run(_args(tmp_path, "claude-reviewer", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json"),
+                 dry_run=True))
+    assert not (tmp_path / "home").exists()  # a dry run reserves and creates nothing, even by default
+
+
+def test_a_second_concurrent_launch_on_another_matrix_copy_is_refused_by_the_ledger_lock(tmp_path):
+    other = tmp_path / "copy.json"
+    shutil.copy(QUAL / "pat-198-native-rollback-2026-10-17.json", other)
+    inner, calls = [], []
+
+    def launch(command, **kw):
+        calls.append(command)
+        try:
+            rt.run(_args(tmp_path, "claude-reviewer", matrix=str(other), work_dir=str(tmp_path / "w2"),
+                         out=str(tmp_path / "r2.json")), launch=_host(tmp_path, "claude-reviewer", calls=inner))
+        except rt.RollbackTrialError as exc:
+            inner.append(str(exc))
+        return _host(tmp_path, "claude-implementer")(command, **kw)
+
+    rt.run(_args(tmp_path, "claude-implementer"), launch=launch)
+    assert len(calls) == 1 and len(inner) == 1 and "ledger.jsonl.lock" in inner[0]
+    assert not (tmp_path / "w2").exists() and not (tmp_path / "copy.json.lock").exists()
+    assert json.loads(other.read_text())["native_calls"] == 0
+    ledger = rt.ledger_path()
+    assert not ledger.with_name(ledger.name + ".lock").exists() and not (tmp_path / "matrix.json.lock").exists()
+
+
+def test_the_ledger_lock_is_refused_when_present_and_the_matrix_lock_is_released(tmp_path):
+    ledger = rt.ledger_path()
+    ledger.parent.mkdir(parents=True)
+    stale = ledger.with_name(ledger.name + ".lock")
+    stale.write_text("")
+    calls = []
+    with pytest.raises(rt.RollbackTrialError, match="ledger.jsonl.lock"):
+        rt.run(_args(tmp_path, "claude-scout"), launch=_host(tmp_path, "claude-scout", calls=calls))
+    assert calls == [] and stale.exists() and not (tmp_path / "matrix.json.lock").exists()
+
+
+@pytest.mark.parametrize("text", ["Agent type 'foundry:routed-worker-medium-sonnet-5' not found. Available agents: foundry:eiffel",
+                                  "PreToolUse hook denied this call: no access to the plugin directory",
+                                  "the profile file does not exist"])
+def test_a_hook_refusal_or_missing_agent_type_is_not_an_unavailable_model(tmp_path, text):
+    rt.run(_args(tmp_path, "claude-implementer"),
+           launch=_host(tmp_path, "claude-implementer", children=False, result=text, is_error=True, exit_code=1))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["account_availability"] == "unknown" and body["verdict"] != "unavailable"
+
+
+@pytest.mark.parametrize("text", ["the model claude-opus-5 does not exist", "you have no access to this model"])
+def test_a_model_anchored_does_not_exist_or_no_access_is_still_unavailable(tmp_path, text):
+    rt.run(_args(tmp_path, "claude-reviewer"),
+           launch=_host(tmp_path, "claude-reviewer", children=False, result=text, is_error=True, exit_code=1))
+    assert json.loads((tmp_path / "result.json").read_text())["verdict"] == "unavailable"
+
+
+def test_a_divergent_profile_with_an_unavailable_text_is_not_conforming(tmp_path):
+    text = "model not found"
+    rt.run(_args(tmp_path, "claude-implementer"),
+           launch=_host(tmp_path, "claude-implementer", result=text, is_error=True, exit_code=1,
+                        types="foundry:routed-worker-high-sonnet-5", child_records=[_synthetic(text)]))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["profile"] == "divergent" and body["verdict"] == "not_conforming"
+    assert "profile" in body["not_established"]
+
+
+def test_a_logged_null_effort_on_haiku_is_an_absence(tmp_path):
+    null = [{"type": "assistant", "version": "2.1.300", "message": {"model": "claude-haiku-4-5"}, "effort": None}]
+    rt.run(_args(tmp_path, "claude-scout"), launch=_host(tmp_path, "claude-scout", child_records=null))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["effort"] == "unknown" and body["observed"]["efforts"] == [] and body["verdict"] == "unknown"
+
+
+def test_a_real_effort_logged_on_haiku_stays_divergent(tmp_path):
+    rt.run(_args(tmp_path, "claude-scout"), launch=_host(tmp_path, "claude-scout", efforts=("medium",)))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["effort"] == "divergent" and body["verdict"] == "not_conforming"

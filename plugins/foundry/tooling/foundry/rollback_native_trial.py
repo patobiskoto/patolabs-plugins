@@ -55,7 +55,8 @@ ROLLBACK = {
 }
 LINES = {f"{host}-{role}": (host, role) for host, role in ROLLBACK}
 _UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|supported)|unavailable|invalid|unknown)"
-                          r"|(not (found|available)|unavailable|invalid).{0,60}model|does not exist|no access)")
+                          r"|(not (found|available)|unavailable|invalid).{0,60}model"
+                          r"|model.{0,60}(does not exist|no access)|(does not exist|no access).{0,60}model)")
 _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           (re.compile(r"(?i)(bearer|basic)\s+[A-Za-z0-9._\-=+/]{8,}"), r"\1 <masked>"),
           (re.compile(r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+"), r"\1=<masked>"),
@@ -165,13 +166,19 @@ def _reserve(path: Path, line: str, date: str, session_id: str) -> None:
         raise RollbackTrialError(f"the reservation ledger cannot be written: {type(exc).__name__}") from exc
 
 
-def _take_lock(matrix_path: Path) -> Path:
-    """Exclusive lock next to the matrix (O_EXCL); a present file refuses the run, a stale one needs the maintainer."""
-    lock = matrix_path.with_name(matrix_path.name + ".lock")
+def _take_lock(target: Path) -> Path:
+    """Exclusive lock next to ``target`` (O_EXCL): the matrix, then the ledger. A present file refuses the run, a
+    stale one needs the maintainer."""
+    lock = target.with_name(target.name + ".lock")
+    if target.name == LEDGER_NAME:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RollbackTrialError(f"{lock.name} cannot be created: {type(exc).__name__}") from exc
     try:
         os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     except FileExistsError as exc:
-        raise RollbackTrialError(f"{lock.name} exists: another run holds the matrix (or died); nothing is launched") from exc
+        raise RollbackTrialError(f"{lock.name} exists: another run holds the lock (or died); nothing is launched") from exc
     except OSError as exc:
         raise RollbackTrialError(f"{lock.name} cannot be created: {type(exc).__name__}") from exc
     return lock
@@ -269,7 +276,7 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
             if isinstance(record.get("version"), str):
                 versions.add(record["version"])
             for key in ("effort", "perTurnEffort"):
-                if key in record:
+                if record.get(key) is not None:  # a logged null is an absence, not a value (haiku 4.5)
                     efforts.add(record[key])
             message = record.get("message")
             if record.get("type") == "assistant" and isinstance(message, dict):
@@ -322,7 +329,7 @@ def verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[s
         failed.append("process")
     if facts["observed"]["children"] > 1:
         failed.append("children")
-    if facts["account_availability"] == "unavailable_declared":
+    if facts["account_availability"] == "unavailable_declared" and c["profile"] != "divergent":
         return "unavailable", failed + [n for n, s in c.items() if s in ("unknown", "dated_snapshot")]
     open_points = [n for n, s in c.items() if s in ("unknown", "dated_snapshot")]
     if failed:
@@ -350,11 +357,14 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         raise RollbackTrialError("the work directory must be outside any git repository: the fixture carries its own policy")
     # taken before the lock file exists, so the lock never makes the checkout look dirty
     source = base._head()
-    lock = None if args.dry_run else _take_lock(matrix_path)
+    locks: list[Path] = []
     try:
+        if not args.dry_run:  # matrix lock, then the lock of the ledger shared by every matrix copy
+            locks.append(_take_lock(matrix_path))
+            locks.append(_take_lock(ledger_path()))
         return _run_claude(args, role, model, effort, work, out, matrix_path, launch, today, source)
     finally:
-        if lock is not None:
+        for lock in locks:
             lock.unlink(missing_ok=True)
 
 
@@ -394,6 +404,8 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
                    "max_budget_usd": args.max_budget_usd, "concurrency": 1, "replays": 0,
                    "environment_names": sorted(environment)},
         "source": source,
+        "ledger": {"path": f"<data_dir>/{LEDGER_NAME}",
+                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default"},
         "argv": [p if p != session_id else "<session id>" for p in
                  (command[0], "-p", "<parent prompt>", *command[3:-3], "<plugins/foundry of this checkout>", *command[-2:])],
         "requested": {"role": role, "tier": route.selected_tier, "model": route.model, "effort": route.effort},
