@@ -317,6 +317,35 @@ def test_the_integrity_error_is_what_routing_raises_for_a_corrupt_ledger(tmp_pat
         store.current_for_sync(**arguments)
 
 
+@pytest.mark.parametrize("field", ["claim_publication", "claim", "coordinates", "head"])
+def test_an_invalid_persisted_claim_field_is_an_integrity_error(tmp_path, field):
+    from foundry.routing import AcceptanceProofStore, ReviewDeduplicator, review_diff_hash
+
+    state = tmp_path / "state"
+    store = AcceptanceProofStore("o/r", state)
+    store.directory.mkdir(parents=True)
+    ledger = ReviewDeduplicator("o/r", state)
+    ledger.directory.mkdir(parents=True, exist_ok=True)
+    diff_hash = review_diff_hash(b"d")
+    record = {
+        "schema_version": 1, "diff_hash": diff_hash, "state": "completed", "generation": 1,
+        "claim": {"id": "a" * 64}, "recoveries": [], "completed_at": "2026-10-16T12:00:00Z",
+        "acceptance_proof_id": "b" * 64, "coordinates": {"root": "/r", "base": BASE},
+        "head": SHA,
+    }
+    bad = {
+        "claim_publication": {"attempt_digest": "x", "generation": 1},
+        "claim": {"id": "not-hex"},
+        "coordinates": {"root": "", "base": "short"},
+        "head": "short",
+    }[field]
+    record[field] = bad
+    (ledger.directory / diff_hash).write_text(json.dumps(record))
+    with pytest.raises(ProofIntegrityError):
+        store.current_for_sync(
+            issue_id="APP-2", issue_body="- [ ] a", head=SHA, diff=b"d", base=BASE)
+
+
 def test_await_verdict_comes_before_an_expired_or_absent_approval(tmp_path):
     children = [node("APP-2", state="done"), node("APP-3", state="dropped")]
     _, decision, _, _ = run(children, tmp_path, approved=False)
@@ -372,6 +401,15 @@ def test_branch_names_match_the_issue_id_exactly_and_the_first_sorted_one_wins()
     assert cc._branch_for(["feat/app-20-y", "feat/app-3-z"], "APP-2") is None
 
 
+# Dependency order precaution (not drift) -----------------------------------------------
+
+def test_dependency_state_behind_is_a_precaution_suspension(tmp_path):
+    children = [node("APP-2", state="ready"), node("APP-3", state="in-progress")]
+    _, decision, _, _ = run(children, tmp_path, deps=[("APP-3", "APP-2")])
+    assert (decision.kind, decision.ticket, decision.reason) == (
+        "suspend", "APP-3", "dependency_state_behind")
+
+
 # Drift (PAT-ADR-0027) ------------------------------------------------------------------
 
 def test_structure_change_suspends(tmp_path):
@@ -407,13 +445,6 @@ def test_unreadable_node_suspends(tmp_path):
     broken["nodes"][1]["state"] = "weird"
     _, decision, _, _ = run([], tmp_path, raw=broken, tracker=FakeTracker(broken), approved=False)
     assert decision.reason == "node_unreadable"
-
-
-def test_dependency_state_behind_is_a_precaution_suspension(tmp_path):
-    children = [node("APP-2", state="ready"), node("APP-3", state="in-progress")]
-    _, decision, _, _ = run(children, tmp_path, deps=[("APP-3", "APP-2")])
-    assert (decision.kind, decision.ticket, decision.reason) == (
-        "suspend", "APP-3", "dependency_state_behind")
 
 
 # Approval is one input of the decision; the observation stays complete -----------------
@@ -526,6 +557,24 @@ def test_cli_refuses_a_tracker_without_capabilities(monkeypatch, capsys, tmp_pat
     assert cc.main(["next", "APP-1", "--root", str(tmp_path)]) == 2
     out = json.loads(capsys.readouterr().out)
     assert out["decision"]["kind"] == "refuse" and out["contract"] == cc.CADENCE_CONTRACT
+
+
+def test_cli_next_suspends_on_an_invalid_attempts_journal(monkeypatch, capsys, tmp_path):
+    import foundry
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    tracker = FakeTracker(graph([node("APP-2", state="ready")]))
+    tracker.resolve_checkout_project = lambda root: PROJECT
+    monkeypatch.setattr(foundry, "tracker", lambda *a, **k: tracker)
+    monkeypatch.setattr(foundry, "codehost", lambda *a, **k: FakeCodeHost())
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "campaign-attempts.jsonl").write_text("not json\n")
+    monkeypatch.setenv("FOUNDRY_DATA", str(data))
+    assert cc.main(["next", "APP-1", "--root", str(tmp_path)]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"]["kind"] == "suspend"
+    assert out["decision"]["reason"] == "attempts_journal_invalid"
 
 
 def test_cli_next_prints_one_decision(monkeypatch, capsys, tmp_path):

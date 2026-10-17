@@ -40,7 +40,7 @@ KINDS = (
     "start", "implement", "open-pr", "review", "correct", "defer-remarks", "wait-ci", "wait",
     "merge", "await-verdict", "suspend", "refuse",
 )
-# Tracker states strictly behind a started or finished dependent (PAT-ADR-0027: a dependency strictly behind a dependent).
+# Tracker states strictly behind a started or finished dependent (`dependency_state_behind`).
 _UNFINISHED = ("backlog", "ready", "blocked", "in-progress", "review")
 _PR_NUMBER = re.compile(r"/pull/([0-9]+)(?:[/?#]|$)")
 

@@ -82,9 +82,12 @@ class RoutingConfigError(ValueError):
 
 
 class ProofIntegrityError(RoutingConfigError):
-    """The review ledger or an acceptance proof is corrupt, invalid or inconsistent (PAT-235).
+    """A persisted review ledger record or acceptance proof is corrupt, invalid or inconsistent.
 
-    Distinct from the plain ``RoutingConfigError`` of an absent, stale or non-mergeable proof.
+    Raised when reading the persisted record (``_read_record``, ``completed_proof_binding``,
+    proof validation), including an invalid claim publication, claim id, coordinates or head.
+    Distinct from the plain ``RoutingConfigError`` of an absent marker or an absent, stale or
+    non-mergeable proof, and of caller input rejected at claim time (PAT-235).
     """
 
 
@@ -1073,7 +1076,12 @@ class ReviewDeduplicator:
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
         if "claim_publication" in record:
-            self._validate_claim_publication(record)
+            try:
+                self._validate_claim_publication(record)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                raise ProofIntegrityError(str(exc)) from exc
         return record
 
     @staticmethod
@@ -1695,12 +1703,18 @@ class ReviewDeduplicator:
             raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
-        self._validate_claim_id(claim_id)
+        try:
+            self._validate_claim_id(claim_id)
+        except RoutingConfigError as exc:
+            raise ProofIntegrityError(str(exc)) from exc
         if not self._valid_utc_timestamp(completed_at):
             raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
-        coordinates = self._validate_coordinates(coordinates)
+        try:
+            coordinates = self._validate_coordinates(coordinates)
+        except RoutingConfigError as exc:
+            raise ProofIntegrityError(str(exc)) from exc
         return {
             "proof_id": proof_id,
             "generation": generation,
@@ -1717,7 +1731,12 @@ class ReviewDeduplicator:
             binding = self._completed_proof_binding_from_record(diff_hash, record)
             if binding is None:
                 return None
-            self._claimed_head(record)
+            try:
+                self._claimed_head(record)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                raise ProofIntegrityError(str(exc)) from exc
             return binding
 
     def _validated_proof_for_terminal_binding(

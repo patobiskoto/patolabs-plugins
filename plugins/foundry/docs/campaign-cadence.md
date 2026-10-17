@@ -6,8 +6,8 @@ returns exactly one decision. This page covers that computation only
 write, no git mutation, no PR mutation, no session launch. Executing a decision is
 [`campaign-effects.md`](campaign-effects.md) (PAT-217, and PAT-218 for `review` and
 `correct`). The state lives in the tracker, git, the PR and the local attempt journal
-(`campaign_effects.journal_facts`, read-only here); the module keeps none. The frozen Dev Hub coordinator (`campaign_coordinator.py`,
-`campaign_runtime.py`) is not used.
+(`campaign_effects.journal_facts`, read-only here); the module keeps none. The frozen Dev
+Hub coordinator (`campaign_coordinator.py`, `campaign_runtime.py`) is not used.
 
 ## Command
 
@@ -18,16 +18,19 @@ FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py campaign-cadence next PAT-
 It prints one JSON object (`CADENCE_CONTRACT`): the observation (capabilities, structure
 digest observed and approved, approval status, the ticket in focus, the tickets) and the
 `decision`. The same observation gives byte-identical output (`report`: sorted keys). The
-exit code is 2 when a capability is missing, and 0 once a decision is printed (an invalid attempt
-journal prints `suspend` `attempts_journal_invalid`, as `step` does). An error that
-`observe` does not convert into `node_unreadable` (a network error, an error of the code host,
-the `SystemExit` of a tracker binding) is not caught by `main`: the command ends with that
-error and a non-zero exit code other than 2 (traceback, or the message of the `SystemExit`).
+exit code is 2 when a capability is missing, and 0 once a decision is printed (an invalid
+attempt journal prints `suspend` `attempts_journal_invalid`, as `step` does). An error that
+`observe` does not convert into `node_unreadable` (a network error, an error of the code
+host, the `SystemExit` of a tracker binding) is not caught by `main`: the command ends with
+that error and a non-zero exit code other than 2 (traceback, or the message of the
+`SystemExit`).
 
 ## Decision table
 
-`decide` is pure over an `Observation`. The first matching row wins, except that
-`await-verdict` is returned before an approval refusal (see the row below).
+`decide` is pure over an `Observation`. The first matching row wins, except that every
+`suspend` and every `await-verdict` is returned before the approval refusal row (`decide`),
+including the `suspend` rows listed below it; only an effect can be refused for lack of
+approval.
 
 | Situation | Decision |
 | --- | --- |
@@ -62,27 +65,30 @@ error and a non-zero exit code other than 2 (traceback, or the message of the `S
 | valid review, CI with a failing check, even while other checks are pending (PAT-235) | `correct` `ci_failing` |
 | valid review, CI green | `merge` |
 
-The `reason` codes of the decisions that do not suspend (`_ticket_step`, `_remarks`, `_step`):
-`start` `eligible_dependencies_done` or `in_progress_branch_absent`; `implement`
-`started_without_pr`; `open-pr` `implemented_without_pr` or `correction_not_pushed`; `review`
-`review_missing` or `review_unobservable`; `correct` `review_blocked`, `review_fix_before_merge`,
-`review_fix_description`, `remarks_not_deferrable` or `ci_failing`; `defer-remarks`
-`non_blocking_remarks`; `wait` `deferral_transient_failure`; `wait-ci` `ci_pending` or
-`ci_not_proven`; `merge` `review_valid_ci_green`; `await-verdict` `all_tickets_terminal`.
+The `reason` codes of the decisions that do not suspend (`_ticket_step`, `_remarks`,
+`_step`): `start` `eligible_dependencies_done` or `in_progress_branch_absent`; `implement`
+`started_without_pr`; `open-pr` `implemented_without_pr` or `correction_not_pushed`;
+`review` `review_missing` or `review_unobservable`; `correct` `review_blocked`,
+`review_fix_before_merge`, `review_fix_description`, `remarks_not_deferrable` or
+`ci_failing`; `defer-remarks` `non_blocking_remarks`; `wait` `deferral_transient_failure`;
+`wait-ci` `ci_pending` or `ci_not_proven`; `merge` `review_valid_ci_green`; `await-verdict`
+`all_tickets_terminal`.
 
-The remarks facts (`TicketFacts.deferral`, PAT-141) come from the attempt journal and the receipt
-state through the `deferral` callable of `observe` (`campaign_defer.deferral_facts`) and, only
-when deferrable remarks remain, from two `get_issue` reads through the `origin` callable
-(`campaign_defer.origin_of`). The `next` verb passes them like `step` does
-(`campaign_effects.journal_facts`, PAT-235), so it announces `defer-remarks` where `step` will do
-it; `observe` called without them leaves them absent and no deferral is decided. The steps of the effect are in [`campaign-effects.md`](campaign-effects.md), section
-"The defer-remarks effect".
+The remarks facts (`TicketFacts.deferral`, PAT-141) come from the attempt journal and the
+receipt state through the `deferral` callable of `observe` (`campaign_defer.deferral_facts`)
+and, only when deferrable remarks remain, from two `get_issue` reads through the `origin`
+callable (`campaign_defer.origin_of`). The `next` verb passes them like `step` does
+(`campaign_effects.journal_facts`, PAT-235), so it announces `defer-remarks` where `step`
+will do it; `observe` called without them leaves them absent and no deferral is decided. The
+steps of the effect are in [`campaign-effects.md`](campaign-effects.md), section "The
+defer-remarks effect".
 
 The three counts (`fix_before_merge`, `review_rounds`, `corrections`) are facts of
 `TicketFacts` for the ticket in focus, read from the attempt journal by the `history`
-callable passed to `observe` (`campaign_review.history`, through `journal_facts` for `next` and
-`step`); `observe` called without it leaves them at 0 and the bounds never fire. `step` also turns a `correct` `ci_failing` into `suspend`
-`ci_failing_not_executed` (`campaign-effects.md`); `decide` itself still returns `correct`.
+callable passed to `observe` (`campaign_review.history`, through `journal_facts` for `next`
+and `step`); `observe` called without it leaves them at 0 and the bounds never fire. `step`
+also turns a `correct` `ci_failing` into `suspend` `ci_failing_not_executed`
+(`campaign-effects.md`); `decide` itself still returns `correct`.
 A ticket already `done` costs no PR read: the next ticket is chosen instead.
 "Implementation finished" (or a correction finished) is not observable from the tracker,
 git and the PR alone, so `open-pr` reads one more fact: the local attempt journal of
@@ -95,18 +101,18 @@ classification `build_preview` uses; the function was extracted from it, unchang
 ## Observation and cost
 
 Order: capabilities (flags only), one `get_epic_subgraph` (plus `validate_subgraph` and
-`structure_digest`), the approval journal, then, for the one ticket in focus only,
-`git for-each-ref`, `git rev-parse` and `git rev-list --count` (read-only, `_git`), `list_prs`
-(or `get_pr` from the tracker PR link when no branch is found) and `get_pr` for each PR that is not open, one
-`get_issue` for its body, the proof store, and `ci_gate` (`write.py`, both CI sources),
-the last one only when the review is valid. The approval is checked with the preview digest
-of the latest journal record of the Epic, for two reasons: the digest cannot be recomputed
-here, because it covers the version of every node (`snapshot.versions`, `epic_preview.py`),
-and these versions change when the campaign writes a node (deduced, not observed on a
-tracker), and the policy that produced it is not observable.
-The structure digest is the observed one, so a structure change is detected exactly. As the
-checked preview digest is always one of the journal's own records, `preview_digest_mismatch`
-is unreachable on this path (an Epic without a record gives `absent` first).
+`structure_digest`), the approval journal, then, for the one ticket in focus only, `git
+for-each-ref`, `git rev-parse` and `git rev-list --count` (read-only, `_git`), `list_prs`
+(or `get_pr` from the tracker PR link when no branch is found) and `get_pr` for each PR that
+is not open, one `get_issue` for its body, the proof store, and `ci_gate` (`write.py`, both
+CI sources), the last one only when the review is valid. The approval is checked with the
+preview digest of the latest journal record of the Epic, for two reasons: the digest cannot
+be recomputed here, because it covers the version of every node (`snapshot.versions`,
+`epic_preview.py`), and these versions change when the campaign writes a node (deduced, not
+observed on a tracker), and the policy that produced it is not observable. The structure
+digest is the observed one, so a structure change is detected exactly. As the checked
+preview digest is always one of the journal's own records, `preview_digest_mismatch` is
+unreachable on this path (an Epic without a record gives `absent` first).
 
 The re-read of a closed PR is needed because the jq of `GitHubCodeHost.list_prs` selects
 `merged`; deduced, not re-verified here: the list endpoint of the code host returns
@@ -115,23 +121,27 @@ The re-read of a closed PR is needed because the jq of `GitHubCodeHost.list_prs`
 
 Cost in tracker requests: the subgraph read (`epic_subgraph.build_neutral_subgraph`, one
 `get_issue` per node plus binding validation) plus at most one `get_issue`, plus two more
-`get_issue` when the review is valid and deferrable remarks remain (`origin_of`). To measure a
-pass: `FOUNDRY_REQUEST_COUNT=stderr FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py
+`get_issue` when the review is valid and deferrable remarks remain (`origin_of`). To measure
+a pass: `FOUNDRY_REQUEST_COUNT=stderr FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py
 campaign-cadence next <EPIC>` (`REQUEST_COUNT_ENV`, `trackers/linear.py`). The measured
 figures (PAT-228: 19 requests for an Epic of 17 tickets, about one request per node) are in
 `docs/linear-request-cost.md`, "Epic campaign (PAT-228)"; the effects `run` also reports the
-requests of each pass (`docs/campaign-effects.md`, "Provider requests of a pass"). Every pass,
-`wait-ci` included, reads the whole subgraph: the structure digest is checked on every observation
-(`campaign_cadence.py`, `observe`; PAT-ADR-0027 defines the drift but not when it is checked;
-deduced: a pass cannot know before observing whether it leads to an effect). PAT-228 leaves
-that unchanged. The cost of the worst pass (valid review, deferrable remarks, `origin_of`) and the
-share of the single `get_issue` of the review read are not measured: unknown.
+requests of each pass (`docs/campaign-effects.md`, "Provider requests of a pass"). Every
+pass, `wait-ci` included, reads the whole subgraph: the structure digest is checked on every
+observation (`campaign_cadence.py`, `observe`; PAT-ADR-0027 defines the drift but not when
+it is checked; deduced: a pass cannot know before observing whether it leads to an effect).
+PAT-228 leaves that unchanged. The cost of the worst pass (valid review, deferrable remarks,
+`origin_of`) and the share of the single `get_issue` of the review read are not measured:
+unknown.
 
-The `ticket` objects of the output carry `branch_sha`, `ahead` and `implemented` beside the
-earlier fields (`TicketFacts`, `campaign_cadence.py`); `CADENCE_CONTRACT` is unchanged, so a reader
-that validates the object strictly must accept them. `review` also takes the value `integrity`.
-At most one branch is read per ticket: `_branch_for` takes the first name in sorted order when
-several branches match the ticket, with no ambiguity signal (a limit, covered by
+The `ticket` objects of the output (`asdict` of `TicketFacts`, `campaign_cadence.py`) carry,
+beside the fields of the first version of `CADENCE_CONTRACT` (PAT-216), the fields added
+since: `branch_sha`, `ahead`, `implemented` (PAT-217), `fix_before_merge`, `review_rounds`,
+`corrections` (PAT-218), `deferral` (PAT-141), `fix_description`, `description_corrected`
+(PAT-227). `CADENCE_CONTRACT` is unchanged, so a reader that validates the object strictly
+must accept them. `review` also takes the value `integrity`. At most one branch is read per
+ticket: `_branch_for` takes the first name in sorted order when several branches match the
+ticket, with no ambiguity signal (a limit, covered by
 `test_branch_names_match_the_issue_id_exactly_and_the_first_sorted_one_wins`).
 
 ## Capabilities required (PAT-ADR-0026)
@@ -141,8 +151,8 @@ several branches match the ticket, with no ambiguity signal (a limit, covered by
 `Tracker.reconcile_issue_creation`. There is no declarative flag for the third one: that is
 a gap, so the override is the test. Linear sets the two flags and overrides the method
 (`trackers/linear.py`); a tracker missing any of them is refused before any read of the Epic or
-resolution of the project: `main` first calls `foundry.tracker()` (without `--root`), then
-`_context` checks the flags.
+resolution of the project: `main` calls `_context`, which first calls `foundry.tracker()`
+(without `--root`), then checks the flags.
 
 ## Drift and its limit (PAT-ADR-0027)
 
@@ -159,9 +169,8 @@ not drift in the sense of PAT-ADR-0027: without a previous state, a dependency t
 back cannot be told from a dependent that went ahead of it, so it also fires on an
 out-of-order forward progress; the way out is human (finish the dependency, or remove the
 edge and approve again). Contradictions on PR and git facts are read for the ticket in focus
-only. A merged PR whose tracker `done` projection is missing
-suspends; replaying `issue merge` recovers it (`issue.py`, `recover_done_projection`), and
-that is a human decision here.
+only. A merged PR whose tracker `done` projection is missing suspends; replaying `issue merge`
+recovers it (`issue.py`, `recover_done_projection`), and that is a human decision here.
 
 ## Approval and review proof
 
@@ -170,10 +179,17 @@ everything and returns `refuse` with the step it would take. The review proof is
 `AcceptanceProofStore.valid_for_merge` and `current_for_sync` (`routing.py`) on the exact
 diff `git diff <base>...<head>` of the PR (`routing.git_diff`); the store may create its
 review directory and `.ledger.lock` in the private data directory and wait on that lock
-(`ReviewDeduplicator._locked`, `routing.py`). It may also rewrite a ledger marker that holds only
-the legacy `{"diff_hash": ...}` into a completed record: `completed_proof_binding` calls
-`_record_for`, which calls `_read_record` with `migrate_bare_legacy=True` (`routing.py`). A corrupt
-or inconsistent ledger or proof raises `ProofIntegrityError` and suspends the ticket; a missing,
-stale or non-mergeable one stays a plain `RoutingConfigError` (`none` or `blocked`). Tests:
-`tests/test_campaign_cadence.py` (one per state, drift, approval, capability, idempotence,
-fakes that fail on any effect).
+(`ReviewDeduplicator._locked`, `routing.py`). It may also rewrite a ledger marker that holds
+only the legacy `{"diff_hash": ...}` into a completed record: `completed_proof_binding`
+calls `_record_for`, which calls `_read_record` with `migrate_bare_legacy=True`
+(`routing.py`). A persisted ledger record or proof that cannot be read, or whose shape,
+claim publication, claim id, coordinates, head or content is invalid or inconsistent, raises
+`ProofIntegrityError` (a subclass of `RoutingConfigError`; `_read_record`,
+`_completed_proof_binding_from_record`, `completed_proof_binding`, proof validation in
+`routing.py`) and `_review_status` returns `integrity`: `suspend` `review_proof_integrity`.
+`current_for_sync` validates every proof marker before it filters by issue, so a corrupt
+proof of another issue suspends the pass for the ticket in focus too (`issue merge` already
+fails closed in the same state, as `valid_for_merge` calls it). An absent ledger marker, or
+an absent, stale, ambiguous or non-mergeable proof, stays a plain `RoutingConfigError`
+(`none` or `blocked`). Tests: `tests/test_campaign_cadence.py` (one per state, drift,
+approval, capability, idempotence, fakes that fail on any effect).
