@@ -357,19 +357,19 @@ def _session_route(runtime, role: str, issue: str, *, floor: str | None = None):
     ), policy
 
 
-def plan_review(runtime, epic: str, ticket, attempts: Path) -> dict:
+def plan_review(runtime, epic: str, ticket, attempts: Path, cwd=None) -> dict:
     """The reviewer route (FOUNDRY-ADR-0006 floor and any escalation floor) and the mode."""
     route, policy = _session_route(runtime, "reviewer", ticket.id)
-    plan = fx.session_plan(runtime, route, policy)
-    if os.environ.get("FOUNDRY_DATA"):  # `read-review` finds the claim under registry.data_dir()
-        plan["env"] = {**plan["env"], "FOUNDRY_DATA": os.environ["FOUNDRY_DATA"]}
+    # `read-review` finds the claim under registry.data_dir(): the probe gets the same environment
+    data = {"FOUNDRY_DATA": os.environ["FOUNDRY_DATA"]} if os.environ.get("FOUNDRY_DATA") else None
+    plan = fx.session_plan(runtime, route, policy, cwd, data)
     mode = review_mode(fx.read_attempts(attempts), epic, ticket.id, ticket.pr.head_sha,
                        ticket.pr.base_sha)
     return {**plan, "role": "reviewer", "mode": mode}
 
 
 def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
-                 ceilings: tuple[int, int | None] | None = None) -> dict:
+                 ceilings: tuple[int, int | None] | None = None, cwd=None) -> dict:
     """Escalation failure first (it decides whether and at which tier), then the prompt."""
     pr = ticket.pr
     records = fx.read_attempts(attempts)
@@ -390,7 +390,7 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
     report = Path(report_record["summary_file"]).read_text(encoding="utf-8")
     route, policy = _session_route(runtime, "implementer", ticket.id)
     if decision.reason == DESCRIPTION_REASON:
-        plan = fx.session_plan(runtime, route, policy)
+        plan = fx.session_plan(runtime, route, policy, cwd)
         issue = tracker.get_issue(ticket.id)
         plan["prompt"] = description_prompt(
             epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "", report,
@@ -426,7 +426,7 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
             return {"suspend": (str(outcome.get("action"))[:64], {})}
         route, policy = _session_route(runtime, "implementer", ticket.id,
                                        floor=outcome.get("final_tier"))
-    plan = fx.session_plan(runtime, route, policy)
+    plan = fx.session_plan(runtime, route, policy, cwd)
     issue = tracker.get_issue(ticket.id)
     plan["prompt"] = correct_prompt(
         epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "", report,
@@ -576,7 +576,7 @@ def body_summary(records: list[dict], epic: str, ticket: str) -> str | None:
     try:
         raw = Path(saved[-1]["summary_file"]).read_text(encoding="utf-8") \
             if saved[-1]["summary_file"] else None
-    except OSError:
+    except (OSError, UnicodeDecodeError):  # an undecodable file is read as no summary (PAT-236)
         raw = None
     return fx.published_summary(raw)
 

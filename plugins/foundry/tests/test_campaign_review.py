@@ -1,5 +1,6 @@
 """PAT-218: review and correction in a campaign; doubles only, no network, no real claude."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -787,6 +788,16 @@ def test_the_summary_criterion_is_mechanical():
         assert ce.published_summary(bad) == ce.SUMMARY_UNUSABLE_BODY
 
 
+def test_an_undecodable_summary_file_is_read_as_no_summary(env, tmp_path):
+    _description_only(env)
+    env.world.session_summary = f"{ce.SUMMARY_MARK}\n## Corrected\nthe new description"
+    step(env)
+    records = ce.read_attempts(env.kwargs["attempts"])
+    saved = [r for r in records if r["event"] == "finished" and r.get("summary_file")]
+    Path(saved[-1]["summary_file"]).write_bytes("é".encode("utf-8")[:1])
+    assert cr.body_summary(records, "APP-1", "APP-2") == ce.SUMMARY_UNUSABLE_BODY
+
+
 def test_the_reviewer_contract_asks_each_remark_for_a_target():
     contract = cr.review_contract()
     assert 'target "diff"' in contract and '"description"' in contract
@@ -851,3 +862,50 @@ def test_the_description_prompt_carries_the_published_description(env):
     prompt = [c for c in effects(env.world) if c[0][0] == "claude"][-1][3]
     assert "<description>\n## Summary\nAPP-2\n</description>" in prompt
     assert "Do not write a `## Review rounds` section" in prompt
+
+
+def test_a_correction_through_step_runs_in_the_native_sandbox(env):
+    """PAT-236 (220-6): the correction session launched by `step` -> `_launch` carries the
+    sandbox settings of its worktree, the unit test of the argv alone cannot show that."""
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env)
+    result = step(env)
+    assert (result.decision.kind, result.outcome) == ("correct", "executed")
+    argv, cwd, _env, _prompt = effects(env.world)[-1]
+    assert argv[0] == "claude" and "--tools" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert settings["sandbox"]["enabled"] is True
+    assert os.path.realpath(cwd) in settings["sandbox"]["filesystem"]["allowWrite"]
+    common = str(Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git")
+    assert os.path.join(os.path.realpath(common), "objects") in (
+        settings["sandbox"]["filesystem"]["allowWrite"])
+
+
+def test_the_version_probe_runs_where_and_as_the_session_launches(env, monkeypatch):
+    """PAT-236: `claude --version` runs in the directory, with the environment, of the session
+    it precedes (implementation, review, correction), as in the other two headless runners."""
+    from foundry import routing_facades
+
+    # every route declares a minimum, so that every session is preceded by a probe
+    monkeypatch.setattr(routing_facades, "claude_host_version_requirement",
+                        lambda model, observed: {"status": "conforming", "required": "2.1.293"})
+    monkeypatch.setenv("FOUNDRY_DATA", os.environ["FOUNDRY_DATA"])
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env), step(env)
+    calls = [c for c in env.world.calls if c[0][0] == "claude"]
+    assert any(c[0][1] == "--version" for c in calls)
+    pairs = 0
+    for index, (argv, cwd, child_env, _input) in enumerate(calls):
+        if argv[1] != "--version":
+            continue
+        launch = next(c for c in calls[index + 1:] if c[0][1] != "--version")
+        assert os.path.realpath(cwd) == os.path.realpath(launch[1]) != os.path.realpath(
+            env.runtime.root)
+        assert child_env == launch[2]
+        pairs += 1
+    assert pairs >= 3  # implementation, review, correction

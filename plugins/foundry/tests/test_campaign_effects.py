@@ -66,6 +66,7 @@ class World:
         self.clients = {}  # client id of a failed creation -> the issue it created
         self.write_failures = {}  # verb -> stderr of the next failure of that verb
         self.remarks_receipts = 0
+        self.git_dirs_unreadable = False  # PAT-236: `git rev-parse --git-common-dir` fails
         self.worktree_head = {}  # ticket -> the branch its worktree HEAD names, when moved
 
     def add_issue(self, issue_id, title, kind, state, parent=None, body="- [ ] done"):
@@ -102,6 +103,8 @@ class World:
         if argv == ["git", "rev-parse", "HEAD"]:  # PAT-227: the commit the worktree HEAD names
             ticket = Path(cwd).name
             return ok(self.head_sha.get(ticket, self.heads.get(ticket, "")) + "\n")
+        if self.git_dirs_unreadable and "--git-common-dir" in argv:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
         if argv[:2] == ["git", "rev-parse"]:  # PAT-220: a linked worktree of the stand-in repository
             common = Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git"
             return ok(f"{common}\n{common}/worktrees/{Path(cwd).name}\n")
@@ -638,13 +641,41 @@ def test_same_identity_is_never_launched_twice_even_after_a_crash(env):
     assert len(env.world.calls) == before
 
 
-def test_claim_is_atomic_per_identity(tmp_path):
+def test_a_second_claim_of_one_identity_is_refused(tmp_path):
     path = tmp_path / "a.jsonl"
     record = {"schema_version": ce.EFFECTS_CONTRACT, "event": "started", "attempt": "x" * 64,
               "epic": "APP-1", "ticket": "APP-2", "kind": "start", "fingerprint": {},
               "session_id": None, "route": None, "at": "2026-10-16T12:00:00Z"}
     assert ce.claim(path, record, None) is None
     assert ce.claim(path, record, None) == "attempt_already_made"
+    assert len(path.read_text().splitlines()) == 1
+
+
+def test_concurrent_claims_of_one_identity_grant_exactly_one(tmp_path):
+    """PAT-236: the read and the append share one `flock`: of several simultaneous claims of
+    the same identity (separate file descriptions, hence the lock is what orders them)
+    exactly one is granted and the journal holds one ``started`` line."""
+    import threading
+
+    path = tmp_path / "a.jsonl"
+    record = {"schema_version": ce.EFFECTS_CONTRACT, "event": "started", "attempt": "y" * 64,
+              "epic": "APP-1", "ticket": "APP-2", "kind": "start", "fingerprint": {},
+              "session_id": None, "route": None, "at": "2026-10-16T12:00:00Z"}
+    count = 12
+    barrier, answers = threading.Barrier(count, timeout=30), []
+
+    def worker():
+        barrier.wait()
+        answers.append(ce.claim(path, dict(record), None))
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert not any(thread.is_alive() for thread in threads)
+    assert answers.count(None) == 1
+    assert answers.count("attempt_already_made") == count - 1
     assert len(path.read_text().splitlines()) == 1
 
 
@@ -787,3 +818,58 @@ def test_saved_summary_masks_credential_shaped_values(tmp_path):
         assert leaked not in saved
     assert "https://[REDACTED]@example.com/org/repo.git" in saved
     assert "https://example.com/docs" in saved and "a@b" in saved
+
+
+def test_saved_summary_is_cut_on_a_character_boundary(tmp_path):
+    """PAT-236: a cut in the middle of a multi-byte character left a file that does not decode."""
+    text = "€" * (ce.MAX_SUMMARY_BYTES // 3 + 5)  # three bytes each: the limit falls inside one
+    assert ce.MAX_SUMMARY_BYTES % 3 != 0
+    saved = Path(ce._save_summary(tmp_path / "attempts.jsonl", "a" * 16, text))
+    raw = saved.read_bytes()
+    assert 0 < len(raw) <= ce.MAX_SUMMARY_BYTES
+    assert raw.decode("utf-8") == "€" * (ce.MAX_SUMMARY_BYTES // 3)
+    odd = "a" + "é" * ce.MAX_SUMMARY_BYTES  # the limit falls inside the second byte of a letter
+    cut = Path(ce._save_summary(tmp_path / "attempts.jsonl", "b" * 16, odd)).read_bytes()
+    assert len(cut) <= ce.MAX_SUMMARY_BYTES and cut.decode("utf-8").startswith("aé")
+
+
+def test_an_undecodable_summary_file_is_published_as_unusable_not_a_plan_failure(env):
+    step(env), step(env)
+    record = [r for r in ce.read_attempts(env.kwargs["attempts"])
+              if r["event"] == "finished" and r["kind"] == "implement"][0]
+    Path(record["summary_file"]).write_bytes(b"\xc3\x28 not utf-8")
+    result = step(env)
+    assert (result.decision.kind, result.outcome) == ("open-pr", "executed")
+    assert effects(env.world)[2][3] == ce.SUMMARY_UNUSABLE_BODY
+
+
+def test_a_relative_worktrees_dir_is_resolved_once(monkeypatch, tmp_path, env):
+    """PAT-236: ``--worktrees-dir`` is resolved against the current directory at start."""
+    import foundry
+
+    seen = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cc, "_context", lambda root: (env.tracker, PROJECT))
+    monkeypatch.setattr(foundry, "codehost", lambda *a, **k: env.codehost)
+    monkeypatch.setattr(ce, "step", lambda *a, **k: seen.append(a[4]) or ce.StepResult(
+        cc.Decision("suspend", reason="x"), "stopped"))
+    args = SimpleNamespace(epic_id="APP-1", root=str(env.tmp / "repo"), verb="step",
+                           budget_usd=1.0, worktrees_dir="rel/wt")
+    ce.cli(args)
+    assert seen[0].worktrees_dir == (tmp_path / "rel" / "wt").resolve()
+    assert seen[0].worktrees_dir.is_absolute()
+
+
+def test_unreadable_git_dirs_cost_no_attempt(env):
+    """PAT-236 (220-7): the worktree git directories are read before the claim, as `_plan`
+    promises: the error leaves no ``started`` line, so the next pass is not a replay."""
+    step(env)  # start
+    env.world.git_dirs_unreadable = True
+    result = step(env)
+    assert (result.decision.kind, result.outcome) == ("implement", "failed")
+    assert result.effect["phase"] == "plan"
+    assert [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "implement"] == []
+    assert not [c for c in env.world.calls if c[0][0] == "claude"]
+    env.world.git_dirs_unreadable = False
+    again = step(env)
+    assert (again.decision.kind, again.outcome) == ("implement", "executed")

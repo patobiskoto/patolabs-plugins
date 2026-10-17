@@ -175,24 +175,27 @@ behaviour, not the pre-FOUNDRY-125 closed table:
   Both native trials of 2026-10-09 (first `not_conforming`, kept as recorded; second
   `conforming`, authorised by the maintainer) are in
   `plugins/foundry/docs/qualification/pat-125-haiku-55-promotion.md`.
-- `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires Claude Code 2.1.293
-  for the `haiku-5.5` pin. The routing hook observes the host version with
+- `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires Claude Code 2.1.293 for
+  the `haiku-5.5` pin. The routing hook observes the host version with
   `claude_host_version()`: the top-level `version` of the last versioned record of the
-  session transcript named by its payload, never the environment and never a `claude`
-  found on `PATH`. An observed lower version makes `claude_invocation_binding()` raise
+  session transcript named by its payload, never the environment and never a `claude` found
+  on `PATH`. An observed lower version makes `claude_invocation_binding()` raise
   `RoutingConfigError` naming the required version: the launch is denied and nothing is
-  substituted, neither Haiku 4.5 nor an alias. An unobservable version is `unknown`:
-  the launch proceeds with `host_version.status = "unknown"` and the
-  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The headless
-  runners (`command_runtime.py`, `campaign_runtime.py`) apply the same rule through
-  `claude_headless_host_version_requirement()`: for such a pin only, they ask the
-  `claude` they are about to launch its `--version` (local, unpaid, same runner, child
-  environment and working directory), refuse below the minimum, and on an unreadable
-  answer launch after writing one line with the same code to standard error, at every
-  launch. There a dated snapshot `claude-haiku-5-5-YYYYMMDD` carries the same minimum;
-  the hook refuses such an identifier first because no preloaded pinned profile exists
-  for it. `routing show`/`resolve` and `doctor` bind nothing and observe no host
-  version.
+  substituted, neither Haiku 4.5 nor an alias. An unobservable version is `unknown`: the
+  launch proceeds with `host_version.status = "unknown"` and the
+  `CLAUDE_HOST_VERSION_UNOBSERVED` warning, never reported as conforming. The three headless
+  runners (`command_runtime.py`, `campaign_runtime.py` and the effects of the Epic campaign
+  cadencer, `campaign_effects.py::session_plan`) apply the same rule through
+  `claude_headless_host_version_requirement()`: for such a pin only, they ask the `claude`
+  they are about to launch its `--version` (local, unpaid, same runner, same child
+  environment as the launch up to the two receipt variables that `command_runtime.py` adds
+  after the probe, and working directory: the command root in `command_runtime.py`, the
+  worktree in `campaign_runtime.py`, the ticket worktree in `campaign_effects.py`, PAT-236),
+  refuse below the minimum, and on an unreadable answer launch after writing one line with
+  the same code to standard error, at every launch. In these runners a dated snapshot
+  `claude-haiku-5-5-YYYYMMDD` carries the same minimum; the hook refuses such an identifier
+  first because no preloaded pinned profile exists for it. `routing show`/`resolve` and
+  `doctor` bind nothing and observe no host version.
 - The ten Sonnet 5.5 versioned profiles (`CLAUDE_CACHE_TTL_1H_PINS`, `routing_facades.py`, PAT-134) carry the
   subagent prompt-cache lifetime as a nested map, `experimental: {cacheTtl: 1h}`, and no other profile does. Per the
   Anthropic documentation read on 2026-10-09 (not re-verified), the field needs Claude Code 2.1.248 or later and `1h`
