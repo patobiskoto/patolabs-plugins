@@ -10,12 +10,16 @@ This module calls no tracker, starts no campaign and writes nothing else than th
 approval or a typed refusal.  A preview never approves itself: ``epic_preview`` has no
 approval code path.
 
-An agent session cannot approve by an accidental or cooperative call: ``approve`` reads its confirmation from
-the controlling terminal only and refuses under an agent-session environment marker, and
-the Claude ``PreToolUse`` Bash guard denies the command; a deliberate bypass is not stopped.  This is not cryptography: a
-process running as the same OS user can append to the journal directly.  ``check`` refuses a
-line whose ``record_digest`` does not verify (a malformed hand-append), but cannot detect a
-well-formed forged line.  See ``docs/campaign-approval.md``.
+An agent session cannot approve by an accidental or cooperative call: ``approve`` reads its
+confirmation from the controlling terminal only and refuses under an agent-session
+environment marker, and the Claude ``PreToolUse`` Bash guard denies the command; a
+deliberate bypass is not stopped.
+
+Limit: this is not cryptography.  A process running as the same OS user can append to the
+journal directly.  ``check`` refuses a line whose ``record_digest`` does not verify (a
+malformed hand-append), but cannot detect a well-formed forged line.  An approval written by
+this version expires at the latest when the approved preview's ``policy.expires_at``
+expires; an older record keeps its own ``expires_at``.  See ``docs/campaign-approval.md``.
 """
 from __future__ import annotations
 
@@ -84,6 +88,15 @@ def journal_path() -> Path:
     return Path(registry.data_dir()) / JOURNAL_NAME
 
 
+def _aware(now: datetime | None) -> datetime:
+    """``now`` or the current UTC time; a naive ``now`` is refused, never read as local."""
+    if now is None:
+        return datetime.now(timezone.utc)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ApprovalError("horodatage naïf refusé : un fuseau est requis")
+    return now
+
+
 def _stamp(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -128,11 +141,19 @@ def read_journal(path: Path | None = None) -> list[dict]:
     """Every record, or ``JournalInvalid`` when any line fails: nothing is trusted then."""
     target = path or journal_path()
     try:
-        raw = target.read_bytes()
+        descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
         return []
     except OSError as exc:
         raise JournalInvalid("journal d'approbation illisible") from exc
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)  # waits for an append in progress
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read()
+    except OSError as exc:
+        raise JournalInvalid("journal d'approbation illisible") from exc
+    finally:
+        os.close(descriptor)
     records = []
     for line in raw.split(b"\n"):
         if not line:
@@ -151,7 +172,7 @@ def check(
     path: Path | None = None,
 ) -> dict:
     """The valid approval for exactly these digests, or a typed refusal.  No effect."""
-    moment = now or datetime.now(timezone.utc)
+    moment = _aware(now)
     own = [record for record in read_journal(path) if record["epic"] == epic]
     if not own:
         raise ApprovalAbsent(f"aucune approbation pour {epic}")
@@ -184,6 +205,18 @@ def digests_from_preview(preview: object, epic: str) -> tuple[str, str]:
     if _digest(material) != declared:
         raise ApprovalError("l'empreinte d'aperçu ne correspond pas au contenu du fichier")
     return declared, structure
+
+
+def preview_expiry(preview: dict) -> datetime:
+    """``policy.expires_at`` (epoch milliseconds) of a validated preview, as a UTC second."""
+    policy = preview.get("policy")
+    millis = policy.get("expires_at") if isinstance(policy, dict) else None
+    if type(millis) is not int or millis <= 0:
+        raise ApprovalError("l'aperçu ne porte pas d'expiration policy.expires_at valide")
+    try:
+        return datetime.fromtimestamp(millis // 1000, timezone.utc)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise ApprovalError("expiration d'aperçu hors bornes") from exc
 
 
 def _load_preview(path: str, epic: str) -> tuple[dict, str, str]:
@@ -227,13 +260,25 @@ def _confirm_on_tty(summary: str, expected: str) -> None:
 
 
 def _append(record: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise JournalInvalid("journal d'approbation non inscriptible, rien n'est écrit") from exc
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise JournalInvalid("journal d'approbation non inscriptible, rien n'est écrit") from exc
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        os.write(descriptor, _canonical(record) + b"\n")
+        data = memoryview(_canonical(record) + b"\n")
+        while data:  # os.write may write fewer bytes than asked
+            data = data[os.write(descriptor, data):]
         os.fsync(descriptor)
+    except OSError as exc:
+        raise JournalInvalid(
+            "écriture du journal d'approbation non confirmée, l'enregistrement a pu être écrit"
+        ) from exc
     finally:
         os.close(descriptor)
 
@@ -251,12 +296,16 @@ def approve(
         raise ApprovalError(f"max-sessions hors bornes (1 à {MAX_SESSIONS_CEILING})")
     if max_sessions_per_issue is not None and not 0 < max_sessions_per_issue <= max_sessions:
         raise ApprovalError("max-sessions-per-issue hors bornes (1 à max-sessions)")
-    _, preview_digest, structure = _load_preview(preview_path, epic)
-    moment = (now or datetime.now(timezone.utc)).replace(microsecond=0)
+    preview, preview_digest, structure = _load_preview(preview_path, epic)
+    moment = _aware(now).replace(microsecond=0)
+    preview_end = preview_expiry(preview)
+    if preview_end <= moment:
+        raise ApprovalError("l'aperçu est déjà expiré (policy.expires_at) : rien n'est écrit")
+    expiry = min(moment + ttl, preview_end)
     record = {
         "schema_version": APPROVAL_CONTRACT, "epic": epic, "preview_contract": PREVIEW_CONTRACT,
         "preview_digest": preview_digest, "structure_digest": structure,
-        "issued_at": _stamp(moment), "expires_at": _stamp(moment + ttl),
+        "issued_at": _stamp(moment), "expires_at": _stamp(expiry),
         "max_sessions": max_sessions, "max_sessions_per_issue": max_sessions_per_issue,
         "approved_at": _stamp(moment), "approver": {"kind": APPROVER_KIND},
     }
@@ -266,8 +315,9 @@ def approve(
     except JournalInvalid as exc:
         raise ApprovalError(f"enregistrement d'approbation refusé, rien n'est écrit : {exc}") from exc
     summary = (f"Epic {epic}\n  preview_digest   {preview_digest}\n"
-               f"  structure_digest {structure}\n  expire {_stamp(moment + ttl)}, "
-               f"{max_sessions} sessions au plus"
+               f"  structure_digest {structure}\n  expire {_stamp(expiry)}"
+               + (" (plafonné par l'expiration de l'aperçu)" if expiry < moment + ttl else "")
+               + f", {max_sessions} sessions au plus"
                + (f", {max_sessions_per_issue} par issue" if max_sessions_per_issue else ""))
     _confirm_on_tty(summary, preview_digest[:CONFIRMATION_LENGTH])
     _append(record, path or journal_path())
@@ -298,10 +348,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.verb == "approve":
+            try:
+                ttl = timedelta(hours=args.ttl_hours)
+            except OverflowError as exc:
+                raise ApprovalError(f"durée hors bornes (maximum {MAX_TTL.days} jours)") from exc
             result = approve(
                 args.epic, args.preview_file, max_sessions=args.max_sessions,
-                max_sessions_per_issue=args.max_sessions_per_issue,
-                ttl=timedelta(hours=args.ttl_hours),
+                max_sessions_per_issue=args.max_sessions_per_issue, ttl=ttl,
             )
         elif args.verb == "status":
             result = [r for r in read_journal() if r["epic"] == args.epic]
