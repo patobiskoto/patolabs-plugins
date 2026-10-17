@@ -270,8 +270,8 @@ home, the network, other hosts and versions.
   `refs`; the objects are shared by all worktrees; the user scope of the host settings still
   loads (`--setting-sources user`) and can add to the sandbox arrays.
 - Residual, deduced (PAT-242): the sandbox governs the shell commands of a session, not the launch of
-  `claude` itself. Every later `claude` start in that worktree (each session and its `--version`
-  probe) happens outside the sandbox, in a worktree the previous session wrote. With a directory-dependent shim (asdf, mise,
+  `claude` itself. Every later `claude` start in that worktree (each session, and its `--version`
+  probe when the pin declares a minimum host version) happens outside the sandbox, in a worktree the previous session wrote. With a directory-dependent shim (asdf, mise,
   `.tool-versions`), a file that previous session wrote there could choose which binary is launched.
   Not observed; scope: the shims that resolve `claude` from the working directory. The other launches
   by name (the `python3` of the plugin hooks, the `git` of the cadencer) are not examined: unknown, and
