@@ -700,57 +700,59 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    an attempt of the pull request made a write.
 6. The `finished` line with state `done`; the next pass decides `merge`.
 
-A failed `edit create-issue` is never retried inside the pass. When its standard error is the
-structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
+A failed `edit create-issue` is never retried inside the pass. When its standard error is
+the structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
 required`), or is a quota error whose message names a `client_id=<UUID>`, `edit
-reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once, unless the error
-carries a `reset_at` (in the quota message, or in `causes.create` or `causes.read` of the
-object; PAT-238): the quota is then empty, so no read is made now, the client id goes to
+reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once, unless the
+error carries a `reset_at` (in the quota message, or in `causes.create` or `causes.read` of
+the object; PAT-238): the quota is then empty, so no read is made now, the client id goes to
 `unknown`, the failure is transient with that `reset_at` in its reason, and the next pass
-reconciles first, once the wait is over. `validation: accepted` adopts that issue. `_reconcile` tells four answers apart: `accepted`; `absent`
-(standard error naming `IssueUnavailableError`, the read found no such issue: the creation did
-not happen, nothing is kept in `unknown`, transient `creation_not_observed`, and the next pass
-creates again with a new client id); `refused` (standard error naming `TrackerConflictError` or
-`validation refused`, or `validation: refused` in the answer or in the creation error object:
-the adapter does not replay, `creation_replay_refused`, a durable refusal; when the creation
-object says `creation: created`, the write is listed in `writes` and, for the companion Epic,
-its `issue_id` is the `companion` of the field, PAT-238); anything else is
-unreadable and the effect stays unknown (a read that fails on quota keeps its `reset_at` in the
-reason `creation_effect_unknown`): the client id and the title go to the `unknown` key of
-the `finished` line (transient), and the next pass reconciles by that client id (`_create`)
-before any new creation. The ADR only says a creation is retried after reconciliation
-(PAT-ADR-0028); this split is the reading of R9 (b) (`tests/test_campaign_defer.py`).
-Risk (deduced, not observed): `absent` is read as "the creation did not happen". If the tracker
-answers `IssueUnavailableError` for a client id whose issue was created but is not readable yet
-(a delay between the write and its read), the next pass creates the issue again and a duplicate
-exists.
-The bound is `MAX_DEFER_TRIES` attempts in total for one diff hash, the first included
-(`deferral_facts`: `len(started) >= MAX_DEFER_TRIES`), that is `MAX_DEFER_TRIES` - 1 retries.
-The read of steps 2 and 3 still precedes
-the creation and adopts an issue it finds; a companion that the journal names but that was
-renamed or retyped since is not trusted (the listing decides). An error object that names neither an issue nor a
-client id is a durable refusal (`creation_effect_unreconcilable`).
+reconciles first, once the wait is over. `validation: accepted` adopts that issue.
+`_reconcile` tells four answers apart: `accepted`; `absent` (standard error naming
+`IssueUnavailableError`, the read found no such issue: the creation did not happen, nothing
+is kept in `unknown`, transient `creation_not_observed`, and the next pass creates again
+with a new client id); `refused` (standard error naming `TrackerConflictError` or
+`validation refused`, or `validation: refused` in the answer or in the creation error
+object: the adapter does not replay, `creation_replay_refused`, a durable refusal; when the
+creation object says `creation: created`, the write is listed in `writes` and, for the
+companion Epic, its `issue_id` is the `companion` of the field, PAT-238); anything else is
+unreadable and the effect stays unknown (a read that fails on quota keeps its `reset_at` in
+the reason `creation_effect_unknown`): the client id and the title go to the `unknown` key
+of the `finished` line (transient), and the next pass reconciles by that client id
+(`_create`) before any new creation. The ADR only says a creation is retried after
+reconciliation (PAT-ADR-0028); this split is the reading of R9 (b)
+(`tests/test_campaign_defer.py`). Risk (deduced, not observed): `absent` is read as "the
+creation did not happen". If the tracker answers `IssueUnavailableError` for a client id
+whose issue was created but is not readable yet (a delay between the write and its read),
+the next pass creates the issue again and a duplicate exists. The bound is `MAX_DEFER_TRIES`
+attempts in total for one diff hash, the first included (`deferral_facts`: `len(started) >=
+MAX_DEFER_TRIES`), that is `MAX_DEFER_TRIES` - 1 retries. The read of steps 2 and 3 still
+precedes the creation and adopts an issue it finds; a companion that the journal names but
+that was renamed or retyped since is not trusted (the listing decides). An error object that
+names neither an issue nor a client id is a durable refusal
+(`creation_effect_unreconcilable`).
 
 Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
 unavailable, a binding refusal, a `ValueError`, `SystemExit`, `type_unmapped`,
-`invalid_field_options` or an unknown type is a durable refusal; any other error (quota, network,
-an unknown cause) is transient. The recorded `reason` is the last line of the error (at most 200
-characters, 64-hex runs and credential shapes masked with `mask_credentials`, PAT-238, because
-the reason is journaled and told in the PR description; `deferral_lines` masks it again). A quota
-error whose message carries `reset_at=<UTC time>` (`LinearQuotaExhaustedError`,
-`trackers/linear.py`) keeps that time in the reason, and the retry waits until the later of
-`DEFER_RETRY_SECONDS` after the `finished` line and that time (`reset_of`, `deferral_facts`,
-PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent, past or not a valid date changes
-nothing. The reset is honoured up to `MAX_RESET_WAIT_SECONDS` (3600) after the `finished` line, so
-a far date cannot hold a ticket for good; that cap is a Foundry choice, not measured (the Linear
-window is not established, `docs/linear-tracker.md`). That a real quota error reaches the
-cadencer with that text is deduced from `LinearQuotaExhaustedError._render` and `classify`, not
-exercised against a real quota error. Durable refusal: the `finished` line is `completed` with state
-`refused`, no substitute write is made, the next pass decides `correct` and the corrected head
-is reviewed again. Transient: the `finished` line is `failed` with error `transient` and the
-outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
-`--poll-seconds` and observes again. That the patterns match what each real adapter raises is
-not exercised here: only the Linear class names are known from the code, the YouTrack and
+`invalid_field_options` or an unknown type is a durable refusal; any other error (quota,
+network, an unknown cause) is transient. The recorded `reason` is the last line of the error
+(at most 200 characters, 64-hex runs and credential shapes masked with `mask_credentials`,
+PAT-238, because the reason is journaled and told in the PR description; `deferral_lines`
+masks it again). A quota error whose message carries `reset_at=<UTC time>`
+(`LinearQuotaExhaustedError`, `trackers/linear.py`) keeps that time in the reason, and the
+retry waits until the later of `DEFER_RETRY_SECONDS` after the `finished` line and that time
+(`reset_of`, `deferral_facts`, PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent,
+past or not a valid date changes nothing. The reset is honoured up to
+`MAX_RESET_WAIT_SECONDS` (3600) after the `finished` line, so a far date cannot hold a
+ticket for good; that cap is a Foundry choice, not measured (the Linear window is not
+established, `docs/linear-tracker.md`). That a real quota error reaches the cadencer with
+that text is deduced from `LinearQuotaExhaustedError._render` and `classify`, not exercised
+against a real quota error. Durable refusal: the `finished` line is `completed` with state
+`refused`, no substitute write is made, the next pass decides `correct` and the corrected
+head is reviewed again. Transient: the `finished` line is `failed` with error `transient`
+and the outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
+`--poll-seconds` and observes again. That the patterns match what each real adapter raises
+is not exercised here: only the Linear class names are known from the code, the YouTrack and
 GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60),
 `MAX_RESET_WAIT_SECONDS` (3600) and `MAX_DEFER_TRIES` (5) are chosen and not measured.
 
@@ -899,10 +901,11 @@ routing table changed.
 
 R5 status (PAT-238): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md` and
 `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign"). Candidate artefacts: the constants
-`_COMPANION_NAME` (the exact companion Epic naming rule), `_RESET_AT` and `MAX_RESET_WAIT_SECONDS`, the helper `reset_of`,
-the optional use of `reset_at` in the wait of a transient deferral, the `companion` of a refused
-creation that was created, the `journal_memory` rule on attempts that did not end `done`, and the
-sentences of R9 on the number of attempts and on the orphan scan, which were too strong. No CLI
-verb or option, configuration key or routing table changed. The dead `automatic_retry` branch of
-`_create` is removed (internal; no adapter sets the flag to true, `trackers/base.py`,
+`_COMPANION_NAME` (the exact companion Epic naming rule), `_RESET_AT` and
+`MAX_RESET_WAIT_SECONDS`, the helper `reset_of`, the optional use of `reset_at` in the wait
+of a transient deferral, the `companion` of a refused creation that was created, the
+`journal_memory` rule on attempts that did not end `done`, and the sentences of R9 on the
+number of attempts and on the orphan scan, which were too strong. No CLI verb or option,
+configuration key or routing table changed. The dead `automatic_retry` branch of `_create`
+is removed (internal; no adapter sets the flag to true, `trackers/base.py`,
 `trackers/linear.py`).
