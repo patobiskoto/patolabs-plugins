@@ -71,7 +71,7 @@ until a later step adds and exercises that run; this page then gets a dated amen
   `--help`, read 2026-10-17; whether it covers the child's spend is unknown). The tool refuses a real run without it.
   `<AMOUNT>` is the maintainer's figure; none is fixed here.
 - Time ceiling: 20 minutes, the process group is killed (`TIMEOUT_SECONDS`). One parent, one child expected, no
-  concurrency. More than one child is `not_conforming`.
+  concurrency. More than one child is `not_conforming`, even with an unavailability text.
 - Stop conditions: any line whose host answer is a refusal, an unavailable model or a divergent model is recorded
   and the sequence goes on with the next line only if the coordinator decides so; nothing is retried or replaced.
   Stop the whole sequence on: an authentication failure (OAuth), a usage-limit message, or a real-policy digest
@@ -147,7 +147,8 @@ coordinate (`agents/`), so `claude-architect`, `claude-scout` and `claude-implem
 `vauban` is scoped to an architectural question and what it does with this task is unknown.
 
 Verdicts: `conforming` (everything exact), `not_conforming` (any divergent value, wrong process exit, several
-children, changed guard), `unavailable` (unless the launched profile is divergent, which is `not_conforming`), `unknown` (anything not observed, a dated snapshot included). Errors are kept
+children, changed guard), `unavailable` (only when nothing but the process exit diverges; a divergent profile or several children is
+`not_conforming`, and a divergent profile sets the account availability back to `unknown`), `unknown` (anything not observed, a dated snapshot included). Errors are kept
 verbatim after masking: secrets, e-mail addresses, opaque tokens of 32 characters or more, home directory, 2000
 characters at most.
 

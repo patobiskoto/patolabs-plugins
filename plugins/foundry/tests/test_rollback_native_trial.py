@@ -412,6 +412,27 @@ def test_a_divergent_profile_with_an_unavailable_text_is_not_conforming(tmp_path
     body = json.loads((tmp_path / "result.json").read_text())
     assert body["conformity"]["profile"] == "divergent" and body["verdict"] == "not_conforming"
     assert "profile" in body["not_established"]
+    assert body["account_availability"] == "unknown"
+
+
+def test_several_children_with_an_unavailable_text_are_not_conforming(tmp_path):
+    # Two children also make the profile divergent (one agent type per child), so this locks the outcome; the
+    # `set(failed) <= {"process"}` rule is what keeps `unavailable` off any other divergence.
+    text = "model not found"
+    inner = _host(tmp_path, "claude-implementer", result=text, is_error=True, exit_code=1,
+                  child_records=[_synthetic(text)])
+
+    def launch(command, **kwargs):
+        outcome = inner(command, **kwargs)
+        for folder in (tmp_path / "projects").glob("*/*/subagents"):
+            (folder / "agent-1.jsonl").write_text((folder / "agent-0.jsonl").read_text())
+            (folder / "agent-1.meta.json").write_text((folder / "agent-0.meta.json").read_text())
+        return outcome
+
+    rt.run(_args(tmp_path, "claude-implementer"), launch=launch)
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["observed"]["children"] == 2 and body["verdict"] == "not_conforming"
+    assert "children" in body["not_established"] and body["account_availability"] == "unknown"
 
 
 def test_a_logged_null_effort_on_haiku_is_an_absence(tmp_path):

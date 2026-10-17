@@ -329,7 +329,7 @@ def verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[s
         failed.append("process")
     if facts["observed"]["children"] > 1:
         failed.append("children")
-    if facts["account_availability"] == "unavailable_declared" and c["profile"] != "divergent":
+    if facts["account_availability"] == "unavailable_declared" and set(failed) <= {"process"}:
         return "unavailable", failed + [n for n, s in c.items() if s in ("unknown", "dated_snapshot")]
     open_points = [n for n, s in c.items() if s in ("unknown", "dated_snapshot")]
     if failed:
@@ -442,6 +442,8 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
     after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
     guard_ok = before == after
     state, open_points = verdict(process, facts)
+    if facts["conformity"]["profile"] == "divergent" and facts["account_availability"] == "unavailable_declared":
+        facts["account_availability"] = "unknown"  # the model tried was not necessarily the line's
     if not guard_ok:
         state, open_points = "not_conforming", ["policy_guard", *open_points]
     body["policy_guard"].update({"real_policy_digests_after": after, "unchanged": guard_ok})
