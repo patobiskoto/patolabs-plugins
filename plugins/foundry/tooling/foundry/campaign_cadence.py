@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -315,10 +316,27 @@ def missing_capabilities(tracker) -> tuple[str, ...]:
     return tuple(missing)
 
 
+# PAT-220: what a session wrote in a worktree (a hook a relative core.hooksPath selects there)
+# must not run in a git command of the cadencer, which runs outside the sandbox.
+def git_neutral_env(environ, hooks: str) -> dict:
+    """``environ`` plus ``GIT_CONFIG_COUNT`` entries ``core.hooksPath=<hooks>`` and
+    ``core.fsmonitor=false``, appended after any entries ``environ`` already declares."""
+    env = dict(environ)
+    count = env.get("GIT_CONFIG_COUNT", "0")
+    count = int(count) if count.isdigit() else 0
+    for key, value in (("core.hooksPath", hooks), ("core.fsmonitor", "false")):
+        env[f"GIT_CONFIG_KEY_{count}"], env[f"GIT_CONFIG_VALUE_{count}"] = key, value
+        count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+    return env
+
+
 def _git(root: str, *args: str, check: bool = True) -> str:
-    """The one read-only git call of this module; empty on a refused, unchecked call."""
+    """The one read-only git call of this module; empty on a refused, unchecked call.  Its
+    verbs (``for-each-ref``, ``rev-parse``, ``rev-list``) run no hook: hooks stay off."""
     result = subprocess.run(
         ["git", *args], cwd=root, capture_output=True, text=True, check=check,
+        env=git_neutral_env(os.environ, os.devnull),
     )
     return result.stdout.strip() if result.returncode == 0 else ""
 

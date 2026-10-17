@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -40,6 +40,8 @@ SUMMARIES_NAME = "campaign-summaries"
 EFFECT_KINDS = ("start", "implement", "open-pr", "review", "correct", "defer-remarks", "merge")
 # The kinds that launch a model session; the approval ceilings count them all (PAT-218).
 SESSION_KINDS = ("implement", "review", "correct")
+# The kinds whose effect may push with `issue openpr` (a PR body update included).
+PUSH_KINDS = ("open-pr", "review", "defer-remarks")
 IMPLEMENT_BUDGET_USD = 5.0  # default ceiling of one session; not measured (unknown)
 MAX_BUDGET_USD = 25.0
 IMPLEMENT_TIMEOUT_SECONDS = 2 * 60 * 60
@@ -51,7 +53,8 @@ DEFAULT_POLL_SECONDS = 60
 MAX_POLL_SECONDS = 600
 MAX_SUMMARY_BYTES = 32 * 1024
 # The session may commit locally; it holds no push, code-host or Foundry write verb.  These
-# are tool rules of the host, a discipline boundary and not a sandbox (docs/campaign-effects.md).
+# are tool rules of the host, a second layer: the write boundary is the native sandbox of
+# ``sandbox_settings`` (PAT-220), see docs/campaign-effects.md.
 DISALLOWED_TOOLS = (
     "Bash(git push:*)", "Bash(gh:*)",
     "Bash(python3 *foundry_cli.py issue *)", "Bash(python3 *foundry_cli.py edit *)",
@@ -226,6 +229,26 @@ class Runtime:
     budget_usd: float = IMPLEMENT_BUDGET_USD
     plugin_root: Path = Path(__file__).resolve().parents[2]
     environ: Callable[[], dict] = lambda: dict(os.environ)  # noqa: E731
+    _hooks: str | None = field(default=None, init=False, repr=False)
+
+    def hooks_dir(self) -> str:
+        """PAT-220: the hooks directory of the main checkout ``root``, read once (``git rev-parse
+        --git-path hooks`` honours ``core.hooksPath``, a relative one against the top level of
+        ``root``); refused when it lies in the worktrees directory, which holds every ticket's."""
+        if self._hooks is None:
+            done = self.runner(
+                ["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+                cwd=self.root, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS,
+                env=self.environ(), check=False)
+            path = (done.stdout or "").strip() if done.returncode == 0 else ""
+            if "\n" in path or not os.path.isabs(path):
+                raise OSError("git_hooks_dir_unreadable")
+            path = os.path.realpath(path)
+            outer = os.path.realpath(self.worktrees_dir)
+            if path == outer or path.startswith(outer.rstrip("/") + "/"):
+                raise OSError("git_hooks_dir_in_campaign_worktrees")
+            self._hooks = path
+        return self._hooks
 
     @property
     def cli(self) -> str:
@@ -262,9 +285,13 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
 
 def _run(runtime: Runtime, argv: list[str], cwd, *, input=None, timeout=COMMAND_TIMEOUT_SECONDS,
          env=None):
+    """Without ``env`` (every subprocess but a session): git runs the main checkout's hooks
+    with fsmonitor off (``cadence.git_neutral_env``), also in a Foundry command it runs."""
+    if env is None:
+        env = cadence.git_neutral_env(runtime.environ(), runtime.hooks_dir())
     return runtime.runner(
         argv, cwd=str(cwd), input=input, capture_output=True, text=True, timeout=timeout,
-        env=env if env is not None else runtime.environ(), check=False,
+        env=env, check=False,
     )
 
 
@@ -288,6 +315,19 @@ def ensure_worktree(runtime: Runtime, ticket: str, refs: Callable[[str], list[st
     if done.returncode != 0:
         raise OSError("création du worktree refusée par git")
     return path
+
+
+def branch_mismatch(runtime: Runtime, worktree: Path, ticket: str, refs) -> dict | None:
+    """PAT-220: ``issue openpr`` pushes the branch the worktree HEAD names, which the session
+    can move; the evidence of a refusal when it is not the ticket's branch or is the default."""
+    done = _run(runtime, ["git", "rev-parse", "--abbrev-ref", "HEAD"], worktree,
+                timeout=GIT_TIMEOUT_SECONDS)
+    head = (done.stdout or "").strip() if done.returncode == 0 else None
+    expected = cadence._branch_for(refs(runtime.root), ticket)
+    default = registry.default_branch(runtime.root) or "main"
+    if head and head == expected and head != default:
+        return None
+    return {"head": head, "expected": expected, "default": default}
 
 
 def _parse_session(stdout: object, session_id: str) -> dict:
@@ -362,16 +402,72 @@ def _session_id(attempt: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"foundry:campaign:{attempt}"))
 
 
-def session_argv(runtime: Runtime, plan: dict, epic: str, ticket: str, session_id: str) -> list[str]:
+def git_dirs(runtime: Runtime, worktree: Path) -> tuple[str, str]:
+    """(common dir, git dir) of a linked worktree, absolute (one local ``git rev-parse``)."""
+    done = _run(runtime, ["git", "rev-parse", "--path-format=absolute", "--git-common-dir",
+                          "--absolute-git-dir"], worktree, timeout=GIT_TIMEOUT_SECONDS)
+    lines = (done.stdout or "").splitlines() if done.returncode == 0 else []
+    if len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
+        raise OSError("répertoires git du worktree illisibles")
+    common, gitdir = (os.path.realpath(line) for line in lines)
+    if common == gitdir:
+        raise OSError("le répertoire du ticket n'est pas un worktree lié")
+    return common, gitdir
+
+
+def sandbox_settings(worktree: Path, worktrees_dir: Path, common: str, gitdir: str,
+                     env: dict) -> dict:
+    """The ``--settings`` object of an implementation or correction session (PAT-220): the
+    PAT-124 native sandbox (``local_first_runner.native_sandbox_settings``) confined to the
+    ticket worktree plus what a local ``git commit`` writes, with the Foundry data directory,
+    the Foundry configuration and the host configuration of the user denied."""
+    from foundry import config
+    from foundry.local_first_runner import native_sandbox_settings
+
+    real = os.path.realpath
+    home = real(os.path.expanduser("~"))
+    deny = [real(registry.data_dir()), real(config.default_config_path().parent),
+            real(config.default_config_path()), real(os.path.join(home, ".claude"))]
+    if os.path.exists(os.path.join(home, ".codex")):
+        deny.append(real(os.path.join(home, ".codex")))
+    inside = lambda outer, p: p == outer or p.startswith(outer.rstrip("/") + "/")  # noqa: E731
+    # Reads re-allowed under the home: the git common dir, the git identity files, and the
+    # interpreter prefixes and PATH entries that are under the home (bounded, never a denied path).
+    wanted = [common, os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git"),
+              sys.prefix, sys.base_prefix,
+              *[e for e in (env.get("PATH") or "").split(os.pathsep) if os.path.isabs(e)]]
+    allow = [real(p) for p in wanted if inside(home, real(p)) or p == common]
+    allow = [p for p in dict.fromkeys(allow)
+             if not any(inside(p, d) or inside(d, p) for d in deny)]
+    protect = [*deny, *[os.path.join(real(worktree), name) for name in (".claude", ".git")]]
+    # Read stays allowed for the git identity files (above); they and ~/.claude.json are not written.
+    protect += [os.path.join(home, name) for name in (".gitconfig", ".config/git", ".claude.json")]
+    protect += [os.path.join(common, name) for name in ("hooks", "config", "info", "refs/replace")]
+    protect += [os.path.join(gitdir, name) for name in ("commondir", "gitdir", "config.worktree")]
+    return native_sandbox_settings(
+        attempt_dir=worktree, work_root=worktrees_dir, home=home, deny_read=deny, allow_read=allow,
+        allow_write=[os.path.join(common, "objects"), os.path.join(common, "refs"),
+                     os.path.join(common, "logs"), gitdir],
+        protect=protect)
+
+
+def session_argv(runtime: Runtime, plan: dict, epic: str, ticket: str, session_id: str,
+                 settings: dict) -> list[str]:
+    """Implementation and correction sessions: native sandbox (``dontAsk`` mode and
+    ``--settings``), user settings only, so the worktree's own ``.claude`` cannot widen it, and no
+    MCP server (one is launched by ``claude`` outside the sandbox, e.g. from a ``.mcp.json``)."""
+    from foundry.local_first_runner import with_native_sandbox
+
     argv = [
         "claude", "--print", "--output-format", "json", "--model", plan["model"],
-        "--max-budget-usd", f"{runtime.budget_usd:.2f}", "--permission-mode", "auto",
+        "--max-budget-usd", f"{runtime.budget_usd:.2f}",
         "--plugin-dir", str(runtime.plugin_root), "--name", f"foundry-campaign-{epic}-{ticket}",
+        "--setting-sources", "user", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
     ]
     if plan["effort"] is not None:
         argv.extend(["--effort", plan["effort"]])
     argv.extend(["--session-id", session_id, "--disallowedTools", *DISALLOWED_TOOLS])
-    return argv
+    return with_native_sandbox(argv, settings)
 
 
 def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts,
@@ -393,7 +489,9 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
 
         return launch_review(runtime, plan, epic, ticket, attempt, attempts, worktree)
     session_id = _session_id(attempt)
-    argv = session_argv(runtime, plan, epic, ticket.id, session_id)
+    common, gitdir = git_dirs(runtime, worktree)
+    settings = sandbox_settings(worktree, runtime.worktrees_dir, common, gitdir, plan["env"])
+    argv = session_argv(runtime, plan, epic, ticket.id, session_id, settings)
     done = _run(runtime, argv, worktree, input=plan["prompt"], timeout=IMPLEMENT_TIMEOUT_SECONDS,
                 env=plan["env"])
     result = _parse_session(done.stdout, session_id)
@@ -431,6 +529,11 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         return StepResult(
             cadence.Decision("suspend", reason="attempts_journal_invalid",
                              evidence={"error": str(exc)}), "stopped")
+    try:  # PAT-220: before any git command of this pass
+        runtime.hooks_dir()
+    except OSError as exc:
+        return StepResult(cadence.Decision("refuse", reason="git_hooks_dir_refused",
+                                           evidence={"error": str(exc)}), "stopped")
     obs = cadence.observe(
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
@@ -478,6 +581,12 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
             plan["prompt"] = implement_prompt(
                 epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "",
             )
+        if decision.kind in PUSH_KINDS:  # each may run `issue openpr`, which pushes
+            mismatch = branch_mismatch(
+                runtime, ensure_worktree(runtime, ticket.id, refs), ticket.id, refs)
+            if mismatch is not None:
+                return StepResult(cadence.Decision(
+                    "suspend", ticket.id, "worktree_branch_mismatch", mismatch), "stopped")
     except Exception as exc:  # noqa: BLE001 - configuration refused before any attempt
         return StepResult(decision, "failed", {"phase": "plan", "error": type(exc).__name__,
                                                "detail": _hide_hex(str(exc))})

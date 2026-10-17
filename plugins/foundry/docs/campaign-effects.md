@@ -64,10 +64,14 @@ One fresh headless session per `implement` attempt, launched by `_launch` with t
 
 ```text
 claude --print --output-format json --model <routed model> --max-budget-usd <budget>
-  --permission-mode auto --plugin-dir <plugin root> --name foundry-campaign-<EPIC>-<ID>
-  [--effort <routed effort>] --session-id <uuid5 of the attempt identity>
-  --disallowedTools <DISALLOWED_TOOLS>
+  --plugin-dir <plugin root> --name foundry-campaign-<EPIC>-<ID> --setting-sources user
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}' [--effort <routed effort>] --session-id <uuid5 of the attempt identity>
+  --disallowedTools <DISALLOWED_TOOLS> --permission-mode dontAsk --settings <sandbox JSON>
 ```
+
+The last two flags come from `with_native_sandbox` (`local_first_runner.py`, PAT-220); the
+JSON is `sandbox_settings`, below. A correction session (`campaign_review.py`) is launched by
+the same `_launch` and `session_argv`, so it has the same sandbox.
 
 - Model and effort come from `RoutingPolicy.load(root).resolve("implementer", "claude")`,
   translated by `claude_invocation_model` and `claude_effort_parameters`, as in
@@ -97,16 +101,124 @@ Foundry verbs that write, such as `routing record-review-proof`, are not listed)
 guard (`hooks/guard_bash.py`) also denies `gh pr create/merge`, a push to the default branch
 and `campaign-approval approve` when the plugin is active, because `--plugin-dir` is passed.
 
-The limit, stated: the session runs as the same OS user as the cadencer. A token kept in the
-user's Foundry configuration file or keychain, or any credential of that user, is readable by
-a command the session writes outside the Foundry code paths; a plain spelling outside the
-prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not denied (deduced);
-and the session can write the local Foundry state of `registry.data_dir()`, including the
-review-proof store, the approval journal and the attempt journal, so a forged review proof
-would let the cadencer merge without a real review. This is a discipline boundary,
-not a sandbox (the framing of `guard_bash.py`, whose `bash -c` indirection is out of scope by
-design). Whether the host matches the mid-command wildcards of `DISALLOWED_TOOLS` is not
-verified here (unknown); the tests pin the argv, not the host's matching.
+### The native sandbox (PAT-220, PAT-ADR-0026)
+
+`sandbox_settings` (`campaign_effects.py`) builds the `--settings` object with
+`native_sandbox_settings` (`local_first_runner.py`, the PAT-124 sandbox, unchanged), with the
+ticket worktree as attempt directory and the worktrees directory as work root. Sources are the
+code and the tests `test_session_*` and `test_implement_session_runs_in_the_native_sandbox`
+(`tests/test_campaign_effects.py`), which read the built settings and pin them; one live
+`claude` session was run, once (trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`): `claude` 2.1.294,
+`claude-haiku-5-5`, effort `low`, work root and data directory under the home, settings built by
+`sandbox_settings` before the protection of `~/.gitconfig`, `~/.config/git` and `~/.claude.json`
+below. PAT-124 (`CHANGELOG.md`, review round 3, trials of
+2026-10-08) observed one OS write refusal outside the attempt directory with the launcher's
+settings; it lists as "STILL not established" a work root under the home, the Edit rule,
+Glob/Grep, the shared per-user temporary directory and the OS-level `denyWrite` on `.claude`
+for a shell command (the trial note `pat-19-native-sandbox-trial-2026-10-08-t4.json` says the
+same of a work root under the home). The default work root `<repo>-campaign` is under the home
+(`default_worktrees_dir`). The trial answers, observed once: shell and Write-tool writes in a work root under the home
+succeeded, and the attempted writes to the worktree `.claude`, the `.git` pointer and, through
+the Write tool, the data directory were refused and left unchanged on the filesystem. Which
+layer refused (the OS `denyWrite`, the `dontAsk` mode as in PAT-124 P15, or a permission rule)
+was not recorded: unknown. Still unknown, not tested: the OS-level `denyWrite` inside an
+`allowWrite`, Glob/Grep, the shared temporary directory, reads re-allowed inside the denied
+home, the network, other hosts and versions.
+
+- Shell commands run in the Bash sandbox (`enabled`, `failIfUnavailable` true,
+  `allowUnsandboxedCommands` false): writes only in the worktree, in the per-user temporary
+  directory (the host default, `native_sandbox_settings`) and in the git paths below. The file
+  tools rely on permissions (mode `dontAsk`, `Read`/`Edit` allow rules on the worktree only).
+- Denied to reads and writes, by sandbox and by `Read`/`Edit` rules: `registry.data_dir()`
+  (the proof store `acceptance-proofs`, `campaign-approvals.jsonl`, `campaign-attempts.jsonl`,
+  `review-remarks`), the directory and the file of `config.default_config_path()`, `~/.claude`
+  and `~/.codex` when it exists. The sandbox also denies shell reads of the whole home, apart
+  from what is re-allowed: the git common directory, `~/.gitconfig`, `~/.config/git`, and the
+  entries under the home of `sys.prefix`, `sys.base_prefix` and of the `PATH` of the child
+  environment (meant to let the tests find their interpreter: deduced, not observed, the trial
+  ran no test; not covered: user site-packages such as `pip --user` under `~/Library/Python`,
+  the symlink targets of `PATH` entries such as pipx or uv tool shims under `~/.local`, and
+  pyenv shims dispatching to a version other than `sys.prefix`). The `Read`/`Edit` rules do not deny the
+  home itself when the work root is under it, as the default `<repo>-campaign` is whenever the
+  repo is (`native_sandbox_settings` drops a denied path that contains the attempt directory);
+  the file tools then hold the rest of the home only by mode `dontAsk` and the absence of an
+  allow rule (deduced). The worktree's `.claude` and `.git` pointer file, the denied paths
+  above, `~/.gitconfig`, `~/.config/git` and `~/.claude.json` are also in `denyWrite` and in
+  the `Edit` deny rules (reads of the first two stay allowed, so a commit finds its identity;
+  `core.hooksPath` or `core.fsmonitor` there would run code outside the sandbox). That an
+  `allowWrite` of the user scope cannot reopen them is deduced; a refusal that left the path unchanged
+  was observed once (refusing layer not recorded) for the worktree `.claude` and `.git` pointer,
+  for `~/.config/foundry`, `~/.claude` and the data directory (two shell writes and one
+  Write-tool write; steps 3 to 8 and 12 of the trial of 2026-10-17, `docs/qualification/pat-220-sandbox-trial-2026-10-17.json`),
+  not for the other paths nor for the three user files added after it. `--setting-sources user`
+  keeps the worktree's project and local settings from widening the sandbox (arrays merge across
+  scopes, PAT-124).
+- Git in a linked worktree writes into the main repository's directory. `git_dirs` reads the
+  common directory and the worktree's git directory (`git rev-parse`), and the sandbox
+  allows writes to `objects`, `refs`, `logs` of the common directory and to the worktree's own
+  git directory only (what a local `git commit` writes: observed once, a `git add` and `git commit` in a linked
+  worktree under these settings made the commit, trial of 2026-10-17).
+  `hooks`, `config`, `info`, `refs/replace` of the common directory and `commondir`, `gitdir`,
+  `config.worktree` of the git directory are denied to writes, so the session cannot plant a
+  hook there, change `core.hooksPath` or add a replacement object (observed once: a write into
+  the common `hooks` and a `git config core.hooksPath` left the common directory unchanged;
+  `commondir`, `config.worktree`, `refs/replace` were not tested). A relative
+  `core.hooksPath`, such as the `.githooks` that `doctor` proposes, resolves in the worktree,
+  which the session writes. So every subprocess started by `_run`, sessions excepted, gets
+  `core.hooksPath=<hooks directory of the main checkout>` and `core.fsmonitor=false` through
+  `GIT_CONFIG_COUNT`, appended after existing entries (`campaign_cadence.git_neutral_env`,
+  applied by `_run`); the `issue`, `edit` and `routing` commands it runs pass it to their
+  git (deduced: they set no environment of their own). `Runtime.hooks_dir` reads that directory
+  once per `Runtime` (one `step` or `run` command), from the repository root, with `git rev-parse --path-format=absolute
+  --git-path hooks`: with git 2.54.0 it gave a relative `core.hooksPath` joined to the main
+  checkout's top level, an absolute one as is, a `~/` one expanded, `<common dir>/hooks` unset
+  (observed once, by hand). The session does not write it when it is the main checkout's
+  `.githooks`, the common `hooks` or a global directory outside the paths it writes (deduced
+  from the settings above); one inside the worktrees directory makes the pass `refuse`
+  `git_hooks_dir_refused` before any other git command, while one in the temporary directory or in a
+  git path the session writes is not refused (residual). The read-only git calls of
+  `campaign_cadence._git` (`for-each-ref`, `rev-parse`, `rev-list`, which run no hook) keep
+  `core.hooksPath=/dev/null`. Observed in `tests/test_campaign_effects.py`, one git version:
+  under a relative `core.hooksPath`, a cadencer `git push` from a linked worktree ran the main
+  checkout's `pre-push` hook, which refused it, and not the one planted in the worktree, which
+  ran without these entries; a commit ran a `pre-commit` hook of a global absolute
+  `core.hooksPath`. So the repository's own `pre-push` hook (the AGENTS.md#R1 guard and the
+  check of `docs/commit-privacy.md`) and a global hooks directory, when enabled, run on the
+  push of `issue openpr` (deduced from those tests; `issue openpr` itself was not run).
+- `issue openpr` pushes the branch the worktree HEAD names (`openpr`, `issue.py`), and the
+  session can move that HEAD (it writes the worktree's git directory, above). Before an `open-pr`, `review` or `defer-remarks` effect
+  (`PUSH_KINDS`: each may run `issue openpr`), `branch_mismatch` reads it with `git rev-parse
+  --abbrev-ref HEAD`; when it is not the ticket's branch (`campaign_cadence._branch_for`) or is
+  the default branch (`registry.default_branch`, else `main`), the pass returns `suspend`
+  `worktree_branch_mismatch`, claims no attempt and runs no `issue openpr`
+  (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`).
+- Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
+  `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
+  session could redirect the git directory to a repository of its own whose configuration
+  names a command other than a hook or fsmonitor (for example `core.sshCommand` or
+  `credential.helper`, for the push of `issue openpr`), and a later git command of the
+  cadencer would run that code outside the sandbox (deduced). The pointer was refused in the trial; `commondir`, `config.worktree` and
+  `refs/replace` were not tested.
+- Residual, deduced: the `user` scope of the host settings can add `permissions.allow` rules
+  (for example `Edit` or `Read` on the home) that the file tools would honour where no deny
+  rule exists, which is most of the home when the work root is under it.
+- Residual, deduced: the refs of every branch (and `refs/remotes`) are writable inside
+  `refs`; the objects are shared by all worktrees; the user scope of the host settings still
+  loads (`--setting-sources user`) and can add to the sandbox arrays.
+- Stays outside the sandbox: the `claude` process itself (model API network, its own
+  credentials and the user's keychain access, `--plugin-dir` reads), the plugin hooks it
+  runs, and the network of the shell commands, which the sandbox policy governs and these
+  settings do not open (deduced from the settings, which set no network key; not observed).
+  A credential kept outside the home or in the keychain is not covered by the read rules.
+
+The remaining limits, stated: `DISALLOWED_TOOLS` denies, by prefix rules only, `git push`,
+`gh`, and the Foundry verbs `issue`, `edit`, `adr` and `campaign-approval approve`; a plain
+spelling outside the prefix rules (`git -C . push`, an absolute path to `git` or `gh`) is not
+denied by them (deduced), and with the network of the shell not opened such a push has no
+route (deduced). The sandbox, not these rules, is what keeps the session from writing the
+review-proof store, the approval journal and the attempt journal. Whether the host matches
+the mid-command wildcards of `DISALLOWED_TOOLS` is not verified here (unknown); the tests pin
+the argv, not the host's matching.
 
 ## The attempt journal
 
@@ -250,8 +362,7 @@ not receive it. `--setting-sources user --strict-mcp-config --mcp-config` (the f
 by the installed `claude --help`; the last two are used by `campaign_runtime.py`) keep the
 `.claude/settings*.json` of the worktree, which the diff or an earlier session may have
 written, and any project MCP server out of the reviewer session; the `session_argv` of the
-implementer session is unchanged, because the `DISALLOWED_TOOLS` deny rules stay in force
-whatever the scopes allow (deduced, not run). The prompt (`review_prompt`, standard input) carries the
+implementer session carries the same three flags (`session_argv`, `campaign_effects.py`). The prompt (`review_prompt`, standard input) carries the
 reviewer contract of `skills/review-pr/SKILL.md` (stages, output, marker), the exact
 `read-review` command, and the send text written by `prepare-review`, followed by a sentence
 saying that the output contract overrides that text (which asks to load `review-pr` and to
@@ -268,10 +379,12 @@ matches the `Bash(...)` wildcard rules as written, or refuses a compound command
 with an allowed prefix, and whether `Read` of the packet directory is allowed through
 `--add-dir` (unknown). Remaining limit: the `user` scope is still loaded, so the permission
 rules of the user's own settings apply to the reviewer, and its `Read` reaches any file the OS
-user can read. The session runs as the same OS user as the cadencer and in the ticket
-worktree: the limit stated for the implementer session applies, a discipline boundary and not
-a sandbox, and the reviewer does not hold the `record-review-proof` verb in its rules (the
-coordinator records the proof, as in the manual workflow).
+user can read. The reviewer is not in the native sandbox: `reviewer_argv` carries no
+`--settings` (tested), because its three read verbs take the review-deduplication lock
+(`ReviewDeduplicator._locked`, `routing.py`, `.ledger.lock` under `review-dedup/` of the data
+directory), which the sandbox denies. It runs as the same OS user as the cadencer, in the
+ticket worktree, as a discipline boundary: it does not hold the `record-review-proof` verb in
+its rules (the coordinator records the proof, as in the manual workflow).
 
 ## The correction effect
 
