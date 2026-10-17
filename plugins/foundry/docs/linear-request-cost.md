@@ -201,6 +201,10 @@ described under "Conditions of the measure".
    before the write, the bounded write and its readback in `_bounded_issue_update`.
    Which reads are redundant and which are that guarantee is a design question, not
    settled here.
+   When the readback of the `review` State shows the proven PAT-230 regression, that
+   path adds two `issue.state-history` reads (`_review_regression_proven`, called by the
+   readback and again by the strict `_lifecycle_projection` that `set_state` runs after
+   it; deduced from the code, not counted by a test) and no second `issueUpdate`.
 
 ### `issue close-epic`
 
