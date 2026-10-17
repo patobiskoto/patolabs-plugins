@@ -2,7 +2,8 @@
 
 One pass re-reads the tracker, git and the PR, and returns exactly one ``Decision``.  It
 produces no effect: no tracker write, no git mutation, no PR mutation, no session launch.
-The state lives in the tracker, git and the PR, never here.  ``decide`` is pure over an
+The state lives in the tracker, git, the PR, the local attempt journal, the approval journal
+and the review ledger with its acceptance-proof store, never here.  ``decide`` is pure over an
 immutable ``Observation``; ``observe`` gathers it through declared capabilities only.
 Executing a decision is ``campaign_effects`` (PAT-217, PAT-218); this module stays effect-free.
 """
@@ -40,7 +41,7 @@ KINDS = (
     "start", "implement", "open-pr", "review", "correct", "defer-remarks", "wait-ci", "wait",
     "merge", "await-verdict", "suspend", "refuse",
 )
-# Tracker states strictly behind a started or finished dependent (PAT-ADR-0027 regression).
+# Tracker states strictly behind a started or finished dependent (`dependency_state_behind`).
 _UNFINISHED = ("backlog", "ready", "blocked", "in-progress", "review")
 _PR_NUMBER = re.compile(r"/pull/([0-9]+)(?:[/?#]|$)")
 
@@ -91,7 +92,7 @@ class TicketFacts:
     # (PAT-217, PAT-218).
     implemented: bool = False
     pr: PullFacts | None = None
-    review: str | None = None  # none | valid | blocked | unobservable
+    review: str | None = None  # none | valid | blocked | unobservable | integrity
     ci: str | None = None  # green | pending | red | none
     anomaly: str | None = None
     # From the attempt journal (PAT-218), for the ticket in focus only.  ``fix_before_merge``
@@ -222,6 +223,9 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
                 return Decision("open-pr", ticket.id, "implemented_without_pr",
                                 {"branch": True, "ahead": ticket.ahead})
             return Decision("implement", ticket.id, "started_without_pr", {"branch": True})
+        if ticket.state == "review":  # a review state implies a PR: restarting would redo it
+            return Decision("suspend", ticket.id, "review_state_without_branch_or_pr",
+                            {"branch": False})
         return Decision("start", ticket.id, "in_progress_branch_absent", {"branch": False})
     evidence = {"pr": pr.number}
     if pr.merged:
@@ -234,6 +238,8 @@ def _ticket_step(ticket: TicketFacts) -> Decision:
     if ticket.implemented and ticket.branch_sha and ticket.branch_sha != pr.head_sha:
         # A correction session committed locally: the PR still holds the reviewed head.
         return Decision("open-pr", ticket.id, "correction_not_pushed", evidence)
+    if ticket.review == "integrity":  # a corrupt proof or ledger is not "no review" (PAT-235)
+        return Decision("suspend", ticket.id, "review_proof_integrity", evidence)
     if ticket.review == "blocked":
         return _bounded(ticket, Decision("correct", ticket.id, "review_blocked", evidence))
     if ticket.review != "valid":
@@ -284,7 +290,8 @@ def _step(obs: Observation) -> Decision:
 
 
 def decide(obs: Observation) -> Decision:
-    """Exactly one decision; no effect.  Order: capability, strict read, drift, approval."""
+    """Exactly one decision; no effect.  Order: capability, strict read, drift, suspension or
+    ``await-verdict``, approval."""
     if obs.missing_capabilities:
         return Decision(
             "refuse", reason="capability_missing",
@@ -298,7 +305,8 @@ def decide(obs: Observation) -> Decision:
             evidence={"observed": obs.structure_observed, "approved": obs.structure_approved},
         )
     step = _step(obs)
-    if step.kind == "suspend":
+    # An expired or absent approval refuses an effect; `await-verdict` requests none (PAT-235).
+    if step.kind in ("suspend", "await-verdict"):
         return step
     if obs.approval_status != "valid":
         return Decision(
@@ -414,7 +422,7 @@ def _default_diff(root: str, base: str, head: str) -> bytes:
 
 
 def _review_status(store, issue, pr: PullFacts, root: str, diff_reader) -> str:
-    from foundry.routing import RoutingConfigError
+    from foundry.routing import ProofIntegrityError, RoutingConfigError
 
     if not pr.head_sha or not pr.base_sha:
         return "unobservable"
@@ -428,11 +436,15 @@ def _review_status(store, issue, pr: PullFacts, root: str, diff_reader) -> str:
     try:
         store.valid_for_merge(**coordinates)
         return "valid"
+    except ProofIntegrityError:
+        return "integrity"
     except RoutingConfigError:
         pass
     try:
         store.current_for_sync(**coordinates)
         return "blocked"
+    except ProofIntegrityError:
+        return "integrity"
     except RoutingConfigError:
         return "none"
 
@@ -443,9 +455,9 @@ def _ci_status(codehost, repo: str, sha: str) -> str:
     verdict = ci_gate(codehost, repo, sha)
     if verdict["passed"]:
         return "green"
-    if verdict["pending"]:
-        return "pending"
-    return "red" if verdict["failing"] else "none"
+    if verdict["failing"]:  # a known failure is red without waiting for the other checks
+        return "red"
+    return "pending" if verdict["pending"] else "none"
 
 
 def observe(
@@ -599,13 +611,22 @@ def main(argv: list[str] | None = None) -> int:
     import foundry
 
     tracker, project = _context(args.root)
-    if project is None:  # before any read, even the binding resolution
+    if project is None:  # before any read of the Epic
         obs = Observation(epic=args.epic_id, missing_capabilities=missing_capabilities(tracker))
         print(report(obs, decide(obs)))
         return 2
+    path = campaign_effects.journal_path()
+    try:  # the same journal facts as `step`, so that `next` announces what `step` will do
+        campaign_effects.read_attempts(path)
+    except campaign_effects.AttemptJournalInvalid as exc:
+        obs = Observation(epic=args.epic_id)
+        print(report(obs, Decision("suspend", reason="attempts_journal_invalid",
+                                   evidence={"error": str(exc)})))
+        return 0
     obs = observe(
         tracker, foundry.codehost(), project, args.epic_id, args.root,
         datetime.now(timezone.utc),
+        **campaign_effects.journal_facts(tracker, args.epic_id, path),
     )
     print(report(obs, decide(obs)))
     return 0

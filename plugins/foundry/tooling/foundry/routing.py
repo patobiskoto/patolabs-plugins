@@ -81,6 +81,16 @@ class RoutingConfigError(ValueError):
     """A project or user routing value is invalid."""
 
 
+class ProofIntegrityError(RoutingConfigError):
+    """A persisted review ledger record or acceptance proof is corrupt, invalid or inconsistent.
+
+    Raised when reading the persisted record (``_read_record``, ``completed_proof_binding``,
+    proof validation), including an invalid claim publication, claim id, coordinates or head.
+    Distinct from the plain ``RoutingConfigError`` of an absent marker or an absent, stale or
+    non-mergeable proof, and of caller input rejected at claim time (PAT-235).
+    """
+
+
 class RoutingUnavailableError(RuntimeError):
     """No available model satisfies the role's fallback contract."""
 
@@ -1040,7 +1050,7 @@ class ReviewDeduplicator:
         try:
             record = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 f"ledger de review corrompu pour {diff_hash} ; intervention humaine requise."
             ) from exc
         if record == {"diff_hash": diff_hash} and migrate_bare_legacy:
@@ -1062,11 +1072,16 @@ class ReviewDeduplicator:
                 record.get("state") not in {"in_progress", "completed"} or
                 type(record.get("generation")) is not int or
                 not isinstance(record.get("recoveries"), list)):
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
         if "claim_publication" in record:
-            self._validate_claim_publication(record)
+            try:
+                self._validate_claim_publication(record)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                raise ProofIntegrityError(str(exc)) from exc
         return record
 
     @staticmethod
@@ -1676,7 +1691,7 @@ class ReviewDeduplicator:
             return None
         if (not isinstance(proof_id, str) or len(proof_id) != 64 or
                 any(character not in "0123456789abcdef" for character in proof_id)):
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
         generation = record.get("generation")
@@ -1685,15 +1700,21 @@ class ReviewDeduplicator:
         completed_at = record.get("completed_at")
         coordinates = record.get("coordinates")
         if type(generation) is not int or generation < 1:
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
-        self._validate_claim_id(claim_id)
+        try:
+            self._validate_claim_id(claim_id)
+        except RoutingConfigError as exc:
+            raise ProofIntegrityError(str(exc)) from exc
         if not self._valid_utc_timestamp(completed_at):
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 f"ledger de review invalide pour {diff_hash} ; intervention humaine requise."
             )
-        coordinates = self._validate_coordinates(coordinates)
+        try:
+            coordinates = self._validate_coordinates(coordinates)
+        except RoutingConfigError as exc:
+            raise ProofIntegrityError(str(exc)) from exc
         return {
             "proof_id": proof_id,
             "generation": generation,
@@ -1710,7 +1731,12 @@ class ReviewDeduplicator:
             binding = self._completed_proof_binding_from_record(diff_hash, record)
             if binding is None:
                 return None
-            self._claimed_head(record)
+            try:
+                self._claimed_head(record)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                raise ProofIntegrityError(str(exc)) from exc
             return binding
 
     def _validated_proof_for_terminal_binding(
@@ -1737,7 +1763,7 @@ class ReviewDeduplicator:
             or proof["review"]["generation"] != binding["generation"]
             or proof["review"]["claim_digest"] != binding["claim_digest"]
         ):
-            raise RoutingConfigError(
+            raise ProofIntegrityError(
                 "preuve AC incohérente avec l'issue ou la review terminée ; refus fermé."
             )
         return {
@@ -2025,9 +2051,9 @@ class AcceptanceProofStore:
         try:
             value = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise RoutingConfigError("preuve AC illisible ou JSON invalide ; refus fermé.") from exc
+            raise ProofIntegrityError("preuve AC illisible ou JSON invalide ; refus fermé.") from exc
         if not isinstance(value, dict):
-            raise RoutingConfigError("preuve AC invalide ; refus fermé.")
+            raise ProofIntegrityError("preuve AC invalide ; refus fermé.")
         return value
 
     @staticmethod
@@ -2046,7 +2072,7 @@ class AcceptanceProofStore:
         remains responsible for binding a proof to its exact marker path.
         """
         if not isinstance(proof, dict):
-            raise RoutingConfigError("preuve AC invalide ; refus fermé.")
+            raise ProofIntegrityError("preuve AC invalide ; refus fermé.")
         if proof.get("schema") in {ADVISORY_SCHEMA, TERMINAL_SCHEMA}:
             raise RoutingConfigError("advisory postmerge record is never an acceptance proof.")
         required_keys = {
@@ -2054,7 +2080,7 @@ class AcceptanceProofStore:
         }
         # ``carried_from`` exists only on a proof written by ``carry`` (PAT-ADR-0021).
         if set(proof) not in (required_keys, required_keys | {"carried_from"}):
-            raise RoutingConfigError("preuve AC legacy ou incomplète ; refus fermé.")
+            raise ProofIntegrityError("preuve AC legacy ou incomplète ; refus fermé.")
         carried = proof.get("carried_from")
         if "carried_from" in proof and (
                 not isinstance(carried, dict) or
@@ -2063,10 +2089,10 @@ class AcceptanceProofStore:
                 not cls._is_lower_hex(carried.get("head"), 40) or
                 not cls._is_lower_hex(carried.get("base"), 40) or
                 not cls._is_lower_hex(carried.get("diff_hash"), 64)):
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         if (proof.get("schema_version") != 1 or
                 not cls._is_lower_hex(proof.get("proof_id"), 64)):
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
 
         canonical = dict(proof)
         proof_id = canonical.pop("proof_id")
@@ -2074,7 +2100,7 @@ class AcceptanceProofStore:
             json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         if calculated_id != proof_id:
-            raise RoutingConfigError("intégrité de preuve AC invalide ; refus fermé.")
+            raise ProofIntegrityError("intégrité de preuve AC invalide ; refus fermé.")
 
         issue = proof.get("issue")
         review = proof.get("review")
@@ -2084,7 +2110,7 @@ class AcceptanceProofStore:
                 not isinstance(issue.get("id"), str) or not issue["id"].strip() or
                 not cls._is_lower_hex(issue.get("ac_digest"), 64) or
                 not isinstance(issue.get("criteria"), list)):
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         for index, criterion in enumerate(issue["criteria"], start=1):
             if (not isinstance(criterion, dict) or
                     set(criterion) != {"id", "digest", "verdict"} or
@@ -2093,13 +2119,13 @@ class AcceptanceProofStore:
                     criterion.get("verdict") not in {
                         "pass", "fail", "not_covered", "contradicted",
                     }):
-                raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+                raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         if (not isinstance(review, dict) or
                 set(review) != {"role", "generation", "claim_digest"} or
                 review.get("role") != "reviewer" or
                 type(review.get("generation")) is not int or review["generation"] < 1 or
                 not cls._is_lower_hex(review.get("claim_digest"), 64)):
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         if (not isinstance(coordinates, dict) or
                 set(coordinates) != {"head", "diff_hash", "base"} or
                 not cls._is_lower_hex(coordinates.get("head"), 40) or
@@ -2107,7 +2133,7 @@ class AcceptanceProofStore:
                 not isinstance(coordinates.get("base"), str) or
                 not coordinates["base"].strip() or
                 proof.get("quality") not in {"mergeable", "blocked"}):
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         return proof
 
     @classmethod
@@ -2115,7 +2141,7 @@ class AcceptanceProofStore:
         """Load one canonical proof and reject hostile data before matching it."""
         proof = cls._validate_proof(cls._load(marker))
         if not cls._is_lower_hex(marker.name, 64) or proof["proof_id"] != marker.name:
-            raise RoutingConfigError("preuve AC malformée ; refus fermé.")
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         return proof
 
     # Public name for read-only reporters (``review_rounds``); same behaviour.
@@ -2426,7 +2452,13 @@ class AcceptanceProofStore:
         for marker in self.directory.iterdir():
             if not marker.is_file() or marker.name.startswith("."):
                 continue
-            proof = self._validated_proof(marker)
+            try:
+                proof = self._validated_proof(marker)
+            except ProofIntegrityError:
+                raise
+            except RoutingConfigError as exc:
+                # An advisory or terminal record in the proof directory is corrupt state here.
+                raise ProofIntegrityError(str(exc)) from exc
             issue = proof["issue"]
             coordinates = proof["coordinates"]
             review = proof["review"]
@@ -2438,7 +2470,7 @@ class AcceptanceProofStore:
                 or outcome.get("digest") != criterion["digest"]
                 for criterion, outcome in zip(expected, proof_criteria)
             )):
-                raise RoutingConfigError(
+                raise ProofIntegrityError(
                     "preuve AC incohérente avec les critères courants."
                 )
             if (coordinates.get("head") != head or
@@ -2453,7 +2485,7 @@ class AcceptanceProofStore:
                 continue
             if (review["generation"] != binding["generation"] or
                     review["claim_digest"] != binding["claim_digest"]):
-                raise RoutingConfigError("preuve AC incohérente avec la review terminée.")
+                raise ProofIntegrityError("preuve AC incohérente avec la review terminée.")
             matches.append(proof)
         if len(matches) != 1:
             raise RoutingConfigError("preuve AC absente, périmée ou ambiguë ; override humain requis.")

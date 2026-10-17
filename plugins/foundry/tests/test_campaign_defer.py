@@ -624,3 +624,26 @@ def test_the_description_cites_the_writes_made_before_a_durable_refusal():
     assert review.deferral_lines([], "APP-1", "APP-2", _finished(refused)["deferral"]) == [
         "Remarks not deferred: durable refusal (creation_replay_refused) "
         "(writes made before it: create companion Epic); they are corrected before the merge."]
+
+
+def test_next_announces_defer_remarks_where_step_will_do_it(env, monkeypatch, capsys):
+    """PAT-235: the dry pass reads the same journal facts as the real one."""
+    import foundry
+
+    reviewed(env)
+    tracker = env.tracker
+    tracker.resolve_checkout_project = lambda root: PROJECT
+    monkeypatch.setattr(foundry, "tracker", lambda *a, **k: tracker)
+    monkeypatch.setattr(foundry, "codehost", lambda *a, **k: env.codehost)
+    monkeypatch.setattr(ce, "journal_path", lambda: env.kwargs["attempts"])
+    real = cc.observe
+    inject = {k: v for k, v in env.kwargs.items() if k != "attempts"}
+    monkeypatch.setattr(cc, "observe", lambda *a, **k: real(*a, **{**k, **inject}))
+    assert cc.main(["next", "APP-1", "--root", str(env.tmp / "repo")]) == 0
+    out = json.loads(capsys.readouterr().out)
+    # the approval of the fixture is dated at the fake clock: `next` uses the real one
+    step_ = out["decision"]["blocked_step"]
+    assert (step_["kind"], step_["reason"]) == ("defer-remarks", "non_blocking_remarks")
+    assert out["observation"]["tickets"][0]["deferral"]["deferrable"] == 2
+    assert env.world.edits == []  # `next` wrote nothing
+    assert step(env).decision.kind == "defer-remarks"
