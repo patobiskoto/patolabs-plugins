@@ -253,11 +253,6 @@ def approve(
         raise ApprovalError("max-sessions-per-issue hors bornes (1 à max-sessions)")
     _, preview_digest, structure = _load_preview(preview_path, epic)
     moment = (now or datetime.now(timezone.utc)).replace(microsecond=0)
-    summary = (f"Epic {epic}\n  preview_digest   {preview_digest}\n"
-               f"  structure_digest {structure}\n  expire {_stamp(moment + ttl)}, "
-               f"{max_sessions} sessions au plus"
-               + (f", {max_sessions_per_issue} par issue" if max_sessions_per_issue else ""))
-    _confirm_on_tty(summary, preview_digest[:CONFIRMATION_LENGTH])
     record = {
         "schema_version": APPROVAL_CONTRACT, "epic": epic, "preview_contract": PREVIEW_CONTRACT,
         "preview_digest": preview_digest, "structure_digest": structure,
@@ -266,6 +261,15 @@ def approve(
         "approved_at": _stamp(moment), "approver": {"kind": APPROVER_KIND},
     }
     record["record_digest"] = record_digest(record)
+    try:
+        _validate_record(record)
+    except JournalInvalid as exc:
+        raise ApprovalError(f"enregistrement d'approbation refusé, rien n'est écrit : {exc}") from exc
+    summary = (f"Epic {epic}\n  preview_digest   {preview_digest}\n"
+               f"  structure_digest {structure}\n  expire {_stamp(moment + ttl)}, "
+               f"{max_sessions} sessions au plus"
+               + (f", {max_sessions_per_issue} par issue" if max_sessions_per_issue else ""))
+    _confirm_on_tty(summary, preview_digest[:CONFIRMATION_LENGTH])
     _append(record, path or journal_path())
     return record
 

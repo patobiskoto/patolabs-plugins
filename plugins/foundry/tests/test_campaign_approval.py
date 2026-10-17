@@ -127,6 +127,19 @@ def test_hand_edited_or_foreign_preview_is_refused(env, monkeypatch):
     assert not ca.journal_path().exists()
 
 
+def test_invalid_root_preview_is_refused_and_journal_stays_readable(env, monkeypatch):
+    path, preview = preview_file(env)
+    do_approve(env, monkeypatch, preview, path)
+    before = ca.journal_path().read_bytes()
+    bad_path, bad = preview_file(env, epic="not-an-issue")
+    fake_tty(monkeypatch, bad["preview_digest"][:12])
+    with pytest.raises(ca.ApprovalError):
+        ca.approve("not-an-issue", bad_path, max_sessions=1, max_sessions_per_issue=None, now=NOW)
+    assert ca.journal_path().read_bytes() == before
+    assert len(ca.read_journal()) == 1
+    assert ca.check("PAT-100", preview["preview_digest"], STRUCT, NOW)["epic"] == "PAT-100"
+
+
 @pytest.mark.parametrize("kwargs", [
     {"max_sessions": 0}, {"max_sessions": 5000}, {"per_issue": 9},
     {"ttl": timedelta(days=8)}, {"ttl": timedelta(0)},

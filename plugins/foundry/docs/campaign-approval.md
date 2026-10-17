@@ -17,7 +17,7 @@ python3 tooling/foundry_cli.py campaign-approval check PAT-100 --preview-file pr
 
 `preview.json` is the output of `epic-preview` (`PREVIEW_CONTRACT`). `approve` reads that
 file only: it recomputes `preview_digest` over the file's material with
-`epic_preview._digest` and refuses a hand-edited file, a file for another Epic and missing
+`epic_preview._digest` and refuses a hand-edited file, a file for another Epic, an Epic identifier outside the issue-id format (the complete record is validated before any append, nothing is written otherwise) and missing
 or non-hex digests (`digests_from_preview`, `campaign_approval.py`). It then prints the
 digests, expiry and ceilings and requires the human to retype the first 12 hex characters
 of `preview_digest` (`CONFIRMATION_LENGTH`). Bounds: `--max-sessions` 1 to
