@@ -566,8 +566,9 @@ of a failed attempt is the companion Epic found or created before the failure, `
    `companion` of their `deferral` field, most recent first) are read by identifier (`get_issue`)
    and the first that is still an Epic with that title is kept; otherwise the project is listed
    (`Listing`, `tracker.search`, at most once per attempt, then `get_issue` where `type` is
-   absent). Before PAT-228 the project was listed here and again in step 3. More than one: durable refusal
-   `companion_epic_ambiguous`. None: `edit create-issue` with the field `Type: Epic`, state
+   absent). Before PAT-228 the project was listed here and again in step 3. More than one in that listing: durable refusal
+   `companion_epic_ambiguous` (a companion kept from the journal is not compared with other Epics
+   of the same name). None: `edit create-issue` with the field `Type: Epic`, state
    `backlog`, no `parent`; no link to the origin Epic is made.
 3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
    with the lowest identifier; a started or closed child is never used. Otherwise an issue titled
@@ -706,7 +707,8 @@ reasons `non_blocking_remarks`, `remarks_not_deferrable`, `deferral_transient_fa
 receipt directory `review-remarks`. No configuration key or routing table changed.
 
 R5 status (PAT-228): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
-`docs/linear-request-cost.md` and `docs/qualification/pat-219-epic-campaign-2026-10-17.md`.
+`docs/linear-request-cost.md`, `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic
+campaign") and `docs/qualification/pat-219-epic-campaign-2026-10-17.md`.
 Candidate artefacts: the optional journal key `requests` and its keys (`REQUEST_KEYS`), the
 `requests` field of a step and of a run report, `Tracker.request_count` and
 `LinearTracker.request_count`, `Runtime.subprocess_requests`, `request_summary`, and the new
