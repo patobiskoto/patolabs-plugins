@@ -197,6 +197,5 @@ call on caller input. An absent ledger marker, or an absent, stale, ambiguous or
 non-mergeable proof, stays a plain `RoutingConfigError` (`none` or `blocked`). Known limit:
 while the acceptance-proof directory does not exist, `current_for_sync` raises a plain
 `RoutingConfigError` before it reads the ledger, so a corrupt ledger marker is then read as
-no review.
-Tests: `tests/test_campaign_cadence.py` (one per state, drift,
-approval, capability, idempotence, fakes that fail on any effect).
+no review. Tests: `tests/test_campaign_cadence.py` (one per state, drift, approval,
+capability, idempotence, fakes that fail on any effect).
