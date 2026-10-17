@@ -2,6 +2,259 @@
 
 ## Unreleased
 
+## 1.5.0 — 2026-10-17
+
+Minor release. It packages the Epic campaign: the human approval of a campaign and the
+steps that run it, and it changes behaviour, all merged after `foundry-v1.4.0`. New CLI surfaces:
+`campaign-approval approve|status|check` (PAT-215), `campaign-cadence next` (PAT-216) and
+`campaign-cadence step|run` (PAT-217, PAT-218, PAT-141), `issue accept` with `--status`
+(PAT-206, Linear only) and `routing record-review-remarks` (PAT-141). `epic-preview` is an
+existing verb that now works on Linear (PAT-178). Behaviour changes without a new verb: the
+implementation and correction sessions of a campaign run in the native Claude Code sandbox
+(PAT-220); the summary of a campaign session is filtered for credentials (PAT-223);
+`campaign-approval approve` validates the whole record before any append (PAT-222);
+on Linear, `issue openpr` tolerates the State going back to In Progress right after the
+write (PAT-230); a failed `defer-remarks` keeps its real error (PAT-229); a campaign
+remark that targets only the PR description is corrected without a new review (PAT-227);
+the campaign reports its Linear requests and skips redundant lookups (PAT-228); `adr
+link-issue` accepts three more historical ADR bodies (PAT-209). PAT-219 records a real
+campaign and changes no code; PAT-224 and PAT-212 correct documentation and a helper
+script; PAT-232 fixes a test. Release note: `docs/release-1.5.0.md`; upgrade guide:
+`docs/migration-1.5.0.md`. This dated section is not a claim that 1.5.0 is already tagged
+or installed. The entries below are the fragments present after `foundry-v1.4.0`, kept as
+written.
+
+- PAT-232: `tests/test_campaign_approval.py::test_cli_status_and_check` approved at a fixed
+  time (2026-10-16T12:00Z) while the CLI `check` reads the real clock, so it failed once that
+  approval expired (CI of `main` red from 2026-10-17). The test now approves at the real
+  clock. Documentation status (R5): not necessary, tests only; no CLI verb, configuration key
+  or documented behaviour changed.
+- PAT-230: on Linear, `issue openpr` (state review) no longer fails when the native State
+  goes back from In Review to In Progress right after Foundry's write (observed: 292 ms
+  later; deduced: by the team's `start` Git automation, `stateHistory` has no author).
+  The bounded readback accepts that regression only when the `stateHistory` proves In
+  Progress, then Review after the latest review receipt, then In Progress (the PAT-76
+  verification); no second write and no retry (PAT-ADR-0006, S2), other divergences
+  still fail.
+  Documentation status (R5): updated `docs/linear-tracker.md` and
+  `docs/linear-request-cost.md` (artefact: bounded State readback for `review`). No CLI
+  verb, option or configuration key changed.
+- PAT-229: a failed `defer-remarks` attempt keeps the real error and its partial writes. The
+  `foundry linear_requests=N` lines printed at exit when `FOUNDRY_REQUEST_COUNT=stderr` are
+  dropped (`without_request_count`, `campaign_effects.py`) before the classification, the
+  reading of the error JSON and the `detail` tails of `campaign_defer.py`,
+  `campaign_effects.py` and `campaign_review.py`; the `deferral` of a failed attempt now
+  carries `companion` (found or created before the failure). Documentation status (R5):
+  updated `docs/campaign-effects.md` (deferral field and error tails); no CLI verb or
+  configuration key changed; `AGENTS.md` R9 unchanged (still true: the cadencer reads the
+  text of the error, `_DURABLE`).
+- PAT-228: the Epic campaign now reports the Linear requests of each pass (`requests` on every
+  step of `campaign-cadence step|run`, a `requests` summary of observation, wait and effects, and an
+  optional `requests` key on the `finished` line of the attempt journal; new `Tracker.request_count`,
+  `null` where a tracker does not count). The deferral of remarks no longer lists the whole project
+  twice per attempt: it lists it at most once, and not at all when an earlier attempt of the Epic
+  journaled the companion Epic and none can have created a follow-up. Measured on the GraphQL
+  double with one closed Epic of 55 nodes: 59 or 116 requests for the lookups before, 59 then 3
+  after; a replayed campaign splits 35 observation requests (12 spent waiting) and 60 effect requests
+  (117 before). Limit: an orphan follow-up created outside the journal of the campaign Epic is not
+  seen when the scan is skipped (`docs/linear-request-cost.md`, "Epic campaign (PAT-228)"). The observation of a pass that
+  waits is unchanged (PAT-ADR-0027).
+  Documentation status (R5): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
+  `docs/linear-request-cost.md`, `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 (a duplicate
+  companion Epic is refused only when the project is listed); artefacts listed in `docs/campaign-effects.md` ("R5 status
+  (PAT-228)"). No CLI verb, option or configuration key changed.
+- PAT-227: in an Epic campaign, a remark marked "fix before merge" that targets only the PR
+  description no longer ends in `suspend attempt_already_made`. The reviewer marks each remark
+  with a `target` (`diff` or `description`; a receipt without it reads as `diff`). When every
+  marked remark targets the description, the `correct` effect (reason `review_fix_description`)
+  asks a session for a new description only; it replaces the PR body with the `## Review
+  rounds` section and a line saying it was not re-reviewed (the diff is unchanged), and the
+  pass goes on. A failed or unusable correction suspends `description_correction_not_settled`.
+  Implementation and correction summaries must start with the line `FOUNDRY_SUMMARY_V1`; a
+  summary without it is never published as the PR body, a fixed marked text is. Residual risk:
+  a description corrected this way is not re-reviewed, and the merge gate never reads it.
+  Documentation status (R5): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
+  `docs/review-rounds.md` and the R9 sentence of `AGENTS.md`/`CLAUDE.md` ("Inside an Epic
+  campaign") on what the correction loop re-reviews.
+- PAT-224: three statements of the campaign documentation corrected against the code.
+  `docs/campaign-cadence.md`: the exit code of `next` is not "0 otherwise" (errors that
+  `observe` does not convert, such as network, code host or binding `SystemExit`, end the
+  command with another code); the approval check uses the journal's preview digest because
+  the node versions change when the campaign writes a node (deduced), so
+  `preview_digest_mismatch` is unreachable there. `docs/campaign-effects.md` ("Bounds"): the list of suspensions is
+  complete. Documentation status (R5): updated `docs/campaign-cadence.md` and
+  `docs/campaign-effects.md`; artefacts `campaign-cadence next` exit code, approval check,
+  suspension reasons. No CLI verb or configuration key changed.
+- PAT-223: the summary of a campaign session is filtered before it is stored and sent as the
+  pull-request body: URL userinfo, `Authorization` header values and well-known token shapes
+  become `[REDACTED]` (`campaign_effects.mask_credentials`, in `_save_summary`). The session can
+  still read `<common>/config` and `~/.gitconfig`; a credential of an unknown shape is not
+  masked (unknown). Documentation status (R5): updated `docs/campaign-effects.md` ("The native
+  sandbox"); artefact `mask_credentials`. No CLI verb or configuration key changed.
+- PAT-222: `campaign-approval approve` now validates the complete record (including the Epic
+  against the issue-identifier format) before any append and refuses without writing, so a
+  fabricated preview with an invalid root can no longer make the journal unreadable for every
+  Epic. Documentation status (R5): `docs/campaign-approval.md` updated (refusal list).
+- PAT-220: the implementation and correction sessions of an Epic campaign now run in the
+  native Claude Code sandbox (PAT-124 settings, `--permission-mode dontAsk`, `--settings`,
+  `--setting-sources user`; the old `--permission-mode auto` is gone). Shell writes are
+  limited to the ticket worktree, the temporary directory and the git paths of a local
+  commit (`objects`, `refs`, `logs`, the worktree git directory); the Foundry data directory
+  (proof store, approval and attempt journals, remarks receipts), the Foundry configuration,
+  `~/.claude` and `~/.codex` are denied to reads and writes, and `hooks`, `config`, `info`,
+  `refs/replace` of the git common directory stay unwritable. The reviewer session stays
+  outside (its read verbs take a lock in the data directory). No MCP server (`--strict-mcp-
+  config`). Outside the sandbox: the `claude` process and its network, the keychain.
+  `~/.gitconfig`, `~/.config/git` and `~/.claude.json` are denied to writes. Tests read the
+  built settings; one live session (2026-10-17, `docs/qualification/pat-220-sandbox-
+  trial-2026-10-17.json`) observed once, with the refusing layer not recorded, the refusals
+  of writes to the proof store and attempt journal, `~/.config/foundry`, `~/.claude`, the
+  worktree `.claude` and `.git` pointer, the common `hooks` and `core.hooksPath`, and a `git
+  commit` in the worktree. Not tested, unknown: Glob/Grep, reads, `commondir`,
+  `config.worktree`, `refs/replace`, the network, the three user files above, other hosts
+  and versions. A hook under a relative `core.hooksPath` sits in the worktree the session
+  writes, so every subprocess of the cadencer's `_run`, sessions excepted, gets the hooks
+  directory of the main checkout (`Runtime.hooks_dir`, `git rev-parse --git-path hooks`
+  from the repository root) and `core.fsmonitor=false` through `GIT_CONFIG_COUNT`
+  (`campaign_cadence.git_neutral_env`): a hook planted in the worktree does not run; the
+  repository's `pre-push` hook (AGENTS.md#R1 guard, `docs/commit-privacy.md` check) and
+  a global absolute hooks directory still run (tests, one git version). A hooks directory
+  inside the worktrees directory makes the pass `refuse` `git_hooks_dir_refused`. Before
+  `open-pr`, `review` and `defer-remarks` (`PUSH_KINDS`), a worktree HEAD that is not the
+  ticket's branch or is the default branch makes the pass `suspend`
+  `worktree_branch_mismatch`, with no push.
+  Documentation status (R5): updated `docs/campaign-effects.md` ("The native sandbox");
+  artefacts `sandbox_settings`, `git_dirs`, `session_argv(settings)`, `git_neutral_env`,
+  `Runtime.hooks_dir`, `branch_mismatch`, the constant `PUSH_KINDS`, the reasons
+  `git_hooks_dir_refused` and `worktree_branch_mismatch`. Not necessary for AGENTS.md#R1
+  (and CLAUDE.md) and `docs/commit-privacy.md`: they stay true for campaign pushes, whose
+  git runs the repository's own `pre-push` hook (`Runtime.hooks_dir`, test
+  `test_cadencer_push_runs_the_main_checkout_hook_never_one_planted_in_the_worktree`). No
+  CLI verb or configuration key changed.
+- PAT-219: first real Epic campaign on this repository, recorded in
+  `docs/qualification/pat-219-epic-campaign-2026-10-17.md`. The qualification Epic PAT-221
+  (three tickets) reached `await-verdict` in three runs and was closed with
+  `close-epic --human-verdict=accepted`. Two tickets merged through the campaign; one was
+  finished by the coordinator after a `suspend` `attempt_already_made`. Sessions cost about
+  5.0 USD. Linear requests of the cadencer process: 1723 for 14 steps (run 1), 13 for 3
+  (run 2), 479 for 12 (run 3), far above the PAT-177 estimate of about 75 per ticket. The
+  effects counted by their subcommand are close to their estimates (`start` and the first
+  `open-pr` inside, the re-push below, `merge` above); where the excess comes from is unknown (deduced lead: the reads of the deferral
+  effect). Deviations filed as PAT-227 to PAT-230. Documentation status (R5): new
+  qualification record. The criterion "the documentation no longer says that deferral has
+  no effect in a campaign" was met by PAT-141 (AGENTS.md#R9 "Inside an Epic campaign",
+  `docs/review-rounds.md`, `skills/merge-pr`); no other page changed. No CLI verb or
+  configuration key changed.
+- PAT-218: `campaign-cadence step` and `run` now review and correct. A `review` claims the
+  exact diff, writes the private packet, runs one fresh read-only headless Claude reviewer
+  at the routed reviewer tier (FOUNDRY-ADR-0006 floor; `dontAsk`, Read/Grep/Glob and the
+  three `routing` read verbs, user settings only, no project MCP server), parses its
+  verdict strictly (closed schema, else no
+  proof) and records the proof with `record-review-proof`. A blocking review records the
+  escalation failure (`human_required` suspends the campaign) and gives the findings to one
+  fresh implementer session; the commit is pushed with `issue openpr`, then reviewed again.
+  A round after a validated review with remarks marked "fix before merge" is a partial
+  review (PAT-ADR-0022); a clean merge of main after a validated review tries
+  `carry-review-proof` first (PAT-ADR-0021). At most 3 review rounds and 2 corrections per
+  ticket (`review_rounds_exhausted`, `corrections_exhausted`); each review also writes its
+  rounds in the PR description (PAT-ADR-0022); reviewer and correction
+  sessions count against the approval ceilings. The claim capability stays in 0600 private
+  files and never reaches the journal or the output. Non-blocking remarks stay in the saved
+  report and the step output: carrying them to a companion Epic is PAT-141. Red-CI
+  correction, ADR selection for the packet and Codex are not done, and the reviewer runs as
+  the same OS user (a discipline boundary, not a sandbox). Documentation status (R5):
+  updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`, `docs/review-rounds.md`,
+  `AGENTS.md`/`CLAUDE.md` R9, README.
+- PAT-217: New `campaign-cadence step <EPIC>` and `run <EPIC>` execute the next step of an
+  approved Epic campaign (PAT-ADR-0026), at most one effect per pass: `issue start` in a
+  linked worktree outside the repository, one fresh headless Claude session at the routed
+  implementer tier (budget-bounded, push, `gh` and the Foundry `issue`/`edit`/`adr` verbs
+  denied by prefix rules, allowlisted environment), `issue openpr`, and `issue merge`, which
+  keeps its own CI and review-proof gates. A local attempt journal never launches the same
+  attempt twice and counts sessions against the approval ceilings. `decide` gains `open-pr`;
+  a closed PR is now re-read with `get_pr` before it is called merged. Review and correction
+  are not executed (PAT-218), Codex is not wired, and the session runs as the same OS user
+  and can write the local Foundry state, review proofs included (a discipline boundary, not
+  a sandbox). Documentation status (R5): new `docs/campaign-effects.md`, updated
+  `docs/campaign-cadence.md`, `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9, README.
+- PAT-216: New `campaign-cadence next <EPIC>` computes, read-only, the one next step of an
+  Epic campaign (PAT-ADR-0026): it re-reads the tracker, git and the PR, and returns one of
+  `start`, `implement`, `review`, `correct`, `wait-ci`, `merge`, `await-verdict`, `suspend`
+  (drift of PAT-ADR-0027, with a motive) or `refuse` (missing capability or approval), the
+  same bytes for the same observation. It produces no effect on the tracker, git or the PR
+  (the review store may create its local lock file) and requires the declared tracker
+  capabilities before any read. `epic_preview.classify_nodes` is extracted from
+  `build_preview`, unchanged. Documentation status (R5): new `docs/campaign-cadence.md` and
+  `README.md` pointer; the cost per pass is measured by the issue, not stated here.
+- PAT-215: New `campaign-approval` verbs (`approve`, `status`, `check`) record the human
+  approval of an Epic campaign (PAT-ADR-0026): an append-only journal outside the
+  repository (`registry.data_dir()`) binds the Epic, the exact preview digest, the
+  structure digest, an expiry and session ceilings; `check` refuses a different digest, an
+  expired or an absent approval before any effect. An agent cannot approve: the
+  confirmation is read from `/dev/tty`, agent-session markers refuse, and the Claude
+  `PreToolUse` Bash guard denies the command; a same-user process can still append to the
+  journal directly. No tracker is read or written. Documentation status (R5): new
+  `docs/campaign-approval.md`, `README.md` pointer, and one sentence in `AGENTS.md#R1`
+  (a guard denial in every repository, before any registry read).
+- PAT-212: Settle the remarks deferred from the PAT-196 reviews and the 1.4.0 release
+  review. `scripts/codex_profile_provenance.py` no longer fails on an absent profile with
+  `--rollout` or on a JSON line that is not an object, passes `foundry_versions` through
+  `_token`, and no longer echoes values containing `/` or `:`;
+  `docs/qualification/pat-196-codex-reviewer-provenance.md` records the observed-run facts
+  (`codex --version`, cache listing, `collaboration_mode.settings` model and reasoning
+  effort), the exact native command and its directory, and the limits of "matched" and of
+  the built-in source; both READMEs state the `foundry-v1.4.0` tag as now known.
+  Documentation status (R5): the helper's options are unchanged, the qualification page and
+  READMEs are updated; no routing constant, model or effort vocabulary, or configuration key
+  changed.
+- PAT-209: `adr link-issue` now accepts the exact stored bodies of `FOUNDRY-ADR-0003`,
+  `FOUNDRY-ADR-0015` and `FOUNDRY-ADR-0017` through three more digest-pinned entries of
+  `_PAT_201_PROFILES`; any other or altered body stays refused before any write, and
+  `FOUNDRY-ADR-0017` (a table) stays refused as a new body. Documentation status (R5): the
+  private constant is documented in `docs/qualification/pat-201-historical-adr-links.md`
+  and `docs/linear-tracker.md`; no CLI verb, option or configuration key changed.
+- PAT-206: New `issue accept <ID> --human-verdict=accepted --decision-file=<path>` and
+  read-only `issue accept <ID> --status` (Linear only, PAT-ADR-0025) accept an issue with
+  no code and no PR by one closed human decision: per criterion a `pass` verdict, evidence
+  from a closed list (a confirmed advisory report or an issue of the same project) and the
+  unknowns copied verbatim. It appends one `acceptance-decision` lifecycle receipt, then
+  projects `done`; the read-back must read done, aligned and accepted (source
+  `linear-human-acceptance`). Epic closure counts it as accepted and the release scope
+  reads it `accepted` with `acceptance_decision_digest`. YouTrack, GitHub Projects and
+  DevHub refuse before any read. Documentation status (R5): CLI verb and flags, the
+  decision-file keys and the receipt are documented in `docs/linear-tracker.md`, the
+  capability row in `docs/tracker-contract.md` and `tracker-contract.v1.json` (`version`
+  now 4); the sequence is run on the test double only, never on a live workspace.
+- PAT-178: The Epic preview now works on Linear. `LinearTracker` sets
+  `epic_subgraph_supported` and builds the neutral `foundry-epic-subgraph.v1` (PAT-ADR-0027)
+  from `get_issue` reads (`tooling/foundry/epic_subgraph.py`); `devhub-application.v1` is
+  still accepted and its preview digest is unchanged. The preview result gains
+  `structure_digest` (ids, types, hierarchy, internal `depends-on` edges, external blocker
+  pairs and the Epic validation digest), outside the digested material, and
+  `authority.tracker` carries the tracker name. Documentation status (R5):
+  `docs/epic-preview.md`, `docs/tracker-contract.md` and `.v1.json`, `docs/review-rounds.md`
+  and the R9 paragraph of `AGENTS.md`/`CLAUDE.md` are updated; no CLI verb, option or
+  configuration key changed.
+- PAT-141: an Epic campaign now carries the non-blocking remarks of a validated review
+  (PAT-ADR-0028). The reviewer's result gains a `remarks` key, each remark marked "fix
+  before merge" or not, with counts that must agree. `routing record-review-remarks` writes
+  a local receipt bound to the proof id, the diff hash and the review generation, beside
+  the unchanged proof; `issue merge` never reads it. The new `defer-remarks` effect, before
+  `merge`, finds or creates the companion Epic `Nits <ORIGIN-EPIC-ID>` with no link to the
+  origin Epic, finds or creates one open follow-up issue under it, posts one comment per
+  validated round, never one per remark, and cites every follow-up in the PR description.
+  It reads the tracker before every write, so a retry duplicates nothing. A durable
+  refusal (capability absent, `Epic` type refused, two companions of the same name, a
+  creation the adapter refuses to replay), a ticket with no origin Epic and a ticket of a
+  companion Epic make the campaign correct the remarks before the merge; a transient
+  failure, or a creation the read shows did not happen, makes it wait and retry (`wait`,
+  outcome `waiting`; 5 attempts at most). Rule R9,
+  `merge-pr` and `docs/review-rounds.md` no longer say the authorization has no effect in a
+  campaign. Documentation status (R5): updated `docs/campaign-effects.md`,
+  `docs/campaign-cadence.md`, `docs/review-rounds.md`, `skills/merge-pr/SKILL.md`,
+  `AGENTS.md`/`CLAUDE.md` R9, README; the new CLI verb, journal key, decision kinds and
+  constants are listed in `docs/campaign-effects.md`.
+
 ## 1.4.0 — 2026-10-15
 
 Minor release. Most entries below change behaviour. New CLI surfaces: `routing

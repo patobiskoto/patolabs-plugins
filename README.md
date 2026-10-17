@@ -165,6 +165,32 @@ Statuses:
   PAT-201's links and of the PAT-205 `(AGENTS.md#R<n>)` qualification. The return to
   1.3.0 through an official manager is not tried (PAT-162).
 
+**Release 1.5.0, prepared by its release pull request:** that pull request sets both
+Foundry host manifests to **1.5.0** (Ship-iOS stays at **0.3.0**) and carries the dated
+`1.5.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the nineteen
+fragments of `plugins/foundry/changelog.d/` (which it deletes), the
+[release notes](plugins/foundry/docs/release-1.5.0.md), the
+[upgrade and rollback guide](plugins/foundry/docs/migration-1.5.0.md) and the freeze
+entry of `plugins/foundry/tests/fixtures/release-history.json`. It is a minor version
+because it adds CLI verbs (`campaign-approval approve|status|check`, `campaign-cadence
+next` and `step|run`, `issue accept`, `routing record-review-remarks`) and changes
+behaviour (campaign sessions in the native sandbox, the Linear `issue openpr` State
+readback, the Epic preview on Linear); the release notes open with these behaviour changes
+and claim no gain. Statuses:
+
+- **Done by the release pull request:** the manifests, the CHANGELOG section, the two
+  pages, the freeze entry, the removal of the fragments and one comment line of
+  `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
+- **Not done by it, and not claimed here:** the tag `foundry-v1.5.0`, the update of the
+  installed plugin on Claude Code and on Codex, and the readback of the version a host
+  actually loads. They come after the merge; the tag and the host update each need the
+  maintainer's explicit authorization, and all are recorded on the release ticket
+  (`skills/release/SKILL.md`, steps 6 to 9).
+- **Not verified:** the Foundry 1.5.0 / Ship-iOS 0.3.0 pair on a host, the native sandbox
+  of campaign sessions beyond the one live trial of PAT-220 (refusing layer not recorded),
+  the cause of the Linear State return of PAT-230 (deduced), and the cost of a campaign
+  (PAT-219). The return to 1.4.0 through an official manager is not tried (PAT-162).
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -198,7 +224,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.4.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.5.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
