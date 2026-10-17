@@ -47,7 +47,8 @@ def fake_tty(monkeypatch, answer):
 def do_approve(env, monkeypatch, preview, path, **kwargs):
     fake_tty(monkeypatch, preview["preview_digest"][:12])
     return ca.approve("PAT-100", path, max_sessions=kwargs.pop("max_sessions", 5),
-                      max_sessions_per_issue=kwargs.pop("per_issue", 2), now=NOW, **kwargs)
+                      max_sessions_per_issue=kwargs.pop("per_issue", 2),
+                      now=kwargs.pop("now", NOW), **kwargs)
 
 
 def test_approve_writes_one_bound_record(env, monkeypatch):
@@ -200,7 +201,8 @@ def test_preview_module_has_no_approval_path():
 
 def test_cli_status_and_check(env, monkeypatch, capsys):
     path, preview = preview_file(env)
-    do_approve(env, monkeypatch, preview, path)
+    # The CLI checks against the real clock, so approve at the real clock too (PAT-232).
+    do_approve(env, monkeypatch, preview, path, now=datetime.now(timezone.utc))
     assert ca.main(["status", "PAT-100"]) == 0
     assert len(json.loads(capsys.readouterr().out)) == 1
     assert ca.main(["check", "PAT-100", "--preview-file", path]) == 0
