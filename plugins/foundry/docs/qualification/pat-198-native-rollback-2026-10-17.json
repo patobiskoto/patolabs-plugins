@@ -8,7 +8,7 @@
     "per_line": 1,
     "retries": 0
   },
-  "native_calls": 1,
+  "native_calls": 2,
   "rows": [
     {
       "line": "codex-scout",
@@ -180,24 +180,46 @@
         "model": "sonnet-5",
         "effort": "medium"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-17",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "implementer",
+        "tier": "balanced",
+        "model": "sonnet-5",
+        "effort": "medium"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
-      "limits": "unknown"
+      "transmitted": {
+        "profile": "routed-worker-medium-sonnet-5",
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+        "effort_status": "requested",
+        "source": "profile_frontmatter",
+        "basis": "computed offline from this checkout before launch"
+      },
+      "native_observation": {
+        "models": [
+          "claude-sonnet-5"
+        ],
+        "agent_types": [
+          "foundry:routed-worker-medium-sonnet-5"
+        ],
+        "efforts": [
+          "medium"
+        ],
+        "host_version": "2.1.302"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-26145230\n\nFichier lu : `/private/tmp/claude-501/pat198-runs/claude-implementer/fixture/marker.txt`",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "4335c032ba436e9fdc6a364718b642a141f85b714ca99efa830a7e722cecd63b",
+      "limits": [
+        "one call; not a sample",
+        "effort is observed only if the host logs it; absence is unknown",
+        "account availability is observed for this account and this date only"
+      ]
     },
     {
       "line": "claude-reviewer",
