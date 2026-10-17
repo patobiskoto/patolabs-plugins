@@ -108,8 +108,10 @@ campaign-cadence next <EPIC>` (`REQUEST_COUNT_ENV`, `trackers/linear.py`). The m
 figures (PAT-228: 19 requests for an Epic of 17 tickets, about one request per node) are in
 `docs/linear-request-cost.md`, "Epic campaign (PAT-228)"; the effects `run` also reports the
 requests of each pass (`docs/campaign-effects.md`, "Provider requests of a pass"). Every pass,
-`wait-ci` included, reads the whole subgraph: the structure digest is checked before every effect
-(PAT-ADR-0027); PAT-228 leaves that unchanged.
+`wait-ci` included, reads the whole subgraph: the structure digest is checked on every observation
+(`campaign_cadence.py`, `observe`; PAT-ADR-0027 defines the drift but not when it is checked;
+deduced: a pass cannot know before observing whether it leads to an effect). PAT-228 leaves
+that unchanged.
 
 ## Capabilities required (PAT-ADR-0026)
 

@@ -240,6 +240,8 @@
   },
   "notes_recorded_after_run": [
     "argv_without_settings drops every argument starting with '{', so the value of --mcp-config ('{\"mcpServers\":{}}') is absent from that list; the argv passed to claude carried it (session_argv)",
-    "the refusing layer of each refused step (OS sandbox, dontAsk mode or permission rule) was not recorded: unknown"
+    "the refusing layer of each refused step (OS sandbox, dontAsk mode or permission rule) was not recorded: unknown",
+    "clarifications added 2026-10-17 after the run, without new observation: in 'settings' and in 'steps_recorded_after_run', '~' is the anonymisation of the absolute home directory (deduced from the record, not recorded as such); in 'Read(/~/...)' and 'Edit(/~/...)' the '/~/' must not be read as a path relative to the project, and the exact rule text as passed to claude was not recorded: unknown",
+    "the 'data/proofs/' of steps 3 and 12 is a path of the trial directory '~/foundry-sandbox-trial/data'; it is not the 'acceptance-proofs/<namespace>' proof store of 'routing.py' (the Foundry state directory), and was not shown to be an equivalent of it. Whether the directory 'data/proofs' existed before the run was not recorded: unknown. A refused write is consistent with either case, so the 'unchanged' of 'data_proof' and 'tool_data_proof' does not tell which"
   ]
 }

@@ -76,8 +76,10 @@ Effects, from the subcommand lines: `issue start` 13 (Ã—3), `issue openpr` 13 (Ã
 `openpr` of run 2 12. The review, correction and successful deferral effects recorded no
 count.
 
-Run 2 (three observations, no review, no deferral) gives about 4 requests per observation, so
-the observation alone does not explain runs 1 and 3. Deduced, not verified: the excess follows
+Run 2 (three steps, no review, no deferral) gives about 4 requests per step (13 over 3), so
+the observation alone does not explain runs 1 and 3. That total is the whole cadencer process
+of the table above, not the observation alone: it also counts the other reads listed there
+(`get_issue` of `implement` among them). Deduced, not verified: the excess follows
 the deferral effect, which runs in the cadencer process and reads the whole project
 (`tracker.search(project)` in `_find_companion` and `_find_follow_up`, `campaign_defer.py`):
 run 1 has three deferral attempts and 1723 requests, run 3 one attempt and 479. The breakdown
@@ -93,8 +95,9 @@ round and about 120 with three rounds and two corrections. It counts start 13, o
 - The effects measured by their subcommand are close to their estimates: `start` 13 (estimate
   13) and the first `open-pr` 13 (estimate 11 to 15) fall inside; the re-push after a
   correction, 10, is below; `merge` 33 is above (estimate 20 to 30).
-- The total does not: run 1 alone is 1723 requests in the cadencer for less than two tickets,
-  against about 150 to 200 estimated. Where the excess comes from is unknown (deduced lead: the
+- The total does not: run 1 alone is 1723 requests in the cadencer process (the subcommand
+  lines are not in that figure) for less than two tickets, against about 150 to 200 estimated
+  for a whole run (subcommands included, so the sets differ and the real gap is larger). Where the excess comes from is unknown (deduced lead: the
   deferral effect, above); measuring it is the subject of PAT-228.
 - The estimate's recommendation (no tracker re-read while waiting for CI) is not followed:
   `run` observes at every step, `wait-ci` included (`campaign_effects.run`).
