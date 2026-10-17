@@ -1,0 +1,35 @@
+{
+  "name": "gauge",
+  "description": "Read-only quota gauge for Codex, Claude, Linear and GitHub Actions counters.",
+  "version": "0.1.0",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/gauge",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "quota",
+    "rate-limit",
+    "usage",
+    "codex",
+    "claude",
+    "linear",
+    "github-actions"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "gauge",
+    "shortDescription": "Read the Codex, Claude, Linear and GitHub Actions quota counters.",
+    "longDescription": "Read-only: shows each quota counter with its source and read time, and says unknown when a value cannot be read. Never prints a token, login or account identifier.",
+    "developerName": "patolabs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/gauge",
+    "defaultPrompt": [
+      "Show my current quota counters."
+    ]
+  }
+}

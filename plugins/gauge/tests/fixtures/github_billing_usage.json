@@ -1,0 +1,5 @@
+{"usageItems":[
+{"date":"2026-10-01T00:00:00Z","product":"actions","sku":"Actions Linux","quantity":100,"unitType":"Minutes","pricePerUnit":0.008,"grossAmount":0.8,"discountAmount":0.8,"netAmount":0,"organizationName":"ORG","repositoryName":"REPO"},
+{"date":"2026-10-02T00:00:00Z","product":"actions","sku":"Actions Linux","quantity":50.5,"unitType":"Minutes","pricePerUnit":0.008,"grossAmount":0.404,"discountAmount":0.1,"netAmount":0.304,"organizationName":"ORG","repositoryName":"REPO"},
+{"date":"2026-10-02T00:00:00Z","product":"copilot","sku":"x","quantity":9,"unitType":"Requests","grossAmount":9,"netAmount":9}
+]}

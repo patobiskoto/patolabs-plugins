@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"result":{"userAgent":"anonymised"}}
+{"jsonrpc":"2.0","id":2,"result":{"accountId":"ACCOUNT-ID-PLACEHOLDER","rateLimits":{"limitId":"codex","primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1790000000},"secondary":{"usedPercent":7,"windowDurationMins":10080,"resetsAt":1790500000},"credits":{"balance":"CREDITS-PLACEHOLDER"},"planType":"plan","rateLimitReachedType":null},"rateLimitsByLimitId":{}}}
