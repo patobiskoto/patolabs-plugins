@@ -36,6 +36,9 @@ MAX_REMARK_TEXT = review_remarks.MAX_REMARK_TEXT
 MAX_PREVIOUS_REPORT_BYTES = 32 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _FENCE = re.compile(r"\A```(?:json)?\s*\n(.*?)\n```\Z", re.S)
+RESULT_KEYS = {"outcomes", "quality", "fix_before_merge", "non_blocking", "remarks"}
+# PAT-237: optional key of a reviewer result; true when a partial review read the whole diff
+FULL_REVIEW_KEY = "full_review"
 REVIEW_KEYS = {"verdict", "fix_before_merge", "non_blocking", "diff_hash", "base", "head",
                "carried", "partial"}
 # PAT-227: how many "fix before merge" remarks target the PR description; absent (a line
@@ -67,6 +70,15 @@ def _scrub(text: str, hidden) -> str:
         if secret:
             text = text.replace(secret, "[redacted]")
     return text
+
+
+def scrub_remarks(remarks: list[dict], hidden) -> list[dict]:
+    """PAT-237: the remark texts as the report is saved: the claim capability and the attempt
+    token replaced (``_scrub``), credential shapes masked (``fx.mask_credentials``), and the text
+    cut back to ``MAX_REMARK_TEXT`` (a mask can lengthen it) before the receipt and the tracker
+    comment."""
+    return [{**r, "text": _scrub(fx.mask_credentials(r["text"]), hidden)[:MAX_REMARK_TEXT]}
+            for r in remarks]
 
 
 def _write_private(path: Path, text: str) -> None:
@@ -182,8 +194,9 @@ def review_contract() -> str:
         "OK (only genuinely verified strengths). End the human-readable part with exactly: "
         "`AC: PASS|BLOCK · QUALITY: OK to merge|BLOCK`.\n"
         f"Then, as the very last thing you print, a line `{RESULT_SENTINEL}` followed by ONE "
-        "JSON object and nothing after it, with exactly the keys outcomes, quality, "
-        "fix_before_merge, non_blocking and remarks: outcomes is the ordered array of "
+        "JSON object and nothing after it, with the keys outcomes, quality, "
+        "fix_before_merge, non_blocking and remarks (and the optional full_review, below, "
+        "and no other): outcomes is the ordered array of "
         "{\"id\",\"digest\",\"verdict\"} copied from the criteria of acceptance.json "
         "(verdict is pass, fail, not_covered or contradicted); quality is mergeable or "
         "blocked (mergeable only if every verdict is pass and nothing blocks); "
@@ -198,7 +211,8 @@ def review_contract() -> str:
         "publication (release note, migration guide, CHANGELOG section of a published "
         "version) and on a missing or generic documentation status under AGENTS.md#R5: the "
         "campaign defers every false remark to a companion Epic and never those two cases. "
-        "Never print the claim_id."
+        "Add \"full_review\": true only when the prompt below says PARTIAL REVIEW and you "
+        "read the whole diff; otherwise leave the key out. Never print the claim_id."
     )
 
 
@@ -212,7 +226,7 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
         "\nPacket instructions (written by `routing prepare-review`):\n" + send_text,
         "\nThe output contract above overrides the packet instructions: do not load the "
         f"`review-pr` skill and do not return another JSON shape; print `{RESULT_SENTINEL}` "
-        "and the five-key object only.\n",
+        "and the object of the output contract only.\n",
     ]
     if placeholder:
         parts.append(
@@ -222,13 +236,18 @@ def review_prompt(epic: str, ticket: str, pr: int, send_text: str, command: str,
     if partial:
         parts.append(
             "\nPARTIAL REVIEW (PAT-ADR-0022). The previous round was validated (every criterion "
-            "pass, quality mergeable) with remarks marked \"fix before merge\"; a correction "
+            "pass, quality mergeable) with remarks to correct: those marked \"fix before "
+            "merge\" or, when none of its remarks could be deferred to a companion Epic, every "
+            "non-blocking remark; a correction "
             f"session then changed the head (commit range {partial['range']}). The previous "
             "verdict, its remarks and this range are declared by the coordinator in "
             "coordinator-declarations.json (unverified; you cannot check them against the "
             "diff). Check that each correction settles its remark without a new defect and "
-            "that nothing else changed. If the change goes beyond correcting those remarks, "
-            "say so with the reason and review the whole diff. Either way return a verdict on "
+            "that nothing else changed. A remark of the previous round that the correction "
+            "was not asked to settle was deferred to a companion Epic: do not list it again; "
+            "list a remark only if it is new or a correction left it unsettled. If the change goes "
+            "beyond correcting those remarks, say so with the reason, review the whole diff "
+            "and add \"full_review\": true to the result. Either way return a verdict on "
             "ALL criteria for the exact current diff."
         )
     else:
@@ -316,9 +335,10 @@ def parse_result(text: object) -> tuple[str, dict]:
         raise ReviewOutputInvalid("JSON du relecteur illisible") from exc
     if not report:
         raise ReviewOutputInvalid("rapport de relecture vide")
-    if not isinstance(data, dict) or set(data) != {
-            "outcomes", "quality", "fix_before_merge", "non_blocking", "remarks"}:
+    if not isinstance(data, dict) or not RESULT_KEYS <= set(data) <= RESULT_KEYS | {FULL_REVIEW_KEY}:
         raise ReviewOutputInvalid("clés du verdict hors contrat")
+    if FULL_REVIEW_KEY in data and type(data[FULL_REVIEW_KEY]) is not bool:
+        raise ReviewOutputInvalid("full_review hors contrat")
     outcomes = data["outcomes"]
     if (not isinstance(outcomes, list) or not outcomes or not all(
             isinstance(o, dict) and set(o) == {"id", "digest", "verdict"}
@@ -357,6 +377,18 @@ def _session_route(runtime, role: str, issue: str, *, floor: str | None = None):
     ), policy
 
 
+def _tier_without_floor(policy, route) -> str:
+    """The implementer tier without the escalation floor; when no model is available at it (an
+    availability list that changed since the floor was raised), the tier of ``route``, resolved
+    with the active floor (PAT-237)."""
+    from foundry.routing import RoutingUnavailableError
+
+    try:
+        return policy.resolve("implementer", "claude").selected_tier
+    except RoutingUnavailableError:
+        return route.selected_tier
+
+
 def plan_review(runtime, epic: str, ticket, attempts: Path, cwd=None) -> dict:
     """The reviewer route (FOUNDRY-ADR-0006 floor and any escalation floor) and the mode."""
     route, policy = _session_route(runtime, "reviewer", ticket.id)
@@ -390,6 +422,14 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
     report = Path(report_record["summary_file"]).read_text(encoding="utf-8")
     route, policy = _session_route(runtime, "implementer", ticket.id)
     if decision.reason == DESCRIPTION_REASON:
+        # PAT-237: a worktree HEAD that is not the PR head would make the paid session fail
+        # at `publish_description`: stop before it (nothing is claimed, nothing is spent)
+        moved = _head_problem(runtime, cwd or runtime.worktrees_dir / ticket.id, ticket)
+        if moved == "head_unreadable":
+            raise OSError("tête du worktree illisible")
+        if moved is not None:
+            return {"suspend": ("description_worktree_head_moved", {
+                "head": moved, "pr_head": pr.head_sha})}
         plan = fx.session_plan(runtime, route, policy, cwd)
         issue = tracker.get_issue(ticket.id)
         plan["prompt"] = description_prompt(
@@ -406,7 +446,7 @@ def plan_correct(runtime, decision, epic: str, ticket, attempts: Path, tracker,
         kind = "review_blocking_after_fix" if corrected else "review_blocking"
         # The tier without the escalation floor: record_failure raises it to the floor itself,
         # and a replay after `escalated` must send the same signal (same idempotent identity).
-        base_tier = policy.resolve("implementer", "claude").selected_tier
+        base_tier = _tier_without_floor(policy, route)
         args = ["routing", "escalation", "failure", ticket.id, "implementer", "--kind", kind,
                 "--current-tier", base_tier, "--idempotency-key",
                 f"campaign-{epic}-{ticket.id}-{kind}-{pr.head_sha[:16]}",
@@ -594,6 +634,15 @@ def update_pr_body(runtime, epic: str, ticket, attempts: Path, worktree: Path,
     return "" if done.returncode == 0 else "pr_body_not_updated"
 
 
+def _head_problem(runtime, worktree: Path, ticket) -> str | None:
+    """``None`` when the worktree HEAD is the observed PR head; ``"head_unreadable"`` when
+    ``git rev-parse HEAD`` fails; else the commit the HEAD names (PAT-227, PAT-237)."""
+    head = fx.worktree_head_sha(runtime, worktree)
+    if head is None:
+        return "head_unreadable"
+    return None if head == ticket.pr.head_sha else head
+
+
 def publish_description(runtime, epic: str, ticket, attempts: Path, worktree: Path,
                         fields: dict, refs) -> dict:
     """PAT-227: the summary of a description correction replaces the PR body (``issue openpr
@@ -605,7 +654,10 @@ def publish_description(runtime, epic: str, ticket, attempts: Path, worktree: Pa
     """
     if fx.branch_mismatch(runtime, worktree, ticket.id, refs) is not None:
         return {**fields, "status": "failed", "error": "description_worktree_branch_mismatch"}
-    if fx.worktree_head_sha(runtime, worktree) != ticket.pr.head_sha:
+    moved = _head_problem(runtime, worktree, ticket)
+    if moved == "head_unreadable":  # PAT-237: not a commit of the session, a failed read
+        return {**fields, "status": "failed", "error": "description_head_unreadable"}
+    if moved is not None:
         return {**fields, "status": "failed", "error": "description_session_moved_head"}
     try:
         raw = Path(fields["summary_file"]).read_text(encoding="utf-8") \
@@ -711,6 +763,7 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         report, verdict = parse_result(result.get("result"))
     except ReviewOutputInvalid as exc:
         return {**_failed("reviewer_output_invalid", str(exc)), **base_out}
+    verdict["remarks"] = scrub_remarks(verdict["remarks"], hidden)
     saved = fx._save_summary(attempts, attempt, _scrub(report, hidden))
     outcomes = workdir / "outcomes.json"
     _write_private(outcomes, json.dumps(
@@ -731,7 +784,7 @@ def launch_review(runtime, plan: dict, epic: str, ticket, attempt: str, attempts
         "verdict": "validated" if verdict["quality"] == "mergeable" else "blocked",
         "fix_before_merge": verdict["fix_before_merge"], "non_blocking": verdict["non_blocking"],
         "diff_hash": diff_hash, "base": pr.base_sha, "head": pr.head_sha, "carried": False,
-        "partial": partial is not None,
+        "partial": partial is not None and verdict.get(FULL_REVIEW_KEY) is not True,
         DESCRIPTION_KEY: sum(r["fix_before_merge"] and r["target"] == "description"
                              for r in verdict["remarks"]) if verdict["quality"] == "mergeable" else 0,
     }

@@ -102,6 +102,9 @@ class World:
             return ok(self.worktree_head.get(Path(cwd).name, self.branch(Path(cwd).name)) + "\n")
         if argv == ["git", "rev-parse", "HEAD"]:  # PAT-227: the commit the worktree HEAD names
             ticket = Path(cwd).name
+            if getattr(self, "head_failures", 0):  # PAT-237: `git rev-parse HEAD` fails
+                self.head_failures -= 1
+                return SimpleNamespace(returncode=128, stdout="", stderr="fatal")
             return ok(self.head_sha.get(ticket, self.heads.get(ticket, "")) + "\n")
         if self.git_dirs_unreadable and "--git-common-dir" in argv:
             return SimpleNamespace(returncode=1, stdout="", stderr="")
@@ -217,7 +220,8 @@ def _routing(self, argv, cwd, ok):
     verb = argv[3]
     if verb == "claim-review":
         assert len(_opt(argv, "--claim-attempt-token")) == 64
-        return ok(json.dumps({"diff_hash": DIFF_HASH, "should_run": True, "state": "claimed",
+        return ok(json.dumps({"diff_hash": getattr(self, "diff_hash", DIFF_HASH),
+                              "should_run": True, "state": "claimed",
                               "generation": 1, "claim_id": CLAIM_ID}))
     if verb == "prepare-review":
         claim = json.loads(Path(_opt(argv, "--claim-file")).read_text())
@@ -355,7 +359,7 @@ def env(tmp_path, monkeypatch):
     kwargs = dict(
         attempts=tmp_path / "attempts.jsonl", journal=journal,
         refs=lambda r: world.branches(), diff_reader=lambda r, b, h: b"diff",
-        proof_store=WorldProofs(world),
+        proof_store=WorldProofs(world), contains=lambda r, branch, pr: True,
         branch_facts=lambda r, b: (
             world.heads.get(b.split("/")[1].split("-x")[0].upper()),
             world.ahead.get(b.split("/")[1].split("-x")[0].upper())),
@@ -758,6 +762,19 @@ def test_effect_primitives_are_not_referenced_by_the_module():
         assert name not in source
 
 
+def test_effect_primitives_are_not_referenced_by_the_review_module():
+    """PAT-237: the same authority limit for ``campaign_review.py`` (whole words: its own
+    ``update_pr_body`` runs ``issue openpr``, a Foundry command)."""
+    import re
+
+    source = open(ce.campaign_review.__file__, encoding="utf-8").read()
+    for name in ("open_pr", "merge_pr", "update_pr", "delete_branch", "create_issue",
+                 "update_fields", "add_comment", "record_delivery_receipt", "Popen",
+                 "--allow-no-ci", "--allow-incomplete-ac"):
+        assert not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w])", source), name
+    assert ".transition(" not in source
+
+
 def test_cli_step_prints_one_result(monkeypatch, capsys, env):
     import subprocess
 
@@ -798,10 +815,15 @@ def test_real_git_branch_facts_and_worktree(tmp_path):
     runtime = ce.Runtime(root=str(repo), worktrees_dir=tmp_path / "wt")
     path = ce.ensure_worktree(runtime, "APP-2", cc._git_refs)
     assert path == tmp_path / "wt" / "APP-2" and git("branch", "--show-current", cwd=path).stdout.strip() == "chore/app-2-x"
+    base_sha = git("rev-parse", "main").stdout.strip()
     git("commit", "-q", "--allow-empty", "-m", "work", cwd=path)
     head, ahead = cc._git_branch_facts(str(repo), "chore/app-2-x")
     assert ahead == 1 and head == git("rev-parse", "chore/app-2-x").stdout.strip()
     assert cc._git_branch_facts(str(repo), "chore/app-9-x") == (None, None)
+    assert cc._git_contains(str(repo), head, base_sha) is True  # PR head in the branch (PAT-237)
+    assert cc._git_contains(str(repo), base_sha, head) is False  # a PR head ahead of the branch
+    assert cc._git_contains(str(repo), head, "9" * 40) is False  # a PR head not known locally
+    assert cc._git_contains(str(tmp_path / "absent"), head, base_sha) is False
     fresh = ce.ensure_worktree(runtime, "APP-3", cc._git_refs)  # no branch yet: detached
     assert fresh.is_dir() and git("branch", "--show-current", cwd=fresh).stdout.strip() == ""
 

@@ -324,9 +324,28 @@ def comment_text(ticket, receipt_ref: str, pr: int, rounds: int, remarks: list[d
         f"Pull request #{pr}, issue {ticket}, review round {rounds}.",
         f"Deferral reference: {receipt_ref}",
         "",
-        *(f"- {remark['text']}" for remark in remarks),
+        *(f"- {fx.mask_credentials(remark['text'])}" for remark in remarks),
     ]
     return "\n".join(lines)
+
+
+def already_deferred(repository: str, records: list[dict], epic: str, ticket: str,
+                     diff_hash: str) -> tuple[set[str], dict | None]:
+    """PAT-237: the texts of the remarks that an earlier validated round of this ticket (another
+    diff hash) already deferred, from the receipts of its ``done`` deferrals in the journal, and
+    the ``deferral`` field of the latest such deferral."""
+    store = review_remarks.ReviewRemarksStore(repository)
+    texts: set[str] = set()
+    last = None
+    for record in review._mine(records, epic, ticket):
+        field = record.get("deferral")
+        if (record["event"] == "finished" and record["kind"] == KIND and field
+                and field["state"] == "done" and field["diff_hash"] != diff_hash):
+            receipt = store.find(ticket, field["diff_hash"])
+            texts.update(r["text"] for r in (receipt or {}).get("remarks", [])
+                         if not r["fix_before_merge"])
+            last = field
+    return texts, last
 
 
 def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
@@ -343,9 +362,18 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
     deferrable = [r for r in receipt["remarks"] if not r["fix_before_merge"]]
     if not deferrable or len(deferrable) != facts.deferrable:
         raise Durable("remarks_receipt_inconsistent")
+    earlier, last = already_deferred(repository, fx.read_attempts(attempts), epic, ticket.id,
+                                     facts.diff_hash)
+    deferrable = [r for r in deferrable if r["text"] not in earlier]  # no double deferral
     origin = facts.origin
     if origin is None or facts.origin_is_companion:
         raise Durable("no_deferral_case")
+    if not deferrable and last is not None:  # PAT-237: nothing left, no deferral read or write
+        field = deferral_field("done", facts.diff_hash, ledger, follow_up=last["follow_up"],
+                               companion=last["companion"], remarks=0)
+        if review.update_pr_body(runtime, epic, ticket, attempts, worktree, None, deferral=field):
+            raise Transient("pr_body_not_updated")
+        return field
     name = f"{COMPANION_PREFIX}{origin}"
     listing = Listing(tracker, project)
     known, maybe_created = journal_memory(attempts, epic)
@@ -371,7 +399,7 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
         ledger["writes"].append(WRITE_ATTACH)
     ref = f"{ticket.id}@{facts.diff_hash[:16]}"
     existing = _read(tracker.get_issue, follow_up).comments
-    if not any(ref in str(c.get("text", "")) for c in existing):
+    if deferrable and not any(ref in str(c.get("text", "")) for c in existing):
         rounds = len(review.review_records(fx.read_attempts(attempts), epic, ticket.id))
         done = _write(runtime, worktree, ["comment", follow_up], input=comment_text(
             ticket.id, ref, ticket.pr.number, rounds, deferrable))

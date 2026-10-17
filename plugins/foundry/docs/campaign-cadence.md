@@ -49,7 +49,8 @@ included, is refused for lack of approval.
 | `in-progress`, branch present, no PR, otherwise | `implement` |
 | `in-progress`, no branch, no PR | `start` `in_progress_branch_absent` (resume) |
 | `review`, no branch, no PR (a review state implies a PR) | `suspend` `review_state_without_branch_or_pr` |
-| open PR whose head is not the branch head, the last implementation or correction attempt ended on the branch head | `open-pr` `correction_not_pushed` |
+| open PR whose head is not the branch head, the last implementation or correction attempt ended on the branch head, and the PR head is an ancestor of the branch head (`branch_contains_pr`, PAT-237) | `open-pr` `correction_not_pushed` |
+| the same, the PR head is not an ancestor of the branch head (moved on the remote only, diverged, or unknown to the local repository) | `suspend` `pr_head_not_in_branch` |
 | open PR, no review proof on the exact diff, or diff unobservable, fewer than `MAX_REVIEW_ROUNDS` (3) recorded rounds | `review` |
 | the same, at `MAX_REVIEW_ROUNDS` recorded rounds | `suspend` `review_rounds_exhausted` |
 | open PR, the review ledger or a proof is corrupt, invalid or inconsistent (`ProofIntegrityError`, `routing.py`), which is not "no review" | `suspend` `review_proof_integrity` |
@@ -139,7 +140,9 @@ The `ticket` objects of the output (`asdict` of `TicketFacts`, `campaign_cadence
 beside the fields of the first version of `CADENCE_CONTRACT` (PAT-216), the fields added
 since: `branch_sha`, `ahead`, `implemented` (PAT-217), `fix_before_merge`, `review_rounds`,
 `corrections` (PAT-218), `deferral` (PAT-141), `fix_description`, `description_corrected`
-(PAT-227). `CADENCE_CONTRACT` is unchanged, so a reader that validates the object strictly
+(PAT-227), `branch_contains_pr` (PAT-237: `true` or `false` for the ticket in focus when its last
+attempt ended on the branch head and the branch head differs from the head of its open PR; `null`
+otherwise). `CADENCE_CONTRACT` is unchanged, so a reader that validates the object strictly
 must accept them. `review` also takes the value `integrity`. At most one branch is read per
 ticket: `_branch_for` takes the first name in sorted order when several branches match the
 ticket, with no ambiguity signal (a limit, covered by
