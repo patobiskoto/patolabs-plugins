@@ -1301,8 +1301,8 @@ def accept(issue_id, flags=()):
         raise SystemExit(
             f"⛔ Acceptation interrompue ou refusée pour {issue_id}. Cause : {cause}\n"
             f"`{status_command}` relit l'état. Si le reçu est écrit sans l'état natif, "
-            "relance exactement la même commande (aucun second reçu) ; aucun retry "
-            "automatique."
+            "relance exactement la même commande selon ce que dit `--status` (aucun "
+            "second reçu) ; aucun retry automatique."
         ) from None
     print(f"✅ {issue_id} → done · acceptation humaine · {issue.acceptance_source}")
 

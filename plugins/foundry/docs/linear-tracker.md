@@ -1181,9 +1181,9 @@ chosen in `_project_native_state` only after the generations 1..n and
 `previous_projection_digest` chain of the review receipts are checked, by the same
 helper as the projection (`_check_review_chain`): else `Linear lifecycle review chain
 invalid`, or `Linear lifecycle state proof malformed` for a non-integer or non-positive
-generation. The readback looks the history up by the
-issue id the command was given, not by the `identifier` of the readback. It is
-observation only: the State is not written again and there is no retry, as PAT-ADR-0006
+generation. The readback looks the history up by the issue id the command was given, not
+by the `identifier` of the readback. It is observation only:
+the State is not written again and there is no retry, as PAT-ADR-0006
 S2 requires (one single write, no automatic or silent retry); any other divergence still
 fails closed. Observed on 2026-10-17 (campaign PAT-221): Foundry set In Review, and the
 native State was back to In Progress 292 ms later, which failed the `open-pr` effect.
@@ -1232,11 +1232,11 @@ command again unconditionally only when the native state is `done`. For `backlog
 est refusée", because the replay refuses any other native state (`native state is ..., expected
 ...` in `LinearTracker.accept_issue`) and the status does not carry `from_state`
 (`acceptance_coordinates` is unchanged, as PAT-ADR-0023 binds them). For any other native
-state it says the state is not a replay state. `FROM_STATES` is also the
-Linear set of admitted predecessors (`_HUMAN_ACCEPTANCE_PREDECESSORS`): one set, not two. A
-misspelled flag lists `--decision-file=<chemin>, --human-verdict=<verdict>, --status` as the
-allowed ones. A repeated `--human-verdict=` or `--decision-file=` is
-refused before any read. No campaign step calls it (`_MUTATING_STEPS` in
+state it says the state is not a replay state. `FROM_STATES` is also the Linear set of
+admitted predecessors (`_HUMAN_ACCEPTANCE_PREDECESSORS`): one set, not two. A misspelled
+flag lists `--decision-file=<chemin>, --human-verdict=<verdict>, --status` as the allowed
+ones. A repeated `--human-verdict=` or `--decision-file=` is refused before any read.
+No campaign step calls it (`_MUTATING_STEPS` in
 `campaign_runtime.py` is unchanged). The receipt traces the decision; it does not
 authenticate the person. An architecture delegation authorizes no acceptance: each
 acceptance needs its own decision.
@@ -1311,9 +1311,9 @@ receipt and any changed body or criteria (`check_against_body`, zero criteria in
 then requires the native state to be the decision's `from_state` or `done`, and projects the
 State. It does not run `verify_evidence` again and does not repeat the Epic, closure audit
 and children refusals (deduced from the code order; those run after the replay branch
-returns). The digest is the sha256 of the
-canonical JSON with `ensure_ascii=True` (`canonical` in `acceptance_decision.py`) and the
-comparison is exact, with no Unicode normalization (no such call in the module): a replay file
+returns). The digest is the sha256 of the canonical JSON with `ensure_ascii=True`
+(`canonical` in `acceptance_decision.py`) and the comparison is exact,
+with no Unicode normalization (no such call in the module): a replay file
 whose text differs in any code point, including a composed versus a decomposed accent in
 `unknowns`, is a different decision and is refused. A wrong decision, or a body edited between
 receipt and projection, leaves the issue in conflict with no correction path here. The body
