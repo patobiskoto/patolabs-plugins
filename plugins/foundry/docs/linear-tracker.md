@@ -1153,7 +1153,7 @@ PAT-76 additionally covers an exact, durable Foundry `state-in-progress` then
 `state-review` sequence whose native State later regresses from Review to
 `in-progress`. For that second path, Foundry re-reads Linear's complete bounded
 `stateHistory` and requires an actual native In Progress → Review → In Progress span,
-with Review reached after the matching receipt was written. An interrupted review
+with Review reached at or after the matching receipt was written. An interrupted review
 write with no observed native Review remains a conflict. In either case, a normal
 Foundry read still projects the already-
 receipted `review`, PR coordinates and AC result. It creates, rewrites and infers no
@@ -1174,18 +1174,24 @@ of the native `review` State (`_bounded_issue_update`, `_review_readback_regress
 `tooling/foundry/trackers/linear.py`) accepts a native `in-progress` State instead of
 raising `Linear issue divergent after bounded write` only when
 `_review_regression_proven` finds the In Progress → Review → In Progress span, with
-Review reached after the creation time of the latest generation's `state-review`
-receipt (`_receipt_created_at`, the same rule as the PAT-76 projection). It is
-observation only: the State is not written again and there is no retry, as PAT-ADR-0006
-S2 requires (one single write, no automatic or silent retry); any other divergence still
-fails closed. Observed on 2026-10-17 (campaign PAT-221): Foundry set In Review, and the
-native State was back to In Progress 292 ms later, which failed the `open-pr` effect.
-Deduced, not observed: that move is the work of the team's `start` automation, because
-`stateHistory` (query in `trackers/linear.py`) carries no author. Observed the same
-day, read-only, with `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the team's Git automation
-rules are `start` → In Progress and `review` → In Review. That `start` fires when the
-PR opens is also deduced, not verified. No Linear configuration was changed (decision
-of PAT-230).
+Review reached at or after the creation time of the latest generation's `state-review`
+receipt (`review_receipt_at <= review_start` in `_review_regression_proven`;
+`_receipt_created_at`, the same rule as the PAT-76 projection). That latest receipt is
+chosen in `_project_native_state` only after the generations 1..n and
+`previous_projection_digest` chain of the review receipts are checked, by the same
+helper as the projection (`_check_review_chain`): else `Linear lifecycle review chain
+invalid`, or `Linear lifecycle state proof malformed` for a non-integer or non-positive
+generation. The readback looks the history up by the issue id the command was given, not
+by the `identifier` of the readback. It is observation only: the State is not written again
+and there is no retry, as PAT-ADR-0006 S2 requires (one single write, no automatic or silent
+retry); any other divergence still fails closed. Observed on 2026-10-17 (campaign PAT-221):
+Foundry set In Review, and the native State was back to In Progress 292 ms later, which
+failed the `open-pr` effect. Deduced, not observed: that move is the work of the team's
+`start` automation, because `stateHistory` (query in `trackers/linear.py`) carries no
+author. Observed the same day, read-only, with `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the
+team's Git automation rules are `start` → In Progress and `review` → In Review. That `start`
+fires when the PR opens is also deduced, not verified. No Linear configuration was changed
+(decision of PAT-230).
 
 PAT-74 exercised the second path in the private PAT-61 Linear sandbox: its native
 history showed In Progress → In Review → In Progress after Foundry's start/review
@@ -1218,11 +1224,20 @@ foundry_cli.py issue accept <ID> --status
 `_ACCEPT_FLAG_PREFIXES`) accepts one issue on the explicit decision of the maintainer, which
 the coordinator transmits. `--status` is read-only, takes no other flag and prints one of
 `aucune acceptation humaine`, `accepté`, `reçu écrit, état non projeté` or `inconnu`
-(`write.issue_acceptance_state`). A repeated `--human-verdict=` or `--decision-file=` is
-refused before any read. No campaign step calls it (`_MUTATING_STEPS` in
-`campaign_runtime.py` is unchanged). The receipt traces the decision; it does not
-authenticate the person. An architecture delegation authorizes no acceptance: each
-acceptance needs its own decision.
+(`write.issue_acceptance_state`). `reçu écrit, état non projeté` tells to run the same
+command again unconditionally only when the native state is `done`. For `backlog`, `ready` or
+`in-progress` (`_ACCEPT_RETRY_STATES` in `issue.py`: `acceptance_decision.FROM_STATES` plus
+`done`) it adds "si l'état natif est encore celui de la décision (`from_state`) ; sinon elle
+est refusée", because the replay refuses any other native state (`native state is ..., expected
+...` in `LinearTracker.accept_issue`) and the status does not carry `from_state`
+(`acceptance_coordinates` is unchanged, as PAT-ADR-0023 binds them). For any other native
+state it says the state is not a replay state. `FROM_STATES` is also the Linear set of
+admitted predecessors (`_HUMAN_ACCEPTANCE_PREDECESSORS`): one set, not two. A misspelled
+flag lists `--decision-file=<chemin>, --human-verdict=<verdict>, --status` as the allowed
+ones. A repeated `--human-verdict=` or `--decision-file=` is refused before any read.
+No campaign step calls it (`_MUTATING_STEPS` in `campaign_runtime.py` is unchanged). The
+receipt traces the decision; it does not authenticate the person. An architecture delegation
+authorizes no acceptance: each acceptance needs its own decision.
 
 **Decision file.** A closed JSON document, parsed by `tooling/foundry/acceptance_decision.py`
 (duplicate keys, non-finite numbers and extra or missing keys are refused). Top-level keys,
@@ -1238,23 +1253,29 @@ counted as evidence). Evidence types are the closed list `EVIDENCE_TYPES`:
 `postmerge_review.restituted_reports`, so only a confirmed report counts; an isolated,
 unconfirmed or other-hash record is refused) and `issue` (`id`, an issue of the same
 project other than the accepted one, checked with `validate_issue_binding`). A checked box
-or a native state is not evidence. Adding a type is a code and test change. The size bound
-is `advisory_schema.MAX_COMMENT_BYTES`, applied to the file and to the final receipt body;
-it is the bound retained for advisory comments, not a qualification of Linear's maximum
-comment size (unknown).
+or a native state is not evidence. The only check on a criterion's evidence is structural
+(at least one item, and each item exists in the same project); nothing checks that the cited
+evidence supports that criterion, which stays the maintainer's judgement. Adding a type is a
+code and test change. The size bound is `advisory_schema.MAX_COMMENT_BYTES`
+(`acceptance_decision.MAX_BYTES`), one value applied to the file read, to the canonical
+document and to the final receipt body. Deduced: the receipt is always larger than the
+canonical document, as both are compact `ensure_ascii` JSON and the receipt embeds the document
+(`_lifecycle_marker`, `canonical`); a file written with indentation can exceed the bound
+while its compact receipt would not. The bound is retained for advisory comments, not a
+qualification of Linear's maximum comment size (unknown).
 
 **Refusals before any write** (`LinearTracker.accept_issue`; locally, before any read,
 `write.validate_acceptance_request`: missing or different verdict, other provider, invalid
 document, document `issue` different from the argument, `from_state` not admitted). After
 the fresh read: an Epic (use `issue close-epic`), a closure audit, an issue with children,
 zero criteria, any `state-review`, `state-done`, `acceptance`, `acceptance-override` or
-`cockpit-evidence` receipt or a PR projected by such a Foundry receipt (use `issue merge`); a PR
-linked natively by an integration or merged outside Foundry is not read and so not refused
-(deduced: `pr_url` comes only from Foundry receipts), a native state outside
-`backlog`, `ready`, `in-progress` or different from `from_state`, a natively `dropped`
-issue, a body, criterion count, text or order that differs from the decision, invalid
-evidence, and a receipt beyond the size bound. A start receipt (`state-in-progress`) is
-allowed.
+`cockpit-evidence` receipt or a PR projected by such a Foundry receipt (use `issue merge`), a
+native state outside `backlog`, `ready`, `in-progress` or different from `from_state`, a
+natively `dropped` issue, a body, criterion count, text or order that differs from the
+decision, invalid evidence, and a receipt beyond the size bound. Limits of this list: a PR
+linked natively by an integration or merged outside Foundry is not read and so not
+refused (deduced: `pr_url` comes only from Foundry receipts), and a start receipt
+(`state-in-progress`) is allowed.
 
 **Receipt and sequence.** Operation `acceptance-decision` (in `_LIFECYCLE_OPERATIONS`). Its
 payload is exactly `native_state_id` (the `done` State id, as for `state-done`),
@@ -1281,8 +1302,24 @@ decisions, reads as a conflict. A body or criteria changed after the decision re
 conflict (`malformed or stale`), as for a review proof. Between the receipt and the State
 projection the strict read refuses (`Linear native state changed outside lifecycle`);
 the recovery is to run exactly the same command, which converges on the receipt and writes
-only the State. A wrong decision, or a body edited between receipt and projection, leaves
-the issue in conflict with no correction path here.
+only the State. That replay branch (`recorded` in `LinearTracker.accept_issue`) compares the
+decision digest and rereads the lifecycle projection, which refuses a decision next to a
+`state-review`, `state-done`, `acceptance`, `acceptance-override` or `cockpit-evidence`
+receipt and any changed body or criteria (`check_against_body`, zero criteria included). It
+then requires the native state to be the decision's `from_state` or `done`, and projects the
+State. It does not run `verify_evidence` again and does not repeat the Epic, closure audit
+and children refusals (deduced from the code order; those run after the replay branch
+returns). The digest is the sha256 of the canonical JSON with `ensure_ascii=True`
+(`canonical` in `acceptance_decision.py`) and the comparison is exact, with no Unicode
+normalization (no such call in the module): a replay file whose text differs in any code
+point, including a composed versus a decomposed accent in `unknowns`, is a different
+decision and is refused. A wrong decision, or a body edited between receipt and projection,
+leaves the issue in conflict with no correction path here. The body is bound as a whole
+(`body_sha256` is the sha256 of the full description, though the criterion digests ignore
+the checkbox state): ticking a criterion box after the acceptance changes the body and puts
+the issue in conflict permanently (`malformed or stale`), so leave the boxes as they were
+when the decision was written (`tests/test_issue_acceptance.py`,
+`test_ticking_a_box_after_the_decision_makes_it_stale`).
 
 **Epic closure and release.** The Epic closure audit counts a child read this way as
 accepted (same positive rule as for a review proof) and binds its coordinates, so the

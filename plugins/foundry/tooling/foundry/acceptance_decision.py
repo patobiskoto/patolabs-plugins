@@ -35,7 +35,8 @@ _EVIDENCE_KEYS = {
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _ISSUE_ID = re.compile(r"[A-Z][A-Z0-9]{0,15}-[1-9][0-9]{0,8}\Z")
 _CRITERION_ID = re.compile(r"ac-[1-9][0-9]{0,3}\Z")
-_STATES = frozenset({"backlog", "ready", "in-progress"})
+# Native states a human decision may start from; the Linear tracker imports this set.
+FROM_STATES = frozenset({"backlog", "ready", "in-progress"})
 
 
 class AcceptanceDecisionError(ValueError):
@@ -104,7 +105,7 @@ def validate(document, issue_id: str | None = None) -> dict:
         )
     _digest(document["body_sha256"], "body_sha256")
     _digest(document["ac_digest"], "ac_digest")
-    if document["from_state"] not in _STATES:
+    if document["from_state"] not in FROM_STATES:
         raise AcceptanceDecisionError("from_state : état natif observé non admis")
     if document["authority"] != AUTHORITY:
         raise AcceptanceDecisionError(f"autorité `{AUTHORITY}` requise")
