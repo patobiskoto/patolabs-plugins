@@ -1,5 +1,6 @@
 """PAT-218: review and correction in a campaign; doubles only, no network, no real claude."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -867,9 +868,34 @@ def test_a_correction_through_step_runs_in_the_native_sandbox(env):
     assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
     settings = json.loads(argv[argv.index("--settings") + 1])
     assert settings["sandbox"]["enabled"] is True
-    import os
-
     assert os.path.realpath(cwd) in settings["sandbox"]["filesystem"]["allowWrite"]
     common = str(Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git")
     assert os.path.join(os.path.realpath(common), "objects") in (
         settings["sandbox"]["filesystem"]["allowWrite"])
+
+
+def test_the_version_probe_runs_where_and_as_the_session_launches(env, monkeypatch):
+    """PAT-236: `claude --version` runs in the directory, with the environment, of the session
+    it precedes (implementation, review, correction), as in the other two headless runners."""
+    from foundry import routing_facades
+
+    # every route declares a minimum, so that every session is preceded by a probe
+    monkeypatch.setattr(routing_facades, "claude_host_version_requirement",
+                        lambda model, observed: {"status": "conforming", "required": "2.1.293"})
+    monkeypatch.setenv("FOUNDRY_DATA", os.environ["FOUNDRY_DATA"])
+    to_review(env)
+    roomy(env)
+    env.world.reviews.append(result_text(quality="blocked", verdict="fail"))
+    step(env), step(env)
+    calls = [c for c in env.world.calls if c[0][0] == "claude"]
+    assert any(c[0][1] == "--version" for c in calls)
+    pairs = 0
+    for index, (argv, cwd, child_env, _input) in enumerate(calls):
+        if argv[1] != "--version":
+            continue
+        launch = next(c for c in calls[index + 1:] if c[0][1] != "--version")
+        assert os.path.realpath(cwd) == os.path.realpath(launch[1]) != os.path.realpath(
+            env.runtime.root)
+        assert child_env == launch[2]
+        pairs += 1
+    assert pairs >= 3  # implementation, review, correction

@@ -461,8 +461,10 @@ def _save_summary(path: Path, attempt: str, text: str) -> str:
     return str(target)
 
 
-def session_plan(runtime: Runtime, route, policy) -> dict:
-    """Model, effort, child environment and host-version check of one routed session."""
+def session_plan(runtime: Runtime, route, policy, cwd=None, extra_env=None) -> dict:
+    """Model, effort, child environment and host-version check of one routed session.  The check
+    runs ``claude --version`` in ``cwd`` (the directory the session will run in, else the main
+    checkout) and with the session environment, so that the same ``claude`` answers (PAT-236)."""
     from foundry.command_runtime import _claude_child_environment
     from foundry.routing_facades import (
         claude_effort_parameters, claude_headless_host_version_requirement,
@@ -471,16 +473,16 @@ def session_plan(runtime: Runtime, route, policy) -> dict:
 
     model = claude_invocation_model(route.model, project_models=policy.claude_models)
     effort = claude_effort_parameters(route, invocation_model=model)["transmitted"]
-    env = _claude_child_environment()
+    env = {**_claude_child_environment(), **(extra_env or {})}
     claude_headless_host_version_requirement(
-        model, "claude", runner=runtime.runner, env=env, cwd=runtime.root,
+        model, "claude", runner=runtime.runner, env=env, cwd=cwd or runtime.root,
     )
     return {"kind": "session", "model": model, "effort": effort, "env": env,
             "route": {"tier": route.selected_tier, "model": model, "effort": effort}}
 
 
 def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
-          attempts: Path) -> dict:
+          attempts: Path, cwd=None) -> dict:
     """Everything that can fail on configuration, resolved before the attempt is claimed."""
     if kind == "start":
         return {"argv": runtime.command("issue", "start", ticket.id), "route": None}
@@ -508,7 +510,7 @@ def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
     from foundry.routing import RoutingPolicy
 
     policy = RoutingPolicy.load(runtime.root)
-    return session_plan(runtime, policy.resolve("implementer", "claude"), policy)
+    return session_plan(runtime, policy.resolve("implementer", "claude"), policy, cwd)
 
 
 def _session_id(attempt: str) -> str:
@@ -721,19 +723,24 @@ def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, mar
     except approval.ApprovalError as exc:
         return StepResult(cadence.Decision("refuse", reason=f"approval_{exc.code}"), "stopped")
     try:
+        cwd = None  # PAT-236: the directory a session runs in, where its `claude --version` runs
+        if decision.kind in ("implement", "correct", "review"):
+            cwd = ensure_worktree(runtime, ticket.id, refs)
+            if decision.kind == "review":  # `launch_review` runs the session in the resolved path
+                cwd = cwd.resolve()
         if decision.kind == "review":
-            plan = campaign_review.plan_review(runtime, epic, ticket, path)
+            plan = campaign_review.plan_review(runtime, epic, ticket, path, cwd)
         elif decision.kind == "correct":
             plan = campaign_review.plan_correct(
                 runtime, decision, epic, ticket, path, tracker,
-                (granted["max_sessions"], granted["max_sessions_per_issue"]))
+                (granted["max_sessions"], granted["max_sessions_per_issue"]), cwd)
             for kind in ("suspend", "refuse"):
                 if kind in plan:
                     reason, evidence = plan[kind]
                     return StepResult(cadence.Decision(kind, ticket.id, reason, evidence),
                                       "stopped")
         else:
-            plan = _plan(runtime, decision.kind, epic, ticket, path)
+            plan = _plan(runtime, decision.kind, epic, ticket, path, cwd)
             plan.update(tracker=tracker, project=project)
         if decision.kind == "implement":
             issue = tracker.get_issue(ticket.id)
@@ -742,7 +749,7 @@ def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, mar
             )
         if plan.get("kind") == "session" and plan.get("role") != "reviewer":
             # PAT-236: read before the claim, so that an error costs no attempt (see `_plan`)
-            plan["git_dirs"] = git_dirs(runtime, ensure_worktree(runtime, ticket.id, refs))
+            plan["git_dirs"] = git_dirs(runtime, cwd)
         if decision.kind in PUSH_KINDS:  # each may run `issue openpr`, which pushes
             mismatch = branch_mismatch(
                 runtime, ensure_worktree(runtime, ticket.id, refs), ticket.id, refs)

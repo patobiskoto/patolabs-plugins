@@ -822,11 +822,12 @@ def test_saved_summary_masks_credential_shaped_values(tmp_path):
 
 def test_saved_summary_is_cut_on_a_character_boundary(tmp_path):
     """PAT-236: a cut in the middle of a multi-byte character left a file that does not decode."""
-    text = "é" * (ce.MAX_SUMMARY_BYTES // 2 + 5)  # two bytes each: the limit falls between two
+    text = "€" * (ce.MAX_SUMMARY_BYTES // 3 + 5)  # three bytes each: the limit falls inside one
+    assert ce.MAX_SUMMARY_BYTES % 3 != 0
     saved = Path(ce._save_summary(tmp_path / "attempts.jsonl", "a" * 16, text))
     raw = saved.read_bytes()
     assert 0 < len(raw) <= ce.MAX_SUMMARY_BYTES
-    assert raw.decode("utf-8") == "é" * (len(raw) // 2)
+    assert raw.decode("utf-8") == "€" * (ce.MAX_SUMMARY_BYTES // 3)
     odd = "a" + "é" * ce.MAX_SUMMARY_BYTES  # the limit falls inside the second byte of a letter
     cut = Path(ce._save_summary(tmp_path / "attempts.jsonl", "b" * 16, odd)).read_bytes()
     assert len(cut) <= ce.MAX_SUMMARY_BYTES and cut.decode("utf-8").startswith("aé")

@@ -1279,25 +1279,26 @@ translation to `claude-haiku-5-5`. The check runs where the profile is bound, in
   unprobed model availability; refusing every unobserved host instead would deny the
   tier on conforming hosts whenever the transcript is not readable. On an observed
   conforming host the context carries `status: "conforming"`.
-- Headless runners: the DevHub command runner and the isolated campaign executor
+- Headless runners: the DevHub command runner, the isolated campaign executor and the
+  effects of the Epic campaign cadencer (`campaign_effects.py::session_plan`, PAT-236)
   (`claude --print --model ... --effort ...`) bind no profile, so they apply the same
   rule to the binary itself with `claude_headless_host_version_requirement()`. Only for
   a pin that declares a minimum, they first run `claude --version` (local, unpaid)
-  through the same runner, the same child environment and the same working directory
-  as the launch (the command root, or the campaign worktree), so the name `claude`
-  resolves for the probe as it does for the launch, a directory-dependent shim
-  included. Below 2.1.293 they raise the same `RoutingConfigError` before any provider
-  invocation. A project `claude_models` translation to a dated snapshot of the line
-  (`claude-haiku-5-5-YYYYMMDD`) carries the same minimum in these runners. In the hook
-  such an identifier is refused first for its real blocker, whatever the host version:
-  no preloaded pinned profile exists for it (`aucun profil épinglé préchargé`). An
-  answer that is absent, fails or is not `X.Y.Z (Claude Code)` is `unknown`: the launch
-  proceeds and one line on standard error carrying `CLAUDE_HOST_VERSION_UNOBSERVED` and
-  the required version says so at every launch. It is a direct write: no warning
-  filter or other process-wide state is touched (safe across the campaign threads, and
-  an operator's `-W` / `PYTHONWARNINGS` settings neither hide nor escalate it); these
-  runners have no structured warning channel and their receipts are unchanged. The
-  child environment allow-list (R6) is untouched.
+  through the same runner, the same child environment and the same working directory as
+  the launch (the command root, the campaign worktree, or the ticket worktree of the
+  cadencer), so the name `claude` resolves for the probe as it does for the launch, a
+  directory-dependent shim included. Below 2.1.293 they raise the same
+  `RoutingConfigError` before any provider invocation. A project `claude_models`
+  translation to a dated snapshot of the line (`claude-haiku-5-5-YYYYMMDD`) carries the
+  same minimum in these runners. In the hook such an identifier is refused first for its
+  real blocker, whatever the host version: no preloaded pinned profile exists for it
+  (`aucun profil épinglé préchargé`). An answer that is absent, fails or is not `X.Y.Z
+  (Claude Code)` is `unknown`: the launch proceeds and one line on standard error
+  carrying `CLAUDE_HOST_VERSION_UNOBSERVED` and the required version says so at every
+  launch. It is a direct write: no warning filter or other process-wide state is touched
+  (safe across the campaign threads, and an operator's `-W` / `PYTHONWARNINGS` settings
+  neither hide nor escalate it); these runners have no structured warning channel and
+  their receipts are unchanged. The child environment allow-list (R6) is untouched.
 - Limits: a session resumed after a host update reports the previous version until the
   running host has written a record. `routing show`, `routing resolve` and `doctor`
   bind nothing and observe no host version: they neither apply nor certify the minimum.

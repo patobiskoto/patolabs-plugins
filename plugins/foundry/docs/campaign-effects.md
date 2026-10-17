@@ -59,7 +59,10 @@ detached at the remote default branch for a new ticket, or on the existing ticke
 `campaign_effects.py`, `campaign_review.py` or `campaign_defer.py` runs `git worktree remove`
 or deletes it (searched, PAT-236); a finished ticket keeps its directory under the worktrees
 directory until a human removes it, and `ensure_worktree` reuses an existing directory as is.
-`--worktrees-dir` is resolved against the current directory when the command starts.
+`--worktrees-dir` is resolved against the current directory when the command starts (`cli`).
+For an `implement`, `correct` or `review` pass, `_step` creates the worktree (`ensure_worktree`)
+and, for `implement` and `correct`, reads its git directories (`git_dirs`) before the attempt
+is claimed: an error there is a `failed` outcome with `phase: plan` and consumes no attempt.
 
 ## The implementation session
 
@@ -81,8 +84,8 @@ the same `_launch` and `session_argv`, so it has the same sandbox.
   translated by `claude_invocation_model` and `claude_effort_parameters`, as in
   `ClaudeCommandEffectProvider._invoke` (`command_runtime.py`); a pin with a minimum host
   version is checked by `claude_headless_host_version_requirement` before the attempt is
-  claimed (`session_plan`: it asks `claude --version` from the main checkout `runtime.root`,
-  while the session itself runs in the ticket worktree, `_launch`; AGENTS.md#R7). The route is
+  claimed (`session_plan`: `claude --version` runs in the directory the session runs in, the
+  ticket worktree, with the session environment, `plan["env"]`; AGENTS.md#R7). The route is
   recorded in the `started` line.
 - The prompt (`implement_prompt`) goes through standard input: it carries the issue title
   and body read by the coordinator (`tracker.get_issue`, before the attempt is claimed),
@@ -103,7 +106,9 @@ summary of an implementation session was the reply to a background-command notif
 published as the PR body unchanged; the cause is deduced (the session ran its tests as a
 background command and `claude --print` returned its last turn), not observed. The criterion is
 mechanical (`usable_summary`): a summary is usable when its first line is exactly
-`FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`) and something follows. The implementation and correction
+`FOUNDRY_SUMMARY_V1` (`SUMMARY_MARK`) and something follows. A saved summary file that does
+not decode as UTF-8 is read as no summary (`_plan`) and published as `SUMMARY_UNUSABLE_BODY`,
+and `_save_summary` cuts the text on a character boundary so that its file decodes. The implementation and correction
 prompts ask for that line. `published_summary` returns the summary without that line, or, when
 it is empty, lacks the line or has nothing after it, the fixed text `SUMMARY_UNUSABLE_BODY`
 (`Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the review rounds.`); the
@@ -216,32 +221,35 @@ home, the network, other hosts and versions.
   check of `docs/commit-privacy.md`) and a global hooks directory, when enabled, run on the
   push of `issue openpr` (deduced from those tests; `issue openpr` itself was not run).
 - `issue openpr` pushes the branch the worktree HEAD names (`openpr`, `issue.py`), and the
-  session can move that HEAD (it writes the worktree's git directory, above). Before an `open-pr`, `review` or `defer-remarks` effect
-  (`PUSH_KINDS`: each may run `issue openpr`) and, for the description correction (PAT-227), after its
-  session and before its `issue openpr` (`publish_description`), `branch_mismatch` reads it with `git rev-parse
-  --abbrev-ref HEAD`; when it is not the ticket's branch (`campaign_cadence._branch_for`) or is
-  the default branch (`registry.default_branch`, else `main`), the pass returns `suspend`
+  session can move that HEAD (it writes the worktree's git directory, above). Before an
+  `open-pr`, `review` or `defer-remarks` effect (`PUSH_KINDS`: each may run `issue openpr`) and,
+  for the description correction (PAT-227), after its session and before its `issue openpr`
+  (`publish_description`), `branch_mismatch` reads it with `git rev-parse --abbrev-ref HEAD`;
+  when it is not the ticket's branch (`campaign_cadence._branch_for`) or is the default branch
+  (`registry.default_branch`, else `main`), the pass returns `suspend`
   `worktree_branch_mismatch`, claims no attempt and runs no `issue openpr`
   (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`); after a
   description correction session the attempt is already claimed, so it fails with `error`
   `description_worktree_branch_mismatch` and publishes nothing
   (`test_the_description_is_not_published_when_the_session_moved_the_worktree_head`). The check
-  is point-in-time (residual, deduced from the code): `issue openpr` reads the HEAD again
-  when it runs (`openpr`, `issue.py`, `rev-parse --abbrev-ref HEAD` then `git push`), after
-  `branch_mismatch`, and nothing holds the worktree between the two, so a
-  process that outlives the session (whether `claude` ends one it started is unknown) or the
-  reviewer session, which is not in the sandbox and writes the same worktree as the same OS
-  user (below), could move HEAD in that interval; a test of the interval has not been
-  written.
+  is point-in-time (residual, deduced from the code): `issue openpr` reads the HEAD again when
+  it runs (`openpr`, `issue.py`, `rev-parse --abbrev-ref HEAD` then `git push`), after
+  `branch_mismatch`, and nothing holds the worktree between the two, so a process that outlives
+  the session (whether `claude` ends one it started is unknown) or the reviewer session, which
+  runs in the same worktree, unsandboxed ("The reviewer session and its limit"), could move HEAD
+  in that interval; a test of the interval has not been written. Deduced from the code: in the
+  `review` effect the reviewer session runs between `branch_mismatch` (before the claim) and the
+  `issue openpr` of `update_pr_body`, so the interval is real for that effect.
 - `.gitattributes` and `.lfsconfig` of the worktree are files the session writes (it holds the
   worktree) and that no code of the campaign reads or checks (searched, PAT-236). Deduced from
-  git, not observed here: a `.gitattributes` can name a `filter`, `diff` or `textconv` driver
-  but its command comes from the configuration, which the sandbox protects (common `config`,
-  `~/.gitconfig`), so it runs only a driver that configuration already defines. If `git-lfs` is
-  installed and enabled for the user, its filter and `pre-push` hook run outside the sandbox
-  in the git commands of the cadencer (the push of `issue openpr` included), and a
-  `.lfsconfig` can change the endpoint it contacts. Unknown: whether `git-lfs` is installed
-  on the machine that runs the cadencer, and what it would do here; not tested.
+  git, not observed here: a `.gitattributes` can name a `filter`, `diff` or `merge` driver (and
+  `textconv` is a key of a `diff` driver, set in the configuration) but the command of a driver
+  comes from the configuration, which the sandbox protects (common `config`, `~/.gitconfig`), so
+  it runs only a driver that configuration already defines. If `git-lfs` is installed and its
+  hooks are installed in the repository's hooks directory, its filter and `pre-push` hook run
+  outside the sandbox in the git commands of the cadencer (the push of `issue openpr` included),
+  and a `.lfsconfig` can change the endpoint it contacts. Unknown: whether `git-lfs` is
+  installed on the machine that runs the cadencer, and what it would do here; not tested.
 - Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
   `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
   session could redirect the git directory to a repository of its own whose configuration
@@ -719,10 +727,12 @@ branch head, so the next pass launches a new session with a new identity: retrie
 bounded only by `max_sessions` and `max_sessions_per_issue` of the approval (`refusal`: the
 `started` lines of `SESSION_KINDS` of the Epic, over every run, then of the ticket). Each
 session is launched with `--max-budget-usd` set to the `--budget-usd` of the run that launches
-it (`session_argv`), so the worst-case spend is the sum of those per-session values, that is
-`max_sessions` times the largest `--budget-usd` used, provided `claude` enforces the cap
-(whether it can be exceeded is not verified here: unknown). `defer-remarks` and `start` launch
-no session. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
+it (`session_argv`; a review session carries it through `reviewer_argv`, and a review counts
+in the ceiling although a carried review launches nothing), so the worst-case spend is at most
+the sum of those per-session values, that is at most `max_sessions` times the largest
+`--budget-usd` used, itself at most `MAX_BUDGET_USD` (25.0), provided `claude` enforces the cap
+(whether it can be exceeded is not verified here: unknown). The absolute bound is
+`max_sessions` times `MAX_BUDGET_USD`. `defer-remarks` and `start` launch no session. Tests: `tests/test_campaign_effects.py` (one effect per subprocess, the `claude`
 argv, the allowlisted environment, no replay including after a crash, ceilings, merge only on
 a `merge` decision) and `tests/test_campaign_review.py` (the review path, the reviewer argv,
 strict parsing, escalation, the correction prompt, bounds, partial review, carry, secrets, and
@@ -740,8 +750,9 @@ directory of its `--version` call). Candidate artefacts: the `Bash(...)` rules o
 `ticket`, `kind` of a `finished` line, the `requests` counts of an interrupted run, the
 worst-case spend, the residues of the branch check and of `.gitattributes`/`.lfsconfig`. Code
 behaviour changed without a new constant, CLI verb or option, configuration key or routing
-table: `--worktrees-dir` resolved, summary cut on a character boundary, git directories read
-before the claim.
+table: `--worktrees-dir` resolved, summary cut on a character boundary, an undecodable summary
+file published as `SUMMARY_UNUSABLE_BODY`, git directories read before the claim, and the
+`claude --version` probe run in the directory of the session (`session_plan`).
 
 R5 status (PAT-218): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md`,
 `docs/review-rounds.md`, `AGENTS.md`/`CLAUDE.md` R9 ("What is not coded yet"),
