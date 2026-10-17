@@ -1182,17 +1182,16 @@ chosen in `_project_native_state` only after the generations 1..n and
 helper as the projection (`_check_review_chain`): else `Linear lifecycle review chain
 invalid`, or `Linear lifecycle state proof malformed` for a non-integer or non-positive
 generation. The readback looks the history up by the issue id the command was given, not
-by the `identifier` of the readback. It is observation only:
-the State is not written again and there is no retry, as PAT-ADR-0006
-S2 requires (one single write, no automatic or silent retry); any other divergence still
-fails closed. Observed on 2026-10-17 (campaign PAT-221): Foundry set In Review, and the
-native State was back to In Progress 292 ms later, which failed the `open-pr` effect.
-Deduced, not observed: that move is the work of the team's `start` automation, because
-`stateHistory` (query in `trackers/linear.py`) carries no author. Observed the same
-day, read-only, with `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the team's Git automation
-rules are `start` → In Progress and `review` → In Review. That `start` fires when the
-PR opens is also deduced, not verified. No Linear configuration was changed (decision
-of PAT-230).
+by the `identifier` of the readback. It is observation only: the State is not written again
+and there is no retry, as PAT-ADR-0006 S2 requires (one single write, no automatic or silent
+retry); any other divergence still fails closed. Observed on 2026-10-17 (campaign PAT-221):
+Foundry set In Review, and the native State was back to In Progress 292 ms later, which
+failed the `open-pr` effect. Deduced, not observed: that move is the work of the team's
+`start` automation, because `stateHistory` (query in `trackers/linear.py`) carries no
+author. Observed the same day, read-only, with `_TEAM_GIT_AUTOMATION_STATES_QUERY`: the
+team's Git automation rules are `start` → In Progress and `review` → In Review. That `start`
+fires when the PR opens is also deduced, not verified. No Linear configuration was changed
+(decision of PAT-230).
 
 PAT-74 exercised the second path in the private PAT-61 Linear sandbox: its native
 history showed In Progress → In Review → In Progress after Foundry's start/review
@@ -1236,10 +1235,9 @@ state it says the state is not a replay state. `FROM_STATES` is also the Linear 
 admitted predecessors (`_HUMAN_ACCEPTANCE_PREDECESSORS`): one set, not two. A misspelled
 flag lists `--decision-file=<chemin>, --human-verdict=<verdict>, --status` as the allowed
 ones. A repeated `--human-verdict=` or `--decision-file=` is refused before any read.
-No campaign step calls it (`_MUTATING_STEPS` in
-`campaign_runtime.py` is unchanged). The receipt traces the decision; it does not
-authenticate the person. An architecture delegation authorizes no acceptance: each
-acceptance needs its own decision.
+No campaign step calls it (`_MUTATING_STEPS` in `campaign_runtime.py` is unchanged). The
+receipt traces the decision; it does not authenticate the person. An architecture delegation
+authorizes no acceptance: each acceptance needs its own decision.
 
 **Decision file.** A closed JSON document, parsed by `tooling/foundry/acceptance_decision.py`
 (duplicate keys, non-finite numbers and extra or missing keys are refused). Top-level keys,
@@ -1312,16 +1310,16 @@ then requires the native state to be the decision's `from_state` or `done`, and 
 State. It does not run `verify_evidence` again and does not repeat the Epic, closure audit
 and children refusals (deduced from the code order; those run after the replay branch
 returns). The digest is the sha256 of the canonical JSON with `ensure_ascii=True`
-(`canonical` in `acceptance_decision.py`) and the comparison is exact,
-with no Unicode normalization (no such call in the module): a replay file
-whose text differs in any code point, including a composed versus a decomposed accent in
-`unknowns`, is a different decision and is refused. A wrong decision, or a body edited between
-receipt and projection, leaves the issue in conflict with no correction path here. The body
-is bound as a whole (`body_sha256` is the sha256 of the full description, though the
-criterion digests ignore the checkbox state): ticking a criterion box after the acceptance
-changes the body and puts the issue in conflict permanently (`malformed or stale`), so leave
-the boxes as they were when the decision was written
-(`tests/test_issue_acceptance.py`, `test_ticking_a_box_after_the_decision_makes_it_stale`).
+(`canonical` in `acceptance_decision.py`) and the comparison is exact, with no Unicode
+normalization (no such call in the module): a replay file whose text differs in any code
+point, including a composed versus a decomposed accent in `unknowns`, is a different
+decision and is refused. A wrong decision, or a body edited between receipt and projection,
+leaves the issue in conflict with no correction path here. The body is bound as a whole
+(`body_sha256` is the sha256 of the full description, though the criterion digests ignore
+the checkbox state): ticking a criterion box after the acceptance changes the body and puts
+the issue in conflict permanently (`malformed or stale`), so leave the boxes as they were
+when the decision was written (`tests/test_issue_acceptance.py`,
+`test_ticking_a_box_after_the_decision_makes_it_stale`).
 
 **Epic closure and release.** The Epic closure audit counts a child read this way as
 accepted (same positive rule as for a review proof) and binds its coordinates, so the
