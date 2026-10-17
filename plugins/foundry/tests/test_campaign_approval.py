@@ -14,8 +14,14 @@ NOW = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
 STRUCT = "b" * 64
 
 
-def make_preview(epic="PAT-100", structure=STRUCT, extra="x"):
-    material = {"contract": PREVIEW_CONTRACT, "snapshot": {"root": epic}, "note": extra}
+FAR_MS = 4_102_444_800_000  # 2100-01-01T00:00:00Z
+
+
+def make_preview(epic="PAT-100", structure=STRUCT, extra="x", expires_ms=FAR_MS):
+    material = {
+        "contract": PREVIEW_CONTRACT, "snapshot": {"root": epic}, "note": extra,
+        "policy": {"expires_at": expires_ms},
+    }
     return {**material, "preview_digest": _digest(material), "structure_digest": structure}
 
 
@@ -210,3 +216,117 @@ def test_cli_status_and_check(env, monkeypatch, capsys):
     other, _ = preview_file(env, extra="y")
     assert ca.main(["check", "PAT-100", "--preview-file", other]) == 2
     assert json.loads(capsys.readouterr().err)["refused"] == "preview_digest_mismatch"
+
+
+def test_approval_never_outlives_the_approved_preview(env, monkeypatch):
+    # PAT-234 (215-4 e): preview expires 2 hours after NOW, ttl asks for 24 hours
+    ends = int((NOW + timedelta(hours=2)).timestamp() * 1000)
+    path, preview = preview_file(env, expires_ms=ends)
+    record = do_approve(env, monkeypatch, preview, path)
+    assert record["expires_at"] == "2026-10-16T14:00:00Z"
+    assert ca.check("PAT-100", preview["preview_digest"], STRUCT, NOW + timedelta(hours=1))
+    with pytest.raises(ca.ApprovalExpired):
+        ca.check("PAT-100", preview["preview_digest"], STRUCT, NOW + timedelta(hours=2))
+
+
+class KeptOutput(io.StringIO):
+    def close(self):  # `with writer` closes it; keep the text readable
+        self.flush()
+
+
+def test_shorter_ttl_is_kept_and_expiry_is_shown_before_confirmation(env, monkeypatch):
+    path, preview = preview_file(env)
+    shown = KeptOutput()
+    monkeypatch.setattr(ca, "_open_tty", lambda: (
+        io.StringIO(preview["preview_digest"][:12] + "\n"), shown))
+    record = ca.approve("PAT-100", path, max_sessions=3, max_sessions_per_issue=None,
+                        ttl=timedelta(hours=1), now=NOW)
+    assert record["expires_at"] == "2026-10-16T13:00:00Z"
+    assert "expire 2026-10-16T13:00:00Z" in shown.getvalue()
+    assert "plafonné" not in shown.getvalue()
+    capped = int((NOW + timedelta(hours=2)).timestamp() * 1000)
+    path2, preview2 = preview_file(env, extra="y", expires_ms=capped)
+    shown2 = KeptOutput()
+    monkeypatch.setattr(ca, "_open_tty", lambda: (
+        io.StringIO(preview2["preview_digest"][:12] + "\n"), shown2))
+    ca.approve("PAT-100", path2, max_sessions=3, max_sessions_per_issue=None, now=NOW)
+    assert "expire 2026-10-16T14:00:00Z (plafonné par l'expiration de l'aperçu)" in shown2.getvalue()
+
+
+def test_expired_or_expiryless_preview_is_refused_and_records_nothing(env, monkeypatch):
+    past = int((NOW - timedelta(hours=1)).timestamp() * 1000)
+    path, preview = preview_file(env, expires_ms=past)
+    with pytest.raises(ca.ApprovalError, match="expiré"):
+        do_approve(env, monkeypatch, preview, path)
+    for bad in (None, 0, "soon", 1.5, True):
+        path, preview = preview_file(env, extra=str(bad), expires_ms=bad)
+        with pytest.raises(ca.ApprovalError, match="policy.expires_at"):
+            do_approve(env, monkeypatch, preview, path)
+    assert not ca.journal_path().exists()
+
+
+def test_naive_now_is_a_typed_refusal(env, monkeypatch):
+    path, preview = preview_file(env)
+    naive = datetime(2026, 10, 16, 12, 0)
+    with pytest.raises(ca.ApprovalError, match="naïf"):
+        do_approve(env, monkeypatch, preview, path, now=naive)
+    do_approve(env, monkeypatch, preview, path)
+    with pytest.raises(ca.ApprovalError, match="naïf"):
+        ca.check("PAT-100", preview["preview_digest"], STRUCT, naive)
+
+
+def test_partial_os_write_is_completed(env, monkeypatch):
+    path, preview = preview_file(env)
+    real = __import__("os").write
+    monkeypatch.setattr(ca.os, "write", lambda fd, data: real(fd, bytes(data)[:7]))
+    record = do_approve(env, monkeypatch, preview, path)
+    assert ca.read_journal() == [record]
+
+
+def test_unwritable_journal_is_a_json_refusal_not_a_trace(env, monkeypatch, capsys):
+    path, preview = preview_file(env)
+    journal = ca.journal_path()
+    journal.parent.mkdir(parents=True)
+    journal.symlink_to(env / "elsewhere")  # O_NOFOLLOW refuses the open
+    fake_tty(monkeypatch, preview["preview_digest"][:12])
+    code = ca.main(["approve", "PAT-100", "--preview-file", path, "--max-sessions", "2"])
+    assert code == 2
+    assert json.loads(capsys.readouterr().err)["refused"] == "journal_invalid"
+    assert not (env / "elsewhere").exists()
+
+
+def test_read_waits_for_a_writer_holding_the_lock(env, monkeypatch):
+    import fcntl
+    import os
+    import threading
+    path, preview = preview_file(env)
+    do_approve(env, monkeypatch, preview, path)
+    holder = os.open(ca.journal_path(), os.O_WRONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    done = threading.Event()
+    thread = threading.Thread(target=lambda: (ca.read_journal(), done.set()))
+    thread.start()
+    assert not done.wait(0.3)
+    fcntl.flock(holder, fcntl.LOCK_UN)
+    os.close(holder)
+    assert done.wait(5)
+    thread.join()
+
+
+def test_real_cli_in_a_subprocess_refuses_without_terminal(tmp_path):
+    # PAT-234 (215-5): no monkeypatch; stdin and stdout are pipes, not a terminal
+    import os
+    import subprocess
+    import sys
+    path, _ = preview_file(tmp_path)
+    cli = Path(ca.__file__).resolve().parents[1] / "foundry_cli.py"
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE" and not k.startswith("CODEX_")}
+    env["FOUNDRY_DATA"] = str(tmp_path / "data")
+    result = subprocess.run(
+        [sys.executable, str(cli), "campaign-approval", "approve", "PAT-100",
+         "--preview-file", path, "--max-sessions", "2"],
+        input="", capture_output=True, text=True, env=env, timeout=60,
+    )
+    assert result.returncode == 2, result.stderr
+    assert json.loads(result.stderr)["refused"] == "approver_refused"
+    assert not (tmp_path / "data" / ca.JOURNAL_NAME).exists()

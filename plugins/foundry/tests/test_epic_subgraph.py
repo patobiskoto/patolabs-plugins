@@ -200,6 +200,32 @@ def test_more_than_100_nodes_is_refused():
         FakeLinear(items).get_epic_subgraph(PROJECT, "APP-1")
 
 
+def test_exactly_100_nodes_and_depth_8_are_accepted():
+    kids = tuple(f"APP-{n}" for n in range(2, 101))  # 99 children + root = 100 nodes
+    items = [issue("APP-1", children=kids, issue_type="Epic")]
+    items += [issue(k, parent="APP-1") for k in kids]
+    assert len(FakeLinear(items).get_epic_subgraph(PROJECT, "APP-1")["nodes"]) == 100
+    chain = [issue("APP-1", children=("APP-2",), issue_type="Epic")]
+    for n in range(2, 9):
+        chain.append(issue(f"APP-{n}", parent=f"APP-{n - 1}", children=(f"APP-{n + 1}",)))
+    chain.append(issue("APP-9", parent="APP-8"))  # depth 8
+    graph = FakeLinear(chain).get_epic_subgraph(PROJECT, "APP-1")
+    assert graph["depth"]["reached"] == 8
+
+
+def test_external_blocker_reads_are_capped_before_reading_past_the_ceiling():
+    from foundry.epic_preview import PREVIEW_COLLECTION_LIMIT
+    targets = tuple(f"APP-{n}" for n in range(1000, 1000 + PREVIEW_COLLECTION_LIMIT + 1))
+    items = [issue("APP-1", children=("APP-2",), issue_type="Epic"),
+             issue("APP-2", parent="APP-1", depends=targets)]
+    items += [issue(t) for t in targets]
+    tracker = FakeLinear(items)
+    with pytest.raises(EpicPreviewError, match="plafond"):
+        tracker.get_epic_subgraph(PROJECT, "APP-1")
+    external_reads = [r for r in tracker.reads if r in targets]
+    assert len(external_reads) == PREVIEW_COLLECTION_LIMIT
+
+
 def test_hierarchy_deeper_than_8_is_refused():
     items = [issue("APP-1", children=("APP-2",), issue_type="Epic")]
     for n in range(2, 11):
@@ -267,3 +293,12 @@ def test_tracker_without_capability_refuses_before_any_read(routing_policy):
 
     with pytest.raises(EpicSubgraphUnavailableError):
         preview_epic(Silent(), PROJECT, "APP-1", shared.policy(), routing_policy)
+
+
+def test_tracker_name_is_never_guessed_for_the_neutral_contract(routing_policy):
+    graph = validate_subgraph(FakeLinear(base_issues()).get_epic_subgraph(PROJECT, "APP-1"))
+    raw = graph.value
+    with pytest.raises(EpicPreviewError, match="tracker_name"):
+        build_preview(raw, shared.policy(), routing_policy)
+    named = build_preview(raw, shared.policy(), routing_policy, tracker_name="linear")
+    assert named["authority"]["tracker"] == "linear"

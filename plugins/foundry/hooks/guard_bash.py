@@ -153,19 +153,38 @@ def _push_denies(args, defaults: set, current: str) -> bool:
 _APPROVAL_MODULES = {"campaign-approval", "campaign_approval", "foundry.campaign_approval"}
 
 
+def _approval_invocation(seg) -> bool:
+    """True when the segment *runs* `campaign-approval approve`: the program (after
+    wrappers, then `python*` and its flags) is the module or `foundry_cli`, and `approve`
+    is its verb.  The words in an argument of another program (grep, git commit...) do not
+    match."""
+    cmd, args = _command_and_args(seg)
+    if cmd is None:
+        return False
+    chain = [cmd, *args]
+    if os.path.basename(cmd).startswith("python"):
+        chain = chain[1:]
+        while chain and chain[0].startswith("-"):
+            chain = chain[1:]
+    if not chain:
+        return False
+    program, rest = os.path.basename(chain[0]).removesuffix(".py"), chain[1:]
+    if program == "foundry_cli":
+        return len(rest) >= 2 and rest[0] in _APPROVAL_MODULES and rest[1] == "approve"
+    return program in _APPROVAL_MODULES and bool(rest) and rest[0] == "approve"
+
+
 def approval_deny_reason(command: str) -> str | None:
     """PAT-215: `campaign-approval approve` is a human act; deny it in an agent's Bash.
 
     Independent of any repository binding (no registry read): the approval journal is
     global to the user. Layer 3 of docs/campaign-approval.md; `bash -c` indirection stays
-    out of scope, as for R1."""
+    out of scope, as for R1. PAT-234: only a segment that runs the program is denied."""
     for seg in _segments(_tokens(command)):
-        for index, token in enumerate(seg[:-1]):
-            if os.path.basename(token).removesuffix(".py") in _APPROVAL_MODULES:
-                if seg[index + 1] == "approve":
-                    return ("campaign-approval approve est un acte humain : lance-le toi-même "
-                            "dans un terminal, pas depuis une session d'agent "
-                            "(docs/campaign-approval.md).")
+        if _approval_invocation(seg):
+            return ("campaign-approval approve est un acte humain : lance-le toi-même "
+                    "dans un terminal, pas depuis une session d'agent "
+                    "(docs/campaign-approval.md).")
     return None
 
 

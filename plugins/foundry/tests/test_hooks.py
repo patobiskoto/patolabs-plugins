@@ -479,6 +479,11 @@ def test_campaign_approval_approve_is_denied_without_registry():
     assert _deny("python3 tooling/foundry_cli.py campaign-approval check PAT-1") is None
     assert _deny("python3 tooling/foundry_cli.py campaign-approval status PAT-1") is None
     assert _deny("echo 'campaign-approval approve'") is None
+    # PAT-234: the words as an argument of another program do not match; a direct run does
+    assert _deny("grep campaign-approval approve notes.txt") is None
+    assert _deny("git commit -m x && cat campaign_approval approve") is None
+    assert _deny("./tooling/foundry_cli.py campaign-approval approve PAT-1") is not None
+    assert _deny("python3 -u -m foundry.campaign_approval approve PAT-1") is not None
 
 
 def test_campaign_approval_denied_by_main_outside_any_repo(tmp_path):
