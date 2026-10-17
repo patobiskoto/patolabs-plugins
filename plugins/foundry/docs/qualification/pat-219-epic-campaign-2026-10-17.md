@@ -94,9 +94,13 @@ round and about 120 with three rounds and two corrections. It counts start 13, o
 ## Deviations recorded as issues (under PAT-154)
 
 - PAT-227: a remark that targets only the PR description has no path in the correction
-  loop. The implementer's summary may be a stray message and becomes the PR body as is. The
-  run-1 correction session lasted 6 seconds while its summary claims a full test run
-  (observed; cause unknown).
+  loop. The implementer's summary may be a stray message and becomes the PR body as is.
+  Observed in the attempt journal: the PAT-223 implementation reports 2.2 seconds for
+  0.32 USD, and the correction 6.2 seconds while its summary describes a full test run; the
+  implementation summary opens on a reply to the notification of a background command.
+  Deduced, not verified: the session ran the tests as a background command, and the
+  `--print` result kept by the cadencer is the last turn, the reply to that notification,
+  with that turn's duration only.
 - PAT-228: measure, then reduce, the Linear requests of a campaign.
 - PAT-229: the deferral effect reads the last line of the standard error, which is the
   request counter when `FOUNDRY_REQUEST_COUNT=stderr` is set. The first failure of run 1
