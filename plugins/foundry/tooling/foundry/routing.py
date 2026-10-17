@@ -2688,7 +2688,7 @@ def main(
     record_remarks.add_argument("--diff-hash", required=True)
     record_remarks.add_argument("--proof-id", required=True)
     record_remarks.add_argument("--remarks-file", required=True,
-                                help="JSON array of {text, fix_before_merge}")
+                                help="JSON array of {text, fix_before_merge[, target]}")
     record_remarks.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
     record_remarks.add_argument("--repository", help="repo namespace; defaults to origin URL")
     record_remarks.add_argument("--root", required=True, help="exact Git worktree root")

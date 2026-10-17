@@ -69,8 +69,13 @@ _KEYS = {
                  "exit_code", "cost_usd", "duration_ms", "summary_file", "branch_head",
                  "error", "at"},
 }
-# PAT-218: the verdict of a review; PAT-141: the outcome of a deferral of remarks
-_OPTIONAL = {"started": set(), "finished": {"review", "deferral"}}
+# PAT-218: the verdict of a review; PAT-141: the outcome of a deferral of remarks; PAT-227: a
+# correction that only replaced the PR description
+_OPTIONAL = {"started": set(), "finished": {"review", "deferral", "description"}}
+# PAT-227: the first line a session summary must have to be published as a PR body
+SUMMARY_MARK = "FOUNDRY_SUMMARY_V1"
+SUMMARY_UNUSABLE_BODY = ("Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the "
+                         "review rounds.")
 
 
 class AttemptJournalInvalid(ValueError):
@@ -133,8 +138,31 @@ def read_attempts(path: Path | None = None) -> list[dict]:
             if record["kind"] != "defer-remarks" or not campaign_defer.valid_deferral_field(
                     record["deferral"]):
                 raise AttemptJournalInvalid("report de remarques hors contrat")
+        if "description" in record and (
+                record["kind"] != "correct" or not valid_description_field(record["description"])):
+            raise AttemptJournalInvalid("correction de description hors contrat")
         records.append(record)
     return records
+
+
+def valid_description_field(value: object) -> bool:
+    """Closed shape of the ``description`` key of a ``finished`` ``correct`` line (PAT-227)."""
+    return (isinstance(value, dict) and set(value) == {"head", "base"}
+            and all(isinstance(value[k], str) for k in ("head", "base")))
+
+
+def usable_summary(text: object) -> str | None:
+    """The summary without its ``SUMMARY_MARK`` first line, or ``None`` when it is unusable:
+    empty, without that exact first line, or with nothing after it (PAT-227)."""
+    if not isinstance(text, str):
+        return None
+    first, _, rest = text.lstrip("\n").partition("\n")
+    return rest.strip() or None if first.strip() == SUMMARY_MARK else None
+
+
+def published_summary(text: object) -> str:
+    """What is published as a PR body: the usable summary, else ``SUMMARY_UNUSABLE_BODY``."""
+    return usable_summary(text) or SUMMARY_UNUSABLE_BODY
 
 
 def _open_locked(path: Path) -> int:
@@ -279,7 +307,9 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
         "merge a pull request, never write the tracker, never run `issue`, `edit`, `adr` or "
         "`campaign-approval`. The coordinator does all of that from your commits.\n"
         "Finish with a short pull-request summary in Markdown (what changed, tests run, "
-        "remaining risk). It is the last thing you print."
+        f"remaining risk). Its first line is exactly `{SUMMARY_MARK}`; a summary without that "
+        "first line is not published. It is the last thing you print, after every command has "
+        "ended (never answer a background-command notification instead of the summary)."
     )
 
 
@@ -339,6 +369,12 @@ def branch_mismatch(runtime: Runtime, worktree: Path, ticket: str, refs) -> dict
     if head and head == expected and head != default:
         return None
     return {"head": head, "expected": expected, "default": default}
+
+
+def worktree_head_sha(runtime: Runtime, worktree: Path) -> str | None:
+    """The commit the worktree HEAD names (``git rev-parse HEAD``), else ``None`` (PAT-227)."""
+    done = _run(runtime, ["git", "rev-parse", "HEAD"], worktree, timeout=GIT_TIMEOUT_SECONDS)
+    return (done.stdout or "").strip() or None if done.returncode == 0 else None
 
 
 def _parse_session(stdout: object, session_id: str) -> dict:
@@ -415,8 +451,13 @@ def _plan(runtime: Runtime, kind: str, epic: str, ticket: cadence.TicketFacts,
         if ticket.pr is None:  # a push to an open PR (a correction) never replaces its body
             record = last_implementation(attempts, epic, ticket.id, ticket.branch_sha,
                                          ("implement",))
-            if record and record["summary_file"]:
-                summary = Path(record["summary_file"]).read_text(encoding="utf-8")
+            if record:  # PAT-227: an unusable summary is never published raw
+                try:
+                    raw = (Path(record["summary_file"]).read_text(encoding="utf-8")
+                           if record["summary_file"] else None)
+                except OSError:
+                    raw = None
+                summary = published_summary(raw)
         if summary:
             argv.append("--summary-stdin")
         return {"argv": argv, "route": None, "input": summary or None}
@@ -528,9 +569,13 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
     branch = cadence._branch_for(refs(runtime.root), ticket.id)
     head = branch_facts(runtime.root, branch)[0] if branch else None
     ok = done.returncode == 0 and result.get("is_error") is False
-    return {"status": "completed" if ok else "failed", "exit_code": done.returncode,
-            "cost_usd": float(result["total_cost_usd"]), "duration_ms": result["duration_ms"],
-            "summary_file": saved, "branch_head": head, "error": None, "detail": ""}
+    fields = {"status": "completed" if ok else "failed", "exit_code": done.returncode,
+              "cost_usd": float(result["total_cost_usd"]), "duration_ms": result["duration_ms"],
+              "summary_file": saved, "branch_head": head, "error": None, "detail": ""}
+    if ok and plan.get("description"):  # PAT-227: the correction is the new PR description
+        return campaign_review.publish_description(runtime, epic, ticket, attempts, worktree,
+                                                   fields, refs)
+    return fields
 
 
 def _hide_hex(text: str) -> str:
@@ -566,6 +611,7 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
         history=campaign_review.history(path, epic),
+        description=campaign_review.description_facts(path, epic),
         **{"deferral": campaign_defer.deferral_facts(path, epic),
            "origin": lambda ticket: campaign_defer.origin_of(tracker, ticket),
            **observe_kwargs},

@@ -403,7 +403,10 @@ effect reads the tracker before each write, makes the writes through `edit creat
 `edit link` and `edit comment`, posts one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
 its attempt journal. The following are corrected by the correction loop and
-re-reviewed: a remark marked "fix before merge", a ticket with no origin Epic, a ticket
+re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
+targets the PR description alone: the correction then replaces the description, which is not
+re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),
+a ticket with no origin Epic, a ticket
 of a companion Epic, and a durable refusal (capability absent, `Epic` type refused,
 several companion Epics with the same name, an adapter that refuses to replay a
 creation). A transient failure, including a creation that the read shows did not
