@@ -32,6 +32,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -58,6 +60,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -84,6 +88,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -110,6 +116,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -136,6 +144,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -162,6 +172,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -188,6 +200,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"
@@ -214,6 +228,8 @@
       },
       "account_availability": "unknown",
       "errors": "unknown",
+      "parent_reply": "unknown",
+      "fixture_compliance": "unknown",
       "policy_guard": "unknown",
       "result_file_sha256": "unknown",
       "limits": "unknown"

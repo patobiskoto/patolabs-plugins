@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from foundry import claude_profile_trial as base
+from foundry import registry
 from foundry.command_runtime import _claude_child_environment
 from foundry.routing_facades import _load_claude_policy, claude_invocation_binding
 
@@ -61,6 +62,7 @@ _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           (re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+"), "<masked-email>"),
           (re.compile(r"\b[A-Za-z0-9_\-]{32,}\b"), "<masked-long-token>"))
 _ERROR_LIMIT = 2000
+LEDGER_NAME = "pat198-native-rollback-ledger.jsonl"
 
 
 class RollbackTrialError(base.TrialError):
@@ -90,7 +92,8 @@ def empty_row(line: str) -> dict[str, Any]:
             "resolved_route": "unknown", "transmitted": "unknown",
             "native_observation": {"models": "unknown", "agent_types": "unknown", "efforts": "unknown",
                                    "host_version": "unknown"},
-            "account_availability": "unknown", "errors": "unknown", "policy_guard": "unknown",
+            "account_availability": "unknown", "errors": "unknown", "parent_reply": "unknown",
+            "fixture_compliance": "unknown", "policy_guard": "unknown",
             "result_file_sha256": "unknown", "limits": "unknown"}
 
 
@@ -124,6 +127,56 @@ def _row(matrix: dict[str, Any], line: str) -> dict[str, Any]:
     return rows[0]
 
 
+def ledger_path() -> Path:
+    """Out-of-checkout record of reservations (Foundry data directory): a git revert, stash or other worktree of the
+    matrix cannot re-arm a line recorded here."""
+    return Path(registry.data_dir()).expanduser() / LEDGER_NAME
+
+
+def _ledger_lines(path: Path) -> list[str]:
+    try:
+        entries = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        raise RollbackTrialError(f"the reservation ledger is unreadable: {type(exc).__name__}") from exc
+    return [e.get("line") if isinstance(e, dict) else None for e in entries]
+
+
+def _check_ledger(path: Path, line: str) -> None:
+    reserved = _ledger_lines(path)
+    if line in reserved:
+        raise RollbackTrialError(f"{line} is already reserved in the ledger: one call per line, no retry")
+    if len(reserved) >= MAX_NATIVE_CALLS:
+        raise RollbackTrialError("the ceiling of eight native calls is reached (ledger)")
+
+
+def _reserve(path: Path, line: str, date: str, session_id: str) -> None:
+    """Append-only, one line per reservation; written BEFORE the call."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({"line": line, "date": date, "session": session_id}) + "\n"
+        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(descriptor, entry.encode("utf-8"))
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise RollbackTrialError(f"the reservation ledger cannot be written: {type(exc).__name__}") from exc
+
+
+def _take_lock(matrix_path: Path) -> Path:
+    """Exclusive lock next to the matrix (O_EXCL); a present file refuses the run, a stale one needs the maintainer."""
+    lock = matrix_path.with_name(matrix_path.name + ".lock")
+    try:
+        os.close(os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError as exc:
+        raise RollbackTrialError(f"{lock.name} exists: another run holds the matrix (or died); nothing is launched") from exc
+    except OSError as exc:
+        raise RollbackTrialError(f"{lock.name} cannot be created: {type(exc).__name__}") from exc
+    return lock
+
+
 def policy_digest(path: Path) -> str:
     """sha256 of a policy file, or ``absent``: lets a run prove the real policy was not touched (read-only)."""
     try:
@@ -135,7 +188,33 @@ def policy_digest(path: Path) -> str:
 
 
 def default_guards() -> list[Path]:
+    """Foundry reads only ``<project root>/.foundry/model-routing.json`` (``routing.py``); this is the one of the
+    checkout holding this module. The main checkout's, when run from a worktree, is guarded only if passed."""
     return [base.PLUGIN_ROOT.parents[1] / ".foundry" / "model-routing.json"]
+
+
+def guard_list(extra: Sequence[str] | None) -> list[Path]:
+    """The default guard always, plus any ``--guard-policy``; never replaced."""
+    seen: list[Path] = []
+    for item in (*default_guards(), *(Path(g).expanduser() for g in extra or ())):
+        if item.resolve() not in [x.resolve() for x in seen]:
+            seen.append(item)
+    return seen
+
+
+def _text(message: Any) -> str:
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(b["text"] for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return ""
+
+
+def declares_unavailable(facts: dict[str, Any]) -> bool:
+    """No real model observed, and a masked host text (error, child API-error record, parent reply) matches."""
+    texts = [*facts["errors"], facts["parent_result"].get("reply") or ""]
+    return not facts["observed"]["models"] and any(_UNAVAILABLE.search(t) for t in texts)
 
 
 def parent_prompt(logical: str, token_file: Path) -> str:
@@ -160,8 +239,8 @@ def codex_plan(role: str, work: Path) -> dict[str, Any]:
     """The argv a Codex run WOULD use (the shape of the measurement harness); never launched by this module."""
     model, effort = ROLLBACK[("codex", role)]
     return {"surface": "codex exec (not launched by this module)",
-            "command": ["codex", "exec", "--ephemeral", "--json", "--skip-git-repo-check", "-s", "read-only",
-                        "-C", str(work), "--model", model, "-c", f'model_reasoning_effort="{effort}"', "-"],
+            "command": ["codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox",
+                        "read-only", "--json", "--skip-git-repo-check", "-C", str(work), "--model", model, "-c", f'model_reasoning_effort="{effort}"', "-"],
             "requested": {"role": role, "tier": TIER[role], "model": model, "effort": effort},
             "transmitted": "the two values above, as the command line carries them; no Foundry routing is in the path",
             "observed": "unknown until a run; the JSONL events are the only source",
@@ -180,6 +259,7 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
                  if (f := base._hook_context(record)) is not None), None)
     types, models, versions = [], set(), set()
     efforts: set[Any] = set()
+    errors: list[str] = []
     for child in children:
         try:
             types.append(json.loads(child.with_suffix(".meta.json").read_text(encoding="utf-8")).get("agentType"))
@@ -192,11 +272,14 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
                 if key in record:
                     efforts.add(record[key])
             message = record.get("message")
-            if record.get("type") == "assistant" and isinstance(message, dict) and isinstance(message.get("model"), str):
-                models.add(message["model"])
+            if record.get("type") == "assistant" and isinstance(message, dict):
+                if record.get("isApiErrorMessage") or message.get("model") == "<synthetic>":
+                    # a host-written API-error record (deduced from Claude Code, not observed here): not a model
+                    errors.append(mask(_text(message)))
+                elif isinstance(message.get("model"), str):
+                    models.add(message["model"])
     host_versions = versions or ({init["claude_code_version"]} if isinstance(init.get("claude_code_version"), str) else set())
     expected_efforts = set() if effort is None else {effort}
-    errors = []
     if final.get("is_error") and isinstance(final.get("result"), str):
         errors.append(mask(final["result"]))
     result_text = final.get("result") if isinstance(final.get("result"), str) else ""
@@ -208,11 +291,10 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
         # effort None (haiku 4.5): native metadata may still carry the parent's effort, so absence is the only
         # non-divergent state and it never proves non-applicability.
         "effort": ("unknown" if not efforts else "exact" if efforts == expected_efforts else "divergent"),
-        "fixture": "unknown" if not result_text else "exact" if token in result_text else "divergent",
         "host_version": "unknown" if not host_versions else "observed",
     }
-    unavailable = (not children and not models and any(_UNAVAILABLE.search(e) for e in errors))
-    return {
+    fixture = "unknown" if not result_text else "exact" if token in result_text else "divergent"
+    facts = {
         "host": {"claude_code_version": init.get("claude_code_version")},
         "hook": None if hook is None else {k: hook.get(k) for k in
                                            ("model", "effort", "effort_parameters", "transmitted_launch", "host_version",
@@ -222,11 +304,15 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
                      "log_sha256": {"parent": base._sha256(parents[0]) if len(parents) == 1 else None,
                                     "children": [base._sha256(c) for c in children]}},
         "errors": errors,
-        "account_availability": ("unavailable_declared" if unavailable else "available_observed"
-                                 if conformity["model"] in ("exact", "dated_snapshot") else "unknown"),
+        "account_availability": "available_observed" if conformity["model"] in ("exact", "dated_snapshot") else "unknown",
         "conformity": conformity,
-        "parent_result": {"is_error": final.get("is_error"), "subtype": final.get("subtype")},
+        # reported apart: a role contract may refuse the trivial task; that never decides the model verdict
+        "fixture_compliance": fixture,
+        "parent_result": {"is_error": final.get("is_error"), "subtype": final.get("subtype"), "reply": mask(result_text)},
     }
+    if declares_unavailable(facts):
+        facts["account_availability"] = "unavailable_declared"
+    return facts
 
 
 def verdict(process: dict[str, Any], facts: dict[str, Any]) -> tuple[str, list[str]]:
@@ -262,12 +348,25 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         raise RollbackTrialError("the work directory and the result file must not exist: the trial is never replayed")
     if base._inside_repository(work):
         raise RollbackTrialError("the work directory must be outside any git repository: the fixture carries its own policy")
+    # taken before the lock file exists, so the lock never makes the checkout look dirty
+    source = base._head()
+    lock = None if args.dry_run else _take_lock(matrix_path)
+    try:
+        return _run_claude(args, role, model, effort, work, out, matrix_path, launch, today, source)
+    finally:
+        if lock is not None:
+            lock.unlink(missing_ok=True)
+
+
+def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path, out: Path, matrix_path: Path,
+                launch: Callable[..., dict[str, Any]], today: dt.date | None, source: dict[str, Any]) -> int:
     matrix = _load_matrix(matrix_path)
     row = _row(matrix, args.line)
     if row.get("status") != "not_run":
         raise RollbackTrialError(f"{args.line} is already recorded ({row.get('status')}): one call per line, no retry")
     if matrix.get("native_calls", 0) >= MAX_NATIVE_CALLS:
         raise RollbackTrialError("the ceiling of eight native calls is reached")
+    _check_ledger(ledger_path(), args.line)
     if not args.dry_run and not (isinstance(args.max_budget_usd, (int, float)) and args.max_budget_usd > 0):
         raise RollbackTrialError("--max-budget-usd is required for a real run (the maintainer-authorised amount)")
     policy = policy_for(role, model, effort)
@@ -284,7 +383,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
     command = claude_command(args.claude, parent_prompt(LOGICAL[role], token_file), session_id, args.parent_model,
                              args.max_budget_usd)
     environment = {**_claude_child_environment(), "FOUNDRY_DATA": str(work / "foundry-data")}
-    guards = [Path(g).expanduser() for g in (args.guard_policy or default_guards())]
+    guards = guard_list(args.guard_policy)
     before = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
     body: dict[str, Any] = {
         "schema": RESULT_SCHEMA, "line": args.line,
@@ -294,7 +393,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         "bounds": {"native_calls": 1, "parents": 1, "children_expected": 1, "timeout_seconds": base.TIMEOUT_SECONDS,
                    "max_budget_usd": args.max_budget_usd, "concurrency": 1, "replays": 0,
                    "environment_names": sorted(environment)},
-        "source": base._head(),
+        "source": source,
         "argv": [p if p != session_id else "<session id>" for p in
                  (command[0], "-p", "<parent prompt>", *command[3:-3], "<plugins/foundry of this checkout>", *command[-2:])],
         "requested": {"role": role, "tier": route.selected_tier, "model": route.model, "effort": route.effort},
@@ -311,7 +410,9 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         return 0
     base._create_fixture(work, policy)
     token_file.write_text(token + "\n", encoding="utf-8")
-    # Claim the row BEFORE the call: a killed or failed run still blocks a second one (no retry).
+    # Reserve the line out of the checkout, then claim the row, BEFORE the call: a killed or failed run, a git
+    # revert of the matrix or another worktree still cannot launch a second one (no retry).
+    _reserve(ledger_path(), args.line, body["date"], session_id)
     row.update({"status": "started", "date": body["date"]})
     matrix["native_calls"] = matrix.get("native_calls", 0) + 1
     _write_matrix(matrix_path, matrix)
@@ -324,7 +425,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
         stderr_text = ""
     if stderr_text:
         facts["errors"].append(mask(stderr_text[-_ERROR_LIMIT:]))
-        if not facts["observed"]["models"] and any(_UNAVAILABLE.search(e) for e in facts["errors"]):
+        if declares_unavailable(facts):
             facts["account_availability"] = "unavailable_declared"
     after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
     guard_ok = before == after
@@ -341,6 +442,7 @@ def run(args: Any, *, launch: Callable[..., dict[str, Any]] = base._launch, toda
                                "efforts": facts["observed"]["efforts"] or "unknown",
                                "host_version": facts["host"]["claude_code_version"] or "unknown"},
         "account_availability": facts["account_availability"], "errors": facts["errors"],
+        "parent_reply": facts["parent_result"]["reply"], "fixture_compliance": facts["fixture_compliance"],
         "policy_guard": "unchanged" if guard_ok else "CHANGED",
         "result_file_sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
         "limits": ["one call; not a sample", "effort is observed only if the host logs it; absence is unknown",

@@ -41,8 +41,9 @@ that call to the pinned profile named in section 5. The fixture lives outside an
 disposable project policy mapping only the role's tier to the line's model and effort. The child environment is the
 R6 allow-list (`AGENTS.md#R6`), never under `sandbox-exec`. The child reads one public marker file and returns it.
 
-Codex: `codex exec --ephemeral --json -s read-only --model <model> -c model_reasoning_effort="<effort>"`, packet on
-standard input (the argv shape of the measurement harness, `measurement_harness_v2.py`). The coordinator cannot run
+Codex: `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only --json --model <model>
+-c model_reasoning_effort="<effort>"`, packet on standard input (the argv shape of the measurement harness,
+`measurement_harness_v2.py`, plus `--skip-git-repo-check -C <work>` in the plan of `codex_plan`). The coordinator cannot run
 Codex before 2026-10-23 (usage limit, deduced from the maintainer's statement, not observed here), and the tool does
 not implement a real Codex run: `--dry-run` prints the plan, a real Codex run is refused. Codex rows stay `not_run`
 until a later step adds and exercises that run; this page then gets a dated amendment before any Codex call.
@@ -53,7 +54,14 @@ until a later step adds and exercises that run; this page then gets a dated amen
   no retry. The matrix field `native_calls` counts them; the tool refuses past 8.
 - One call per line: the tool refuses a line whose row is not `not_run`. It claims the row (`status: started`)
   BEFORE the call, so a killed, failed or timed-out run also blocks a second one. A new work directory or result path
-  does not bypass this. Retrying a line needs a new maintainer decision and a hand edit of the matrix, recorded here.
+  does not bypass this. Two further guards do not rest on the matrix of one checkout. An exclusive lock file
+  `<matrix>.lock` (created with `O_EXCL` next to the matrix before it is loaded, removed at the end of the run) refuses
+  a second concurrent launch; a lock left by a killed run also refuses, and only the maintainer removes it. A
+  reservation ledger, `pat198-native-rollback-ledger.jsonl` in the Foundry data directory (`registry.data_dir()`, outside
+  any checkout, append-only, one line per reservation, written before the call), refuses a line already reserved even if
+  the matrix was copied, reverted, stashed or read from another worktree, and refuses past eight lines. Retrying a line
+  needs a new maintainer decision, a hand edit of the matrix and of the ledger, recorded here. Run all lines from one
+  checkout, one after the other, and commit the matrix right after each run.
 - Per-call spend ceiling: `--max-budget-usd <AMOUNT>` is passed to `claude -p` (the flag exists in the installed host's
   `--help`, read 2026-10-17; whether it covers the child's spend is unknown). The tool refuses a real run without it.
   `<AMOUNT>` is the maintainer's figure; none is fixed here.
@@ -84,7 +92,9 @@ Expected pinned profile and wire model per line (computed offline by the dry run
 | `claude-reviewer` | `routed-readonly-high-opus-5` | `claude-opus-5` | `high` |
 | `claude-architect` | `routed-readonly-high-fable-5` | `claude-fable-5` | `high` |
 
-The command works on a checkout whose HEAD is committed and clean (the result records `source.commit` and `dirty`).
+The command works on a checkout whose HEAD is committed and clean (the result records `source.commit` and `dirty`,
+read before the lock and the claim are written, so `dirty: true` means something other than this run changed the
+checkout; committing the matrix after each run keeps the next one clean).
 
 ## 6. What a run writes, and restoration
 
@@ -92,16 +102,18 @@ Written by a real run, and only these:
 
 1. the work directory (outside the repository): fixture, raw stream `stream.ndjson`, `stderr.txt`;
 2. the result file `--out` (schema `foundry.pat198-native-trial.v1`);
-3. the row of its line in the matrix, plus `native_calls` (a first write before the call, a second after it);
+3. the row of its line in the matrix, plus `native_calls` (a first write before the call, a second after it), the
+   lock file `<matrix>.lock` during the run, and one line in the reservation ledger (Foundry data directory);
 4. host-side session logs under the host's own projects directory (written by the host; the tool only reads them).
 
 A dry run writes nothing. The user's real policy files are never touched: the fixture carries its own policy and the
 tool never writes a policy anywhere else. To make that checkable, the tool takes the sha256 of each guarded policy
-file (default: the checkout's `.foundry/model-routing.json`; repeat `--guard-policy` to add the user's own) before
-and after the call, `absent` for a missing file, and records both. A difference makes the line `not_conforming` and the
+file (always the `.foundry/model-routing.json` of the checkout holding the module, the only routing policy Foundry reads
+(`routing.py`; there is no user-level one); `--guard-policy` adds files and never replaces it, and a worktree run does
+not guard the main checkout's policy unless it is passed) before and after the call, `absent` for a missing file, and records both. A difference makes the line `not_conforming` and the
 row `policy_guard: CHANGED`. Restoration therefore needs no action when the guard says `unchanged`. If it says
-`CHANGED`, restore the file from its backup or from version control and note it here. To undo a recorded row: revert
-the matrix file in version control. Delete the work directory when done (it holds a raw stream).
+`CHANGED`, restore the file from its backup or from version control and note it here. A recorded or reserved row is
+never undone without a maintainer decision (section 4). Delete the work directory when done (it holds a raw stream).
 
 ## 7. Observed against unknown
 
@@ -114,8 +126,18 @@ Four values stay separate, per line, in the result and the matrix:
   only if the host logs `effort`/`perTurnEffort`, host version from the logs. Absent = `unknown`. For `haiku-4.5`
   an absent effort never proves non-applicability;
 - account availability: `available_observed` only when the child's model was observed (exact or dated snapshot);
-  `unavailable_declared` only when no child ran and the verbatim (masked) error matches a model-unavailable pattern
-  (a heuristic, `_UNAVAILABLE`; the error text is always kept so a reader can overrule it); otherwise `unknown`.
+  `unavailable_declared` only when no real model was observed and a masked host text (parent error, child API-error
+  record, parent final reply, stderr) matches a model-unavailable pattern (a heuristic, `_UNAVAILABLE`; the texts and the
+  parent's reply are always kept so a reader can overrule it); otherwise `unknown`. A child record with model
+  `<synthetic>` or `isApiErrorMessage` is read as a host API error, never as a model (that record shape is deduced from
+  Claude Code, not observed here).
+
+Fixture compliance (`fixture_compliance`: the parent's reply carries the marker) is reported apart and never decides the
+verdict, which rests on the resolved, transmitted and observed model and effort. Role contracts expected to refuse
+the trivial read-the-marker task: `maigret` certainly (its method STOPs without `diff_hash`, `claim_id`, `root`, `base`),
+so `claude-reviewer` is expected `divergent` on that point; `vauban`, `lupin` and `eiffel` do not STOP on a missing
+coordinate (`agents/`), so `claude-architect`, `claude-scout` and `claude-implementer` are expected to comply, but
+`vauban` is scoped to an architectural question and what it does with this task is unknown.
 
 Verdicts: `conforming` (everything exact), `not_conforming` (any divergent value, wrong process exit, several
 children, changed guard), `unavailable`, `unknown` (anything not observed, a dated snapshot included). Errors are kept
