@@ -663,6 +663,21 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     return result
 
 
+def journal_facts(tracker, epic: str, path: Path) -> dict:
+    """The ``observe`` callables that read the local attempt journal (and the remarks receipt).
+
+    One definition for ``step`` and for ``campaign-cadence next`` (PAT-235), so that the dry
+    pass announces what the real pass will do.  Read-only: ``origin`` reads the tracker.
+    """
+    return {
+        "implemented": lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
+        "history": campaign_review.history(path, epic),
+        "description": campaign_review.description_facts(path, epic),
+        "deferral": campaign_defer.deferral_facts(path, epic),
+        "origin": lambda ticket: campaign_defer.origin_of(tracker, ticket),
+    }
+
+
 def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, marks,
           observe_kwargs) -> StepResult:
     path = attempts or journal_path()
@@ -681,12 +696,7 @@ def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, mar
     marks["start"] = _count(tracker)
     obs = cadence.observe(
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
-        implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
-        history=campaign_review.history(path, epic),
-        description=campaign_review.description_facts(path, epic),
-        **{"deferral": campaign_defer.deferral_facts(path, epic),
-           "origin": lambda ticket: campaign_defer.origin_of(tracker, ticket),
-           **observe_kwargs},
+        **{**journal_facts(tracker, epic, path), **observe_kwargs},
     )
     marks["observed"] = _count(tracker)
     decision = cadence.decide(obs)

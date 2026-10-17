@@ -11,7 +11,7 @@ from foundry import campaign_approval as ca
 from foundry import campaign_cadence as cc
 from foundry.epic_preview import structure_digest, validate_subgraph
 from foundry.models import Check, PullRequest
-from foundry.routing import RoutingConfigError
+from foundry.routing import ProofIntegrityError, RoutingConfigError
 from foundry.trackers.base import IssueUnavailableError, Tracker
 from test_epic_preview import graph, node
 
@@ -96,11 +96,15 @@ class FakeProofs:
         self.status = status
 
     def current_for_sync(self, **kwargs):
+        if self.status == "corrupt":
+            raise ProofIntegrityError("preuve AC malformée ; refus fermé.")
         if self.status in ("valid", "blocked"):
             return {"quality": self.status}
         raise RoutingConfigError("absent")
 
     def valid_for_merge(self, **kwargs):
+        if self.status == "corrupt":
+            raise ProofIntegrityError("ledger de review corrompu ; intervention humaine requise.")
         if self.status == "valid":
             return {}
         raise RoutingConfigError("not mergeable")
@@ -142,8 +146,9 @@ def run(children, tmp_path, *, deps=None, prs=(), checks=(), proofs="none", refs
     codehost = codehost or FakeCodeHost(prs, checks)
     obs = cc.observe(
         tracker, codehost, PROJECT, "APP-1", str(tmp_path), NOW, journal=journal,
-        refs=lambda root: list(refs), diff_reader=lambda root, base, head: b"diff",
-        proof_store=FakeProofs(proofs), **extra,
+        refs=lambda root: list(refs),
+        **{"diff_reader": lambda root, base, head: b"diff", **extra},
+        proof_store=FakeProofs(proofs),
     )
     return obs, cc.decide(obs), tracker, codehost
 
@@ -279,6 +284,94 @@ def test_several_tickets_in_progress_and_nothing_eligible_suspend(tmp_path):
     assert (none.kind, none.reason) == ("suspend", "no_eligible_ticket")
 
 
+# PAT-235: remarks of the review of PAT-216 -------------------------------------------------
+
+def test_a_review_state_without_branch_or_pr_suspends_instead_of_restarting(tmp_path):
+    _, decision, _, _ = run([node("APP-2", state="review")], tmp_path)
+    assert (decision.kind, decision.reason) == ("suspend", "review_state_without_branch_or_pr")
+
+
+def test_a_corrupt_proof_or_ledger_suspends_while_an_absent_review_stays_a_review(tmp_path):
+    kwargs = dict(refs=["feat/app-2-x"], prs=[pr()])
+    obs, decision, _, _ = run([started()], tmp_path, proofs="corrupt", **kwargs)
+    assert (decision.kind, decision.reason) == ("suspend", "review_proof_integrity")
+    assert obs.tickets[0].review == "integrity" and obs.tickets[0].ci is None
+    assert run([started()], tmp_path, proofs="none", **kwargs)[1].reason == "review_missing"
+
+
+def test_the_integrity_error_is_what_routing_raises_for_a_corrupt_ledger(tmp_path):
+    from foundry.routing import AcceptanceProofStore, ReviewDeduplicator, review_diff_hash
+
+    state = tmp_path / "state"
+    store = AcceptanceProofStore("o/r", state)
+    store.directory.mkdir(parents=True)
+    ledger = ReviewDeduplicator("o/r", state)
+    ledger.directory.mkdir(parents=True, exist_ok=True)
+    arguments = dict(issue_id="APP-2", issue_body="- [ ] a", head=SHA, diff=b"d", base=BASE)
+    # a diff that no review reserved is a plain absence, not an integrity anomaly
+    with pytest.raises(RoutingConfigError) as absent:
+        store.current_for_sync(**arguments)
+    assert not isinstance(absent.value, ProofIntegrityError)
+    (ledger.directory / review_diff_hash(b"d")).write_text("{not json")
+    with pytest.raises(ProofIntegrityError):
+        store.current_for_sync(**arguments)
+
+
+def test_await_verdict_comes_before_an_expired_or_absent_approval(tmp_path):
+    children = [node("APP-2", state="done"), node("APP-3", state="dropped")]
+    _, decision, _, _ = run(children, tmp_path, approved=False)
+    assert (decision.kind, decision.reason) == ("await-verdict", "all_tickets_terminal")
+    raw = graph(children)
+    journal = tmp_path / "journal.jsonl"
+    approve(raw, journal, expires=NOW - timedelta(minutes=1))
+    obs = cc.observe(FakeTracker(raw), FakeCodeHost(), PROJECT, "APP-1", str(tmp_path), NOW,
+                     journal=journal, refs=lambda root: [])
+    assert obs.approval_status == "expired" and cc.decide(obs).kind == "await-verdict"
+
+
+def test_a_known_failure_is_red_without_waiting_for_the_other_checks(tmp_path):
+    kwargs = dict(refs=["feat/app-2-x"], prs=[pr()], proofs="valid")
+    _, mixed, _, _ = run([started()], tmp_path,
+                         checks=[check("failure"), check(None, "in_progress")], **kwargs)
+    assert (mixed.kind, mixed.reason) == ("correct", "ci_failing")
+    # green still needs a real success and nothing pending (FOUNDRY-ADR-0002)
+    _, pending, _, _ = run([started()], tmp_path,
+                           checks=[check(), check(None, "in_progress")], **kwargs)
+    assert (pending.kind, pending.reason) == ("wait-ci", "ci_pending")
+
+
+def test_an_unreadable_pr_head_suspends(tmp_path):
+    from dataclasses import replace
+
+    _, decision, _, _ = run([started()], tmp_path, refs=["feat/app-2-x"],
+                            prs=[replace(pr(), sha=None)])
+    assert (decision.kind, decision.reason) == ("suspend", "pr_head_unreadable")
+
+
+def test_an_unobservable_diff_asks_for_a_review(tmp_path):
+    def unreadable(root, base, head):
+        raise RoutingConfigError("diff illisible")
+
+    _, decision, _, _ = run([started()], tmp_path, refs=["feat/app-2-x"], prs=[pr()],
+                            proofs="valid", diff_reader=unreadable)
+    assert (decision.kind, decision.reason) == ("review", "review_unobservable")
+
+
+def test_the_pr_is_read_from_the_tracker_link_when_there_is_no_branch(tmp_path):
+    node_ = {**node("APP-2", state="in-progress"), "pr_url": "https://x/o/r/pull/7"}
+    obs, decision, _, codehost = run([node_], tmp_path, prs=[pr()], proofs="none")
+    assert codehost.calls[:1] == ["get_pr"] and "list_prs" not in codehost.calls
+    assert (decision.kind, decision.reason) == ("review", "review_missing")
+
+
+def test_branch_names_match_the_issue_id_exactly_and_the_first_sorted_one_wins():
+    refs = ["feat/app-2-x", "origin/feat/app-2-x", "fix/app-2", "feat/app-20-y", "feat/app-3-z",
+            "feat/xapp-2-x", "APP-2"]
+    assert cc._branch_for(refs, "APP-2") == "feat/app-2-x"
+    assert cc._branch_for(["fix/app-2", "feat/app-2-y"], "APP-2") == "feat/app-2-y"
+    assert cc._branch_for(["feat/app-20-y", "feat/app-3-z"], "APP-2") is None
+
+
 # Drift (PAT-ADR-0027) ------------------------------------------------------------------
 
 def test_structure_change_suspends(tmp_path):
@@ -316,7 +409,7 @@ def test_unreadable_node_suspends(tmp_path):
     assert decision.reason == "node_unreadable"
 
 
-def test_dependency_state_behind_is_a_regression(tmp_path):
+def test_dependency_state_behind_is_a_precaution_suspension(tmp_path):
     children = [node("APP-2", state="ready"), node("APP-3", state="in-progress")]
     _, decision, _, _ = run(children, tmp_path, deps=[("APP-3", "APP-2")])
     assert (decision.kind, decision.ticket, decision.reason) == (
