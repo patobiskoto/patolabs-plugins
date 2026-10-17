@@ -257,12 +257,13 @@ class ShadowTracker(CountingTracker):
     """The campaign world answers every read; the same read is also made on a ``LinearTracker``
     over the transport double, whose project mirrors the world's issues (``APP-n`` is
     ``LIN-(500+n)`` there) and holds one closed Epic.  The counter is the number of transport
-    calls of those shadow reads.  A shadow read that Linear refuses is ignored (its requests
-    were made and are counted)."""
+    calls of those shadow reads.  A shadow read that fails is kept in ``shadow_failures``
+    (its requests were made and are counted); ``replay`` asserts the list is empty."""
 
     def __init__(self, world, linear):
         super().__init__(world)
         self.linear = linear
+        self.shadow_failures = []
 
     @staticmethod
     def shadow_id(issue_id):
@@ -296,8 +297,8 @@ class ShadowTracker(CountingTracker):
         self._mirror()
         try:
             call(*args, **kwargs)
-        except Exception:  # noqa: BLE001 - the requests are counted whatever the answer
-            pass
+        except Exception as error:  # noqa: BLE001 - the requests are counted whatever the answer
+            self.shadow_failures.append(f"{getattr(call, '__name__', call)}: {error!r}")
 
     def get_epic_subgraph(self, project, epic, *, depth, nodes):
         self._shadow(self.linear.tracker.get_epic_subgraph, self.linear.project,
@@ -336,6 +337,7 @@ def replay(env, linear):
         max_steps=9, poll_seconds=1, sleep=sleep, clock=lambda: test_campaign_effects.NOW,
         **env.kwargs)
     assert stopped == "max_steps"
+    assert env.tracker.shadow_failures == []
     return results
 
 
