@@ -626,7 +626,7 @@ remark, the marked ones included.
 | no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
 | the origin Epic is itself a companion Epic (its title is exactly `Nits ` and an identifier such as `APP-1`, `_COMPANION_NAME`, PAT-238; a title that only starts with `Nits ` is not): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
 | the last attempt ended in a durable refusal | `correct` `remarks_not_deferrable`, cause `refused` |
-| the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed, or the `reset_at` of a quota error (see "Classification of a failure") has not | `wait` `deferral_transient_failure` |
+| the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed, or the `reset_at` of a quota error (see "Classification of a failure"; capped by `MAX_RESET_WAIT_SECONDS`) has not | `wait` `deferral_transient_failure` |
 | the last attempt ended transient, the wait is over | `defer-remarks` again (a new attempt: the identity carries the `try` count) |
 | `MAX_DEFER_TRIES` attempts made for this diff hash | `suspend` `deferral_retries_exhausted` |
 | otherwise | `defer-remarks` `non_blocking_remarks` |
@@ -703,8 +703,11 @@ that an earlier attempt of this journal or the project listing shows (limit in s
 A failed `edit create-issue` is never retried inside the pass. When its standard error is the
 structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
 required`), or is a quota error whose message names a `client_id=<UUID>`, `edit
-reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once; `validation:
-accepted` adopts that issue. `_reconcile` tells four answers apart: `accepted`; `absent`
+reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once, unless the error
+carries a `reset_at` (in the quota message, or in `causes.create` or `causes.read` of the
+object; PAT-238): the quota is then empty, so no read is made now, the client id goes to
+`unknown`, the failure is transient with that `reset_at` in its reason, and the next pass
+reconciles first, once the wait is over. `validation: accepted` adopts that issue. `_reconcile` tells four answers apart: `accepted`; `absent`
 (standard error naming `IssueUnavailableError`, the read found no such issue: the creation did
 not happen, nothing is kept in `unknown`, transient `creation_not_observed`, and the next pass
 creates again with a new client id); `refused` (standard error naming `TrackerConflictError` or
@@ -712,7 +715,8 @@ creates again with a new client id); `refused` (standard error naming `TrackerCo
 the adapter does not replay, `creation_replay_refused`, a durable refusal; when the creation
 object says `creation: created`, the write is listed in `writes` and, for the companion Epic,
 its `issue_id` is the `companion` of the field, PAT-238); anything else is
-unreadable and the effect stays unknown: the client id and the title go to the `unknown` key of
+unreadable and the effect stays unknown (a read that fails on quota keeps its `reset_at` in the
+reason `creation_effect_unknown`): the client id and the title go to the `unknown` key of
 the `finished` line (transient), and the next pass reconciles by that client id (`_create`)
 before any new creation. The ADR only says a creation is retried after reconciliation
 (PAT-ADR-0028); this split is the reading of R9 (b) (`tests/test_campaign_defer.py`).
@@ -736,15 +740,19 @@ the reason is journaled and told in the PR description; `deferral_lines` masks i
 error whose message carries `reset_at=<UTC time>` (`LinearQuotaExhaustedError`,
 `trackers/linear.py`) keeps that time in the reason, and the retry waits until the later of
 `DEFER_RETRY_SECONDS` after the `finished` line and that time (`reset_of`, `deferral_facts`,
-PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent or past changes nothing. That a real
-quota error reaches the cadencer with that text is not exercised here (unknown). Durable refusal: the `finished` line is `completed` with state
+PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent, past or not a valid date changes
+nothing. The reset is honoured up to `MAX_RESET_WAIT_SECONDS` (3600) after the `finished` line, so
+a far date cannot hold a ticket for good; that cap is a Foundry choice, not measured (the Linear
+window is not established, `docs/linear-tracker.md`). That a real quota error reaches the
+cadencer with that text is deduced from `LinearQuotaExhaustedError._render` and `classify`, not
+exercised against a real quota error. Durable refusal: the `finished` line is `completed` with state
 `refused`, no substitute write is made, the next pass decides `correct` and the corrected head
 is reviewed again. Transient: the `finished` line is `failed` with error `transient` and the
 outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
 `--poll-seconds` and observes again. That the patterns match what each real adapter raises is
 not exercised here: only the Linear class names are known from the code, the YouTrack and
-GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60) and
-`MAX_DEFER_TRIES` (5) are chosen and not measured.
+GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60),
+`MAX_RESET_WAIT_SECONDS` (3600) and `MAX_DEFER_TRIES` (5) are chosen and not measured.
 
 The companion Epic and its follow-up have no link to the Epic of the campaign: the neutral
 subgraph (`build_neutral_subgraph`) follows `parent-of` from the campaign's Epic only, so the
@@ -891,7 +899,7 @@ routing table changed.
 
 R5 status (PAT-238): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md` and
 `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign"). Candidate artefacts: the constants
-`_COMPANION_NAME` (the exact companion Epic naming rule) and `_RESET_AT`, the helper `reset_of`,
+`_COMPANION_NAME` (the exact companion Epic naming rule), `_RESET_AT` and `MAX_RESET_WAIT_SECONDS`, the helper `reset_of`,
 the optional use of `reset_at` in the wait of a transient deferral, the `companion` of a refused
 creation that was created, the `journal_memory` rule on attempts that did not end `done`, and the
 sentences of R9 on the number of attempts and on the orphan scan, which were too strong. No CLI

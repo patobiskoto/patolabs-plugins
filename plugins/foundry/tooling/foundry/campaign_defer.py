@@ -31,7 +31,12 @@ COMPANION_PREFIX = "Nits "
 _COMPANION_NAME = re.compile(r"Nits [A-Za-z][A-Za-z0-9]*-[0-9]+")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
-DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait; not measured
+DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or the reset_at of a
+# quota error when later (capped by MAX_RESET_WAIT_SECONDS); not measured
+# A quota error's `reset_at` lengthens that wait, up to this many seconds after the attempt ended,
+# so a ticket never waits for a far or wrong date.  A Foundry choice: not measured, and the
+# Linear quota window is not established (docs/linear-tracker.md).
+MAX_RESET_WAIT_SECONDS = 3600
 MAX_DEFER_TRIES = 5  # attempts per diff; beyond them the campaign waits for a human
 STATES = ("pending", "done", "refused", "transient", "exhausted")
 DEFERRAL_KEYS = {"state", "follow_up", "companion", "reason", "diff_hash", "remarks", "writes",
@@ -107,7 +112,12 @@ def reset_of(reason: str | None) -> datetime | None:
     ``trackers/linear.py``), read back from the journaled reason; ``None`` when absent or
     ``unknown``."""
     found = _RESET_AT.search(reason or "")
-    return _moment(found.group(1)) if found else None
+    if not found:
+        return None
+    try:
+        return _moment(found.group(1))
+    except ValueError:  # a date the pattern accepts and the calendar does not (month 13)
+        return None
 
 
 # --------------------------------------------------------------------- observation
@@ -157,6 +167,8 @@ def deferral_facts(path: Path, epic: str):
             until = _moment(last_end["at"]) + timedelta(seconds=DEFER_RETRY_SECONDS)
             # a quota error reports when the quota resets: no retry before (PAT-ADR-0006)
             reset = reset_of((last_end.get("deferral") or {}).get("reason"))
+            if reset is not None:  # honoured up to MAX_RESET_WAIT_SECONDS after the attempt
+                reset = min(reset, _moment(last_end["at"]) + timedelta(seconds=MAX_RESET_WAIT_SECONDS))
             facts["cooling"] = bool(now) and max(until, reset or until) > now
         return cadence.DeferralFacts(**facts)
     return read
@@ -183,7 +195,8 @@ def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | Non
     """``edit reconcile-create <issue id or client id> <spec>`` (read-only): ``("accepted",
     issue id)``; ``("absent", None)`` when the read finds no such issue (the creation did not
     happen); ``("refused", None)`` when the adapter refuses to validate it (no replay);
-    otherwise ``("unknown", None)``."""
+    otherwise ``("unknown", reason)``, the reason keeping the ``reset_at`` of a quota error that
+    failed the read (the retry then waits for it, PAT-ADR-0006)."""
     with tempfile.TemporaryDirectory() as tmp:
         spec_file = Path(tmp) / "spec.json"
         spec_file.write_text(json.dumps(spec), encoding="utf-8")
@@ -192,12 +205,30 @@ def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | Non
         tail = fx.without_request_count(check.stderr)[-400:]
         if _REFUSED.search(tail):
             return "refused", None
-        return ("absent", None) if _ABSENT.search(tail) else ("unknown", None)
+        return ("absent", None) if _ABSENT.search(tail) else ("unknown", _unknown_reason(tail))
     verdict = review._json_object(check.stdout)
     if verdict and verdict.get("validation") == "refused":
         return "refused", None
     found = verdict.get("issue_id") if verdict and verdict.get("validation") == "accepted" else None
-    return ("accepted", found) if isinstance(found, str) and found else ("unknown", None)
+    return (("accepted", found) if isinstance(found, str) and found
+            else ("unknown", "creation_effect_unknown"))
+
+
+def _cause_reset(details: dict | None) -> str | None:
+    """The ``reset_at`` that a failed create call or read-back reports in the ``causes`` of the
+    structured creation error (``trackers/linear.py``), when it is a well-formed UTC time."""
+    causes = (details or {}).get("causes")
+    for key in ("create", "read"):
+        cause = causes.get(key) if isinstance(causes, dict) else None
+        found = cause.get("reset_at") if isinstance(cause, dict) else None
+        if isinstance(found, str) and _RESET_AT.fullmatch(f"reset_at={found}"):
+            return found
+    return None
+
+
+def _unknown_reason(tail: str) -> str:
+    reset = _RESET_AT.search(tail)
+    return f"creation_effect_unknown {reset.group(0)}" if reset else "creation_effect_unknown"
 
 
 def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
@@ -211,7 +242,7 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
         if status == "refused":
             raise Durable("creation_replay_refused")
         if status == "unknown":
-            raise Transient("creation_effect_unknown")
+            raise Transient(found)
         ledger["unknown"].remove(entry)
         if status == "accepted":
             ledger["writes"].append(label)
@@ -238,9 +269,16 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
         client = found.group(1) if found else None
         if not isinstance(classify(stderr), Transient) or client is None:
             raise classify(stderr)
+        if _RESET_AT.search(stderr[-400:]):  # the quota is empty: a read now would fail too
+            ledger["unknown"].append({"title": spec["title"], "client_id": client})
+            raise classify(stderr)  # the next pass reconciles first, after the reset (PAT-238)
     ref = next((v for v in (named, client) if isinstance(v, str) and v), None)
     if ref is None:
         raise Durable("creation_effect_unreconcilable")
+    reset = _cause_reset(details)
+    if reset:  # the quota is empty: park the reconciliation until it resets (PAT-238)
+        ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
+        raise Transient(f"creation_effect_unknown reset_at={reset}")
     status, found = _reconcile(runtime, cwd, ref, spec)
     if status == "accepted":
         ledger["writes"].append(label)
@@ -250,7 +288,7 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     if status == "absent":  # the creation did not happen: the next pass creates again
         raise Transient("creation_not_observed")
     ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
-    raise Transient("creation_effect_unknown")
+    raise Transient(found)
 
 
 class Listing:

@@ -248,11 +248,6 @@ def test_the_journal_names_the_companions_and_a_possible_creation(env):
     assert cd.journal_memory(path, "APP-1") == (["APP-50"], True)
     path.write_text("\n".join([
         line("started", "a1"),
-        line("finished", "a1", deferral=field("APP-50", [cd.WRITE_COMPANION])),
-        line("started", "a2"),
-    ]) + "\n")
-    path.write_text("\n".join([
-        line("started", "a1"),
         line("finished", "a1", deferral=field("APP-50", [cd.WRITE_COMPANION, cd.WRITE_FOLLOW_UP])),
         line("started", "a2"),
     ]) + "\n")

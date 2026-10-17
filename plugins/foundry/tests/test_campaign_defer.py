@@ -318,6 +318,69 @@ def test_a_quota_error_naming_the_client_id_is_reconciled_by_it(env):
     assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
 
 
+def test_a_quota_error_with_a_reset_time_on_a_creation_is_not_reconciled_at_once(env):
+    """PAT-238: the read would fail under the empty quota and lose `reset_at`."""
+    reviewed(env)
+    env.world.create_failure = f"{reset_text(NOW + timedelta(hours=1))} client_id={CLIENT}"
+    env.world.create_effect_first = True
+    env.world.search_blind = {"Nits APP-1"}  # only the client id can find the created Epic
+    first = step(env)
+    assert first.outcome == "waiting"
+    assert verbs(env) == ["create-issue"]  # no reconcile-create now
+    assert first.effect["deferral"]["unknown"] == [{"title": "Nits APP-1", "client_id": CLIENT}]
+    assert cd.reset_of(first.effect["deferral"]["reason"]) == NOW + timedelta(hours=1)
+    assert step(env, LATER).decision.kind == "wait"  # until reset_at, not DEFER_RETRY_SECONDS
+    assert verbs(env) == ["create-issue"]
+    env.world.clients[CLIENT] = companions(env)[0].id
+    env.world.create_failure = None
+    done = step(env, NOW + timedelta(hours=1, minutes=1))
+    assert done.outcome == "executed" and verbs(env)[1] == "reconcile-create"
+    assert verbs(env).count("create-issue") == 2  # companion adopted, follow-up created once
+    assert done.effect["deferral"]["unknown"] == []
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
+
+
+def test_a_creation_error_whose_read_hit_the_quota_waits_for_the_reset(env):
+    reviewed(env)
+    reset = (NOW + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required",
+        "causes": {"read": {"operation": "issue.read", "status": 429, "reset_at": reset}}})
+    first = step(env)
+    assert first.outcome == "waiting" and verbs(env) == ["create-issue"]
+    assert first.effect["deferral"]["unknown"] == [{"title": "Nits APP-1", "client_id": CLIENT}]
+    assert cd.reset_of(first.effect["deferral"]["reason"]) == NOW + timedelta(hours=1)
+    assert step(env, LATER).decision.kind == "wait"
+
+
+def test_a_quota_failure_of_the_reconciliation_read_keeps_its_reset_time(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": CLIENT, "issue_id": None, "reconciliation": "required"})
+    env.world.reconcile_failure = reset_text(NOW + timedelta(hours=1))
+    first = step(env)
+    assert first.outcome == "waiting"
+    assert first.effect["deferral"]["reason"].startswith("creation_effect_unknown")
+    assert cd.reset_of(first.effect["deferral"]["reason"]) == NOW + timedelta(hours=1)
+    assert step(env, LATER).decision.kind == "wait"
+    env.world.reconcile_failure = ABSENT  # after the reset the read answers: no such issue
+    again = step(env, NOW + timedelta(hours=1, minutes=1))
+    assert verbs(env).count("reconcile-create") == 2  # the second read came after the reset
+    assert again.outcome == "executed" and again.effect["deferral"]["unknown"] == []
+
+
+def test_a_journaled_unknown_creation_whose_read_hits_the_quota_again_keeps_the_new_reset(env):
+    reviewed(env)
+    env.world.create_failure = f"{reset_text(NOW + timedelta(hours=1))} client_id={CLIENT}"
+    step(env)
+    later = NOW + timedelta(hours=1, minutes=1)
+    env.world.reconcile_failure = reset_text(later + timedelta(minutes=30))
+    second = step(env, later)
+    assert second.effect["deferral"]["unknown"] == [{"title": "Nits APP-1", "client_id": CLIENT}]
+    assert cd.reset_of(second.effect["deferral"]["reason"]) == later + timedelta(minutes=30)
+    assert step(env, later + timedelta(minutes=10)).decision.kind == "wait"
+
+
 def test_a_comment_that_went_through_is_not_posted_twice(env):
     reviewed(env)
     env.world.write_failures["comment"] = "ConnectionError: transport_error"
@@ -518,7 +581,8 @@ def test_a_new_child_of_the_origin_epic_does_stop_the_merge(env):
     step(env)
     env.world.checks = [check()]
     env.world.add_issue("APP-77", "A late child", "Task", "ready", parent="APP-1")
-    assert step(env).decision.kind != "merge"
+    stopped = step(env).decision
+    assert (stopped.kind, stopped.reason) == ("suspend", "structure_changed")
 
 
 def test_the_origin_epic_closure_graph_ignores_the_companion(env):
@@ -811,6 +875,28 @@ def test_a_reset_time_in_the_past_or_unknown_changes_nothing(env):
     assert cd.reset_of(None) is None
 
 
+def test_a_reset_time_already_past_changes_nothing(env):
+    reviewed(env)
+    env.world.create_failure = reset_text(NOW - timedelta(hours=1))
+    assert step(env).outcome == "waiting"
+    assert step(env, LATER).decision.kind == "defer-remarks"  # only DEFER_RETRY_SECONDS count
+
+
+def test_a_far_reset_time_is_honoured_only_up_to_the_cap(env):
+    reviewed(env)
+    env.world.create_failure = reset_text(NOW + timedelta(days=30))
+    assert step(env).outcome == "waiting"
+    inside = NOW + timedelta(seconds=cd.MAX_RESET_WAIT_SECONDS - 60)
+    assert step(env, inside).decision.kind == "wait"
+    after = NOW + timedelta(seconds=cd.MAX_RESET_WAIT_SECONDS + 60)
+    assert step(env, after).decision.kind == "defer-remarks"  # never waits for 30 days
+
+
+def test_an_impossible_date_is_no_reset_time():
+    assert cd.reset_of("quota reset_at=2026-13-45T25:61:61Z") is None
+    assert cd.reset_of("quota reset_at=2026-02-30T00:00:00Z") is None
+
+
 def test_the_reset_time_survives_a_long_error():
     long_text = "LinearQuotaExhaustedError: " + "x" * 300 + " reset_at=2026-10-16T13:00:00Z"
     reason = cd.classify(long_text).reason
@@ -875,3 +961,13 @@ def test_the_request_counter_is_left_out_of_the_detail_of_a_failed_command(env):
 
     done, err = review._foundry(env.runtime, ["issue", "x"], env.tmp)
     assert done.returncode == 1 and err == "refused"
+
+
+def test_the_companion_name_rule_accepts_every_identifier_the_preview_accepts():
+    """N4: `_COMPANION_NAME` and `epic_preview.ISSUE_ID` must not drift apart."""
+    from foundry import epic_preview
+
+    for identifier in ("APP-1", "PAT-238", "A1-7", "AB-12", "ABCDEFGHIJKLMNO1-999"):
+        assert epic_preview.ISSUE_ID.fullmatch(identifier)
+        assert cd._COMPANION_NAME.fullmatch(f"{cd.COMPANION_PREFIX}{identifier}")
+    assert cd._COMPANION_NAME.fullmatch("Nits APP-1 and more") is None

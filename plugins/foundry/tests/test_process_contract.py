@@ -122,6 +122,11 @@ _R9_CODE_CITATIONS = (
     ("campaign_defer.py", "def run_deferral("),
     ("campaign_defer.py", "MAX_DEFER_TRIES = "),
     ("campaign_defer.py", "_DURABLE = re.compile("),
+    ("campaign_defer.py", "DEFER_RETRY_SECONDS = "),
+    ("campaign_defer.py", "MAX_RESET_WAIT_SECONDS = "),
+    ("campaign_defer.py", "def reset_of("),
+    ("campaign_defer.py", "_RESET_AT = re.compile("),
+    ("campaign_defer.py", '_COMPANION_NAME = re.compile('),
     ("campaign_review.py", "def parse_result("),
     ("review_remarks.py", "class ReviewRemarksStore:"),
 )
