@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -40,6 +40,8 @@ SUMMARIES_NAME = "campaign-summaries"
 EFFECT_KINDS = ("start", "implement", "open-pr", "review", "correct", "defer-remarks", "merge")
 # The kinds that launch a model session; the approval ceilings count them all (PAT-218).
 SESSION_KINDS = ("implement", "review", "correct")
+# The kinds whose effect may push with `issue openpr` (a PR body update included).
+PUSH_KINDS = ("open-pr", "review", "defer-remarks")
 IMPLEMENT_BUDGET_USD = 5.0  # default ceiling of one session; not measured (unknown)
 MAX_BUDGET_USD = 25.0
 IMPLEMENT_TIMEOUT_SECONDS = 2 * 60 * 60
@@ -227,6 +229,26 @@ class Runtime:
     budget_usd: float = IMPLEMENT_BUDGET_USD
     plugin_root: Path = Path(__file__).resolve().parents[2]
     environ: Callable[[], dict] = lambda: dict(os.environ)  # noqa: E731
+    _hooks: str | None = field(default=None, init=False, repr=False)
+
+    def hooks_dir(self) -> str:
+        """PAT-220: the hooks directory of the main checkout ``root``, read once (``git rev-parse
+        --git-path hooks`` honours ``core.hooksPath``, a relative one against the top level of
+        ``root``); refused when it lies in the worktrees directory, which holds every ticket's."""
+        if self._hooks is None:
+            done = self.runner(
+                ["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+                cwd=self.root, capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS,
+                env=self.environ(), check=False)
+            path = (done.stdout or "").strip() if done.returncode == 0 else ""
+            if "\n" in path or not os.path.isabs(path):
+                raise OSError("git_hooks_dir_unreadable")
+            path = os.path.realpath(path)
+            outer = os.path.realpath(self.worktrees_dir)
+            if path == outer or path.startswith(outer.rstrip("/") + "/"):
+                raise OSError("git_hooks_dir_in_campaign_worktrees")
+            self._hooks = path
+        return self._hooks
 
     @property
     def cli(self) -> str:
@@ -263,11 +285,13 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
 
 def _run(runtime: Runtime, argv: list[str], cwd, *, input=None, timeout=COMMAND_TIMEOUT_SECONDS,
          env=None):
-    """Without ``env`` (every subprocess but a session): git hooks and fsmonitor are off
-    (``cadence.git_neutral_env``), also for the git commands of a Foundry command it runs."""
+    """Without ``env`` (every subprocess but a session): git runs the main checkout's hooks
+    with fsmonitor off (``cadence.git_neutral_env``), also in a Foundry command it runs."""
+    if env is None:
+        env = cadence.git_neutral_env(runtime.environ(), runtime.hooks_dir())
     return runtime.runner(
         argv, cwd=str(cwd), input=input, capture_output=True, text=True, timeout=timeout,
-        env=env if env is not None else cadence.git_neutral_env(runtime.environ()), check=False,
+        env=env, check=False,
     )
 
 
@@ -291,6 +315,19 @@ def ensure_worktree(runtime: Runtime, ticket: str, refs: Callable[[str], list[st
     if done.returncode != 0:
         raise OSError("création du worktree refusée par git")
     return path
+
+
+def branch_mismatch(runtime: Runtime, worktree: Path, ticket: str, refs) -> dict | None:
+    """PAT-220: ``issue openpr`` pushes the branch the worktree HEAD names, which the session
+    can move; the evidence of a refusal when it is not the ticket's branch or is the default."""
+    done = _run(runtime, ["git", "rev-parse", "--abbrev-ref", "HEAD"], worktree,
+                timeout=GIT_TIMEOUT_SECONDS)
+    head = (done.stdout or "").strip() if done.returncode == 0 else None
+    expected = cadence._branch_for(refs(runtime.root), ticket)
+    default = registry.default_branch(runtime.root) or "main"
+    if head and head == expected and head != default:
+        return None
+    return {"head": head, "expected": expected, "default": default}
 
 
 def _parse_session(stdout: object, session_id: str) -> dict:
@@ -492,6 +529,11 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
         return StepResult(
             cadence.Decision("suspend", reason="attempts_journal_invalid",
                              evidence={"error": str(exc)}), "stopped")
+    try:  # PAT-220: before any git command of this pass
+        runtime.hooks_dir()
+    except OSError as exc:
+        return StepResult(cadence.Decision("refuse", reason="git_hooks_dir_refused",
+                                           evidence={"error": str(exc)}), "stopped")
     obs = cadence.observe(
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
@@ -539,6 +581,12 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
             plan["prompt"] = implement_prompt(
                 epic, ticket.id, getattr(issue, "title", "") or "", issue.body or "",
             )
+        if decision.kind in PUSH_KINDS:  # each may run `issue openpr`, which pushes
+            mismatch = branch_mismatch(
+                runtime, ensure_worktree(runtime, ticket.id, refs), ticket.id, refs)
+            if mismatch is not None:
+                return StepResult(cadence.Decision(
+                    "suspend", ticket.id, "worktree_branch_mismatch", mismatch), "stopped")
     except Exception as exc:  # noqa: BLE001 - configuration refused before any attempt
         return StepResult(decision, "failed", {"phase": "plan", "error": type(exc).__name__,
                                                "detail": _hide_hex(str(exc))})

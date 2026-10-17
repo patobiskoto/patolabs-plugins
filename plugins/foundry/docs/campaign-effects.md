@@ -164,14 +164,34 @@ home, the network, other hosts and versions.
   the common `hooks` and a `git config core.hooksPath` left the common directory unchanged;
   `commondir`, `config.worktree`, `refs/replace` were not tested). A relative
   `core.hooksPath`, such as the `.githooks` that `doctor` proposes, resolves in the worktree,
-  which the session writes. So every subprocess the cadencer runs, sessions excepted, gets
-  `core.hooksPath=/dev/null` and `core.fsmonitor=false` through `GIT_CONFIG_COUNT`, appended
-  after existing entries (`campaign_cadence.git_neutral_env`, applied by `_run` and
-  `campaign_cadence._git`); the `issue`, `edit` and `routing` commands it runs pass it to their
-  git (deduced: they set no environment of their own). A `pre-commit` hook written in a linked worktree under a relative `core.hooksPath` did
-  not run under it and ran without it (observed in `test_hook_planted_in_a_worktree_does_not_run_in_a_cadencer_git_command`,
-  one git version). Consequence: the repository's own `pre-push` guard (AGENTS.md#R1) does not
-  run on the push of `issue openpr`; the merge path, `issue merge`, is unchanged.
+  which the session writes. So every subprocess started by `_run`, sessions excepted, gets
+  `core.hooksPath=<hooks directory of the main checkout>` and `core.fsmonitor=false` through
+  `GIT_CONFIG_COUNT`, appended after existing entries (`campaign_cadence.git_neutral_env`,
+  applied by `_run`); the `issue`, `edit` and `routing` commands it runs pass it to their
+  git (deduced: they set no environment of their own). `Runtime.hooks_dir` reads that directory
+  once per `Runtime` (one `step` or `run` command), from the repository root, with `git rev-parse --path-format=absolute
+  --git-path hooks`: with git 2.54.0 it gave a relative `core.hooksPath` joined to the main
+  checkout's top level, an absolute one as is, a `~/` one expanded, `<common dir>/hooks` unset
+  (observed once, by hand). The session does not write it when it is the main checkout's
+  `.githooks`, the common `hooks` or a global directory outside the paths it writes (deduced
+  from the settings above); one inside the worktrees directory makes the pass `refuse`
+  `git_hooks_dir_refused` before any other git command, while one in the temporary directory or in a
+  git path the session writes is not refused (residual). The read-only git calls of
+  `campaign_cadence._git` (`for-each-ref`, `rev-parse`, `rev-list`, which run no hook) keep
+  `core.hooksPath=/dev/null`. Observed in `tests/test_campaign_effects.py`, one git version:
+  under a relative `core.hooksPath`, a cadencer `git push` from a linked worktree ran the main
+  checkout's `pre-push` hook, which refused it, and not the one planted in the worktree, which
+  ran without these entries; a commit ran a `pre-commit` hook of a global absolute
+  `core.hooksPath`. So the repository's own `pre-push` hook (the AGENTS.md#R1 guard and the
+  check of `docs/commit-privacy.md`) and a global hooks directory, when enabled, run on the
+  push of `issue openpr` (deduced from those tests; `issue openpr` itself was not run).
+- `issue openpr` pushes the branch the worktree HEAD names (`openpr`, `issue.py`), and the
+  session can move that HEAD (it writes the worktree's git directory, above). Before an `open-pr`, `review` or `defer-remarks` effect
+  (`PUSH_KINDS`: each may run `issue openpr`), `branch_mismatch` reads it with `git rev-parse
+  --abbrev-ref HEAD`; when it is not the ticket's branch (`campaign_cadence._branch_for`) or is
+  the default branch (`registry.default_branch`, else `main`), the pass returns `suspend`
+  `worktree_branch_mismatch`, claims no attempt and runs no `issue openpr`
+  (`test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push`).
 - Residual, unknown: if a `denyWrite` on the worktree `.git` pointer, or on `commondir` or
   `config.worktree` of the git directory (inside the allowed git directory), did not hold, the
   session could redirect the git directory to a repository of its own whose configuration

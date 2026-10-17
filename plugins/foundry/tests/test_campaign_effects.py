@@ -28,11 +28,11 @@ REPOSITORY = "test/repo"
 CLI = str(Path(ce.__file__).resolve().parents[2] / "tooling" / "foundry_cli.py")
 
 
-def neutral(env) -> bool:
-    """``env`` sets ``core.hooksPath=/dev/null`` and ``core.fsmonitor=false`` for git."""
-    entries = [(env.get(f"GIT_CONFIG_KEY_{n}"), env.get(f"GIT_CONFIG_VALUE_{n}"))
-               for n in range(int(env.get("GIT_CONFIG_COUNT", "0")))] if env else []
-    return {("core.hooksPath", os.devnull), ("core.fsmonitor", "false")} <= set(entries)
+def neutral(env, hooks) -> bool:
+    """``env`` sets, last for git, ``core.hooksPath=<hooks>`` and ``core.fsmonitor=false``."""
+    entries = dict((env.get(f"GIT_CONFIG_KEY_{n}"), env.get(f"GIT_CONFIG_VALUE_{n}"))
+                   for n in range(int(env.get("GIT_CONFIG_COUNT", "0")))) if env else {}
+    return entries.get("core.hooksPath") == hooks and entries.get("core.fsmonitor") == "false"
 
 
 class World:
@@ -64,6 +64,7 @@ class World:
         self.clients = {}  # client id of a failed creation -> the issue it created
         self.write_failures = {}  # verb -> stderr of the next failure of that verb
         self.remarks_receipts = 0
+        self.worktree_head = {}  # ticket -> the branch its worktree HEAD names, when moved
 
     def add_issue(self, issue_id, title, kind, state, parent=None, body="- [ ] done"):
         links = [Link("subtask-of", "inward", parent)] if parent else []
@@ -86,10 +87,16 @@ class World:
         return [self.branch(t) for t in self.heads]
 
     def runner(self, argv, cwd=None, input=None, env=None, **kwargs):
-        self.calls.append((list(argv), cwd, env, input))
-        if argv[0] != "claude":  # PAT-220: no git hook nor fsmonitor in a cadencer subprocess
-            assert neutral(env), argv
         ok = lambda out="": SimpleNamespace(returncode=0, stdout=out, stderr="")  # noqa: E731
+        if "--git-path" in argv:  # PAT-220: the hooks directory of the main checkout, read once
+            self.hooks_reads = getattr(self, "hooks_reads", 0) + 1
+            self.hooks = f"{Path(cwd).resolve()}/.git/hooks"
+            return ok(self.hooks + "\n")
+        self.calls.append((list(argv), cwd, env, input))
+        if argv[0] != "claude":  # PAT-220: only the main checkout's hooks, no fsmonitor
+            assert neutral(env, self.hooks), argv
+        if "--abbrev-ref" in argv:  # PAT-220: the branch the worktree HEAD names
+            return ok(self.worktree_head.get(Path(cwd).name, self.branch(Path(cwd).name)) + "\n")
         if argv[:2] == ["git", "rev-parse"]:  # PAT-220: a linked worktree of the stand-in repository
             common = Path(os.environ["FOUNDRY_DATA"]).parent / "repo" / ".git"
             return ok(f"{common}\n{common}/worktrees/{Path(cwd).name}\n")
@@ -483,47 +490,101 @@ def test_session_git_writes_exclude_hooks_and_config(env):
 
 
 def test_git_neutral_env_appends_to_existing_entries():
-    env = cc.git_neutral_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name",
-                              "GIT_CONFIG_VALUE_0": "x", "PATH": "/bin"})
+    env = cc.git_neutral_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath",
+                              "GIT_CONFIG_VALUE_0": "x", "PATH": "/bin"}, "/h")
     assert env["GIT_CONFIG_COUNT"] == "3" and env["PATH"] == "/bin"
-    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("user.name", "x")
-    assert neutral(env) and neutral(cc.git_neutral_env({}))
+    assert (env["GIT_CONFIG_KEY_0"], env["GIT_CONFIG_VALUE_0"]) == ("core.hooksPath", "x")
+    assert neutral(env, "/h") and neutral(cc.git_neutral_env({}, "/h"), "/h")
 
 
 def test_cadence_git_reads_run_with_hooks_and_fsmonitor_off(monkeypatch):
     seen = []
     monkeypatch.setattr(cc.subprocess, "run", lambda argv, **kw: seen.append(kw["env"]) or
                         SimpleNamespace(returncode=0, stdout=""))
-    cc._git_refs("/r")
-    assert seen and all(neutral(e) for e in seen)
+    cc._git_refs("/r")  # read-only verbs: no hook to run
+    assert seen and all(neutral(e, os.devnull) for e in seen)
 
 
-def test_hook_planted_in_a_worktree_does_not_run_in_a_cadencer_git_command(tmp_path, monkeypatch):
-    """B1: a relative core.hooksPath resolves in the worktree the session writes."""
+def _real_repo(tmp_path, monkeypatch):
+    """A main checkout, a bare remote and a detached linked worktree of ticket APP-2."""
     import subprocess
 
     for name, value in (("HOME", str(tmp_path)), ("GIT_CONFIG_NOSYSTEM", "1"),
                         ("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@x"),
                         ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@x")):
         monkeypatch.setenv(name, value)
-    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    for name in ("GIT_CONFIG_COUNT", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL"):
+        monkeypatch.delenv(name, raising=False)
     root, wt = tmp_path / "repo", tmp_path / "wt"
     git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True,  # noqa: E731
                                          capture_output=True)
+    git(tmp_path, "init", "-q", "--bare", str(tmp_path / "remote.git"))
     git(tmp_path, "init", "-q", str(root))
     git(root, "commit", "-q", "--allow-empty", "-m", "base")
-    git(root, "config", "core.hooksPath", ".githooks")  # as `doctor` proposes
+    git(root, "remote", "add", "origin", str(tmp_path / "remote.git"))
     git(root, "worktree", "add", "-q", "--detach", str(wt / "APP-2"))
-    marker = tmp_path / "hook-ran"
-    hook = wt / "APP-2" / ".githooks" / "pre-commit"  # written by the session
-    hook.parent.mkdir()
-    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
-    hook.chmod(0o755)
+    return root, wt, git
+
+
+def _hook(directory, name, marker, status=0):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(f"#!/bin/sh\ntouch {marker}\nexit {status}\n")
+    (directory / name).chmod(0o755)
+
+
+def test_cadencer_push_runs_the_main_checkout_hook_never_one_planted_in_the_worktree(
+        tmp_path, monkeypatch):
+    """B1: a relative core.hooksPath resolves in the worktree the session writes."""
+    root, wt, git = _real_repo(tmp_path, monkeypatch)
+    git(root, "config", "core.hooksPath", ".githooks")  # as `doctor` proposes
+    _hook(root / ".githooks", "pre-push", tmp_path / "main-ran", status=1)  # a refusing guard
+    _hook(wt / "APP-2" / ".githooks", "pre-push", tmp_path / "planted-ran")  # by the session
+    runtime = ce.Runtime(root=str(root), worktrees_dir=wt)
+    assert runtime.hooks_dir() == os.path.realpath(root / ".githooks")
+    done = ce._run(runtime, ["git", "push", "-q", "origin", "HEAD:refs/heads/x"], wt / "APP-2")
+    assert done.returncode != 0 and (tmp_path / "main-ran").exists()
+    assert not (tmp_path / "planted-ran").exists()
+    git(wt / "APP-2", "push", "-q", "origin", "HEAD:refs/heads/x")  # control: plain env runs it
+    assert (tmp_path / "planted-ran").exists()
+
+
+def test_cadencer_git_keeps_an_absolute_global_hooks_path(tmp_path, monkeypatch):
+    root, wt, git = _real_repo(tmp_path, monkeypatch)
+    hooks = tmp_path / "global-hooks"
+    git(root, "config", "--global", "core.hooksPath", str(hooks))
+    _hook(hooks, "pre-commit", tmp_path / "global-ran")
     runtime = ce.Runtime(root=str(root), worktrees_dir=wt)
     done = ce._run(runtime, ["git", "commit", "-q", "--allow-empty", "-m", "x"], wt / "APP-2")
-    assert done.returncode == 0 and not marker.exists()
-    git(wt / "APP-2", "commit", "-q", "--allow-empty", "-m", "y")  # control: plain env runs it
-    assert marker.exists()
+    assert done.returncode == 0 and (tmp_path / "global-ran").exists()
+    assert runtime.hooks_dir() == os.path.realpath(hooks)
+
+
+def test_hooks_dir_inside_the_worktrees_directory_is_refused_before_any_effect(env):
+    inside = env.tmp / "wt" / "APP-2" / ".githooks"
+    env.runtime.runner = lambda argv, **kw: (SimpleNamespace(
+        returncode=0, stdout=f"{inside}\n", stderr="") if "--git-path" in argv
+        else env.world.runner(argv, **kw))
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "refuse", "git_hooks_dir_refused", "stopped")
+    assert "git_hooks_dir_in_campaign_worktrees" in result.decision.evidence["error"]
+    assert env.world.calls == [] and not ce.read_attempts(env.kwargs["attempts"])  # nothing ran
+
+
+def test_worktree_head_on_the_default_branch_suspends_open_pr_without_a_push(env):
+    step(env), step(env)  # start, implement
+    env.world.worktree_head["APP-2"] = "main"  # the session switched the worktree HEAD
+    before = len(effects(env.world))
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "suspend", "worktree_branch_mismatch", "stopped")
+    assert result.decision.evidence == {"head": "main", "expected": "chore/app-2-x",
+                                        "default": "main"}
+    assert len(effects(env.world)) == before  # no `issue openpr` subprocess
+    assert not [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["kind"] == "open-pr"]
+    env.world.worktree_head.clear()  # HEAD back on the ticket branch: the push goes ahead
+    assert (step(env).decision.kind, effects(env.world)[-1][0][3]) == ("open-pr", "openpr")
+    assert env.world.hooks_reads == 1  # once per runtime
 
 
 def test_correction_session_uses_the_same_sandbox_and_reviewer_does_not():
