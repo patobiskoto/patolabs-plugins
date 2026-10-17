@@ -1,4 +1,4 @@
-"""Deterministic, strictly read-only preview of a versioned Epic graph.
+"""Deterministic, strictly read-only preview of an Epic graph.
 
 The graph is either the Dev Hub projection (``devhub-application.v1``) or the
 tracker-neutral ``foundry-epic-subgraph.v1`` (PAT-ADR-0027) that
@@ -30,6 +30,7 @@ POLICY_CONTRACT = "foundry-epic-preview-policy.v1"
 PREVIEW_CONTRACT = "foundry-epic-preview.v1"
 PREVIEW_DEPTH = 8
 PREVIEW_NODE_LIMIT = 100
+PREVIEW_COLLECTION_LIMIT = 400
 STATES = {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
 TERMINAL_STATES = {"done", "dropped"}
 EDGE_TYPES = {"subtask-of", "depends-on", "relates"}
@@ -154,7 +155,7 @@ def validate_subgraph(
     raw: object, *, expected_epic_id: str | None = None,
     expected_project_key: str | None = None,
 ) -> ValidatedGraph:
-    """Validate and normalize the strict complete Dev Hub subgraph contract."""
+    """Validate and normalize the strict complete subgraph of either graph contract."""
     keys = {
         "root", "nodes", "edges", "blockers", "progress", "depth", "truncation",
         "schema_version",
@@ -175,7 +176,7 @@ def validate_subgraph(
     if expected_epic_id is not None and root != expected_epic_id:
         _fail("subgraph.root: racine différente de l'Epic demandé")
     if not isinstance(graph["nodes"], list) or not 1 <= len(graph["nodes"]) <= 100:
-        _fail("subgraph.nodes: racine versionnée requise")
+        _fail("subgraph.nodes: racine requise")
     nodes: dict[str, dict] = {}
     for index, raw_node in enumerate(graph["nodes"]):
         node = _validate_node(raw_node, index, project_key, neutral=neutral)
@@ -184,11 +185,11 @@ def validate_subgraph(
         nodes[node["id"]] = node
     root_node = nodes.get(root)
     if root_node is None or root_node["depth"] != 0 or (root_node["type"] or "").lower() != "epic":
-        _fail("subgraph.root: Epic racine versionné incohérent")
+        _fail("subgraph.root: Epic racine incohérent")
     if any(node["id"] != root and node["depth"] == 0 for node in nodes.values()):
         _fail("subgraph.nodes: plusieurs racines")
 
-    if not isinstance(graph["edges"], list) or len(graph["edges"]) > 400:
+    if not isinstance(graph["edges"], list) or len(graph["edges"]) > PREVIEW_COLLECTION_LIMIT:
         _fail("subgraph.edges: collection hors contrat")
     edge_keys: set[tuple[str, str, str]] = set()
     parents: dict[str, str] = {}
@@ -225,7 +226,7 @@ def validate_subgraph(
     _assert_acyclic(set(nodes), hierarchy, "subgraph.hierarchy")
     _assert_acyclic(set(nodes), dependency_order, "subgraph.dependencies")
 
-    if not isinstance(graph["blockers"], list) or len(graph["blockers"]) > 400:
+    if not isinstance(graph["blockers"], list) or len(graph["blockers"]) > PREVIEW_COLLECTION_LIMIT:
         _fail("subgraph.blockers: collection hors contrat")
     blocker_keys = set()
     external: dict[str, list[dict]] = {issue_id: [] for issue_id in nodes}
@@ -309,7 +310,7 @@ def validate_subgraph(
     )
     if node_limit != PREVIEW_NODE_LIMIT:
         _fail(f"truncation.limits.nodes: {PREVIEW_NODE_LIMIT} requis par le preview")
-    if limits["edges"] != 400:
+    if limits["edges"] != PREVIEW_COLLECTION_LIMIT:
         _fail("truncation.limits.edges: plafond inconnu")
     if (truncation["truncated"] is not False or truncation["reasons"] != []
             or progress["complete"] is not True):
@@ -409,8 +410,9 @@ def structure_digest(graph: ValidatedGraph) -> str:
 
     Covers ids and types, hierarchy (``subtask-of``), internal ``depends-on`` edges,
     the set of external blocker pairs without their states, and the Epic's validation
-    digest.  States, versions, titles and labels are not covered.  Dev Hub's contract
-    carries no parent body, so the parent component is then a named absence.
+    digest.  States, versions, titles and labels are not covered.  ``graph_contract`` (the
+    graph's ``schema_version``) is covered too.  ``devhub-application.v1`` carries no
+    parent body, so the parent component is then a named absence.
     """
     value = graph.value
     edges = value["edges"]
@@ -478,14 +480,22 @@ def classify_nodes(graph: ValidatedGraph) -> dict[str, tuple[str, str]]:
 def build_preview(
     raw_graph: object, raw_policy: object, routing_policy: RoutingPolicy,
     *, expected_epic_id: str | None = None, expected_project_key: str | None = None,
-    tracker_name: str = "devhub",
+    tracker_name: str | None = None,
 ) -> dict:
-    """Purely validate, classify, route and digest a preview (no I/O or mutation)."""
+    """Purely validate, classify, route and digest a preview (no I/O or mutation).
+
+    ``tracker_name`` is recorded as ``authority.tracker``.  Left ``None`` it is ``devhub``
+    for a ``devhub-application.v1`` graph and refused for any other contract: no tracker
+    name is guessed."""
     graph = validate_subgraph(
         raw_graph,
         expected_epic_id=expected_epic_id,
         expected_project_key=expected_project_key,
     )
+    if tracker_name is None:
+        if graph.value["schema_version"] != GRAPH_CONTRACT:
+            _fail("tracker_name requis pour ce contrat de sous-graphe")
+        tracker_name = "devhub"
     request = _policy_request(raw_policy)
     root = graph.value["root"]
     base_floor = request["routing"]["implementer_minimum_tier"]

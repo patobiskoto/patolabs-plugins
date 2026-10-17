@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from foundry.epic_preview import (
     NEUTRAL_GRAPH_CONTRACT,
+    PREVIEW_COLLECTION_LIMIT,
     PREVIEW_DEPTH,
     PREVIEW_NODE_LIMIT,
     TERMINAL_STATES,
@@ -110,6 +111,8 @@ def build_neutral_subgraph(
                 if _project_key(target_id) != project_key:
                     _fail(f"{target_id}: blocker hors projet")
                 if target_id not in external_state:
+                    if len(external_state) + 1 > PREVIEW_COLLECTION_LIMIT:
+                        _fail("subgraph.blockers: plafond de blockers externes dépassé")
                     tracker.validate_issue_binding(project, epic_id, target_id)
                     external = tracker.get_issue(target_id)
                     if external.id != target_id:
@@ -143,7 +146,7 @@ def build_neutral_subgraph(
         "depth": {"requested": PREVIEW_DEPTH, "reached": max(depths.values())},
         "truncation": {
             "truncated": False, "reasons": [],
-            "limits": {"nodes": PREVIEW_NODE_LIMIT, "edges": 400},
+            "limits": {"nodes": PREVIEW_NODE_LIMIT, "edges": PREVIEW_COLLECTION_LIMIT},
         },
         "parent_validation_digest": epic_parent_validation_digest(root),
         "schema_version": NEUTRAL_GRAPH_CONTRACT,

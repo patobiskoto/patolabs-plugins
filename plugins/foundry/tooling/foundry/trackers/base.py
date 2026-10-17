@@ -146,7 +146,7 @@ class ProjectProvisioningUnavailableError(RuntimeError):
 
 
 class EpicSubgraphUnavailableError(RuntimeError):
-    """The active tracker does not expose a complete versioned Epic subgraph."""
+    """The active tracker does not expose a complete Epic subgraph."""
 
 
 class Tracker(ABC):
@@ -243,7 +243,7 @@ class Tracker(ABC):
         depth: int = 8,
         nodes: int = 100,
     ) -> dict:
-        """Return one provider-versioned, explicitly bounded Epic subgraph.
+        """Return one explicitly bounded Epic subgraph.
 
         The result is provider data only.  Consumers must still validate its
         completeness, consistency and acyclicity before deriving a plan.
