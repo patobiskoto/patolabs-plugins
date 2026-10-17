@@ -647,6 +647,10 @@ The destructive real-provider integration is separate and explicitly gated. See
 [`docs/youtrack-smoke.md`](docs/youtrack-smoke.md) for its disposable-project guards,
 runner variables, command, and idempotent cleanup contract.
 
+The on-demand skill-selection evals (five Foundry skills, deterministic graders, a budget
+authorised by the operator before any paid call) are described in
+[`docs/skill-evals.md`](docs/skill-evals.md).
+
 ```
 PYTHONPATH=tooling python3 -m foundry.doctor
 pytest -q -m "not integration" tests  # pure-logic tests, no network; benchmark/POC tests excluded, see below
