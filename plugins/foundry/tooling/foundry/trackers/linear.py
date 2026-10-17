@@ -5815,8 +5815,15 @@ class LinearTracker(Tracker):
         values: dict,
         expected: dict,
         operation: str,
+        *,
+        review_receipt_at: int | None = None,
     ) -> dict:
-        """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue."""
+        """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue.
+
+        ``review_receipt_at`` is set only by the review projection (PAT-230): it
+        lets the readback accept the one provider regression proven by
+        ``_review_regression_proven``, and nothing else.
+        """
         if not isinstance(raw.get("id"), str) or not raw["id"]:
             raise LinearTrackerError(operation, None, "invalid_response")
         try:
@@ -5842,8 +5849,31 @@ class LinearTracker(Tracker):
         readback = self._read_raw(issue_id)
         self._assert_issue_project(readback, binding)
         if not self._raw_matches(readback, expected):
+            if review_receipt_at is not None and self._review_readback_regressed(
+                readback, binding, review_receipt_at,
+            ):
+                return readback
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
+
+    def _review_readback_regressed(
+        self, readback: dict, binding: dict, review_receipt_at: int,
+    ) -> bool:
+        """PAT-230: Linear's ``start`` automation moved Review back to In Progress.
+
+        Observation only, never a second write: the native State must be
+        ``in-progress`` and the bounded ``stateHistory`` must show In Progress,
+        then Review reached after the review receipt, then In Progress (PAT-76).
+        """
+        state_ids = binding["state_ids"]
+        state = readback.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if native_state_id is None or native_state_id != state_ids.get("in-progress"):
+            return False
+        return self._review_regression_proven(
+            readback.get("identifier"), readback.get("id"), native_state_id,
+            review_receipt_at, state_ids,
+        )
 
     @staticmethod
     def _native_state_name(raw: dict, binding: dict) -> str:
@@ -5958,9 +5988,19 @@ class LinearTracker(Tracker):
         self._assert_issue_project(fresh, binding)
         if not self._raw_matches(fresh, snapshot):
             raise TrackerConflictError("Linear issue changed before bounded write")
+        receipt_at = None
+        if state == "review":
+            # PAT-230: the creation time of the latest review receipt bounds the
+            # Review span that a tolerated regression must have reached after it.
+            times = []
+            for row in _connection(fresh.get("comments"), "lifecycle.comments"):
+                decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
+                if decoded is not None and decoded[0] == "state-review":
+                    times.append(_epoch_ms(row.get("createdAt")))
+            receipt_at = max((t for t in times if t is not None), default=None)
         return self._bounded_issue_update(
             issue_id, fresh, binding, values, expected,
-            "issue.update.lifecycle-state",
+            "issue.update.lifecycle-state", review_receipt_at=receipt_at,
         )
 
     def set_state(

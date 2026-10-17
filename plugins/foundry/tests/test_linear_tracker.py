@@ -303,6 +303,7 @@ class LinearWire:
             "LIN-2": raw_issue("LIN-2", ISSUE_2_ID, title="Existing"),
         }
         self.state_histories = {}
+        self.after_issue_update = None
         self.comments = {}
         self.documents = {}
         # Readback probes are historical provider observations, not ADR slots.
@@ -442,6 +443,8 @@ class LinearWire:
         if "FoundryLinearIssueUpdate" in document:
             issue = self._by_native(variables["id"])
             self._apply(issue, variables["input"])
+            if self.after_issue_update is not None:
+                self.after_issue_update(issue, variables["input"])
             return {
                 "data": {
                     "issueUpdate": {
@@ -2560,6 +2563,71 @@ def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_
     instance.link("LIN-2", "blocks", "LIN-1", project=PROJECT)
     assert Link("blocks", "inward", "LIN-1") in instance.get_issue("LIN-2").links
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+
+
+def _regress_after_review_write(wire, shape):
+    """PAT-230: the provider moves Review back to In Progress after the write."""
+
+    def hook(issue, values):
+        if values.get("stateId") != STATE_IDS["review"]:
+            return
+        issue["state"]["id"] = STATE_IDS["in-progress"]
+        if shape != "missing":
+            prove_native_review_regression(wire, issue["identifier"])
+        if shape == "before_receipt":
+            wire.state_histories[issue["identifier"]]["nodes"][1]["startedAt"] = (
+                "2026-09-20T10:01:00Z"
+            )
+        if shape == "incomplete":
+            wire.state_histories[issue["identifier"]]["pageInfo"]["hasNextPage"] = True
+
+    wire.after_issue_update = hook
+
+
+def test_linear_review_write_tolerates_proven_start_automation_regression(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    _regress_after_review_write(wire, "proven")
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+
+    updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
+    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 1
+    assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["in-progress"]
+    assert instance.get_issue("LIN-2").state == "review"
+
+
+@pytest.mark.parametrize("shape", ["missing", "before_receipt", "incomplete"])
+def test_linear_review_write_refuses_unproven_regression(tracker, shape):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    _regress_after_review_write(wire, shape)
+    with pytest.raises(TrackerConflictError):
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+
+
+def test_linear_review_write_refuses_other_divergence(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+
+    def hook(issue, values):
+        issue["state"]["id"] = STATE_IDS["blocked"]
+        prove_native_review_regression(wire, issue["identifier"])
+
+    wire.after_issue_update = hook
+    with pytest.raises(TrackerConflictError, match="divergent after bounded write"):
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
 
 
 @pytest.mark.parametrize("history_shape", ["missing", "before_receipt", "incomplete"])
