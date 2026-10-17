@@ -389,3 +389,93 @@ again (N + 1 reads for N nodes, "Provider-read cost of a graph snapshot (PAT-99)
 opened by `query issue`, `query adrs`, `query backlog` and `query profile` only (section above), so
 it does not share these reads. How many requests this costs on a real project is **unknown**: no
 figure was measured, and no change is made here.
+
+## Epic campaign (PAT-228)
+
+Documentation status (R5, `AGENTS.md#R5`): new section; the artefacts it names are listed in
+`docs/campaign-effects.md` ("R5 status (PAT-228)"). Three kinds of statement are kept apart:
+**observed** (a real run or a real read), **measured on the double** (the GraphQL transport double
+`FaithfulLinearWire`, `tests/test_campaign_request_cost.py`) and **deduced**.
+
+### Observed on a real campaign (2026-10-17)
+
+Source: `docs/qualification/pat-219-epic-campaign-2026-10-17.md`, "Cost". The cadencer process
+(`campaign-cadence run`, `FOUNDRY_REQUEST_COUNT=stderr`) counted 1723 requests for 14 steps (three
+deferral attempts), 13 for 3 steps (no review, no deferral) and 479 for 12 steps (one deferral
+attempt). Before PAT-228 the counter was per process only: no figure was recorded per pass.
+
+One real observation, read-only (`campaign-cadence next PAT-154`, 2026-10-17 about 14:09, Europe/Paris,
+`FOUNDRY_TRACKER=linear`, `FOUNDRY_REQUEST_COUNT=stderr`, the checkout at `af11256`; the project
+had identifiers up to PAT-231, its size is otherwise unknown): 19 requests, for an Epic of 17 tickets (15 `done`,
+1 `dropped`, 1 `in-progress`; focus PAT-228, no PR). The command ran twice (the second time to
+count the tickets); only the first run's count was kept.
+
+### Measured on the double
+
+Pinned by `tests/test_campaign_request_cost.py` (observation: `test_an_observation_costs_one_request_per_node`; lookups: the `test_*lookup*`, `test_a_journaled_*` and `before` tests; replay: `test_a_replayed_campaign_splits_its_requests`). Method: the transport double records every GraphQL call (`wire.calls`); the figures are the
+number of calls, by operation. Project: one closed Epic of 55 nodes (31 children, 24
+prerequisites, as in `tests/test_epic_read_cost.py`), plus a companion Epic and its follow-up.
+
+| Read | Requests | Detail |
+|---|---|---|
+| One observation (`cadence.observe`) of an open Epic, 6 children + 2 prerequisites | 9 | one `issue.read` per node, the Epic included |
+| same, 12 children + 4 prerequisites | 17 | same |
+| same, 31 children + 24 prerequisites | 56 | same |
+| `tracker.search(project)` with that closed Epic | 57 | 1 listing page + 56 `issue.read`; deduced from the code, not traced: the closed Epic is replayed by `_to_issue` (`_verified_epic_closure`); a page holds `_PAGE_SIZE` issues |
+| Companion and follow-up lookup of the deferral, before PAT-228 | 59 or 116 | one listing per lookup (`_find_companion`, then `_find_follow_up` when no unstarted child exists), 116 when the follow-up is started or closed |
+| same, after PAT-228, first attempt of the Epic | 59 | one listing (`Listing`) shared by both lookups |
+| same, after PAT-228, companion journaled and no earlier creation possible | 3 | `get_issue` of the companion, of the companion again and of its child; no listing |
+
+Reading: an observation costs about one request per node of the subgraph, the same order as the
+observed 19 for 17 tickets. A listing of the project costs its pages plus the replay of every
+closed Epic of the project, so it grows with the history of the project, not with the Epic being
+run. Deduced, not verified on a real run: the deferral accounts for most of the observed 1723
+and 479 (run 2, which has no deferral, cost about 4 per pass; runs 1 and 3
+average 123 and 40 per step), because two listings of a project with several closed Epics cost
+hundreds of requests. The per-effect split of those two runs was not recorded.
+
+### Replayed campaign on the double
+
+Method (`test_a_replayed_campaign_splits_its_requests`): `campaign_effects.run` on the campaign
+test world (`tests/test_campaign_effects.py`: fake runner for the sessions and the Foundry
+subcommands, fake code host and CI), with a tracker double that answers from that world and makes
+every read a second time on a `LinearTracker` over `FaithfulLinearWire` (the issues of the world
+mirrored there, plus the closed Epic of 55 nodes above). The counter is the number of transport
+calls of those mirrored reads. Scenario: `start`, `implement`, `open-pr`, `review` (two
+non-blocking remarks), `defer-remarks` (companion Epic and follow-up created), three passes that
+wait for CI, `merge`. The fake runner prints no request line, so the requests of the subcommands
+(`subprocesses`) are not part of these figures (13 for `issue start`, 33 for `issue merge` were
+observed on the real campaign, above).
+
+| Pass | Observation | Effect (in this process) |
+|---|---|---|
+| `start`, `implement`, `open-pr` | 3, 3, 3 | 0, 1, 0 |
+| `review` | 4 | 0 |
+| `defer-remarks` | 6 | 59 |
+| `wait-ci` (3 passes) | 4, 4, 4 | 0 |
+| `merge` | 4 | 0 |
+| Total (`request_summary`) | 35 | 60 |
+
+The `wait` part of the observation is 12 of 35. After PAT-228 the deferral effect is 59 of the 60
+effect requests; with the "before" reads (fixture `before`) it is 116 and the effects total 117,
+the observation unchanged. These are figures of a three-node Epic and of a project holding one
+closed Epic of 55 nodes: they show the split, not the cost of a real project (unknown).
+
+### Reduction (PAT-228) and what it leaves
+
+- Done: the deferral lists the project at most once per attempt (before: up to twice), and not at
+  all when an earlier attempt of the same Epic journaled the companion Epic and no earlier attempt
+  can have created a follow-up (`campaign_defer.journal_memory`, `_find_companion`,
+  `_find_follow_up`). The tracker is still read before every write; only the way of finding the
+  companion changed. Gain, measured on the double with the same method before and after: 59 or 116
+  requests for the lookups become 59 (first attempt) or 3 (later attempts of the Epic); the "before" is re-created by the test fixture `before` (no journal memory, a listing read again at each use), not by the old code. Residual risk: the journal is that of the campaign Epic only, so an orphan follow-up created outside it is not seen when the scan is skipped (`docs/campaign-effects.md`, step 3). On the
+  real campaign, deduced: run 1 would have listed at most three times (once per attempt, instead of
+  at most twice per attempt); the real gain is **unknown** until a campaign runs with the figures this section adds.
+- Not done: the observation of a pass that only waits (`wait-ci`, `waiting`). It costs about one
+  request per node (19 on PAT-154), at every `--poll-seconds`. Reading less would give up
+  the structure check that PAT-ADR-0027 requires before every effect, and the share of a run that
+  waits was not measured (the per-pass figure is now recorded: `docs/campaign-effects.md`,
+  "Provider requests of a pass"), so nothing is changed there.
+- Not done: the first lookup of the companion Epic of an Epic still lists the project: the
+  Tracker port offers no read narrower than `search` (Linear refuses a provider-native query,
+  `LinearTracker.search`), and PAT-ADR-0026 forbids a Linear-only shortcut.

@@ -307,7 +307,8 @@ Not mechanical:
 - Nothing checks, outside the cadencer, that only one companion Epic carries a given
   name. The name and a mention in text are the only relation between the two Epics. In a
   campaign, the `defer-remarks` effect refuses a second Epic of the same name as a
-  durable refusal (`_find_companion` in `tooling/foundry/campaign_defer.py`), and that
+  durable refusal only when `_find_companion` lists the project, not when it keeps a
+  companion that `journal_memory` names (`tooling/foundry/campaign_defer.py`, PAT-228), and that
   file is the only one under `tooling/` or `hooks/` that contains the word `Nits`.
 - No check proves that the cadencer classes a failure rightly as durable or transient: it
   reads the text of the error (`_DURABLE` in `tooling/foundry/campaign_defer.py`) and

@@ -71,7 +71,8 @@ _KEYS = {
 }
 # PAT-218: the verdict of a review; PAT-141: the outcome of a deferral of remarks; PAT-227: a
 # correction that only replaced the PR description
-_OPTIONAL = {"started": set(), "finished": {"review", "deferral", "description"}}
+# PAT-228: the Linear requests of the pass that ran the effect
+_OPTIONAL = {"started": set(), "finished": {"review", "deferral", "description", "requests"}}
 # PAT-227: the first line a session summary must have to be published as a PR body
 SUMMARY_MARK = "FOUNDRY_SUMMARY_V1"
 SUMMARY_UNUSABLE_BODY = ("Session summary unusable (no FOUNDRY_SUMMARY_V1 line); see the "
@@ -138,6 +139,8 @@ def read_attempts(path: Path | None = None) -> list[dict]:
             if record["kind"] != "defer-remarks" or not campaign_defer.valid_deferral_field(
                     record["deferral"]):
                 raise AttemptJournalInvalid("report de remarques hors contrat")
+        if "requests" in record and not valid_requests_field(record["requests"]):
+            raise AttemptJournalInvalid("compte de requêtes hors contrat")
         if "description" in record and (
                 record["kind"] != "correct" or not valid_description_field(record["description"])):
             raise AttemptJournalInvalid("correction de description hors contrat")
@@ -149,6 +152,17 @@ def valid_description_field(value: object) -> bool:
     """Closed shape of the ``description`` key of a ``finished`` ``correct`` line (PAT-227)."""
     return (isinstance(value, dict) and set(value) == {"head", "base"}
             and all(isinstance(value[k], str) for k in ("head", "base")))
+
+
+REQUEST_KEYS = ("observation", "effect", "subprocesses")
+
+
+def valid_requests_field(value: object) -> bool:
+    """Closed shape of the ``requests`` key of a ``finished`` line and of a step (PAT-228): the
+    provider requests of the observation, of the effect in this process, and of the Foundry
+    subcommands the effect ran; each an integer, or ``None`` when not counted."""
+    return (isinstance(value, dict) and set(value) == set(REQUEST_KEYS)
+            and all(v is None or (type(v) is int and v >= 0) for v in value.values()))
 
 
 def usable_summary(text: object) -> str | None:
@@ -242,11 +256,31 @@ class StepResult:
     decision: cadence.Decision
     outcome: str  # executed | failed | wait-ci | waiting | terminal | stopped
     effect: dict | None = None
+    requests: dict | None = None  # PAT-228: see ``valid_requests_field``
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
 
-        return {"outcome": self.outcome, "decision": asdict(self.decision), "effect": self.effect}
+        return {"outcome": self.outcome, "decision": asdict(self.decision), "effect": self.effect,
+                "requests": self.requests}
+
+
+def request_summary(results: list[StepResult]) -> dict:
+    """Provider requests of a run by kind of step (PAT-228): ``observation`` is what the
+    observation of every pass cost, ``wait`` the part of it spent on the passes that only wait
+    (outcomes ``wait-ci`` and ``waiting``), ``effects`` what the effects cost, in this process
+    and in the subcommands they ran.  A figure no pass counted is ``None``."""
+    def total(values):
+        counted = [v for v in values if v is not None]
+        return sum(counted) if counted else None
+
+    rows = [r.requests for r in results if r.requests]
+    waiting = [r.requests for r in results if r.requests and r.outcome in ("wait-ci", "waiting")]
+    return {
+        "observation": total(r["observation"] for r in rows),
+        "wait": total(r["observation"] for r in waiting),
+        "effects": total(v for r in rows for v in (r["effect"], r["subprocesses"])),
+    }
 
 
 @dataclass
@@ -257,6 +291,7 @@ class Runtime:
     budget_usd: float = IMPLEMENT_BUDGET_USD
     plugin_root: Path = Path(__file__).resolve().parents[2]
     environ: Callable[[], dict] = lambda: dict(os.environ)  # noqa: E731
+    subprocess_requests: int | None = field(default=None, init=False, repr=False)
     _hooks: str | None = field(default=None, init=False, repr=False)
 
     def hooks_dir(self) -> str:
@@ -313,7 +348,7 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
     )
 
 
-_REQUEST_COUNT_LINE = re.compile(r"^foundry linear_requests=\d+\s*$")
+_REQUEST_COUNT_LINE = re.compile(r"^foundry linear_requests=(\d+)\s*$")
 
 
 def without_request_count(text: str | None) -> str:
@@ -327,13 +362,20 @@ def without_request_count(text: str | None) -> str:
 def _run(runtime: Runtime, argv: list[str], cwd, *, input=None, timeout=COMMAND_TIMEOUT_SECONDS,
          env=None):
     """Without ``env`` (every subprocess but a session): git runs the main checkout's hooks
-    with fsmonitor off (``cadence.git_neutral_env``), also in a Foundry command it runs."""
+    with fsmonitor off (``cadence.git_neutral_env``), also in a Foundry command it runs.  The
+    request counter lines the command printed are added to ``runtime.subprocess_requests``
+    (PAT-228)."""
     if env is None:
         env = cadence.git_neutral_env(runtime.environ(), runtime.hooks_dir())
-    return runtime.runner(
+    done = runtime.runner(
         argv, cwd=str(cwd), input=input, capture_output=True, text=True, timeout=timeout,
         env=env, check=False,
     )
+    counted = [int(m.group(1)) for line in (getattr(done, "stderr", None) or "").splitlines()
+               if isinstance(line, str) and (m := _REQUEST_COUNT_LINE.match(line))]
+    if counted:
+        runtime.subprocess_requests = (runtime.subprocess_requests or 0) + sum(counted)
+    return done
 
 
 def ensure_worktree(runtime: Runtime, ticket: str, refs: Callable[[str], list[str]]) -> Path:
@@ -590,10 +632,39 @@ def _stopped(decision: cadence.Decision) -> StepResult:
     return StepResult(decision, outcome)
 
 
+def _count(tracker) -> int | None:
+    counter = getattr(tracker, "request_count", None)
+    return counter() if callable(counter) else None
+
+
+def _requests(tracker, marks: dict, runtime: Runtime) -> dict | None:
+    """The ``requests`` field of a pass so far (PAT-228): the tracker counter before and after
+    the observation and now, and the request lines of the subcommands the effect ran."""
+    if "start" not in marks:
+        return None
+    start, observed = marks["start"], marks.get("observed")
+    now = _count(tracker)
+    delta = lambda high, low: None if high is None or low is None else high - low  # noqa: E731
+    return {"observation": delta(observed, start),
+            "effect": delta(now, observed) if observed is not None else None,
+            "subprocesses": runtime.subprocess_requests}
+
+
 def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime | None = None, *,
          attempts: Path | None = None, journal: Path | None = None,
          **observe_kwargs) -> StepResult:
-    """One pass and at most one effect.  ``journal`` is the approval journal."""
+    """One pass and at most one effect.  ``journal`` is the approval journal.  The result
+    carries the provider requests of the pass (``requests``, PAT-228)."""
+    marks: dict = {}
+    runtime.subprocess_requests = None
+    result = _step(tracker, codehost, project, epic, runtime, now, attempts, journal, marks,
+                   observe_kwargs)
+    result.requests = _requests(tracker, marks, runtime)
+    return result
+
+
+def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, marks,
+          observe_kwargs) -> StepResult:
     path = attempts or journal_path()
     moment = now or datetime.now(timezone.utc)
     try:
@@ -607,6 +678,7 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     except OSError as exc:
         return StepResult(cadence.Decision("refuse", reason="git_hooks_dir_refused",
                                            evidence={"error": str(exc)}), "stopped")
+    marks["start"] = _count(tracker)
     obs = cadence.observe(
         tracker, codehost, project, epic, runtime.root, moment, journal=journal,
         implemented=lambda ticket, sha: last_implementation(path, epic, ticket, sha) is not None,
@@ -616,6 +688,7 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
            "origin": lambda ticket: campaign_defer.origin_of(tracker, ticket),
            **observe_kwargs},
     )
+    marks["observed"] = _count(tracker)
     decision = cadence.decide(obs)
     if decision.kind not in EFFECT_KINDS:
         return _stopped(decision)
@@ -687,11 +760,14 @@ def step(tracker, codehost, project, epic: str, runtime: Runtime, now: datetime 
     except Exception as exc:  # noqa: BLE001 - recorded; the attempt is not replayed
         outcome.update(status="failed", error=type(exc).__name__, detail=_hide_hex(str(exc)))
     detail = outcome.pop("detail")
+    requests = _requests(tracker, marks, runtime)
     review = outcome.get("review")
     deferral = outcome.get("deferral")
     finish(path, {
         "schema_version": EFFECTS_CONTRACT, "event": "finished", "attempt": attempt,
         "epic": epic, "ticket": ticket.id, "kind": decision.kind, "at": _stamp(moment),
+        **({"requests": requests} if requests and any(
+            v is not None for v in requests.values()) else {}),
         **outcome,
     })
     effect = {"attempt": attempt, "status": outcome["status"], "exit_code": outcome["exit_code"],
@@ -774,6 +850,7 @@ def cli(args) -> int:
         )
     print(json.dumps({
         "contract": EFFECTS_CONTRACT, "epic": args.epic_id, "stopped": stopped,
+        "requests": request_summary(results),
         "steps": [r.to_dict() for r in results],
     }, ensure_ascii=False, sort_keys=True, indent=2))
     return 1 if any(r.outcome == "failed" for r in results) else 0

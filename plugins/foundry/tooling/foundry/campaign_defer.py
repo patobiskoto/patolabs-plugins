@@ -4,7 +4,8 @@ After a validated review the cadencer carries the deferrable remarks to the comp
 ``Nits <ORIGIN-EPIC-ID>`` with the four writes that AGENTS.md#R9 (b) authorizes in advance.
 Every write is a Foundry command run as a subprocess (``edit create-issue``, ``edit comment``,
 ``edit link``, ``edit reconcile-create``); the tracker is only read, through ``search`` and
-``get_issue``, before each write, so a retry never duplicates one.  The effect launches no
+``get_issue``, before each write, so that a retry finds what an earlier attempt of this journal
+or the listing shows (``journal_memory``, a limit: ``docs/campaign-effects.md``).  The effect launches no
 model session and the merge gate never reads the remarks receipt.  The intent is the
 ``started`` line of the attempt journal, written before the first write.  The ``finished``
 line keeps the client identifier of a creation whose effect is unknown, and the next pass
@@ -232,23 +233,83 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     raise Transient("creation_effect_unknown")
 
 
-def _find_companion(tracker, project, name: str) -> str | None:
-    named = [i for i in _read(tracker.search, project) if i.title == name]
+class Listing:
+    """The project listing (``tracker.search``) of ONE attempt, read at most once and only when
+    a lookup needs it (PAT-228): on Linear it costs one request per page plus the replay of every
+    closed Epic of the project, which made it most of the requests of a campaign."""
+
+    def __init__(self, tracker, project):
+        self.tracker, self.project, self._issues = tracker, project, None
+
+    @property
+    def loaded(self) -> bool:
+        return self._issues is not None
+
+    def issues(self) -> list:
+        if self._issues is None:
+            self._issues = _read(self.tracker.search, self.project)
+        return self._issues
+
+
+def journal_memory(attempts: Path, epic: str) -> tuple[list[str], bool]:
+    """What the earlier deferral attempts of this Epic left in the attempt journal (PAT-228):
+    (the companion Epics they named, most recent first; whether one of them may have created a
+    follow-up issue).  The current attempt is the last ``started`` line, claimed before the
+    launch, and is left out.  An earlier attempt with no ``deferral`` field on its ``finished``
+    line, or none, counts as one that may have created it."""
+    records = [r for r in fx.read_attempts(attempts)
+               if r["epic"] == epic and r["kind"] == KIND]
+    started = [r for r in records if r["event"] == "started"][:-1]
+    finished = {r["attempt"]: r.get("deferral") for r in records if r["event"] == "finished"}
+    companions: list[str] = []
+    maybe_created = False
+    for record in reversed(started):
+        end = finished.get(record["attempt"])
+        if end is None:
+            maybe_created = True
+            continue
+        if end["companion"] and end["companion"] not in companions:
+            companions.append(end["companion"])
+        maybe_created |= WRITE_FOLLOW_UP in end["writes"] or bool(end["unknown"])
+    return companions, maybe_created
+
+
+def _find_companion(listing: Listing, name: str, known: list[str] = ()) -> str | None:
+    """The companion Epic named ``name``.  A companion that an earlier attempt of this Epic
+    journaled is read by identifier (``get_issue``) and kept when it is still an Epic of that
+    title; only otherwise is the project listed."""
+    tracker = listing.tracker
+    for candidate in known:
+        try:
+            issue = tracker.get_issue(candidate)
+        except Exception:  # noqa: BLE001 - unreadable: the listing decides
+            continue
+        if issue.type == "Epic" and issue.title == name:
+            return issue.id
+    named = [i for i in listing.issues() if i.title == name]
     epics = [i for i in named if (i.type or _read(tracker.get_issue, i.id).type) == "Epic"]
     if len(epics) > 1:
         raise Durable("companion_epic_ambiguous")
     return epics[0].id if epics else None
 
 
-def _find_follow_up(tracker, project, companion: str, title: str) -> tuple[str | None, bool]:
-    """(open follow-up of the companion Epic or an orphan to attach, whether to attach it)."""
+def _find_follow_up(listing: Listing, companion: str, title: str,
+                    scan_orphans: bool = True) -> tuple[str | None, bool]:
+    """(open follow-up of the companion Epic or an orphan to attach, whether to attach it).
+
+    The orphan scan (a creation whose parent link failed) reads the listing; it is skipped when
+    that would cost a new listing and no earlier attempt of this Epic can have created a
+    follow-up (PAT-228)."""
+    tracker = listing.tracker
     children = [link.target for link in _read(tracker.get_issue, companion).links
                 if link.type == "parent-of"]
     unstarted = [c for c in (_read(tracker.get_issue, child) for child in children)
                  if c.state in cadence.READY_STATES]
     if unstarted:
         return min(unstarted, key=lambda c: cadence._id_key(c.id)).id, False
-    for issue in _read(tracker.search, project):  # a creation whose parent link failed
+    if not scan_orphans:
+        return None, False
+    for issue in listing.issues():  # a creation whose parent link failed
         if issue.title == title and issue.state in cadence.READY_STATES:
             parents = [link.target for link in _read(tracker.get_issue, issue.id).links
                        if link.type == "subtask-of"]
@@ -286,7 +347,9 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
     if origin is None or facts.origin_is_companion:
         raise Durable("no_deferral_case")
     name = f"{COMPANION_PREFIX}{origin}"
-    companion = _find_companion(tracker, project, name)
+    listing = Listing(tracker, project)
+    known, maybe_created = journal_memory(attempts, epic)
+    companion = _find_companion(listing, name, known)
     if companion is None:
         companion = _create(runtime, worktree, {
             "title": name, "fields": {"Type": "Epic", "State": "backlog"},
@@ -295,7 +358,8 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
         }, ledger, WRITE_COMPANION)
     ledger["companion"] = companion
     title = FOLLOW_UP_TITLE.format(origin=origin)
-    follow_up, attach = _find_follow_up(tracker, project, companion, title)
+    follow_up, attach = _find_follow_up(listing, companion, title,
+                                        maybe_created or listing.loaded)
     if follow_up is None:
         follow_up = _create(runtime, worktree, {
             "title": title, "body": FOLLOW_UP_BODY, "parent": companion},

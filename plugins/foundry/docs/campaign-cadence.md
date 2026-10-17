@@ -105,7 +105,11 @@ Cost in tracker requests: the subgraph read (`epic_subgraph.build_neutral_subgra
 `get_issue` when the review is valid and deferrable remarks remain (`origin_of`). To measure a
 pass: `FOUNDRY_REQUEST_COUNT=stderr FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py
 campaign-cadence next <EPIC>` (`REQUEST_COUNT_ENV`, `trackers/linear.py`). The measured
-figure is recorded by the issue, not here (unknown until measured).
+figures (PAT-228: 19 requests for an Epic of 17 tickets, about one request per node) are in
+`docs/linear-request-cost.md`, "Epic campaign (PAT-228)"; the effects `run` also reports the
+requests of each pass (`docs/campaign-effects.md`, "Provider requests of a pass"). Every pass,
+`wait-ci` included, reads the whole subgraph: the structure digest is checked before every effect
+(PAT-ADR-0027); PAT-228 leaves that unchanged.
 
 ## Capabilities required (PAT-ADR-0026)
 
