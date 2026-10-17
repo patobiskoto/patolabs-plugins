@@ -743,7 +743,8 @@ def _step(tracker, codehost, project, epic, runtime, now, attempts, journal, mar
                                       "stopped")
         else:
             plan = _plan(runtime, decision.kind, epic, ticket, path, cwd)
-            plan.update(tracker=tracker, project=project)
+            if decision.kind == "defer-remarks":  # the only plan that reads the tracker (PAT-238)
+                plan.update(tracker=tracker, project=project)
         if decision.kind == "implement":
             issue = tracker.get_issue(ticket.id)
             plan["prompt"] = implement_prompt(

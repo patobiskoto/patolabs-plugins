@@ -26,9 +26,17 @@ from foundry import review_remarks
 
 KIND = "defer-remarks"
 COMPANION_PREFIX = "Nits "
+# AGENTS.md#R9 (b): the companion Epic is named `Nits ` followed by the identifier of the origin
+# Epic (PAT-238); a title that only starts with `Nits ` is not a companion Epic.
+_COMPANION_NAME = re.compile(r"Nits [A-Za-z][A-Za-z0-9]*-[0-9]+")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
-DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait; not measured
+DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or the reset_at of a
+# quota error when later (capped by MAX_RESET_WAIT_SECONDS); not measured
+# A quota error's `reset_at` lengthens that wait, up to this many seconds after the attempt ended,
+# so a ticket never waits for a far or wrong date.  A Foundry choice: not measured, and the
+# Linear quota window is not established (docs/linear-tracker.md).
+MAX_RESET_WAIT_SECONDS = 3600
 MAX_DEFER_TRIES = 5  # attempts per diff; beyond them the campaign waits for a human
 STATES = ("pending", "done", "refused", "transient", "exhausted")
 DEFERRAL_KEYS = {"state", "follow_up", "companion", "reason", "diff_hash", "remarks", "writes",
@@ -48,6 +56,7 @@ _DURABLE = re.compile(
 # (`IssueUnavailableError`, "issue unavailable"); anything else leaves the effect unknown.
 _REFUSED = re.compile(r"TrackerConflictError|validation refused", re.I)
 _ABSENT = re.compile(r"IssueUnavailableError|issue unavailable", re.I)
+_RESET_AT = re.compile(r"reset_at=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)")
 _CREATED = re.compile(r"^\S+\s+(\S+)\s+—", re.M)
 
 
@@ -89,9 +98,26 @@ def valid_deferral_field(value: object) -> bool:
 def classify(text: str) -> Outcome:
     """Durable refusal or transient failure from the last 400 characters of an error."""
     tail = fx.without_request_count(text)[-400:]
-    reason = re.sub(r"[0-9a-f]{64}", "[hex]", tail.strip().splitlines()[-1] if tail.strip()
-                    else "error")[:200]
+    last = tail.strip().splitlines()[-1] if tail.strip() else "error"
+    # the reason becomes public (PR description, journal): credentials are masked first (PAT-238)
+    reason = re.sub(r"[0-9a-f]{64}", "[hex]", fx.mask_credentials(last))[:200]
+    reset = _RESET_AT.search(tail)
+    if reset and reset.group(0) not in reason:  # a quota reset stays readable past the cut
+        reason = f"{reason[:170]} {reset.group(0)}"
     return Durable(reason) if _DURABLE.search(tail) else Transient(reason)
+
+
+def reset_of(reason: str | None) -> datetime | None:
+    """The ``reset_at=<UTC time>`` that a quota error reports (``LinearQuotaExhaustedError``,
+    ``trackers/linear.py``), read back from the journaled reason; ``None`` when absent or
+    ``unknown``."""
+    found = _RESET_AT.search(reason or "")
+    if not found:
+        return None
+    try:
+        return _moment(found.group(1))
+    except ValueError:  # a date the pattern accepts and the calendar does not (month 13)
+        return None
 
 
 # --------------------------------------------------------------------- observation
@@ -109,7 +135,7 @@ def origin_of(tracker, ticket: str) -> tuple[str | None, bool]:
     parent = tracker.get_issue(parents[0])
     if parent.type != "Epic":
         return None, False
-    return parent.id, parent.title.startswith(COMPANION_PREFIX)
+    return parent.id, _COMPANION_NAME.fullmatch(parent.title) is not None
 
 
 def _moment(stamp: str) -> datetime:
@@ -136,10 +162,14 @@ def deferral_facts(path: Path, epic: str):
                 return cadence.DeferralFacts(
                     **{**facts, "state": end["state"], "follow_up": end["follow_up"]})
         if started:
-            stamp = finished.get(started[-1]["attempt"], started[-1])["at"]
+            last_end = finished.get(started[-1]["attempt"], started[-1])
             facts["state"] = "exhausted" if len(started) >= MAX_DEFER_TRIES else "transient"
-            facts["cooling"] = bool(now) and _moment(stamp) + timedelta(
-                seconds=DEFER_RETRY_SECONDS) > now
+            until = _moment(last_end["at"]) + timedelta(seconds=DEFER_RETRY_SECONDS)
+            # a quota error reports when the quota resets: no retry before (PAT-ADR-0006)
+            reset = reset_of((last_end.get("deferral") or {}).get("reason"))
+            if reset is not None:  # honoured up to MAX_RESET_WAIT_SECONDS after the attempt
+                reset = min(reset, _moment(last_end["at"]) + timedelta(seconds=MAX_RESET_WAIT_SECONDS))
+            facts["cooling"] = bool(now) and max(until, reset or until) > now
         return cadence.DeferralFacts(**facts)
     return read
 
@@ -165,7 +195,8 @@ def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | Non
     """``edit reconcile-create <issue id or client id> <spec>`` (read-only): ``("accepted",
     issue id)``; ``("absent", None)`` when the read finds no such issue (the creation did not
     happen); ``("refused", None)`` when the adapter refuses to validate it (no replay);
-    otherwise ``("unknown", None)``."""
+    otherwise ``("unknown", reason)``, the reason keeping the ``reset_at`` of a quota error that
+    failed the read (the retry then waits for it, PAT-ADR-0006)."""
     with tempfile.TemporaryDirectory() as tmp:
         spec_file = Path(tmp) / "spec.json"
         spec_file.write_text(json.dumps(spec), encoding="utf-8")
@@ -174,12 +205,30 @@ def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | Non
         tail = fx.without_request_count(check.stderr)[-400:]
         if _REFUSED.search(tail):
             return "refused", None
-        return ("absent", None) if _ABSENT.search(tail) else ("unknown", None)
+        return ("absent", None) if _ABSENT.search(tail) else ("unknown", _unknown_reason(tail))
     verdict = review._json_object(check.stdout)
     if verdict and verdict.get("validation") == "refused":
         return "refused", None
     found = verdict.get("issue_id") if verdict and verdict.get("validation") == "accepted" else None
-    return ("accepted", found) if isinstance(found, str) and found else ("unknown", None)
+    return (("accepted", found) if isinstance(found, str) and found
+            else ("unknown", "creation_effect_unknown"))
+
+
+def _cause_reset(details: dict | None) -> str | None:
+    """The ``reset_at`` that a failed create call or read-back reports in the ``causes`` of the
+    structured creation error (``trackers/linear.py``), when it is a well-formed UTC time."""
+    causes = (details or {}).get("causes")
+    for key in ("create", "read"):
+        cause = causes.get(key) if isinstance(causes, dict) else None
+        found = cause.get("reset_at") if isinstance(cause, dict) else None
+        if isinstance(found, str) and _RESET_AT.fullmatch(f"reset_at={found}"):
+            return found
+    return None
+
+
+def _unknown_reason(tail: str) -> str:
+    reset = _RESET_AT.search(tail)
+    return f"creation_effect_unknown {reset.group(0)}" if reset else "creation_effect_unknown"
 
 
 def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
@@ -193,7 +242,7 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
         if status == "refused":
             raise Durable("creation_replay_refused")
         if status == "unknown":
-            raise Transient("creation_effect_unknown")
+            raise Transient(found)
         ledger["unknown"].remove(entry)
         if status == "accepted":
             ledger["writes"].append(label)
@@ -208,19 +257,28 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     stderr = fx.without_request_count(done.stderr)
     details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
-        if details.get("validation") == "refused" or details.get("automatic_retry") is True:
+        if details.get("validation") == "refused":  # the adapter refuses to replay
             if details.get("creation") == "created":
                 ledger["writes"].append(label)  # the issue exists: report the write (R9 b)
-            raise Durable("creation_replay_refused")  # the adapter refuses to replay
+                if label == WRITE_COMPANION and isinstance(details.get("issue_id"), str):
+                    ledger["companion"] = details["issue_id"]  # PAT-238: and name it
+            raise Durable("creation_replay_refused")
         named, client = details.get("issue_id"), details.get("client_id")
     else:  # a quota error names the client identifier in its message (docs/linear-tracker.md)
         named, found = None, _CLIENT.search(stderr[-400:])
         client = found.group(1) if found else None
         if not isinstance(classify(stderr), Transient) or client is None:
             raise classify(stderr)
+        if _RESET_AT.search(stderr[-400:]):  # the quota is empty: a read now would fail too
+            ledger["unknown"].append({"title": spec["title"], "client_id": client})
+            raise classify(stderr)  # the next pass reconciles first, after the reset (PAT-238)
     ref = next((v for v in (named, client) if isinstance(v, str) and v), None)
     if ref is None:
         raise Durable("creation_effect_unreconcilable")
+    reset = _cause_reset(details)
+    if reset:  # the quota is empty: park the reconciliation until it resets (PAT-238)
+        ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
+        raise Transient(f"creation_effect_unknown reset_at={reset}")
     status, found = _reconcile(runtime, cwd, ref, spec)
     if status == "accepted":
         ledger["writes"].append(label)
@@ -230,7 +288,7 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
     if status == "absent":  # the creation did not happen: the next pass creates again
         raise Transient("creation_not_observed")
     ledger["unknown"].append({"title": spec["title"], "client_id": str(client or ref)})
-    raise Transient("creation_effect_unknown")
+    raise Transient(found)
 
 
 class Listing:
@@ -256,7 +314,9 @@ def journal_memory(attempts: Path, epic: str) -> tuple[list[str], bool]:
     (the companion Epics they named, most recent first; whether one of them may have created a
     follow-up issue).  The current attempt is the last ``started`` line, claimed before the
     launch, and is left out.  An earlier attempt with no ``deferral`` field on its ``finished``
-    line, or none, counts as one that may have created it."""
+    line, or none, counts as one that may have created it, and so does one that did not end
+    ``done`` (PAT-238): a creation that failed with no reference to reconcile by leaves nothing
+    in ``writes`` or ``unknown``, and the journal cannot tell whether it happened."""
     records = [r for r in fx.read_attempts(attempts)
                if r["epic"] == epic and r["kind"] == KIND]
     started = [r for r in records if r["event"] == "started"][:-1]
@@ -270,7 +330,8 @@ def journal_memory(attempts: Path, epic: str) -> tuple[list[str], bool]:
             continue
         if end["companion"] and end["companion"] not in companions:
             companions.append(end["companion"])
-        maybe_created |= WRITE_FOLLOW_UP in end["writes"] or bool(end["unknown"])
+        maybe_created |= (end["state"] != "done" or WRITE_FOLLOW_UP in end["writes"]
+                          or bool(end["unknown"]))
     return companions, maybe_created
 
 

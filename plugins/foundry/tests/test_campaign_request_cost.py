@@ -229,8 +229,8 @@ def test_the_journal_names_the_companions_and_a_possible_creation(env):
                         summary_file=None, branch_head=None, error=None)
         return json.dumps({**base, **extra})
 
-    def field(companion, writes):
-        return {"state": "transient", "follow_up": None, "companion": companion, "reason": "x",
+    def field(companion, writes, state="done"):
+        return {"state": state, "follow_up": None, "companion": companion, "reason": "x",
                 "diff_hash": "d", "remarks": None, "writes": writes, "unknown": []}
 
     path.write_text("\n".join([
@@ -240,6 +240,12 @@ def test_the_journal_names_the_companions_and_a_possible_creation(env):
     ]) + "\n")
     assert cd.journal_memory(path, "APP-1") == (["APP-50"], False)
     assert cd.journal_memory(path, "APP-9") == ([], False)
+    path.write_text("\n".join([  # PAT-238: not `done`, so a creation may have been lost
+        line("started", "a1"),
+        line("finished", "a1", deferral=field("APP-50", [cd.WRITE_COMPANION], "transient")),
+        line("started", "a2"),
+    ]) + "\n")
+    assert cd.journal_memory(path, "APP-1") == (["APP-50"], True)
     path.write_text("\n".join([
         line("started", "a1"),
         line("finished", "a1", deferral=field("APP-50", [cd.WRITE_COMPANION, cd.WRITE_FOLLOW_UP])),

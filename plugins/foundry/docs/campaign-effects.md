@@ -624,9 +624,9 @@ remark, the marked ones included.
 | --- | --- |
 | no deferrable remark, or the deferral is `done` for this diff hash | none: the pass goes on to CI and `merge` |
 | no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
-| the origin Epic is itself a companion Epic (its title starts with `Nits `): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
+| the origin Epic is itself a companion Epic (its title is exactly `Nits ` and an identifier such as `APP-1`, `_COMPANION_NAME`, PAT-238; a title that only starts with `Nits ` is not): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
 | the last attempt ended in a durable refusal | `correct` `remarks_not_deferrable`, cause `refused` |
-| the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed | `wait` `deferral_transient_failure` |
+| the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed, or the `reset_at` of a quota error (see "Classification of a failure"; capped by `MAX_RESET_WAIT_SECONDS`) has not | `wait` `deferral_transient_failure` |
 | the last attempt ended transient, the wait is over | `defer-remarks` again (a new attempt: the identity carries the `try` count) |
 | `MAX_DEFER_TRIES` attempts made for this diff hash | `suspend` `deferral_retries_exhausted` |
 | otherwise | `defer-remarks` `non_blocking_remarks` |
@@ -665,7 +665,10 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    `scan_orphans`) only when step 2 did not need the listing (the companion came from the
    journal) and no earlier attempt of this Epic can have created a follow-up (`journal_memory`:
    none wrote `create follow-up issue`, none has `unknown` creations, none lacks a `deferral`
-   field on its `finished` line). Residual risk: `journal_memory` reads the journal of this campaign Epic only
+   field on its `finished` line, and every one ended `done`, PAT-238: a creation that failed
+   with no `client_id` to reconcile by leaves nothing in `writes` or `unknown`, so any attempt
+   that did not end `done` may have created the issue; deduced from `_create`, which records
+   nothing for that failure). Residual risk: `journal_memory` reads the journal of this campaign Epic only
    (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
    in that case and a second follow-up can be created. Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number,
@@ -683,7 +686,8 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    distinct findings with the same text (for example `nit: typo`) are taken for one, so the
    second is neither deferred nor fixed (known limit). The comment is also skipped when a
    comment of the follow-up already contains that reference (a comment whose answer was
-   lost). The tracker may return only the most recent comments (`docs/review-rounds.md`): a
+   lost). The tracker may return only the most recent comments (`skills/merge-pr/SKILL.md`, "Commands to
+   look and to read back"): a
    comment older than that window would be posted again (unknown).
 5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>[,
    <FOLLOW-UP-ID>...] (companion Epic <ID>, created by this pull request|already existing; <N>
@@ -696,36 +700,61 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    an attempt of the pull request made a write.
 6. The `finished` line with state `done`; the next pass decides `merge`.
 
-A failed `edit create-issue` is never retried inside the pass. When its standard error is the
-structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
+A failed `edit create-issue` is never retried inside the pass. When its standard error is
+the structured partial-effect object of `IssueCreationValidationError` (`reconciliation:
 required`), or is a quota error whose message names a `client_id=<UUID>`, `edit
-reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once; `validation:
-accepted` adopts that issue. `_reconcile` tells four answers apart: `accepted`; `absent`
-(standard error naming `IssueUnavailableError`, the read found no such issue: the creation did
-not happen, nothing is kept in `unknown`, transient `creation_not_observed`, and the next pass
-creates again with a new client id); `refused` (standard error naming `TrackerConflictError` or
-`validation refused`, or `validation: refused` in the answer or in the creation error object:
-the adapter does not replay, `creation_replay_refused`, a durable refusal); anything else is
-unreadable and the effect stays unknown: the client id and the title go to the `unknown` key of
-the `finished` line (transient), and the next pass reconciles by that client id (`_create`)
-before any new creation. The ADR only says a creation is retried after reconciliation
-(PAT-ADR-0028); this split is the reading of R9 (b) (`tests/test_campaign_defer.py`).
-The bound is `MAX_DEFER_TRIES`. The read of steps 2 and 3 still precedes
-the creation and adopts an issue it finds; a companion that the journal names but that was
-renamed or retyped since is not trusted (the listing decides). An error object that names neither an issue nor a
-client id is a durable refusal (`creation_effect_unreconcilable`).
+reconcile-create <issue ID, else client id> <spec>` runs (read-only) at once, unless the
+error carries a `reset_at` (in the quota message, or in `causes.create` or `causes.read` of
+the object; PAT-238): the quota is then empty, so no read is made now, the client id goes to
+`unknown`, the failure is transient with that `reset_at` in its reason, and the next pass
+reconciles first, once the wait is over. `validation: accepted` adopts that issue.
+`_reconcile` tells four answers apart: `accepted`; `absent` (standard error naming
+`IssueUnavailableError`, the read found no such issue: the creation did not happen, nothing
+is kept in `unknown`, transient `creation_not_observed`, and the next pass creates again
+with a new client id); `refused` (standard error naming `TrackerConflictError` or
+`validation refused`, or `validation: refused` in the answer or in the creation error
+object: the adapter does not replay, `creation_replay_refused`, a durable refusal; when the
+creation object says `creation: created`, the write is listed in `writes` and, for the
+companion Epic, its `issue_id` is the `companion` of the field, PAT-238); anything else is
+unreadable and the effect stays unknown (a read that fails on quota keeps its `reset_at` in
+the reason `creation_effect_unknown`): the client id and the title go to the `unknown` key
+of the `finished` line (transient), and the next pass reconciles by that client id
+(`_create`) before any new creation. The ADR only says a creation is retried after
+reconciliation (PAT-ADR-0028); this split is the reading of R9 (b)
+(`tests/test_campaign_defer.py`). Risk (deduced, not observed): `absent` is read as "the
+creation did not happen". If the tracker answers `IssueUnavailableError` for a client id
+whose issue was created but is not readable yet (a delay between the write and its read),
+the next pass creates the issue again and a duplicate exists. The bound is `MAX_DEFER_TRIES`
+attempts in total for one diff hash, the first included (`deferral_facts`: `len(started) >=
+MAX_DEFER_TRIES`), that is `MAX_DEFER_TRIES` - 1 retries. The read of steps 2 and 3 still
+precedes the creation and adopts an issue it finds; a companion that the journal names but
+that was renamed or retyped since is not trusted (the listing decides). An error object that
+names neither an issue nor a client id is a durable refusal
+(`creation_effect_unreconcilable`).
 
 Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
 unavailable, a binding refusal, a `ValueError`, `SystemExit`, `type_unmapped`,
-`invalid_field_options` or an unknown type is a durable refusal; any other error (quota, network,
-an unknown cause) is transient. Durable refusal: the `finished` line is `completed` with state
-`refused`, no substitute write is made, the next pass decides `correct` and the corrected head
-is reviewed again. Transient: the `finished` line is `failed` with error `transient` and the
-outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
-`--poll-seconds` and observes again. That the patterns match what each real adapter raises is
-not exercised here: only the Linear class names are known from the code, the YouTrack and
-GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60) and
-`MAX_DEFER_TRIES` (5) are chosen and not measured.
+`invalid_field_options` or an unknown type is a durable refusal; any other error (quota,
+network, an unknown cause) is transient. The recorded `reason` is the last line of the error
+(at most 200 characters, 64-hex runs and credential shapes masked with `mask_credentials`,
+PAT-238, because the reason is journaled and told in the PR description; `deferral_lines`
+masks it again). A quota error whose message carries `reset_at=<UTC time>`
+(`LinearQuotaExhaustedError`, `trackers/linear.py`) keeps that time in the reason, and the
+retry waits until the later of `DEFER_RETRY_SECONDS` after the `finished` line and that time
+(`reset_of`, `deferral_facts`, PAT-ADR-0006: no blind retry); `reset_at=unknown`, absent,
+past or not a valid date changes nothing to the wait. The reset is honoured up to
+`MAX_RESET_WAIT_SECONDS` (3600) after the `finished` line, so a far date cannot hold a
+ticket for good; that cap is a Foundry choice, not measured (the Linear window is not
+established, `docs/linear-tracker.md`). That a real quota error reaches the cadencer with
+that text is deduced from `LinearQuotaExhaustedError._render` and `classify`, not exercised
+against a real quota error. Durable refusal: the `finished` line is `completed` with state
+`refused`, no substitute write is made, the next pass decides `correct` and the corrected
+head is reviewed again. Transient: the `finished` line is `failed` with error `transient`
+and the outcome of the step is `waiting` (not `failed`; the exit code stays 0); `run` sleeps
+`--poll-seconds` and observes again. That the patterns match what each real adapter raises
+is not exercised here: only the Linear class names are known from the code, the YouTrack and
+GitHub Projects texts are not verified (unknown). Constants `DEFER_RETRY_SECONDS` (60),
+`MAX_RESET_WAIT_SECONDS` (3600) and `MAX_DEFER_TRIES` (5) are chosen and not measured.
 
 The companion Epic and its follow-up have no link to the Epic of the campaign: the neutral
 subgraph (`build_neutral_subgraph`) follows `parent-of` from the campaign's Epic only, so the
@@ -869,3 +898,14 @@ the suspension `description_correction_not_settled`; the constants `SUMMARY_MARK
 `AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign") on what the correction loop re-reviews,
 which the description correction made partly false. No CLI verb or option, configuration key or
 routing table changed.
+
+R5 status (PAT-238): updated `docs/campaign-effects.md`, `docs/campaign-cadence.md` and
+`AGENTS.md`/`CLAUDE.md` R9 ("Inside an Epic campaign"). Candidate artefacts: the constants
+`_COMPANION_NAME` (the exact companion Epic naming rule), `_RESET_AT` and
+`MAX_RESET_WAIT_SECONDS`, the helper `reset_of`, the optional use of `reset_at` in the wait
+of a transient deferral, the `companion` of a refused creation that was created, the
+`journal_memory` rule on attempts that did not end `done`, and the sentences of R9 on the
+number of attempts and on the orphan scan, which were too strong. No CLI verb or option,
+configuration key or routing table changed. The dead `automatic_retry` branch of `_create`
+is removed (internal; no adapter sets the flag to true, `trackers/base.py`,
+`trackers/linear.py`).

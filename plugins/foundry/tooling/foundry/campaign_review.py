@@ -568,7 +568,8 @@ def deferral_lines(records: list[dict], epic: str, ticket: str,
     if fields and fields[-1]["state"] == "refused":
         made = list(dict.fromkeys(w for f in fields for w in f["writes"]))
         before = f" (writes made before it: {', '.join(made)})" if made else ""
-        lines.append(f"Remarks not deferred: durable refusal ({fields[-1]['reason']}){before}; "
+        reason = fx.mask_credentials(str(fields[-1]["reason"]))  # public: masked again (PAT-238)
+        lines.append(f"Remarks not deferred: durable refusal ({reason}){before}; "
                      "they are corrected before the merge.")
     return lines
 
