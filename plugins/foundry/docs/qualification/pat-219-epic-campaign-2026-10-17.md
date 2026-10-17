@@ -97,8 +97,9 @@ round and about 120 with three rounds and two corrections. It counts start 13, o
   correction, 10, is below; `merge` 33 is above (estimate 20 to 30).
 - The total does not: run 1 alone is 1723 requests in the cadencer process (the subcommand
   lines are not in that figure) for less than two tickets, against about 150 to 200 estimated
-  for a whole run (subcommands included, so the sets differ and the real gap is larger). Where the excess comes from is unknown (deduced lead: the
-  deferral effect, above); measuring it is the subject of PAT-228.
+  for a whole run (subcommands included, so the sets differ and the real gap is larger). Where
+  the excess comes from is unknown (deduced lead: the deferral effect, above); measuring it is
+  the subject of PAT-228.
 - The estimate's recommendation (no tracker re-read while waiting for CI) is not followed:
   `run` observes at every step, `wait-ci` included (`campaign_effects.run`).
 

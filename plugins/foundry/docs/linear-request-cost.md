@@ -414,7 +414,8 @@ count the tickets); only the first run's count was kept.
 
 Pinned by `tests/test_campaign_request_cost.py` (observation: `test_an_observation_costs_one_request_per_node`; lookups: the `test_*lookup*`, `test_a_journaled_*` and `before` tests; replay: `test_a_replayed_campaign_splits_its_requests`). Method: the transport double records every GraphQL call (`wire.calls`); the figures are the
 number of calls, by operation. Project: one closed Epic of 56 nodes (the Epic itself, 31 children and 24
-prerequisites; the 55 of `tests/test_epic_read_cost.py` do not count the Epic, `N_CHILDREN` and `N_PREREQ`), plus a companion Epic and its follow-up.
+prerequisites; the 55 nodes of `tests/test_epic_read_cost.py` are `N_CHILDREN + N_PREREQ`, the
+Epic excluded), plus a companion Epic and its follow-up.
 
 | Read | Requests | Detail |
 |---|---|---|
@@ -445,7 +446,7 @@ calls of those mirrored reads. Scenario: `start`, `implement`, `open-pr`, `revie
 non-blocking remarks), `defer-remarks` (companion Epic and follow-up created), three passes that
 wait for CI, `merge`. The fake runner prints no request line, so the requests of the subcommands
 (`subprocesses`) are not part of these figures (13 for `issue start`, 33 for `issue merge` were
-observed on the real campaign: `docs/qualification/pat-219-epic-campaign-2026-10-17.md`, "Effects").
+observed on the real campaign: `docs/qualification/pat-219-epic-campaign-2026-10-17.md`, the heading "Linear requests, per step").
 
 | Pass | Observation | Effect (in this process) |
 |---|---|---|
@@ -459,7 +460,8 @@ observed on the real campaign: `docs/qualification/pat-219-epic-campaign-2026-10
 The `wait` part of the observation is 12 of 35. After PAT-228 the deferral effect is 59 of the 60
 effect requests; with the "before" reads (fixture `before`) it is 116 and the effects total 117,
 the observation unchanged. These are figures of a three-node Epic (the Epic and two tickets, `APP-1` to `APP-3` of
-`tests/test_campaign_effects.py`) and of a project holding one closed Epic of 56 nodes: they show the split, not the cost of a real project (unknown).
+`tests/test_campaign_effects.py`) and of a project holding one closed Epic of 56 nodes: they
+show the split, not the cost of a real project (unknown).
 
 ### Reduction (PAT-228) and what it leaves
 
@@ -476,8 +478,7 @@ the observation unchanged. These are figures of a three-node Epic (the Epic and 
   the structure-drift check that PAT-ADR-0027 defines (a drift suspends the campaign; the ADR
   does not say at which moment the check runs). Deduced, not stated by the ADR: the pass checks
   it on every observation because it cannot know, before observing, whether the pass will lead
-  to an effect. The share of a run that
-  waits was not measured (the per-pass figure is now recorded: `docs/campaign-effects.md`,
+  to an effect. The share of a run that waits was not measured (the per-pass figure is now recorded: `docs/campaign-effects.md`,
   "Provider requests of a pass"), so nothing is changed there.
 - Not done: the first lookup of the companion Epic of an Epic still lists the project: the
   Tracker port offers no read narrower than `search` (Linear refuses a provider-native query,
