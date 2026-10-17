@@ -314,7 +314,8 @@ close a strong span, and nested formatting (including strikethrough) is not a si
 Whitespace-adjacent literal bold delimiters are left unchanged. These forms are not
 reverse-normalized: the witness retains the source bytes. Any other multiline inline construction
 (including emphasis, links, nested marks, hardbreaks, or a multi-backtick code span) is refused before any
-provider write. An odd trailing backslash or two trailing spaces creates an unqualified
+provider write, except the multiline bold spans of the two complete pinned bodies of `FOUNDRY-ADR-0015`
+and `FOUNDRY-ADR-0017` (`_PAT_201_PROFILES`, PAT-209, below). An odd trailing backslash or two trailing spaces creates an unqualified
 hardbreak outside code. Raw HTML in a multiline fragment is refused outside inline code,
 as well as at the start of a line. The bounded model does not parse raw HTML: a line outside a
 fence that begins with `<` after up to three spaces is rejected before any provider write,
@@ -413,13 +414,17 @@ missing witness after the existing project/id/title/envelope/body/previous-link 
 it never rewrites the surviving Document.
 PAT-201 adds a source-digest-pinned profile (`_PAT_201_PROFILES`) for the two native
 bodies `FOUNDRY-ADR-0002` and `FOUNDRY-ADR-0018`, whose strong spans contain code outside the
-PAT-85 form on their line. Only those two complete sources are recognised; any other body, or
-a one-byte variant, keeps the PAT-85 refusal; `link_adr_issue` refuses such a source before its first
+PAT-85 form on their line. Those two complete sources are the only ones PAT-201 recognises (PAT-209 adds
+three, next paragraph); any other body, or a one-byte variant, keeps the PAT-85 refusal; `link_adr_issue` refuses such a source before its first
 write when its stored version is not proven by the model (PAT-205). The census, the observed rendering and the
 limits are in `docs/qualification/pat-201-historical-adr-links.md`.
 PAT-209 adds three entries to the same table (`FOUNDRY-ADR-0003`, `-0015`, `-0017`, same
-digest-pinned model, no global normalisation). `FOUNDRY-ADR-0017` is accepted only as a stored
-body (link, status): its table stays refused as a new body (`strict`, PAT-103). See the
+digest-pinned model, no global normalisation). `create_adr` accepts the exact bodies of
+`FOUNDRY-ADR-0003` and `-0015` as new bodies (`test_pat209_create_adr_accepts_the_exact_body_as_a_new_body`).
+`FOUNDRY-ADR-0017` is accepted only as a stored
+body (link, status; `test_pat209_link_and_replay_keep_the_source_bytes`,
+`test_pat209_status_change_keeps_the_source_bytes`): its table stays refused as a new body
+(`strict`, PAT-103; `test_pat209_create_adr_refuses_the_body_of_adr_0017`). See the
 "PAT-209" section of the same page.
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
 fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one

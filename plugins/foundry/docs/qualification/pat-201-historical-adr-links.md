@@ -60,7 +60,8 @@ Limits: a body differing by one byte, a different ADR, or the same form elsewher
 before any write (tests `test_pat201_altered_and_unknown_forms_stay_refused`,
 `test_pat201_altered_body_is_refused_before_any_write`).
 The profile has no inverse; the witness keeps the source bytes (PAT-ADR-0002). The profile is not limited to `link-issue`: `create_adr` accepts the same two exact bodies
-(bounded by the same digests, `_linear_pat_201_readback_body`). `link_adr_issue` also refuses, before
+(bounded by the same digests, `_linear_pat_201_readback_body`); PAT-209 later made `create_adr`
+accept the exact bodies of `FOUNDRY-ADR-0003` and `-0015` as new bodies too (see PAT-209 below). `link_adr_issue` also refuses, before
 its first write, a source whose stored version is not proven by the model
 (`_is_stored_adr_body`; test `test_pat201_link_refuses_a_stored_body_the_model_does_not_prove`).
 No status,
@@ -106,8 +107,9 @@ markers become `* `, as in PAT-201):
   `humainement**`; the table delimiter row `|---|---:|---:|` becomes `| -- | -- | -- |`.
 
 The cause of the two "multiline inline" refusals was not traced to a clause of the model
-(unknown); the census wording "multi-line inline code" of PAT-201 was imprecise: the fixtures
-show the multi-line construct is bold, not inline code. Deduced, not observed: that Linear
+(unknown); the wording "multi-line inline code" for these two refusals was imprecise (this page's
+census writes "multiline inline"; its original author is not recorded here): the fixtures show the
+multi-line construct is bold, not inline code. Deduced, not observed: that Linear
 renders the version-1 Document written by `adr link-issue` the same way; the real link was
 not run (same limit as PAT-201).
 
@@ -127,7 +129,9 @@ Limits (tests in brackets):
   `test_pat209_altered_body_is_refused_before_any_write`);
 - `-0017` contains a table, which the strict new-body shapes refuse (PAT-103): it is accepted
   only as the stored body of an existing version (link, status), not by `create_adr`
-  (`test_pat209_adr_0017_stays_refused_as_a_new_body`). The tests seed its stored Document with
+  (`test_pat209_adr_0017_stays_refused_as_a_new_body`,
+  `test_pat209_create_adr_refuses_the_body_of_adr_0017`; stored: `test_pat209_link_and_replay_keep_the_source_bytes`,
+  `test_pat209_status_change_keeps_the_source_bytes`). The tests seed its stored Document with
   the new-body check relaxed, as the migration probe did (`_pat209_import`);
 - `link_adr_issue` refuses, before its first write, a source whose stored version the model
   does not prove (`_is_stored_adr_body`, PAT-205;

@@ -11094,7 +11094,7 @@ _PAT209_ALTERATIONS = {
 def test_pat209_altered_and_unknown_forms_stay_refused(adr):
     source = PAT209_SOURCES[adr]
     before, after = _PAT209_ALTERATIONS[adr]
-    for altered in (source + " ", source.replace(before.replace("\\n", "\n"), after.replace("\\n", "\n"), 1)):
+    for altered in (source + " ", source.replace(before, after, 1)):
         assert altered != source
         with pytest.raises(ValueError):
             linear_module._linear_markdown_readback_body(altered)
@@ -11151,6 +11151,44 @@ def test_pat209_link_and_replay_keep_the_source_bytes(tracker, monkeypatch, adr)
     )
     calls = len(wire.calls)
     instance.link_adr_issue(linked, "LIN-2", project=PROJECT)
+    assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+@pytest.mark.parametrize("adr", PAT209_ADRS)
+def test_pat209_status_change_keeps_the_source_bytes(tracker, monkeypatch, adr):
+    instance, wire = tracker
+    created = _pat209_import(instance, monkeypatch, adr)
+    instance.set_adr_status(created, "accepted", project=PROJECT)
+    [reread] = instance.list_adrs(PROJECT)
+    assert reread.status == "accepted"
+    assert reread.body.endswith(PAT209_SOURCES[adr])
+    stored = [
+        doc["content"] for doc in wire.documents.values()
+        if doc["content"].startswith(linear_module._ADR_HEADER)
+    ]
+    assert len(stored) == 2
+    assert all(
+        content.endswith(PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]]) for content in stored
+    )
+
+
+@pytest.mark.parametrize("adr", ["0003", "0015"])
+def test_pat209_create_adr_accepts_the_exact_body_as_a_new_body(tracker, adr):
+    instance, wire = tracker
+    created = instance.create_adr(PROJECT, f"New {adr}", PAT209_SOURCES[adr])
+    assert created.body.endswith(PAT209_SOURCES[adr])
+    [stored] = [
+        doc["content"] for doc in wire.documents.values()
+        if doc["content"].startswith(linear_module._ADR_HEADER)
+    ]
+    assert stored.endswith(PAT209_READBACKS[PAT209_SOURCE_SHA256[adr]])
+
+
+def test_pat209_create_adr_refuses_the_body_of_adr_0017(tracker):
+    instance, wire = tracker
+    calls = len(wire.calls)
+    with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
+        instance.create_adr(PROJECT, "New 0017", PAT209_SOURCES["0017"])
     assert not any("mutation " in document for document, _ in wire.calls[calls:])
 
 

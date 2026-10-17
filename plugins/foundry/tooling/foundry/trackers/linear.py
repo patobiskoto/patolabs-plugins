@@ -1073,10 +1073,13 @@ def _linear_pat_72_readback(body: str, rendered: str) -> str | None:
 # PAT-201 (+ PAT-209: ADR-0003/0015/0017): the native FOUNDRY ADR bodies whose
 # strong spans contain code outside what the PAT-85 form qualifies on its line.  Each entry binds one
 # complete source digest to (pre, post, readback digest).  `pre` rewrites the source
-# fragments to the observed Linear strong/code serialization before the general model
-# runs; `post` rewrites the observed autolink after it; the result digest is the
-# SHA-256 of the exact bytes Linear stored.  Nothing here is a Markdown grammar: any
-# other body, including one that differs by a byte, keeps the PAT-85 refusal.
+# fragments to the observed Linear serialization before the general model runs (a
+# strong span split around its code, and for 0015 and 0017 a bold span split at its
+# line break); `post` rewrites the fragments the model does not produce after it (the
+# autolink of 0018, `[…]` as `\[…\]` in 0015, the table separator line of 0017);
+# the result digest is the SHA-256 of the exact bytes Linear stored.  Nothing here is
+# a Markdown grammar: any other body, including one that differs by a byte, keeps the
+# PAT-85 refusal.
 _PAT_201_PROFILES = {
     "abb3117275dd01f04a9bcc07e1ef553c910ce92f9425a4216ca101b2c4661465": (
         (
