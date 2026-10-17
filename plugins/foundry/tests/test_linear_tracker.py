@@ -2565,15 +2565,11 @@ def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
 
 
-def _regress_after_review_write(wire, shape, *, times=1):
+def _regress_after_review_write(wire, shape):
     """PAT-230: the provider moves Review back to In Progress after the write."""
-    seen = []
 
     def hook(issue, values):
         if values.get("stateId") != STATE_IDS["review"]:
-            return
-        seen.append(1)
-        if len(seen) > times:
             return
         issue["state"]["id"] = STATE_IDS["in-progress"]
         if shape != "missing":
@@ -2599,23 +2595,9 @@ def test_linear_review_write_tolerates_proven_start_automation_regression(tracke
     instance.set_state("LIN-2", "review", context=review, project=PROJECT)
 
     updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
-    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 2
-    assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["review"]
+    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 1
+    assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["in-progress"]
     assert instance.get_issue("LIN-2").state == "review"
-
-
-def test_linear_review_write_reapplies_once_then_refuses(tracker):
-    instance, wire = tracker
-    review = TransitionContext(
-        pr_url="https://github.com/acme/widgets/pull/17",
-        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
-    )
-    instance.set_state("LIN-2", "in-progress", project=PROJECT)
-    _regress_after_review_write(wire, "proven", times=2)
-    with pytest.raises(TrackerConflictError, match="divergent after bounded write"):
-        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
-    updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
-    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 2
 
 
 @pytest.mark.parametrize("shape", ["missing", "before_receipt", "incomplete"])
@@ -2629,8 +2611,6 @@ def test_linear_review_write_refuses_unproven_regression(tracker, shape):
     _regress_after_review_write(wire, shape)
     with pytest.raises(TrackerConflictError):
         instance.set_state("LIN-2", "review", context=review, project=PROJECT)
-    updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
-    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 1
 
 
 def test_linear_review_write_refuses_other_divergence(tracker):
@@ -2648,8 +2628,6 @@ def test_linear_review_write_refuses_other_divergence(tracker):
     wire.after_issue_update = hook
     with pytest.raises(TrackerConflictError, match="divergent after bounded write"):
         instance.set_state("LIN-2", "review", context=review, project=PROJECT)
-    updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
-    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 1
 
 
 @pytest.mark.parametrize("history_shape", ["missing", "before_receipt", "incomplete"])

@@ -5821,9 +5821,8 @@ class LinearTracker(Tracker):
         """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue.
 
         ``review_receipt_at`` is set only by the review projection (PAT-230): it
-        lets the readback react to the one provider regression proven by
-        ``_review_regression_proven``, and nothing else: the expected State is
-        re-applied exactly once and read back once, which must then match.
+        lets the readback accept the one provider regression proven by
+        ``_review_regression_proven``, and nothing else.
         """
         if not isinstance(raw.get("id"), str) or not raw["id"]:
             raise LinearTrackerError(operation, None, "invalid_response")
@@ -5853,15 +5852,7 @@ class LinearTracker(Tracker):
             if review_receipt_at is not None and self._review_readback_regressed(
                 readback, binding, review_receipt_at,
             ):
-                # PAT-230: one re-application, one readback, no second tolerance.
-                data = self._graphql(
-                    _ISSUE_UPDATE, {"id": raw["id"], "input": values}, operation,
-                )
-                self._mutation_payload(data, "issueUpdate", operation)
-                readback = self._read_raw(issue_id)
-                self._assert_issue_project(readback, binding)
-                if self._raw_matches(readback, expected):
-                    return readback
+                return readback
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
 
@@ -5870,7 +5861,7 @@ class LinearTracker(Tracker):
     ) -> bool:
         """PAT-230: Linear's ``start`` automation moved Review back to In Progress.
 
-        Observation only (the caller re-applies once): the native State must be
+        Observation only, never a second write: the native State must be
         ``in-progress`` and the bounded ``stateHistory`` must show In Progress,
         then Review reached after the review receipt, then In Progress (PAT-76).
         """
