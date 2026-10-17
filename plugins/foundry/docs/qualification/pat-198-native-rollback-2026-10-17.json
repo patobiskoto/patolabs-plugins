@@ -8,7 +8,7 @@
     "per_line": 1,
     "retries": 0
   },
-  "native_calls": 6,
+  "native_calls": 7,
   "rows": [
     {
       "line": "codex-scout",
@@ -111,27 +111,41 @@
         "model": "gpt-5.6-sol",
         "effort": "high"
       },
-      "status": "not_run",
-      "date": null,
-      "verdict": "not_run",
-      "resolved_route": "unknown",
-      "transmitted": "unknown",
-      "native_observation": {
-        "models": "unknown",
-        "agent_types": "unknown",
-        "efforts": "unknown",
-        "host_version": "unknown"
+      "status": "run",
+      "date": "2026-10-18",
+      "verdict": "conforming",
+      "resolved_route": {
+        "role": "reviewer",
+        "tier": "frontier",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
       },
-      "account_availability": "unknown",
-      "errors": "unknown",
-      "parent_reply": "unknown",
-      "fixture_compliance": "unknown",
-      "policy_guard": "unknown",
-      "result_file_sha256": "unknown",
+      "transmitted": {
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "surface": "codex exec command line",
+        "basis": "the two values above, as the command line carries them; no Foundry routing is in the path"
+      },
+      "native_observation": {
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "agent_types": "not_applicable",
+        "efforts": [
+          "high"
+        ],
+        "host_version": "0.162.1"
+      },
+      "account_availability": "available_observed",
+      "errors": [],
+      "parent_reply": "marqueur-de-fixture-17180042",
+      "fixture_compliance": "exact",
+      "policy_guard": "unchanged",
+      "result_file_sha256": "6a4bb56aa29b13f2d9c68b35bc1dc25dac4684a25f9a0982096dcf7386bc8869",
       "limits": [
-        "not run at the time of the Claude runs: the tool did not run a real Codex call then (section 10 of the protocol adds it, PAT-245)",
-        "the earlier statement of a Codex usage limit until 2026-10-23 came from a stale 2026-10-13 session log and is withdrawn; a Codex rate-limit read of 2026-10-18 showed the weekly window barely used (the coordinator's reading, not re-observed here); whether a call succeeds is unknown until it is made",
-        "follow-up PAT-245"
+        "one call; not a sample",
+        "model and effort are those the host recorded for a completed turn; absence is unknown",
+        "account availability is observed for this account and this date only"
       ]
     },
     {
