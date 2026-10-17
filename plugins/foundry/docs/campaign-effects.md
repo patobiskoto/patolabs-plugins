@@ -405,10 +405,10 @@ One pass for a `review` decision (`campaign_review.launch_review`), all inside o
    number of `true` entries must equal `fix_before_merge` and the number of `false` entries
    `non_blocking`; `review_remarks.validate_remarks`; a receipt written before PAT-227 has no
    `target` and reads as `diff`), a non-empty report before the marker, and refuses `mergeable` with
-   a verdict other than `pass`. and, optionally, `full_review` (PAT-237, `FULL_REVIEW_KEY`: a
-   boolean, `true` when a partial review read the whole diff; see "Partial review and proof carry");
-   any other key is refused. Anything else makes the attempt `failed` (`reviewer_output_invalid`)
-   and records no proof.
+   a verdict other than `pass`. The only optional key is `full_review` (PAT-237, `FULL_REVIEW_KEY`:
+   a boolean, `true` when a partial review read the whole diff; see "Partial review and proof
+   carry"); any other key is refused. Anything else makes the attempt `failed`
+   (`reviewer_output_invalid`) and records no proof.
 5. The report (the text before the marker, `claim_id` and token replaced by `[redacted]`) is saved
    with `_save_summary`; the list-form file `{"outcomes": [...], "quality": ...}` (exactly those two
    keys: `record-review-proof` refuses any other shape, `routing.py`) is written 0600 and `routing
@@ -473,7 +473,7 @@ claude --print --output-format json --model <routed model> --max-budget-usd <bud
   --permission-mode dontAsk --tools Read,Grep,Glob,Bash --add-dir <packet directory>
   --setting-sources user --strict-mcp-config --mcp-config '{"mcpServers":{}}'
   --name foundry-campaign-<EPIC>-<ID>-review [--effort <routed effort>]
-  --no-session-persistence --session-id <uuid5 of the attempt identity>
+  --session-id <uuid5 of the attempt identity>
   --allowedTools Read Grep Glob "Bash(python3 <cli> routing read-review *)"
   "Bash(python3 <cli> routing search-review *)" "Bash(python3 <cli> routing list-review *)"
 ```
@@ -491,17 +491,18 @@ deduced, they would look in the default directory. The implementer session does 
 `claude --help`; the last two are used by `campaign_runtime.py`) keep the `.claude/settings*.json`
 of the worktree, which the diff or an earlier session may have written, and any project MCP server
 out of the reviewer session; the `session_argv` of the implementer session carries the same three
-flags (`session_argv`, `campaign_effects.py`). `--no-session-persistence` (PAT-237, also carried by
-`campaign_runtime.py`) is on the reviewer only: nothing resumes a reviewer session and
-`launch_review` reads its result from standard output (deduced from the code). The implementation
-and correction sessions are left as they were, because the routing hook reads the session transcript
-to observe the host version (AGENTS.md#R7) and whether the flag leaves such a transcript is unknown.
-The prompt (`review_prompt`, standard input) carries the reviewer contract of
-`skills/review-pr/SKILL.md` (stages, output, marker), the exact `read-review` command, and the send
-text written by `prepare-review`, followed by a sentence saying that the output contract overrides
-that text (which asks to load `review-pr` and to return its JSON; `review_packet.py` is unchanged,
-for the manual workflow); it carries `claim_id` because the reviewer needs it to read the diff, and
-the argv of the session does not.
+flags (`session_argv`, `campaign_effects.py`). Unlike `campaign_runtime.py`, which passes
+`--no-session-persistence`, no session of `campaign_effects.py` (implementer, correction, reviewer)
+carries it (PAT-237, 218-14), so its transcript persists: `_parse_session` refuses an output that
+does not echo the `--session-id` passed, and the routing hook reads the session transcript to
+observe the host version (AGENTS.md#R7). Whether `--no-session-persistence` with `--session-id`
+still echoes that id, or leaves such a transcript, is unknown: `campaign_runtime.py` uses both and
+never checks it, and no paid call was made to observe it. The prompt (`review_prompt`, standard
+input) carries the reviewer contract of `skills/review-pr/SKILL.md` (stages, output, marker), the
+exact `read-review` command, and the send text written by `prepare-review`, followed by a sentence
+saying that the output contract overrides that text (which asks to load `review-pr` and to return
+its JSON; `review_packet.py` is unchanged, for the manual workflow); it carries `claim_id` because
+the reviewer needs it to read the diff, and the argv of the session does not.
 
 Why `dontAsk`: a tool call that no rule pre-approves is refused without a prompt, so with the
 `--allowedTools` list above the session can only read files, search, and run the three
@@ -674,10 +675,14 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    one of the deferrable remarks of the receipt of an earlier `done` deferral of the same ticket
    (another diff hash) is left out (`already_deferred`, PAT-237: the partial review that follows a
    correction may list it again); when nothing is left, no comment is posted and the `deferral`
-   field carries `remarks: 0`. The comparison is the exact text: a reworded remark is deferred again
-   (known limit). The comment is also skipped when a comment of the follow-up already contains that
-   reference (a comment whose answer was lost). The tracker may return only the most recent comments
-   (`docs/review-rounds.md`): a comment older than that window would be posted again (unknown).
+   field carries `remarks: 0`; the attempt then reads and writes nothing in the tracker
+   (`run_deferral` returns before step 2) and the field names the follow-up and companion of the
+   latest earlier `done` deferral. The comparison is the exact text: a reworded remark is deferred
+   again, and two distinct findings with the same text (for example `nit: typo`) are taken for one,
+   so the second is neither deferred nor fixed (known limit). The comment is also skipped when a
+   comment of the follow-up already contains that reference (a comment whose answer was lost). The
+   tracker may return only the most recent comments (`docs/review-rounds.md`): a comment older than
+   that window would be posted again (unknown).
 5. `update_pr_body` rewrites the description with the line `Deferred remarks: <FOLLOW-UP-ID>[,
    <FOLLOW-UP-ID>...] (companion Epic <ID>, created by this pull request|already existing; <N>
    remarks; writes: ...)` after the `## Review rounds` section (R9 (b): the writes are reported
@@ -800,12 +805,13 @@ R5 status (PAT-237): updated `docs/campaign-effects.md` and `docs/campaign-caden
 artefacts: the optional key `full_review` of the reviewer result (`FULL_REVIEW_KEY`); the decision
 reason `pr_head_not_in_branch`, the key `branch_contains_pr` of an observed ticket and the
 `contains` argument of `observe`; the suspension `description_worktree_head_moved` and the error
-`description_head_unreadable`; the argv flag `--no-session-persistence` of the reviewer session; the
-helpers `scrub_remarks` and `already_deferred`. No CLI verb or option, configuration key or routing
-table changed. Code behaviour changed without a new constant: remark texts scrubbed before the
-receipt and the tracker comment, the tier sent to the escalation command when the tier without the
-floor is unavailable, a remark deferred once is not deferred again, the wording of the
-partial-review prompt.
+`description_head_unreadable`; the helpers `scrub_remarks` and `already_deferred`; the public
+constant `RESULT_KEYS` (`campaign_review.py`); the sentence of AGENTS.md and CLAUDE.md (R9) on the
+comment of the deferral, now "at most one comment per validated round". No CLI verb or option,
+configuration key or routing table changed. Code behaviour changed without a new constant: remark
+texts scrubbed before the receipt and the tracker comment, the tier sent to the escalation command
+when the tier without the floor is unavailable, a remark deferred once is not deferred again (and an
+attempt with nothing left touches no tracker), the wording of the partial-review prompt.
 
 R5 status (PAT-236): updated `docs/campaign-effects.md`, `docs/model-routing.md` and
 `AGENTS.md`/`CLAUDE.md` R7 (the headless runners that apply

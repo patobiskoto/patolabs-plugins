@@ -491,7 +491,7 @@ def reviewer_argv(runtime, plan: dict, epic: str, ticket: str, session_id: str,
     ]
     if plan["effort"] is not None:
         argv.extend(["--effort", plan["effort"]])
-    argv.extend(["--no-session-persistence", "--session-id", session_id, "--allowedTools", "Read", "Grep", "Glob", *rules])
+    argv.extend(["--session-id", session_id, "--allowedTools", "Read", "Grep", "Glob", *rules])
     return argv
 
 

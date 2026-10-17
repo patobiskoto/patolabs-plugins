@@ -688,6 +688,31 @@ def test_a_round_whose_remarks_were_all_deferred_before_writes_no_second_comment
     assert step(env).decision.kind == "merge"
 
 
+def test_nothing_left_after_the_dedup_touches_no_tracker(env, monkeypatch):
+    """PAT-237 (218-N3): no companion lookup, no follow-up, no comment when every remark was
+    deferred before; the field still names the earlier follow-up and companion."""
+    reviewed(env, nits=1, fix=1)
+    step(env), step(env), step(env)
+    follow_up, = follow_ups(env)
+    env.world.diff_hash = "e" * 64
+    env.world.reviews.append(result_text(nits=1))
+    step(env)
+
+    def forbidden(*a, **k):
+        raise AssertionError("tracker touched")
+
+    monkeypatch.setattr(cd, "Listing", forbidden)
+    monkeypatch.setattr(cd, "_read", forbidden)
+    writes = len(env.world.edits)
+    result = step(env)
+    assert result.decision.kind == "defer-remarks" and result.outcome == "executed"
+    assert len(env.world.edits) == writes and len(follow_ups(env)) == 1
+    field = [r for r in ce.read_attempts(env.kwargs["attempts"]) if r["event"] == "finished"
+             and r["kind"] == "defer-remarks"][-1]["deferral"]
+    assert (field["state"], field["remarks"], field["writes"]) == ("done", 0, [])
+    assert field["follow_up"] == follow_up.id
+
+
 def test_the_tracker_comment_masks_a_credential_shaped_text_of_an_older_receipt():
     """PAT-237 (141-1): defence in depth, a receipt written by hand is not trusted either."""
     fake = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2"

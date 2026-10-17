@@ -109,9 +109,8 @@ def test_reviewer_argv_is_routed_at_the_gate_floor_and_read_only(env):
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
     assert argv.index("--setting-sources") < argv.index("--allowedTools")
-    # PAT-237: a one-shot reviewer session leaves no resumable session behind
-    assert "--no-session-persistence" in argv and argv.index("--no-session-persistence") < (
-        argv.index("--session-id"))
+    # PAT-237: the session persists, as its id is echoed back and checked (docs/campaign-effects.md)
+    assert "--no-session-persistence" not in argv and "--session-id" in argv
 
 
 def test_foundry_data_is_forwarded_to_the_reviewer_only_when_set(env, monkeypatch):
