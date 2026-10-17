@@ -1,0 +1,222 @@
+{
+  "schema": "foundry.pat198-native-rollback.v1",
+  "date": "2026-10-17",
+  "evidence_kind": "native_trial_matrix",
+  "pat17_record": "pat-17-config-rollback-2026-10-11.json (configuration only; not native proof)",
+  "budget": {
+    "max_paid_native_calls": 8,
+    "per_line": 1,
+    "retries": 0
+  },
+  "native_calls": 0,
+  "rows": [
+    {
+      "line": "codex-scout",
+      "host": "codex",
+      "role": "scout",
+      "tier": "economy",
+      "rollback": {
+        "model": "gpt-5.6-luna",
+        "effort": "low"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "codex-implementer",
+      "host": "codex",
+      "role": "implementer",
+      "tier": "balanced",
+      "rollback": {
+        "model": "gpt-5.6-terra",
+        "effort": "medium"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "codex-reviewer",
+      "host": "codex",
+      "role": "reviewer",
+      "tier": "frontier",
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "codex-architect",
+      "host": "codex",
+      "role": "architect",
+      "tier": "apex",
+      "rollback": {
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "claude-scout",
+      "host": "claude",
+      "role": "scout",
+      "tier": "economy",
+      "rollback": {
+        "model": "haiku-4.5",
+        "effort": null
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "claude-implementer",
+      "host": "claude",
+      "role": "implementer",
+      "tier": "balanced",
+      "rollback": {
+        "model": "sonnet-5",
+        "effort": "medium"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "claude-reviewer",
+      "host": "claude",
+      "role": "reviewer",
+      "tier": "frontier",
+      "rollback": {
+        "model": "opus-5",
+        "effort": "high"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    },
+    {
+      "line": "claude-architect",
+      "host": "claude",
+      "role": "architect",
+      "tier": "apex",
+      "rollback": {
+        "model": "fable-5",
+        "effort": "high"
+      },
+      "status": "not_run",
+      "date": null,
+      "verdict": "not_run",
+      "resolved_route": "unknown",
+      "transmitted": "unknown",
+      "native_observation": {
+        "models": "unknown",
+        "agent_types": "unknown",
+        "efforts": "unknown",
+        "host_version": "unknown"
+      },
+      "account_availability": "unknown",
+      "errors": "unknown",
+      "policy_guard": "unknown",
+      "result_file_sha256": "unknown",
+      "limits": "unknown"
+    }
+  ]
+}

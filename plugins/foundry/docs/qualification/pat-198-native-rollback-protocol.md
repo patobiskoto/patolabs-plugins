@@ -1,0 +1,136 @@
+# PAT-198: native qualification of the eight rollback lines of PAT-17 (protocol)
+
+Status: written 2026-10-17, BEFORE any native call. No call has been made when this page is committed; the matrix
+[`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-10-17.json) holds `not_run` / `unknown` in
+every field. Whoever fills it records what a run showed, never what was expected.
+
+## 1. What this is and is not
+
+PAT-17 ([record](pat-17-config-rollback-2026-10-11.json), [decisions](../model-decisions-2026-10-11.md),
+[migration](../model-migration-2026-10.md)) showed that eight rollback configurations resolve through the CLI and
+build plans, with zero native calls (`evidence_kind: configuration_only`, `native_calls: 0`). That is configuration
+compatibility. It says nothing about whether the account can still run those models. PAT-198 asks one question per
+line: when this line is launched natively once, what did the host actually run?
+
+Not a benchmark, not a comparison between lines or with the current models, not a promotion, not a statement about
+quota or cost. An old model that does not answer is declared unavailable for this account on this date. Nothing is
+substituted, no baseline is invented, no default is changed by a result.
+
+## 2. Scope: the eight lines (configurations to examine, availability NOT asserted)
+
+| Line id | Role (tier) | Model / effort | Surface |
+| --- | --- | --- | --- |
+| `codex-scout` | scout (economy) | `gpt-5.6-luna` / `low` | `codex exec` |
+| `codex-implementer` | implementer (balanced) | `gpt-5.6-terra` / `medium` | `codex exec` |
+| `codex-reviewer` | reviewer (frontier) | `gpt-5.6-sol` / `high` | `codex exec` |
+| `codex-architect` | architect (apex) | `gpt-5.6-sol` / `max` | `codex exec` |
+| `claude-scout` | scout (economy) | `haiku-4.5` / none (`not_applicable`) | routed Agent launch |
+| `claude-implementer` | implementer (balanced) | `sonnet-5` / `medium` | routed Agent launch |
+| `claude-reviewer` | reviewer (frontier) | `opus-5` / `high` | routed Agent launch |
+| `claude-architect` | architect (apex) | `fable-5` / `high` | routed Agent launch |
+
+Source of the eight pairs: `ROLLBACK` in `tooling/foundry/rollback_native_trial.py`, equal to the `rollback` of each
+row of the PAT-17 record (checked by `tests/test_rollback_native_trial.py`).
+
+## 3. Surface
+
+Claude: the surface PAT-125 used (`tooling/foundry/claude_profile_trial.py`, reused as-is). One headless `claude -p`
+parent loads this checkout (`--plugin-dir`), is told to call the Agent tool once with the logical role
+(`foundry:lupin`, `foundry:eiffel`, `foundry:maigret`, `foundry:vauban`), and the `PreToolUse` routing hook rewrites
+that call to the pinned profile named in section 5. The fixture lives outside any git repository and carries its own
+disposable project policy mapping only the role's tier to the line's model and effort. The child environment is the
+R6 allow-list (`AGENTS.md#R6`), never under `sandbox-exec`. The child reads one public marker file and returns it.
+
+Codex: `codex exec --ephemeral --json -s read-only --model <model> -c model_reasoning_effort="<effort>"`, packet on
+standard input (the argv shape of the measurement harness, `measurement_harness_v2.py`). The coordinator cannot run
+Codex before 2026-10-23 (usage limit, deduced from the maintainer's statement, not observed here), and the tool does
+not implement a real Codex run: `--dry-run` prints the plan, a real Codex run is refused. Codex rows stay `not_run`
+until a later step adds and exercises that run; this page then gets a dated amendment before any Codex call.
+
+## 4. Authorised budget, ceilings, stops
+
+- Budget (maintainer, standing authorisation recorded in PAT-198): at most eight paid native calls, one per line,
+  no retry. The matrix field `native_calls` counts them; the tool refuses past 8.
+- One call per line: the tool refuses a line whose row is not `not_run`. It claims the row (`status: started`)
+  BEFORE the call, so a killed, failed or timed-out run also blocks a second one. A new work directory or result path
+  does not bypass this. Retrying a line needs a new maintainer decision and a hand edit of the matrix, recorded here.
+- Per-call spend ceiling: `--max-budget-usd <AMOUNT>` is passed to `claude -p` (the flag exists in the installed host's
+  `--help`, read 2026-10-17; whether it covers the child's spend is unknown). The tool refuses a real run without it.
+  `<AMOUNT>` is the maintainer's figure; none is fixed here.
+- Time ceiling: 20 minutes, the process group is killed (`TIMEOUT_SECONDS`). One parent, one child expected, no
+  concurrency. More than one child is `not_conforming`.
+- Stop conditions: any line whose host answer is a refusal, an unavailable model or a divergent model is recorded
+  and the sequence goes on with the next line only if the coordinator decides so; nothing is retried or replaced.
+  Stop the whole sequence on: an authentication failure (OAuth), a usage-limit message, or a real-policy digest
+  change (`policy_guard: CHANGED`). Run the Claude lines one after the other, never in parallel.
+
+## 5. The exact command per Claude line
+
+From the root of the checkout (scratch outside any git repository; `<AMOUNT>` from the maintainer):
+
+```
+S=$(mktemp -d)
+PYTHONPATH=plugins/foundry/tooling python3 -m foundry.rollback_native_trial --line claude-scout \
+  --work-dir "$S/claude-scout" --out "$S/claude-scout.json" --max-budget-usd <AMOUNT> --dry-run
+```
+
+Remove `--dry-run` for the real call. Same with `--line claude-implementer`, `claude-reviewer`, `claude-architect`.
+Expected pinned profile and wire model per line (computed offline by the dry run, `claude_invocation_binding`):
+
+| Line | Profile | Wire model | Effort transmitted |
+| --- | --- | --- | --- |
+| `claude-scout` | `routed-readonly-none-haiku-4.5` | `claude-haiku-4-5` | none (`not_applicable`) |
+| `claude-implementer` | `routed-worker-medium-sonnet-5` | `claude-sonnet-5` | `medium` |
+| `claude-reviewer` | `routed-readonly-high-opus-5` | `claude-opus-5` | `high` |
+| `claude-architect` | `routed-readonly-high-fable-5` | `claude-fable-5` | `high` |
+
+The command works on a checkout whose HEAD is committed and clean (the result records `source.commit` and `dirty`).
+
+## 6. What a run writes, and restoration
+
+Written by a real run, and only these:
+
+1. the work directory (outside the repository): fixture, raw stream `stream.ndjson`, `stderr.txt`;
+2. the result file `--out` (schema `foundry.pat198-native-trial.v1`);
+3. the row of its line in the matrix, plus `native_calls` (a first write before the call, a second after it);
+4. host-side session logs under the host's own projects directory (written by the host; the tool only reads them).
+
+A dry run writes nothing. The user's real policy files are never touched: the fixture carries its own policy and the
+tool never writes a policy anywhere else. To make that checkable, the tool takes the sha256 of each guarded policy
+file (default: the checkout's `.foundry/model-routing.json`; repeat `--guard-policy` to add the user's own) before
+and after the call, `absent` for a missing file, and records both. A difference makes the line `not_conforming` and the
+row `policy_guard: CHANGED`. Restoration therefore needs no action when the guard says `unchanged`. If it says
+`CHANGED`, restore the file from its backup or from version control and note it here. To undo a recorded row: revert
+the matrix file in version control. Delete the work directory when done (it holds a raw stream).
+
+## 7. Observed against unknown
+
+Four values stay separate, per line, in the result and the matrix:
+
+- resolved route: the policy value the fixture resolved to (`requested`), computed offline;
+- transmitted parameters: the profile, wire model and effort the checkout selects (`transmitted`), computed offline,
+  plus the hook's own statement when the host kept it in the parent log (`hook`);
+- native observation: models from the child's assistant records, agent type from the child's `.meta.json`, efforts
+  only if the host logs `effort`/`perTurnEffort`, host version from the logs. Absent = `unknown`. For `haiku-4.5`
+  an absent effort never proves non-applicability;
+- account availability: `available_observed` only when the child's model was observed (exact or dated snapshot);
+  `unavailable_declared` only when no child ran and the verbatim (masked) error matches a model-unavailable pattern
+  (a heuristic, `_UNAVAILABLE`; the error text is always kept so a reader can overrule it); otherwise `unknown`.
+
+Verdicts: `conforming` (everything exact), `not_conforming` (any divergent value, wrong process exit, several
+children, changed guard), `unavailable`, `unknown` (anything not observed, a dated snapshot included). Errors are kept
+verbatim after masking: secrets, e-mail addresses, opaque tokens of 32 characters or more, home directory, 2000
+characters at most.
+
+Known limits, stated before any run: one call is not a sample; the role contracts of `maigret` and `vauban` may
+constrain the fixture task (what the host does then is recorded, not predicted: unknown); the fixture task reads one
+file, so it exercises launch and model identity, not review or architecture quality; the budget flag's coverage of
+the child is unknown.
+
+## 8. Documentation status (R5)
+
+Updated: this page (new), the matrix file (new), `model-routing.md` (pointer), `changelog.d/PAT-198.md`, and the new
+module `foundry.rollback_native_trial` (CLI `--line`, `--work-dir`, `--out`, `--matrix`, `--claude`, `--parent-model`,
+`--projects-dir`, `--max-budget-usd`, `--guard-policy`, `--dry-run`). Not changed, with reason: `claude_profile_trial`
+(imported helpers only, no surface changed); the PAT-17 record, the release notes and published changelog sections
+(frozen historical proofs, left untouched).

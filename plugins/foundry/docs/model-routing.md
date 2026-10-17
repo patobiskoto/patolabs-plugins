@@ -1461,3 +1461,18 @@ the same effort rules as built-in Haiku identities: null or historical requested
 is non-applicable; every explicit user effort is rejected and no gate floor is lowered.
 The declared policy name and its provenance stay intact; only effort validation uses
 the effective target. This does not certify a custom alias's native version.
+
+
+### PAT-198 native qualification of the eight PAT-17 rollback lines
+
+PAT-17 proved the eight rollback configurations by CLI resolution only (zero native calls); that is configuration
+compatibility, not native proof, and backend availability of those old models stays unknown until a run. PAT-198
+fixes a bounded protocol ([page](qualification/pat-198-native-rollback-protocol.md)) and a dated matrix
+([`pat-198-native-rollback-2026-10-17.json`](qualification/pat-198-native-rollback-2026-10-17.json)): one native call
+per line, no retry, disposable policies, the real policy digested before and after. Tool:
+`python3 -m foundry.rollback_native_trial --line <line> ...` (Claude lines run; Codex lines have a dry-run plan only).
+Run by hand by the coordinator, never by the tests. An unavailable model is recorded as such; nothing is substituted
+and no default changes.
+
+Documentation status (PAT-198, R5): updated here and in that page for the new module `foundry.rollback_native_trial`
+and its options; no existing public constant, routing rule or CLI surface changed.
