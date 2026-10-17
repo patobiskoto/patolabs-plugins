@@ -83,8 +83,8 @@ sequence ran on the test double only, never on a live workspace.
   details and the stated limit are in [linear-request-cost.md](linear-request-cost.md)
   ("Epic campaign (PAT-228)").
 - **Remarks (PAT-229, PAT-227):** a failed `defer-remarks` keeps its real error; in an Epic
-  campaign, a "fix before merge" remark that targets only the PR description is corrected without a new
-  review of the diff, a residual risk stated in the changelog entry of PAT-227.
+  campaign, when every "fix before merge" remark targets only the PR description, the description is
+  replaced without a new review, a residual risk stated in the changelog entry of PAT-227.
 - **Approval record (PAT-222):** `approve` validates the whole record before appending.
 - **Historical ADR links (PAT-209):** `adr link-issue` accepts three more stored bodies
   ([qualification/pat-201-historical-adr-links.md](qualification/pat-201-historical-adr-links.md)).
