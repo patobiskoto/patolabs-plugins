@@ -23,8 +23,8 @@ label (derived, not observed).
 Six checks, for what the release note announces. None of them edits a cache.
 
 1. **You run no Epic campaign.** The campaign verbs `campaign-approval`,
-   `campaign-cadence step|run` and `routing record-review-remarks` are new (release note,
-   item 1; changelog entries of PAT-215, PAT-217 and PAT-141). Checks 2 and 3 concern
+   `campaign-cadence next`, `campaign-cadence step|run` and `routing record-review-remarks`
+   are new (release note, item 1; changelog entries of PAT-215, PAT-216, PAT-217 and PAT-141). Checks 2 and 3 concern
    campaigns only; whether any other verb calls them was not searched for this guide:
    unknown.
 2. **You run an Epic campaign: a human approval is required first.** `campaign-approval
@@ -33,8 +33,8 @@ Six checks, for what the release note announces. None of them edits a cache.
    ([campaign-approval.md](campaign-approval.md), "Commands" and "An agent cannot approve
    (layers and limit)"; `AGENTS.md#R1`). Without a valid approval, a pass returns
    `refuse` and launches nothing ([campaign-effects.md](campaign-effects.md), "Commands").
-   The ceilings and lifetime are bounded by `MAX_SESSIONS_CEILING`, `DEFAULT_TTL` and
-   `MAX_TTL` (`tooling/foundry/campaign_approval.py`). `check` refuses a
+   The ceilings and lifetime are bounded by `MAX_SESSIONS_CEILING` and `MAX_TTL`, and the
+   lifetime defaults to `DEFAULT_TTL` (`tooling/foundry/campaign_approval.py`). `check` refuses a
    different preview digest, structure digest, an expired or an absent approval
    ([campaign-approval.md](campaign-approval.md), "Commands").
 3. **Campaign sessions run in the native Claude Code sandbox (PAT-220).** Which paths are
@@ -56,8 +56,8 @@ Six checks, for what the release note announces. None of them edits a cache.
    Linear configuration is changed by this release, and the team's automation rules were
    read once on 2026-10-17 (same paragraph). Any other divergence still fails.
 5. **Scripts that read the Epic preview.** On Linear `epic-preview` now succeeds and its
-   result gains `structure_digest` and `authority.tracker` (changelog entry of PAT-178;
-   [epic-preview.md](epic-preview.md)).
+   result gains `structure_digest`; `authority.tracker` already existed in 1.4.0 and now
+   carries the tracker name (changelog entry of PAT-178; [epic-preview.md](epic-preview.md)).
 6. **Scripts that read `adr link-issue` refusals.** Three more stored ADR bodies are
    accepted (changelog entry of PAT-209); any other body is refused as before.
 
@@ -146,7 +146,7 @@ python3 <foundry-root>/tooling/foundry_cli.py routing show --host codex
 ```
 
 The equivalent doctor skills are `/foundry:doctor` and `$foundry:doctor`. The routes
-are those of 1.4.0 on both hosts: no routing default changes (release note, item 6).
+are those of 1.4.0 on both hosts: no routing default changes (release note, "What 1.5.0 contains since 1.4.0").
 `routing show` and `doctor` bind nothing and observe no host version, as the 1.1.0 guide
 says.
 
@@ -200,7 +200,7 @@ What is known:
 - No manager command that installs a named tag of this marketplace is established in
   this repository; whether either manager accepts a tag was not exercised
   ([migration-1.3.0.md](migration-1.3.0.md), "Return to 1.2.0").
-- Under a restored 1.4.0, `campaign-approval`, `campaign-cadence step|run`, `issue
+- Under a restored 1.4.0, `campaign-approval`, `campaign-cadence next|step|run`, `issue
   accept` and `routing record-review-remarks` do not exist (deduced from the changelog
   entries, not tested as a downgrade).
 - Records written under 1.5.0 are not removed by a package change: the entries of "New

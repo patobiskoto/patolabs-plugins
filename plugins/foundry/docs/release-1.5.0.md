@@ -67,8 +67,8 @@ release.
 
 `epic-preview` is an existing verb. On Linear it now builds the neutral
 `foundry-epic-subgraph.v1` ([epic-preview.md](epic-preview.md)). The result gains
-`structure_digest` and `authority.tracker` (changelog entry of PAT-178); a script that
-reads the result sees two keys it did not see before.
+`structure_digest`; `authority.tracker` already existed in 1.4.0 and now carries the
+tracker name (changelog entry of PAT-178).
 
 ### 5. Acceptance of an issue with no code (PAT-206)
 
@@ -82,13 +82,15 @@ sequence ran on the test double only, never on a live workspace.
 - **Reporting (PAT-228):** every step of `campaign-cadence step|run` reports `requests`;
   details and the stated limit are in [linear-request-cost.md](linear-request-cost.md)
   ("Epic campaign (PAT-228)").
-- **Deferral (PAT-229, PAT-227):** a failed `defer-remarks` keeps its real error; a
-  remark that targets only the PR description is corrected without a new review of the
+- **Remarks (PAT-229, PAT-227):** a failed `defer-remarks` keeps its real error; a
+  "fix before merge" remark that targets only the PR description is corrected without a new review of the
   diff, a residual risk stated in the changelog entry of PAT-227.
 - **Approval record (PAT-222):** `approve` validates the whole record before appending.
 - **Historical ADR links (PAT-209):** `adr link-issue` accepts three more stored bodies
   ([qualification/pat-201-historical-adr-links.md](qualification/pat-201-historical-adr-links.md)).
-- **Documentation and tests only:** PAT-212, PAT-219
+- **Helper script (PAT-212):** `scripts/codex_profile_provenance.py` is changed (changelog
+  entry of PAT-212).
+- **Documentation and tests only:** PAT-219
   ([qualification/pat-219-epic-campaign-2026-10-17.md](qualification/pat-219-epic-campaign-2026-10-17.md)),
   PAT-224, PAT-232.
 
@@ -113,7 +115,7 @@ issue number descending. No configuration key, routing default, model or effort 
 - **Sandbox of campaign sessions:** observed once, refusing layer not recorded; Glob/Grep,
   reads, `commondir`, `config.worktree`, `refs/replace`, the network and the three user
   files named in the PAT-220 entry are not tested (unknown).
-- **Campaign cost:** far above the PAT-177 estimate in the one recorded campaign
+- **Campaign cost:** far above the PAT-177 estimate of Linear requests in the one recorded campaign
   (PAT-219); the cause is unknown.
 - **Codex** is not wired into campaign effects.
 - **Rollback to an earlier plugin version is an untried procedure** (PAT-162); see
@@ -195,6 +197,7 @@ documentation only.
 
 No CLI verb or option, configuration key, runtime constant, hook, agent profile or skill
 instruction is changed by this release preparation, and no file under `tooling/`, `hooks/`
-or `agents/` is touched. Outside release metadata and these pages, the only change is one
-comment line in `scripts/ci_plan.py`. The mechanical documentation-status gate is not
+or `agents/` is touched. Outside release metadata and these pages, the only changes are one
+comment line in `scripts/ci_plan.py` and the release paragraphs (and the version table row of the root one) of
+`README.md` and `plugins/foundry/README.md`. The mechanical documentation-status gate is not
 claimed shipped.

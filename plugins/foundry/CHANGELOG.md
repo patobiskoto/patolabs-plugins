@@ -14,7 +14,7 @@ implementation and correction sessions of a campaign run in the native Claude Co
 (PAT-220); the summary of a campaign session is filtered for credentials (PAT-223);
 `campaign-approval approve` validates the whole record before any append (PAT-222);
 on Linear, `issue openpr` tolerates the State going back to In Progress right after the
-write (PAT-230); a failed `defer-remarks` keeps its real error (PAT-229); a campaign
+write only when the `stateHistory` proves it, with no second write (PAT-230); a failed `defer-remarks` keeps its real error (PAT-229); a campaign
 remark that targets only the PR description is corrected without a new review (PAT-227);
 the campaign reports its Linear requests and skips redundant lookups (PAT-228); `adr
 link-issue` accepts three more historical ADR bodies (PAT-209). PAT-219 records a real
