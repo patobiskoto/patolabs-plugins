@@ -303,6 +303,8 @@ class LinearWire:
             "LIN-2": raw_issue("LIN-2", ISSUE_2_ID, title="Existing"),
         }
         self.state_histories = {}
+        self.after_issue_update = None
+        self.comment_created_at = "2026-09-20T10:02:00Z"
         self.comments = {}
         self.documents = {}
         # Readback probes are historical provider observations, not ADR slots.
@@ -442,6 +444,8 @@ class LinearWire:
         if "FoundryLinearIssueUpdate" in document:
             issue = self._by_native(variables["id"])
             self._apply(issue, variables["input"])
+            if self.after_issue_update is not None:
+                self.after_issue_update(issue, variables["input"])
             return {
                 "data": {
                     "issueUpdate": {
@@ -544,7 +548,7 @@ class LinearWire:
                 {
                     "id": comment["id"],
                     "body": comment["body"],
-                "createdAt": "2026-09-20T10:02:00Z",
+                    "createdAt": self.comment_created_at,
                 }
             )
             return {
@@ -2560,6 +2564,118 @@ def test_linear_reviewed_start_drift_allows_read_and_relation_without_lifecycle_
     instance.link("LIN-2", "blocks", "LIN-1", project=PROJECT)
     assert Link("blocks", "inward", "LIN-1") in instance.get_issue("LIN-2").links
     assert wire.issues["LIN-2"]["comments"]["nodes"] == comments_before_drift
+
+
+def _regress_after_review_write(wire, shape):
+    """PAT-230: the provider moves Review back to In Progress after the write."""
+
+    def hook(issue, values):
+        if values.get("stateId") != STATE_IDS["review"]:
+            return
+        issue["state"]["id"] = STATE_IDS["in-progress"]
+        if shape != "missing":
+            prove_native_review_regression(wire, issue["identifier"])
+        if shape == "before_receipt":
+            # Contiguous history (Review starts 10:03, as In Progress ends); only
+            # the receipt (created 10:05) is later than the start of Review.
+            for row in _lifecycle_rows(wire, issue["identifier"], "state-review"):
+                row["createdAt"] = "2026-09-20T10:05:00Z"
+        if shape == "incomplete":
+            wire.state_histories[issue["identifier"]]["pageInfo"]["hasNextPage"] = True
+
+    wire.after_issue_update = hook
+
+
+def test_linear_review_write_tolerates_proven_start_automation_regression(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    _regress_after_review_write(wire, "proven")
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+
+    updates = [c for c in wire.calls if "FoundryLinearIssueUpdate" in c[0]]
+    assert sum(1 for c in updates if c[1]["input"].get("stateId") == STATE_IDS["review"]) == 1
+    assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["in-progress"]
+    assert instance.get_issue("LIN-2").state == "review"
+
+
+@pytest.mark.parametrize("shape", ["missing", "before_receipt", "incomplete"])
+def test_linear_review_write_refuses_unproven_regression(tracker, shape):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    _regress_after_review_write(wire, shape)
+    with pytest.raises(TrackerConflictError, match="divergent after bounded write|native state"):
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+
+
+@pytest.mark.parametrize(
+    ("created", "tolerated"),
+    [
+        # The latest generation's receipt bounds the span (PAT-76 rule): the
+        # earliest receipt (min) would accept the second case, the latest refuses.
+        (("2026-09-20T10:00:00Z", "2026-09-20T10:02:00Z"), True),
+        (("2026-09-20T10:02:00Z", "2026-09-20T10:05:00Z"), False),
+    ],
+)
+def test_linear_review_write_bounds_regression_by_latest_receipt(
+    tracker, created, tolerated,
+):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+    instance.set_state("LIN-2", "review", context=review, project=PROJECT)
+    wire.issues["LIN-2"]["state"]["id"] = STATE_IDS["in-progress"]
+    _lifecycle_rows(wire, "LIN-2", "state-review")[0]["createdAt"] = created[0]
+    wire.comment_created_at = created[1]
+    second = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="d" * 40, base_sha="b" * 40, review_digest="e" * 64,
+    )
+
+    def hook(issue, values):
+        if values.get("stateId") != STATE_IDS["review"]:
+            return
+        issue["state"]["id"] = STATE_IDS["in-progress"]
+        prove_native_review_regression(wire, issue["identifier"])
+        assert len(_lifecycle_rows(wire, issue["identifier"], "state-review")) == 2
+
+    prove_native_review_regression(wire)
+    wire.after_issue_update = hook
+    if tolerated:
+        instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+        assert wire.issues["LIN-2"]["state"]["id"] == STATE_IDS["in-progress"]
+    else:
+        with pytest.raises(
+            TrackerConflictError, match="divergent after bounded write",
+        ):
+            instance.set_state("LIN-2", "review", context=second, project=PROJECT)
+
+
+def test_linear_review_write_refuses_other_divergence(tracker):
+    instance, wire = tracker
+    review = TransitionContext(
+        pr_url="https://github.com/acme/widgets/pull/17",
+        head_sha="a" * 40, base_sha="b" * 40, review_digest="c" * 64,
+    )
+    instance.set_state("LIN-2", "in-progress", project=PROJECT)
+
+    def hook(issue, values):
+        issue["state"]["id"] = STATE_IDS["blocked"]
+        prove_native_review_regression(wire, issue["identifier"])
+
+    wire.after_issue_update = hook
+    with pytest.raises(TrackerConflictError, match="divergent after bounded write"):
+        instance.set_state("LIN-2", "review", context=review, project=PROJECT)
 
 
 @pytest.mark.parametrize("history_shape", ["missing", "before_receipt", "incomplete"])

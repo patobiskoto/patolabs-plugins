@@ -3891,6 +3891,20 @@ class LinearTracker(Tracker):
         }
         return previous in rank and current in rank and rank[current] >= rank[previous]
 
+    @staticmethod
+    def _receipt_created_at(comments: list[dict], body: str | None) -> int | None:
+        """Creation time (epoch ms) of the lifecycle comment carrying ``body``."""
+        if body is None:
+            return None
+        return next(
+            (
+                _epoch_ms(comment.get("createdAt"))
+                for comment in comments
+                if comment.get("body") == body
+            ),
+            None,
+        )
+
     def _review_regression_proven(
         self,
         issue_id: str,
@@ -4392,13 +4406,8 @@ class LinearTracker(Tracker):
             native_state_id,
             issue_id=issue_id,
             native_issue_id=raw["id"],
-            review_receipt_at=next(
-                (
-                    _epoch_ms(comment.get("createdAt"))
-                    for comment in comments
-                    if reviews and comment.get("body") == reviews[-1][1]
-                ),
-                None,
+            review_receipt_at=self._receipt_created_at(
+                comments, reviews[-1][1] if reviews else None,
             ),
             pending_operation=pending_operation,
             acceptance_complete=acceptance_complete or acceptance_override is not None,
@@ -5815,8 +5824,15 @@ class LinearTracker(Tracker):
         values: dict,
         expected: dict,
         operation: str,
+        *,
+        review_receipt_at: int | None = None,
     ) -> dict:
-        """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue."""
+        """Perform the PAT-ADR-0006 S1-S5 path for one existing Linear issue.
+
+        ``review_receipt_at`` is set only by the review projection (PAT-230): it
+        lets the readback accept the one provider regression proven by
+        ``_review_regression_proven``, and nothing else.
+        """
         if not isinstance(raw.get("id"), str) or not raw["id"]:
             raise LinearTrackerError(operation, None, "invalid_response")
         try:
@@ -5842,8 +5858,31 @@ class LinearTracker(Tracker):
         readback = self._read_raw(issue_id)
         self._assert_issue_project(readback, binding)
         if not self._raw_matches(readback, expected):
+            if review_receipt_at is not None and self._review_readback_regressed(
+                readback, binding, review_receipt_at,
+            ):
+                return readback
             raise TrackerConflictError("Linear issue divergent after bounded write")
         return readback
+
+    def _review_readback_regressed(
+        self, readback: dict, binding: dict, review_receipt_at: int,
+    ) -> bool:
+        """PAT-230: Linear's ``start`` automation moved Review back to In Progress.
+
+        Observation only, never a second write: the native State must be
+        ``in-progress`` and the bounded ``stateHistory`` must show In Progress,
+        then Review reached after the review receipt, then In Progress (PAT-76).
+        """
+        state_ids = binding["state_ids"]
+        state = readback.get("state")
+        native_state_id = state.get("id") if isinstance(state, dict) else None
+        if native_state_id is None or native_state_id != state_ids.get("in-progress"):
+            return False
+        return self._review_regression_proven(
+            readback.get("identifier"), readback.get("id"), native_state_id,
+            review_receipt_at, state_ids,
+        )
 
     @staticmethod
     def _native_state_name(raw: dict, binding: dict) -> str:
@@ -5958,9 +5997,27 @@ class LinearTracker(Tracker):
         self._assert_issue_project(fresh, binding)
         if not self._raw_matches(fresh, snapshot):
             raise TrackerConflictError("Linear issue changed before bounded write")
+        receipt_at = None
+        if state == "review":
+            # PAT-230: same rule as PAT-76 (``_receipt_created_at``): the creation
+            # time of the latest generation's review receipt.
+            comments = _connection(fresh.get("comments"), "lifecycle.comments")
+            latest = None
+            for row in comments:
+                decoded = self._decode_lifecycle_comment(issue_id, row.get("body"))
+                if decoded is None or decoded[0] != "state-review":
+                    continue
+                generation = decoded[1].get("generation")
+                if type(generation) is int and (
+                    latest is None or generation > latest[0]
+                ):
+                    latest = (generation, row.get("body"))
+            receipt_at = self._receipt_created_at(
+                comments, latest[1] if latest else None,
+            )
         return self._bounded_issue_update(
             issue_id, fresh, binding, values, expected,
-            "issue.update.lifecycle-state",
+            "issue.update.lifecycle-state", review_receipt_at=receipt_at,
         )
 
     def set_state(
