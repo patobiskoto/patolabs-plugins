@@ -87,7 +87,7 @@ def valid_deferral_field(value: object) -> bool:
 
 def classify(text: str) -> Outcome:
     """Durable refusal or transient failure from the last 400 characters of an error."""
-    tail = (text or "")[-400:]
+    tail = fx.without_request_count(text)[-400:]
     reason = re.sub(r"[0-9a-f]{64}", "[hex]", tail.strip().splitlines()[-1] if tail.strip()
                     else "error")[:200]
     return Durable(reason) if _DURABLE.search(tail) else Transient(reason)
@@ -170,7 +170,7 @@ def _reconcile(runtime, cwd: Path, ref: str, spec: dict) -> tuple[str, str | Non
         spec_file.write_text(json.dumps(spec), encoding="utf-8")
         check = _write(runtime, cwd, ["reconcile-create", ref, str(spec_file)])
     if check.returncode != 0:
-        tail = (check.stderr or "")[-400:]
+        tail = fx.without_request_count(check.stderr)[-400:]
         if _REFUSED.search(tail):
             return "refused", None
         return ("absent", None) if _ABSENT.search(tail) else ("unknown", None)
@@ -204,7 +204,7 @@ def _create(runtime, cwd: Path, spec: dict, ledger: dict, label: str) -> str:
             raise Transient("create_output_unreadable")
         ledger["writes"].append(label)
         return created.group(1)
-    stderr = done.stderr or ""
+    stderr = fx.without_request_count(done.stderr)
     details = review._json_object(stderr.strip().splitlines()[-1] if stderr.strip() else "")
     if details and details.get("reconciliation") == "required":
         if details.get("validation") == "refused" or details.get("automatic_retry") is True:
@@ -272,8 +272,9 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
                  worktree: Path, repository: str, ledger: dict) -> dict:
     """The six steps; raises ``Durable`` or ``Transient``; returns the ``deferral`` field.
 
-    ``ledger`` is ``{"writes": [...], "unknown": [...]}``: what this attempt wrote and the
-    creations whose effect is still unknown; the caller journals it whatever the outcome."""
+    ``ledger`` is ``{"writes": [...], "unknown": [...], "companion": ...}``: what this attempt
+    wrote, the creations whose effect is still unknown and the companion Epic once found or
+    created; the caller journals it whatever the outcome."""
     facts = ticket.deferral
     receipt = review_remarks.ReviewRemarksStore(repository).find(ticket.id, facts.diff_hash)
     if receipt is None:
@@ -292,6 +293,7 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
             "body": f"Companion Epic of {origin}: holds the non-blocking review remarks "
                     "deferred from it (AGENTS.md#R9 (b)). No tracker link to the origin Epic.",
         }, ledger, WRITE_COMPANION)
+    ledger["companion"] = companion
     title = FOLLOW_UP_TITLE.format(origin=origin)
     follow_up, attach = _find_follow_up(tracker, project, companion, title)
     if follow_up is None:
@@ -342,10 +344,12 @@ def launch(runtime, plan: dict, epic: str, ticket, attempts: Path, worktree: Pat
                                 attempts, worktree, repository_identity(runtime.root), ledger)
         return {**fields, "deferral": deferral}
     except Outcome as outcome:
-        deferral = deferral_field(outcome.state, diff_hash, ledger, reason=outcome.reason)
+        deferral = deferral_field(outcome.state, diff_hash, ledger, reason=outcome.reason,
+                                  companion=ledger.get("companion"))
         if outcome.state == "refused" and review.update_pr_body(
                 runtime, epic, ticket, attempts, worktree, None, deferral=deferral):
-            deferral = deferral_field("transient", diff_hash, ledger, reason="pr_body_not_updated")
+            deferral = deferral_field("transient", diff_hash, ledger, reason="pr_body_not_updated",
+                                      companion=ledger.get("companion"))
             outcome = Transient("pr_body_not_updated")
         return {**fields, "status": "completed" if outcome.state == "refused" else "failed",
                 "error": None if outcome.state == "refused" else "transient",

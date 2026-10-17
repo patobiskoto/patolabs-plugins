@@ -427,6 +427,45 @@ def test_classification_of_failures():
     assert cd.classify("").state == "transient"
 
 
+COUNTER = "foundry linear_requests=2"
+
+
+def test_the_request_counter_line_is_ignored_by_the_classification():
+    assert cd.classify(f"{RATE_LIMITED}\n{COUNTER}\n").reason == RATE_LIMITED[:200]
+    assert cd.classify("LinearBindingError: type_unmapped\n" + COUNTER).state == "refused"
+    assert cd.classify(COUNTER + "\n").reason == "error"
+    assert ce.without_request_count(f"a\n{COUNTER}\nb\n") == "a\nb"
+    assert ce.without_request_count(None) == ""
+
+
+def test_a_counter_after_the_error_json_still_reconciles_and_keeps_the_companion(env):
+    reviewed(env)
+    env.world.create_failure = json.dumps({
+        "client_id": "x", "issue_id": "<ID>", "creation": "unknown", "validation": "unknown",
+        "reconciliation": "required", "automatic_retry": False}) + "\n" + COUNTER + "\n"
+    env.world.create_effect_first = True
+    assert step(env).outcome == "executed"
+    assert verbs(env)[:2] == ["create-issue", "reconcile-create"]
+    assert len(companions(env)) == 1 and len(follow_ups(env)) == 1
+
+
+def test_a_failed_attempt_reports_the_companion_it_made_and_the_real_reason(env):
+    reviewed(env)
+    make_issue = env.world.make_issue
+
+    def make_then_fail(spec):  # the companion is created, the next creation hits the quota
+        issue = make_issue(spec)
+        env.world.create_failure = f"{RATE_LIMITED}\n{COUNTER}\n"
+        return issue
+    env.world.make_issue = make_then_fail
+    result = step(env)
+    deferral = result.effect["deferral"]
+    assert result.outcome == "waiting" and deferral["state"] == "transient"
+    assert deferral["reason"] == RATE_LIMITED[:200]
+    assert deferral["writes"] == [cd.WRITE_COMPANION]
+    assert deferral["companion"] == companions(env)[0].id
+
+
 def test_the_journal_deferral_field_is_a_closed_shape(env):
     reviewed(env)
     step(env)

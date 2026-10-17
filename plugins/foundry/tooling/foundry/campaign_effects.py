@@ -283,6 +283,17 @@ def implement_prompt(epic: str, ticket: str, title: str, body: str) -> str:
     )
 
 
+_REQUEST_COUNT_LINE = re.compile(r"^foundry linear_requests=\d+\s*$")
+
+
+def without_request_count(text: str | None) -> str:
+    """``text`` without the ``foundry linear_requests=N`` lines that ``FOUNDRY_REQUEST_COUNT=
+    stderr`` makes the Linear adapter print last (``REQUEST_COUNT_ENV``,
+    ``trackers/linear.py``): every reader of an error tail goes through here (PAT-229)."""
+    return "\n".join(line for line in (text or "").splitlines()
+                     if not _REQUEST_COUNT_LINE.match(line))
+
+
 def _run(runtime: Runtime, argv: list[str], cwd, *, input=None, timeout=COMMAND_TIMEOUT_SECONDS,
          env=None):
     """Without ``env`` (every subprocess but a session): git runs the main checkout's hooks
@@ -500,7 +511,7 @@ def _launch(runtime: Runtime, plan: dict, epic: str, ticket: cadence.TicketFacts
         return {"status": "completed" if done.returncode == 0 else "failed",
                 "exit_code": done.returncode, "cost_usd": None, "duration_ms": None,
                 "summary_file": None, "branch_head": None, "error": None,
-                "detail": (done.stderr or "")[-400:]}
+                "detail": without_request_count(done.stderr)[-400:]}
     if plan.get("role") == "reviewer":
         from foundry.campaign_review import launch_review
 
