@@ -29,7 +29,7 @@ CODEX_TIMEOUT_S = 15.0
 SUBPROCESS_TIMEOUT_S = 30.0
 PROBE_TIMEOUT_S = 180.0
 PROBE_PROMPT = "Reply with the single word: ok"
-GAUGE_VERSION = "0.1.0"
+GAUGE_VERSION = "0.2.0"
 
 
 @dataclass

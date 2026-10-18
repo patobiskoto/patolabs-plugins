@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-18
+
+- Threshold alert (PAT-247): `gauge_cli.py check [--config PATH]`, skill `gauge:check`,
+  and a `SessionStart` hook (`hooks/hooks.json`) warn when a counter reaches its
+  threshold. One threshold per counter in a JSON file (defaults and location in the
+  README). Never blocking (exit 0, bounded at 6 s in the hook). An unreadable value is
+  reported `inconnu`, never as below the threshold.
+- Codex hook coverage is unverified; `gauge check` is the documented fallback.
+
 ## 0.1.0 — 2026-10-18
 
 - First brick (PAT-246): `gauge_cli.py status [--json]` reads four quota counters, read
