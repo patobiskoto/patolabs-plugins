@@ -73,7 +73,9 @@ source; without them the Claude counter is `inconnu` (see below), so set its thr
 A Claude window whose `resets_at` is already in the past is `inconnu` ("stale"): the
 operator-provided file was written before the reset, so its value no longer describes the
 current window (`_already_reset` in `tooling/gauge/check.py`). The file age itself is not
-judged, only the reset time it carries; a window without `resets_at` is judged as read.
+judged, only the reset time it carries; a window without `resets_at` is judged as read. An old
+value inside a window that has not yet reset is still judged as read: below the threshold it
+stays silent, although the true use may be higher (a lower bound only).
 
 ### Session-start alert
 

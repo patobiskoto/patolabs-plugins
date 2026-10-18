@@ -143,13 +143,11 @@ def kill_live() -> None:
 
 def run_tracked(
     argv: list[str],
-    capture_output: bool = True,
-    text: bool = True,
     timeout: float | None = None,
-    check: bool = False,
 ) -> subprocess.CompletedProcess:
-    """``subprocess.run`` for a captured command, but the child leads its own process
-    group and is registered for ``kill_live``; on timeout its group is killed."""
+    """Run a command, capturing text output, like ``subprocess.run`` with no ``check``: the
+    child leads its own process group and is registered for ``kill_live``; on timeout its
+    group is killed and ``TimeoutExpired`` is raised."""
     proc = subprocess.Popen(
         argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True,
@@ -479,8 +477,7 @@ def read_github_actions(
 
     def call(args: list[str]) -> str | None:
         try:
-            done = run(["gh", *args], capture_output=True, text=True,
-                       timeout=SUBPROCESS_TIMEOUT_S, check=False)
+            done = run(["gh", *args], timeout=SUBPROCESS_TIMEOUT_S)
         except (OSError, subprocess.SubprocessError):
             return None
         return done.stdout if done.returncode == 0 else None

@@ -1,4 +1,4 @@
-"""Offline tests on recorded, anonymised responses. No network, no paid call. Tests that start a process: two run the hook script with an empty PATH, one starts a `sleep` child and kills it."""
+"""Offline tests on recorded, anonymised responses. No network, no paid call. Tests that start a process: three run the hook script (two with an empty PATH, one with `kill_live` replaced), two start a `sleep` child and kill it."""
 from __future__ import annotations
 
 import io
@@ -363,7 +363,7 @@ class LinearRefusalTest(unittest.TestCase):
 
         class Err(urllib.error.HTTPError):
             def close(self):
-                closed.append(True)
+                closed.append(self.code)
 
         for code in (400, 401, 403, 500):
             def opener(req, timeout, code=code):
@@ -373,16 +373,19 @@ class LinearRefusalTest(unittest.TestCase):
             self.assertEqual(r.status, "unknown", code)
             self.assertEqual(r.entries, [])
             self.assertIn(str(code), r.reason)
-            self.assertTrue(closed)
+            self.assertEqual(closed.count(code), 1, code)
 
     def test_http_client_exception_is_unknown(self):
         import http.client
 
-        def opener(req, timeout):
-            raise http.client.RemoteDisconnected("gone")
+        for exc in (http.client.BadStatusLine("x"), http.client.IncompleteRead(b"")):
+            self.assertNotIsInstance(exc, OSError)  # only the HTTPException clause can catch it
 
-        r = readers.read_linear({"LINEAR_API_TOKEN": "t"}, opener=opener)
-        self.assertEqual(r.status, "unknown")
+            def opener(req, timeout, exc=exc):
+                raise exc
+
+            r = readers.read_linear({"LINEAR_API_TOKEN": "t"}, opener=opener)
+            self.assertEqual(r.status, "unknown", type(exc).__name__)
 
     def test_probe_passes_the_normalised_budget(self):
         out = (FIX / "claude_stream.jsonl").read_text()
@@ -575,12 +578,15 @@ class CheckTests(unittest.TestCase):
         self.assertNotIn("Traceback", done.stderr)
 
     def test_linear_percent_and_github_minutes(self):
+        from datetime import datetime, timezone
+
         from gauge import check
+        month = datetime.now(timezone.utc).strftime("%Y-%m")  # evaluate judges this month only
         cfg = self._cfg(codex=None, claude=None, **{"github-actions": 100})
         rmap = {
             "linear": self._ok("linear", [{"label": "requests", "limit": 100, "remaining": 10},
                                            {"label": "complexity", "limit": 100, "remaining": None}]),
-            "github-actions": self._ok("github-actions", [{"label": "2026-10", "minutes_used": 150}]),
+            "github-actions": self._ok("github-actions", [{"label": month, "minutes_used": 150}]),
         }
         warnings = check.check(cfg, reader_map=rmap)[0]
         self.assertEqual(len(warnings), 3)
