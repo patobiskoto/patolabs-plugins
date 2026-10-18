@@ -1,6 +1,7 @@
-"""Offline tests on recorded, anonymised responses. No network, no paid call. Tests that start a process: three run the hook script (two with an empty PATH, one with `kill_live` replaced), two start a `sleep` child and kill it."""
+"""Offline tests on recorded, anonymised responses. No network, no paid call. Tests that start a process: three run the hook script with an empty PATH, one of them with `kill_live` replaced, two start a `sleep` child and kill it."""
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import re
@@ -305,11 +306,14 @@ class GithubTest(unittest.TestCase):
         r = readers.read_github_actions(run=self.runner(usage_rc=1), which=lambda n: "x")
         self.assertEqual(r.status, "unknown")
 
+    def test_gh_reader_runs_tracked_by_default(self):
+        run = inspect.signature(readers.read_github_actions).parameters["run"].default
+        self.assertIs(run, readers.run_tracked)
+
     def test_no_gh_and_empty_usage_are_unknown(self):
         self.assertEqual(readers.read_github_actions(which=lambda n: None).status, "unknown")
         r = readers.read_github_actions(run=self.runner(usage='{"usageItems":[]}'), which=lambda n: "x")
         self.assertEqual(r.status, "unknown")
-
 
     def test_amounts_follow_minutes_items_only(self):
         body = json.dumps({"usageItems": [
@@ -599,7 +603,6 @@ class CheckTests(unittest.TestCase):
         self.assertIn("150 min", warnings[2])
 
     def test_config_file_override_null_and_problems(self):
-
         from gauge import check
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "c.json"
@@ -666,9 +669,10 @@ class CheckTests(unittest.TestCase):
 
     def test_named_config_file_missing_is_reported_default_one_is_silent(self):
         from gauge import check
-        missing = Path(tempfile.gettempdir()) / "gauge-absent-config.json"
-        self.assertEqual(check.load_config(missing)[1], [])
-        problems = check.load_config(missing, explicit=True)[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "absent.json"
+            self.assertEqual(check.load_config(missing)[1], [])
+            problems = check.load_config(missing, explicit=True)[1]
         self.assertEqual(problems, ["configuration file not found: defaults used"])
         self.assertTrue(check.explicit_config({"GAUGE_CONFIG": "x"}))
         self.assertFalse(check.explicit_config({}))
@@ -710,10 +714,10 @@ class CheckTests(unittest.TestCase):
         self.assertIn("inconnu", out.call_args[0][0])
 
     def test_cli_check_reports_a_missing_named_config(self):
-        missing = str(Path(tempfile.gettempdir()) / "gauge-absent-config.json")
-        with mock.patch.object(gauge_cli.gcheck, "check", return_value=([], [])), \
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(gauge_cli.gcheck, "check", return_value=([], [])), \
                 mock.patch("builtins.print") as out:
-            self.assertEqual(gauge_cli.main(["check", "--config", missing]), 0)
+            self.assertEqual(gauge_cli.main(["check", "--config", str(Path(tmp) / "absent.json")]), 0)
         self.assertIn("configuration file not found", out.call_args[0][0])
 
     def test_hook_kills_live_children_before_exiting(self):

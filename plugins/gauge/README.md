@@ -33,7 +33,8 @@ included) or per expected window missing from a response (`EXPECTED_LABELS` in
 the response carried only the weekly `primary`), Claude `five_hour`/`seven_day`,
 Linear `requests`/`complexity`). A value that cannot be read is never reported as below the threshold. It
 prints a single "all read and below" line only when every monitored value was read.
-It always exits 0 and never blocks.
+It always exits 0 and never blocks. On an unexpected internal error it prints
+`gauge: inconnu (internal error)` (`main` in `tooling/gauge_cli.py`).
 
 ### Thresholds and configuration file
 
@@ -87,7 +88,9 @@ total, the Codex reader with `HOOK_CODEX_TIMEOUT_S` (4 s); a reader still runnin
 `inconnu`. Note that, within that bound, it starts `codex app-server` (as `status` does)
 when `codex` is monitored. The `hooks.json` timeout is 10 s. Before it exits the hook calls
 `kill_live` (`tooling/gauge/readers.py`), which kills the process group of the `gh` and
-`codex app-server` children started by the readers and still running.
+`codex app-server` children registered by the readers and still running when it is called;
+a child that a reader starts or registers after that call (for example the second `gh` of
+`read_github_actions`) is not killed (deduced from the code).
 
 Operational constraints. The hook runs at every session start (`startup|resume`) of the
 machine where the plugin is enabled, and injects its text as `additionalContext` into the
@@ -147,8 +150,8 @@ re-verified); gauge reads a file your own statusline script may write.
 python3 -m unittest discover -s plugins/gauge/tests -p 'test_*.py'
 ```
 
-Offline: subprocess and HTTP are replaced by fakes. Tests that start a real process: two run
-`hooks/session_start.py` with an empty `PATH`, one more runs it with its `kill_live` replaced,
+Offline: subprocess and HTTP are replaced by fakes. Tests that start a real process: three run
+`hooks/session_start.py` with an empty `PATH`, one of them with its `kill_live` replaced,
 and two start a `sleep` child to check that it is killed (`LiveProcessTest`); fixtures in `tests/fixtures` are
 anonymised recorded shapes (placeholders for account, login, token, repository).
 
@@ -179,7 +182,7 @@ anonymised recorded shapes (placeholders for account, login, token, repository).
 - 0.2.1 (PAT-251): no new CLI verb, option, configuration key or hook. Behaviour changes
   documented above: current-month rule for GitHub Actions, stale Claude windows, explicit
   configuration file that is absent, Linear read only from 2xx and 429, reset-time units, GitHub
-  minutes definition, hook child cleanup, install commands. Foundry docs: `plugins/foundry/README.md`
+  minutes definition, hook child cleanup, `check` internal-error line, install commands. Foundry docs: `plugins/foundry/README.md`
   (CI jobs list: the fork-guard test now covers five of the eight jobs) and
   `plugins/foundry/changelog.d/PAT-251.md` updated; no Foundry constant, CLI or hook changed.
 - Codex manifest capability `Write`: gauge is read-only, but `.codex-plugin/plugin.json`

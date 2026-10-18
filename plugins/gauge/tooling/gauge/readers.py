@@ -133,8 +133,9 @@ def _untrack(proc: Any) -> None:
 
 
 def kill_live() -> None:
-    """Kill the process group of every child still running (the hook calls it before it
-    exits, so a slow ``gh`` or ``codex app-server`` is not left orphaned)."""
+    """Kill the process group of every registered child still running now (the hook calls
+    it before it exits, so a slow ``gh`` or ``codex app-server`` is not left orphaned); a
+    child registered after the call is not killed."""
     with _LIVE_LOCK:
         procs = list(_LIVE)
     for proc in procs:
