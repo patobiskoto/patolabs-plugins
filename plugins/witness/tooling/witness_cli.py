@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""witness: prove a change of an iOS app in the simulator (xcodebuild, xcrun simctl) or of a local web page
+"""witness: prove a change of an iOS app in the simulator (xcodebuild, xcrun) or of a local web page
 in a headless Chromium-family browser, with a screenshot and a dated report (PAT-254, PAT-255)."""
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from witness import checkout, compare, navigation, prove, simulator, web
 
 EXIT_USAGE, EXIT_REFUSED, EXIT_FAILED, EXIT_TESTS_FAILED = 2, 3, 5, 6
+LABEL = re.compile(r"[A-Za-z0-9._-]+")  # the label enters file names: no separator, no space
+
+
+def label_type(value: str) -> str:
+    if not LABEL.fullmatch(value):
+        raise argparse.ArgumentTypeError("must match [A-Za-z0-9._-]+ (it is part of file names)")
+    return value
 
 
 def fail(msg: str, code: int) -> int:
@@ -82,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--scheme", required=True)
     pr.add_argument("--simulator", required=True, help="simulator name (or UDID)")
     pr.add_argument("--runtime", help="runtime filter (e.g. 27.0) when several simulators share the name")
-    pr.add_argument("--label", default="proof", help="report and screenshot name prefix (e.g. before, after)")
+    pr.add_argument("--label", type=label_type, default="proof", help="report and screenshot name prefix (e.g. before, after)")
     pr.add_argument("--out", help="output directory (default: a new directory in the system temp dir)")
     pr.add_argument("--skip-tests", action="store_true")
     pr.add_argument("--test-plan")
@@ -95,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     wp.add_argument("--project", required=True, help="directory of the web app, in a linked worktree or outside git")
     wp.add_argument("--url", required=True, help="http://localhost[:port]/path or http://127.0.0.1[:port]/path only")
     wp.add_argument("--viewport", default=web.DEFAULT_VIEWPORT, help="WIDTHxHEIGHT (default %(default)s)")
-    wp.add_argument("--label", default="proof")
+    wp.add_argument("--label", type=label_type, default="proof")
     wp.add_argument("--out")
     wp.set_defaults(fn=cmd_web)
     cp = sub.add_parser("compare", help="compare a before and an after proof report")

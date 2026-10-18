@@ -39,7 +39,8 @@ def markdown(r: dict) -> str:
         lines.append(f"- Navigation: {nav['mechanism']} `{what}` to screen {nav['screen']!r} "
                      f"(file sha256 `{nav['sha256']}`; the screen is declared, not verified)")
     lines += [
-        f"- Starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else ""),
+        f"- Starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else "")
+        + f" (tests: {st.get('tests_selection', 'unknown')})",
         (f"- Tests: {r['tests']['result']} (executed: {r['tests'].get('executed', 'unknown')}, "
          f"failures: {r['tests'].get('failures', 'unknown')})"),
         f"- Coordinator token cost: {r['token_cost']}", "", "## Steps", "",

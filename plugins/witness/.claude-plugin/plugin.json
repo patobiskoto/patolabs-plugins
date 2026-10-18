@@ -1,7 +1,7 @@
 {
   "name": "witness",
-  "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun simctl only, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
-  "version": "0.2.0",
+  "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun, with a read-only git check, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },

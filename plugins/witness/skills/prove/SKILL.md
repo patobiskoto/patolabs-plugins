@@ -2,7 +2,7 @@
 name: prove
 description: >
   Proves an iOS app change in a named simulator: tests, build, install, launch, screenshot and a dated
-  report, with xcodebuild and xcrun simctl only. USE WHEN the user asks to prove, check or screenshot an
+  report, with xcodebuild and xcrun (simctl, xcresulttool) and a read-only git check. USE WHEN the user asks to prove, check or screenshot an
   iOS change in the simulator, or invokes /witness:prove (Claude Code) or $witness:prove (Codex).
 argument-hint: "--project P --scheme S --simulator NAME [--label before|after] [--reset | --state-description TEXT] [--navigation FILE.json]"
 allowed-tools: Bash(python3:*)
@@ -17,9 +17,10 @@ absolute path by removing `/skills/prove/SKILL.md`.
 1. The project must be in a linked git worktree or a directory outside any repository, never the
    maintainer's main checkout (the command refuses it). Name the simulator you will use.
 2. For a before/after proof, run it twice (`--label before` at the old commit, `--label after` at the new
-   one) with the same simulator and the same starting state: `--reset` (erases the simulator, which must
+   one; a label is limited to `[A-Za-z0-9._-]+`) with the same simulator and the same starting state: `--reset` (erases the simulator, which must
    be shut down) or `--state-description "<text>"`. Witness never shuts a simulator down and leaves it booted:
-   with `--reset`, run `xcrun simctl shutdown <UDID>` yourself between the two proofs. Run both with the same
+   with `--reset`, run `xcrun simctl shutdown <UDID>` yourself before each proof whose simulator is not already
+   shut down (witness leaves it booted, so before the second proof). Run both with the same
    test options (`compare` refuses a different tests selection).
 
 ```bash

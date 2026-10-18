@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import plistlib
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -35,22 +38,22 @@ def git(cwd: Path, *a: str) -> None:
 class Fake:
     """Dispatches xcodebuild/xcrun calls; git goes through to the real binary."""
 
-    def __init__(self, tests=TEST_OK, devices=None, state="Shutdown", fail=None):
+    def __init__(self, tests=TEST_OK, devices=None, state="Shutdown", fail=None, tests_rc=None):
         self.calls: list[list[str]] = []
-        self.tests, self.state, self.fail = tests, state, fail
-        self.page, self.attachments = "", ["01_Session"]
+        self.tests, self.state, self.fail, self.tests_rc = tests, state, fail, tests_rc
+        self.page, self.attachments, self.version = "", ["01_Session"], "Fake Browser 1.2.3"
         self.devices = devices if devices is not None else {
             RT: [{"name": "Phone A", "udid": UDID, "isAvailable": True, "state": "Shutdown"}]}
 
-    def __call__(self, cmd, timeout, cwd=None):
+    def __call__(self, cmd, timeout, cwd=None, env=None):
         if cmd[0] == "git":
-            return real_run(cmd, timeout, cwd)
+            return real_run(cmd, timeout, cwd, env)
         self.calls.append(cmd)
         if cmd[0] == "xcodebuild" and "-resultBundlePath" in cmd:
             Path(cmd[cmd.index("-resultBundlePath") + 1]).mkdir(parents=True, exist_ok=True)
         if cmd[0] == "FAKE-BROWSER":
             if cmd[1] == "--version":
-                return 0, "Fake Browser 1.2.3\n", ""
+                return 0, self.version + "\n", ""
             shot = next(a for a in cmd if a.startswith("--screenshot=")).split("=", 1)[1]
             Path(shot).write_bytes(b"WEB" + cmd[-1].encode() + self.page.encode())
             return (1, "", "browser boom") if self.fail == "browser" else (0, "", "")
@@ -73,7 +76,8 @@ class Fake:
                 return 65, "", "boom"
             if cmd[-1] == "build":
                 return 0, "** BUILD SUCCEEDED **", ""
-            return (0 if "SUCCEEDED" in self.tests else 65), self.tests, ""
+            return (self.tests_rc if self.tests_rc is not None else 0 if "SUCCEEDED" in self.tests else 65), \
+                self.tests, ""
         sub = cmd[2:]
         if sub[:2] == ["list", "devices"]:
             devs = {k: [dict(d, state=self.state if d["udid"] == UDID else d["state"]) for d in v]
@@ -239,12 +243,47 @@ class ProveTests(Base):
         code, _, _ = self.prove(Fake(tests="no summary\n"))
         self.assertEqual(code, 6)
 
+    def test_rc_zero_without_marker_is_unknown_and_exits_6(self):
+        # PAT-262: rc 0 and no marker gives "unknown" (the former test fed rc 65, which is "failed")
+        code, _, _ = self.prove(Fake(tests="no summary\n", tests_rc=0))
+        self.assertEqual(code, 6)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual((rep["tests"]["result"], rep["outcome"]), ("unknown", "captured-with-tests-unknown"))
+
+    def test_markdown_shows_tests_selection(self):
+        self.prove(Fake(), extra=("--reset", "--only-testing", "T"))
+        md = next((self.tmp / "out").glob("report-before-*.md")).read_text()
+        self.assertIn("- Starting state: reset (tests: only-testing)", md)
+
+    def test_out_inside_main_checkout_refused_before_anything_runs(self):
+        for out in (self.main / "out", self.main / "deep" / "new"):
+            for fake_and_run in (lambda f, o: self.run_cli(f, "prove", "--project", str(self.proj), "--scheme", "Demo",
+                                                           "--simulator", "Phone A", "--out", str(o)),):
+                fake = Fake()
+                code, _, err = fake_and_run(fake, out)
+                self.assertEqual(code, 3, err)
+                self.assertIn("--out", err)
+                self.assertIn("main checkout", err)
+                self.assertEqual(fake.calls, [])
+            self.assertFalse(out.exists())
+        # a linked worktree or a directory outside git stays accepted
+        self.assertEqual(checkout.guard_out(self.wt / "newout"), "linked-worktree")
+        self.assertEqual(checkout.guard_out(self.tmp / "elsewhere" / "x"), "outside-git")
+
+    def test_label_restricted_to_file_name_characters(self):
+        for bad in ("a/b", "../x", "a b", "", "é"):
+            with self.assertRaises(SystemExit) as ctx, redirect_stderr(io.StringIO()):
+                self.prove(Fake(), label=bad)
+            self.assertEqual(ctx.exception.code, 2, bad)
+        self.assertEqual(self.prove(Fake(), label="Before_1.2-x")[0], 0)
+
     def test_tests_selection_recorded(self):
         for extra, want in ((("--skip-tests",), "skipped"), ((), "all"), (("--only-testing", "T"), "only-testing"),
                             (("--test-plan", "P"), "test-plan"),
                             (("--test-plan", "P", "--only-testing", "T"), "test-plan+only-testing")):
-            self.prove(Fake(), label=want, extra=("--reset", *extra))
-            rep = json.loads(next((self.tmp / "out").glob(f"report-{want}-*.json")).read_text())
+            label = want.replace("+", "_")
+            self.prove(Fake(), label=label, extra=("--reset", *extra))
+            rep = json.loads(next((self.tmp / "out").glob(f"report-{label}-*.json")).read_text())
             self.assertEqual(rep["start_state"]["tests_selection"], want)
 
     def test_reset_and_description_exclusive(self):
@@ -354,6 +393,69 @@ class NavigationTests(Base):
         compare.check(compare.load(old), compare.load(path))
 
 
+class PathologicalNavigationFileTests(Base):
+    """PAT-262: the navigation file is read with a bound and only if it is a regular file."""
+
+    def test_file_beyond_max_bytes_refused(self):
+        big = self.tmp / "big.json"
+        big.write_text(json.dumps({"schema": navigation.SCHEMA, "screen": "S", "mechanism": "deeplink",
+                                   "url": "demo://x", "pad": "x" * navigation.MAX_BYTES}))
+        with self.assertRaises(navigation.NavigationError) as ctx:
+            navigation.load(big)
+        self.assertIn("larger than", str(ctx.exception))
+        exact = self.tmp / "exact.json"  # a file of exactly MAX_BYTES stays accepted
+        body = json.dumps({"schema": navigation.SCHEMA, "screen": "S", "mechanism": "deeplink", "url": "demo://x",
+                           "pad": ""})
+        exact.write_text(json.dumps({"schema": navigation.SCHEMA, "screen": "S", "mechanism": "deeplink",
+                                     "url": "demo://x", "pad": "x" * (navigation.MAX_BYTES - len(body))}))
+        self.assertEqual(exact.stat().st_size, navigation.MAX_BYTES)
+        self.assertEqual(navigation.load(exact)["url"], "demo://x")
+
+    def test_reads_at_most_max_bytes_plus_one(self):
+        big = self.tmp / "big.json"
+        big.write_bytes(b" " * (navigation.MAX_BYTES * 4))
+        reads = []
+        real = open
+
+        class Spy:
+            def __init__(self, fh):
+                self.fh = fh
+
+            def read(self, n=-1):
+                reads.append(n)
+                return self.fh.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch("witness.navigation.os.fdopen", lambda *a, **k: Spy(real(*a, **k))), \
+                self.assertRaises(navigation.NavigationError):
+            navigation.load(big)
+        self.assertEqual(reads, [navigation.MAX_BYTES + 1])
+
+    def test_fifo_directory_and_device_refused_without_blocking(self):
+        fifo = self.tmp / "nav.fifo"
+        os.mkfifo(fifo)
+        for path in (fifo, self.tmp, Path("/dev/zero")):
+            result = []
+
+            def attempt(path=path, result=result):
+                try:
+                    navigation.load(path)
+                except navigation.NavigationError as exc:
+                    result.append(str(exc))
+
+            worker = threading.Thread(target=attempt, daemon=True)  # a regression would block: do not hang the run
+            worker.start()
+            worker.join(10)
+            self.assertFalse(worker.is_alive(), f"{path} blocked the loader")
+            self.assertEqual(len(result), 1, path)
+            self.assertIn("regular file", result[0])
+
+
 class WebTests(Base):
     def setUp(self):
         super().setUp()
@@ -365,15 +467,18 @@ class WebTests(Base):
         env = mock.patch.dict("os.environ", {web.ENV_BROWSER: str(self.browser)})
         env.start()
         self.addCleanup(env.stop)
+        self.probe = mock.patch("witness.web.probe", return_value=200)
+        self.probe_mock = self.probe.start()
+        self.addCleanup(self.probe.stop)
 
     def fake(self, page=""):
         f = Fake()
         f.page = page
 
-        def call(cmd, timeout, cwd=None):
+        def call(cmd, timeout, cwd=None, env=None):
             if cmd[0] == str(self.browser):
                 cmd = ["FAKE-BROWSER", *cmd[1:]]
-            return f(cmd, timeout, cwd)
+            return f(cmd, timeout, cwd, env)
         call.inner = f
         return call
 
@@ -405,11 +510,88 @@ class WebTests(Base):
                 code, _, _ = self.prove_web(fake, url=url)
             self.assertEqual(code, 3, url)
             self.assertEqual(fake.inner.calls, [])
-        self.assertEqual(self.prove_web(self.fake(), extra=("--viewport", "wide"))[0], 3)
+        for viewport in ("wide", "1280x800x1", "0x0", "123456x800", "1280X800"):
+            fake = self.fake()
+            with mock.patch("witness.checkout.guard", side_effect=AssertionError("git ran")), \
+                    mock.patch("witness.web.locate_browser", side_effect=AssertionError("browser located")):
+                code, _, err = self.prove_web(fake, extra=("--viewport", viewport))
+            self.assertEqual((code, "viewport" in err), (3, True), viewport)
+            self.assertEqual(fake.inner.calls, [])
+            self.probe_mock.assert_not_called()
         self.assertEqual(self.prove_web(self.fake(), url="http://127.0.0.1:3000/")[0], 0)
 
     def test_main_checkout_refused(self):
         self.assertEqual(self.prove_web(self.fake(), project=self.main)[0], 3)
+
+    def test_probe_refuses_silent_or_erroring_server_before_the_browser_runs(self):
+        for exc in (web.WebRefused("nothing usable answers"), web.WebRefused("HTTP 404")):
+            self.probe_mock.side_effect = exc
+            fake = self.fake()
+            code, _, err = self.prove_web(fake)
+            self.assertEqual(code, 3, err)
+            self.assertEqual([c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c)], [])
+        self.probe_mock.side_effect = None
+        self.probe_mock.return_value = 302
+        self.assertEqual(self.prove_web(self.fake(), label="redirect")[0], 0)
+        rep = json.loads(next((self.tmp / "out").glob("report-redirect-*.json")).read_text())
+        self.assertEqual(rep["navigation"]["probe_status"], 302)
+
+    def test_browser_failure_removes_the_profile_and_exits_5(self):
+        fake = self.fake()
+        fake.inner.fail = "browser"
+        self.prove_web(fake)
+        cmd = next(c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c))
+        profile = next(a for a in cmd if a.startswith("--user-data-dir=")).split("=", 1)[1]
+        self.assertFalse(Path(profile).exists())
+
+    def test_profile_left_in_place_is_reported(self):
+        fake = self.fake()
+        with mock.patch("witness.web.shutil.rmtree"):  # the removal does not happen
+            code, _, _ = self.prove_web(fake)
+        self.assertEqual(code, 0)
+        cmd = next(c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c))
+        profile = next(a for a in cmd if a.startswith("--user-data-dir=")).split("=", 1)[1]
+        self.addCleanup(lambda: __import__("shutil").rmtree(profile, ignore_errors=True))
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertIn("NOT removed", rep["browser"]["profile"])
+        self.assertIn(profile, rep["browser"]["profile"])
+        self.assertIn("NOT removed", next((self.tmp / "out").glob("report-before-*.md")).read_text())
+
+    def test_out_inside_main_checkout_refused(self):
+        fake = self.fake()
+        code, _, err = self.prove_web(fake, extra=("--out", str(self.main / "o")))
+        self.assertEqual((code, "--out" in err), (3, True))
+        self.assertEqual(fake.inner.calls, [])
+        self.probe_mock.assert_not_called()
+
+    def test_compare_refuses_unknown_or_different_browser(self):
+        def proof(label, version="Fake Browser 1.2.3", browser=None):
+            fake = self.fake()
+            fake.inner.version = version
+            if browser:
+                with mock.patch.dict("os.environ", {web.ENV_BROWSER: str(browser)}):
+                    self.prove_web(fake, label=label)
+            else:
+                self.prove_web(fake, label=label)
+            return next((self.tmp / "out").glob(f"report-{label}-*.json"))
+        # an unreadable --version answer is "unknown" in the report
+        u1, u2 = proof("u1", version=""), proof("u2", version="")
+        self.assertEqual(json.loads(u1.read_text())["browser"]["version"], "unknown")
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(u1), "--after", str(u2))
+        self.assertEqual((code, "unknown" in err), (3, True))
+        known = proof("known")
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(known), "--after", str(u2))
+        self.assertEqual(code, 3)
+        # same version string, another executable
+        other = self.tmp / "OTHER-BROWSER"
+        other.write_text("#!/bin/sh\n")
+        other.chmod(0o755)
+        with mock.patch.object(self, "browser", other):  # the fake dispatches on self.browser
+            elsewhere = proof("elsewhere", browser=other)
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(known), "--after", str(elsewhere))
+        self.assertEqual((code, "browser path differs" in err), (3, True))
+        self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(known), "--after", str(proof("again")))[0], 0)
+
 
     def test_browser_location(self):
         with mock.patch.dict("os.environ", {web.ENV_BROWSER: str(self.tmp / "nope")}), \
@@ -451,6 +633,96 @@ class WebTests(Base):
         self.assertEqual((code, "platform differs" in err), (3, True))
 
 
+class GitEnvironmentAndProcessTests(Base):
+    """PAT-262: git does not depend on the caller's environment; a timeout kills the whole process group."""
+
+    def test_inherited_git_variables_do_not_orient_the_guard(self):
+        loose = self.tmp / "loose"
+        loose.mkdir()
+        with mock.patch.dict("os.environ", {"GIT_DIR": str(self.main / ".git"),
+                                            "GIT_COMMON_DIR": str(self.main / ".git"),
+                                            "GIT_WORK_TREE": str(self.main)}):
+            self.assertEqual(checkout.guard(loose), "outside-git")
+            self.assertIs(checkout.describe(loose)["dirty"], "unknown")
+            self.assertEqual(checkout.guard(self.proj), "linked-worktree")
+
+    def test_git_runs_with_the_c_locale(self):
+        seen = []
+
+        def spy(cmd, timeout, cwd=None, env=None):
+            seen.append(env)
+            return real_run(cmd, timeout, cwd, env)
+
+        loose = self.tmp / "loose"
+        loose.mkdir()
+        with mock.patch.dict("os.environ", {"LC_ALL": "fr_FR.UTF-8", "LANG": "fr_FR.UTF-8", "GIT_DIR": "/nope"}), \
+                mock.patch("witness.proc.run", spy):
+            self.assertEqual(checkout.guard(loose), "outside-git")
+        self.assertTrue(seen)
+        for env in seen:
+            self.assertEqual(env["LC_ALL"], "C")
+            self.assertFalse([k for k in env if k.startswith("GIT_")])
+
+    def test_timeout_kills_grandchildren_too(self):
+        pidfile = self.tmp / "grandchild.pid"
+        rc, _, err = proc.run(["sh", "-c", f"sleep 60 & echo $! > {pidfile}; wait"], 1.5)
+        self.assertEqual((rc, "timed out" in err), (None, True))
+        pid = int(pidfile.read_text())
+        for _ in range(50):  # the kill is delivered at once; allow the reaping to finish
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(pid, 9)
+            self.fail("the grandchild survived the timeout")
+
+    def test_run_still_returns_output_and_launch_errors(self):
+        self.assertEqual(proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"], 10), (3, "out\n", "err\n"))
+        rc, _, err = proc.run(["/nonexistent-witness-binary"], 10)
+        self.assertEqual((rc, "cannot be launched" in err), (None, True))
+
+
+class ProbeTests(unittest.TestCase):
+    """The probe is real here: a throwaway local HTTP server on 127.0.0.1 (loopback only, no network)."""
+
+    def serve(self, status):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}/p?q=1"
+
+    def test_status_recorded_and_errors_refused(self):
+        self.assertEqual(web.probe(self.serve(200)), 200)
+        self.assertEqual(web.probe(self.serve(302)), 302)  # redirects are not followed
+        with self.assertRaises(web.WebRefused) as ctx:
+            web.probe(self.serve(404))
+        self.assertIn("404", str(ctx.exception))
+
+    def test_nothing_listening_is_refused(self):
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        with self.assertRaises(web.WebRefused) as ctx:
+            web.probe(f"http://127.0.0.1:{port}/")
+        self.assertIn("local server", str(ctx.exception))
+
+
 class CompareTests(Base):
     def proof(self, label, state_extra=("--reset",), tests=TEST_OK):
         code, _, _ = self.prove(Fake(tests=tests), label=label, extra=state_extra)
@@ -489,6 +761,43 @@ class CompareTests(Base):
         s1 = self.proof("s1", ("--reset", "--skip-tests"))
         s2 = self.proof("s2", ("--reset", "--skip-tests"))
         self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(s1), "--after", str(s2))[0], 0)
+
+    def test_compare_refuses_other_project(self):
+        b = self.proof("before")
+        data = json.loads(b.read_text())
+        data["project"] = "Other.xcodeproj"
+        other = self.tmp / "other-project.json"
+        other.write_text(json.dumps(data))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(other))
+        self.assertEqual((code, "project differs" in err), (3, True))
+
+    def test_unreadable_fields_exit_3_without_traceback(self):
+        b = self.proof("before")
+        good = json.loads(b.read_text())
+        edits = (lambda d: d.pop("generated_at"), lambda d: d.__setitem__("generated_at", 5),
+                 lambda d: d["tests"].pop("result"), lambda d: d["tests"].__setitem__("result", None),
+                 lambda d: d["checkout"].pop("dirty"), lambda d: d.pop("paths"),
+                 lambda d: d.__setitem__("project", None), lambda d: d["simulator"].pop("name"),
+                 lambda d: d.__setitem__("platform", "android"), lambda d: d.__setitem__("schema", "x"))
+        for i, edit in enumerate(edits):
+            data = json.loads(json.dumps(good))
+            edit(data)
+            path = self.tmp / f"bad-{i}.json"
+            path.write_text(json.dumps(data))
+            code, _, err = self.run_cli(Fake(), "compare", "--before", str(path), "--after", str(b))
+            self.assertEqual(code, 3, (i, err))
+            self.assertIn("not a readable", err)
+
+    def test_schema_check_survives_python_optimize(self):
+        b = self.proof("before")
+        data = json.loads(b.read_text())
+        data["schema"] = "witness-proof.v0"
+        bad = self.tmp / "v0.json"
+        bad.write_text(json.dumps(data))
+        cp = subprocess.run([sys.executable, "-O", str(ROOT / "tooling" / "witness_cli.py"), "compare",
+                             "--before", str(bad), "--after", str(b)], capture_output=True, text=True,
+                            check=False)
+        self.assertEqual((cp.returncode, "not a readable" in cp.stderr), (3, True), cp.stderr)
 
     def test_compare_refuses_other_simulator_and_junk(self):
         b = self.proof("before")
