@@ -17,5 +17,5 @@
   reproducible inventory JSON (modules, types, UI strings, resources) with REA evidence
   (evidence id, target sha256, address, file offset); what cannot be read is `unknown`.
 - Skills `blueprint:setup`, `blueprint:targets`, `blueprint:inventory`.
-- Not verified yet: a real `setup --yes` and a real `inventory` (the tests use fakes; the
-  maintainer authorises those runs separately).
+- A real `setup --yes` and a real `inventory` of an authorised target were run once on
+  2026-10-18 with the maintainer's authorisation (README, "Inventory"); the tests use fakes.

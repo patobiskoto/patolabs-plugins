@@ -61,7 +61,14 @@ size) and every location written. Sizes are not recorded in the code: the plan p
 - The lockfile was copied from the 2026-10-18 trial and its root entry changed to the exact
   version `6.5.0` and the name `blueprint-rea`. The procedure was run once on a copy with
   `npm ci --ignore-scripts --dry-run --offline`, which resolved 178 packages and installed
-  nothing. A real install has not been run yet.
+  nothing. A real install was then run once, on 2026-10-18, with the maintainer's
+  authorisation, and completed after the two fixes described in the pull request.
+- Prerequisites not installed by blueprint: `npm` and `node` are taken from `PATH`, unpinned
+  (`NPM_CI` in `setup.py`), and `rea` runs on that `node` at every inventory; the lockfile's
+  `engines` ask for Node `^22.18.0 || >=24.11.0` (the 2026-10-18 run used Node 22.22.3).
+  Extracting the JDK uses `tarfile`'s `filter="data"` (`extract_tar`), which needs Python
+  3.12 or a 3.8–3.11 security release that backports extraction filters; an older Python
+  fails closed (deduced from the Python documentation, not run).
 
 ## Registry of authorised targets
 

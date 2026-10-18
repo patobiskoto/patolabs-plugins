@@ -83,7 +83,8 @@ def plan(d: Path) -> list[dict]:
 
 def render_plan(d: Path) -> str:
     lines = [f"blueprint setup plan (nothing is done without --yes). Data directory: {d}",
-             "Nothing is installed globally and nothing is written outside the data directory."]
+             ("Nothing is installed globally. Writes go to the data directory, except temporary files "
+              "under TMPDIR (npm, the JVM; deduced) and whatever REA or Ghidra may write elsewhere (unknown).")]
     for n, s in enumerate(plan(d), 1):
         lines.append(f"\n{n}. [{s['id']}] {s['title']}")
         lines += [f"   downloads: {x['url']}\n     checksum: {x['checksum']}  size: {x['size']}"
