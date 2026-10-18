@@ -5,12 +5,13 @@ No agent-host browser tool is used: the same command line runs under Claude Code
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import re
 import shutil
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from . import checkout, proc, report
 from .prove import ProofFailed, now, run_step
@@ -28,6 +29,8 @@ DEFAULT_VIEWPORT = "1280x800"
 VIRTUAL_TIME_BUDGET_MS = 5000  # page settle budget passed to the browser; not an observed readiness
 TIMEOUT_VERSION = 15.0
 TIMEOUT_SCREENSHOT = 120.0
+TIMEOUT_PROBE = 10.0
+PROFILE_FRESH = "fresh temporary"
 _VIEWPORT = re.compile(r"^(\d{2,5})x(\d{2,5})$")
 
 
@@ -79,7 +82,30 @@ def browser_version(browser: Path) -> str:
     return out.strip().splitlines()[0][:100] if rc == 0 and out.strip() else "unknown"
 
 
-def capture(browser: Path, url: str, viewport: tuple[int, int], shot: Path) -> None:
+def probe(url: str) -> int:
+    """One GET of the URL (the request the browser makes next), body not read, redirects not followed: the HTTP
+    status. Raises WebRefused when nothing answers or the server answers an error (>= 400): a headless browser
+    given such a page would still exit 0 with a screenshot of the error page (deduced, not observed)."""
+    parts = urlsplit(url)
+    target = quote((parts.path or "/") + (f"?{parts.query}" if parts.query else ""), safe="/?&=%:@!$'()*+,;~-._")
+    conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=TIMEOUT_PROBE)
+    try:
+        conn.request("GET", target, headers={"User-Agent": "witness-probe"})
+        status = conn.getresponse().status
+    except (OSError, http.client.HTTPException) as exc:
+        raise WebRefused(f"nothing usable answers at {url} ({type(exc).__name__}): start the local server first") from None
+    except ValueError:
+        raise WebRefused(f"the URL cannot be requested as given: {url}") from None
+    finally:
+        conn.close()
+    if status >= 400:
+        raise WebRefused(f"the server answers HTTP {status} at {url}: a screenshot would show the error page")
+    return status
+
+
+def capture(browser: Path, url: str, viewport: tuple[int, int], shot: Path, browser_rep: dict) -> None:
+    """Screenshot `shot`. Sets `browser_rep["profile"]`, on failure too: PROFILE_FRESH, or that text plus the path
+    when the temporary profile directory is still there after `rmtree` (cause unknown, perhaps browser children)."""
     profile = Path(tempfile.mkdtemp(prefix="witness-profile-"))
     try:
         cmd = [str(browser), "--headless=new", f"--user-data-dir={profile}", "--no-first-run",
@@ -89,8 +115,11 @@ def capture(browser: Path, url: str, viewport: tuple[int, int], shot: Path) -> N
         rc, _, err = proc.run(cmd, TIMEOUT_SCREENSHOT)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
+        left = profile.exists()
+    browser_rep["profile"] = f"{PROFILE_FRESH}; NOT removed, still at {profile}" if left else PROFILE_FRESH
     if rc != 0:
-        raise OSError(f"browser failed (rc={rc}): {(err or 'no output').strip()[-200:]}")
+        raise OSError(f"browser failed (rc={rc}): {(err or 'no output').strip()[-200:]}"
+                      + (f"; profile left at {profile}" if left else ""))
     if not shot.is_file() or shot.stat().st_size == 0:
         raise OSError("the browser reported success but the screenshot file is missing or empty")
 
@@ -104,7 +133,10 @@ def prove_web(*, project: Path, url: str, viewport: str, label: str, out: Path |
     if not project.exists():
         raise checkout.Refused(f"project path {project} does not exist")
     kind = checkout.guard(project)
+    if out:
+        checkout.guard_out(out)
     browser = locate_browser()
+    status = probe(url)
     out = (out or Path(tempfile.mkdtemp(prefix="witness-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)
     started = now()
@@ -114,15 +146,15 @@ def prove_web(*, project: Path, url: str, viewport: str, label: str, out: Path |
         "schema": report.SCHEMA, "platform": "web", "label": label,
         "generated_at": started.isoformat(timespec="seconds"), "project": project.name,
         "checkout": {"kind": kind, **checkout.describe(project)},
-        "browser": {"path": str(browser), "version": browser_version(browser), "profile": "fresh temporary"},
+        "browser": {"path": str(browser), "version": browser_version(browser), "profile": PROFILE_FRESH},
         "viewport": f"{size[0]}x{size[1]}", "url": url,
-        "navigation": {"mechanism": "web", "path": path},
+        "navigation": {"mechanism": "web", "path": path, "probe_status": status},
         "start_state": {"mode": "fresh-profile", "tests_selection": "none"}, "tests": {"result": "skipped"},
         "steps": [], "paths": {"out": str(out)}, "token_cost": report.TOKEN_COST_UNKNOWN, "outcome": "failed",
     }
     code = 5
     try:
-        run_step(rep, "screenshot", lambda: capture(browser, url, size, shot))
+        run_step(rep, "screenshot", lambda: capture(browser, url, size, shot, rep["browser"]))
         rep["paths"]["screenshot"] = str(shot)
         rep["screenshot_sha256"] = hashlib.sha256(shot.read_bytes()).hexdigest()
         rep["outcome"], code = "proved", 0

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""witness: prove a change of an iOS app in the simulator (xcodebuild, xcrun simctl) or of a local web page
+"""witness: prove a change of an iOS app in the simulator (xcodebuild, xcrun) or of a local web page
 in a headless Chromium-family browser, with a screenshot and a dated report (PAT-254, PAT-255)."""
 from __future__ import annotations
 
 import argparse
 import json
+import re
+import signal
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +17,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from witness import checkout, compare, navigation, prove, simulator, web
 
 EXIT_USAGE, EXIT_REFUSED, EXIT_FAILED, EXIT_TESTS_FAILED = 2, 3, 5, 6
+LABEL = re.compile(r"[A-Za-z0-9._-]+")  # the label enters file names: no separator, no space
+
+
+def label_type(value: str) -> str:
+    if not LABEL.fullmatch(value):
+        raise argparse.ArgumentTypeError("must match [A-Za-z0-9._-]+ (it is part of file names)")
+    return value
+
+
+@contextmanager
+def terminating_on_signals():
+    """SIGTERM and SIGHUP raise SystemExit(128 + signal) so that `proc.run` kills the child's process group (the
+    children run in their own session and would not receive the signal). SIGKILL cannot be handled."""
+    def handler(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    old = {s: signal.signal(s, handler) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
 
 
 def fail(msg: str, code: int) -> int:
@@ -59,6 +84,11 @@ def cmd_web(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     try:
+        if args.out:
+            checkout.guard_out(Path(args.out))
+    except checkout.Refused as exc:
+        return fail(f"refused: {exc}", EXIT_REFUSED)
+    try:
         before, after = compare.load(Path(args.before)), compare.load(Path(args.after))
         compare.check(before, after)
     except compare.Incomparable as exc:
@@ -82,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--scheme", required=True)
     pr.add_argument("--simulator", required=True, help="simulator name (or UDID)")
     pr.add_argument("--runtime", help="runtime filter (e.g. 27.0) when several simulators share the name")
-    pr.add_argument("--label", default="proof", help="report and screenshot name prefix (e.g. before, after)")
+    pr.add_argument("--label", type=label_type, default="proof", help="report and screenshot name prefix (e.g. before, after)")
     pr.add_argument("--out", help="output directory (default: a new directory in the system temp dir)")
     pr.add_argument("--skip-tests", action="store_true")
     pr.add_argument("--test-plan")
@@ -95,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     wp.add_argument("--project", required=True, help="directory of the web app, in a linked worktree or outside git")
     wp.add_argument("--url", required=True, help="http://localhost[:port]/path or http://127.0.0.1[:port]/path only")
     wp.add_argument("--viewport", default=web.DEFAULT_VIEWPORT, help="WIDTHxHEIGHT (default %(default)s)")
-    wp.add_argument("--label", default="proof")
+    wp.add_argument("--label", type=label_type, default="proof")
     wp.add_argument("--out")
     wp.set_defaults(fn=cmd_web)
     cp = sub.add_parser("compare", help="compare a before and an after proof report")
@@ -104,7 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--out", help="output directory (default: the directory of the after report)")
     cp.set_defaults(fn=cmd_compare)
     args = p.parse_args(argv)
-    return args.fn(args)
+    with terminating_on_signals():
+        return args.fn(args)
 
 
 if __name__ == "__main__":

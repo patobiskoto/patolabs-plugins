@@ -1,7 +1,7 @@
 {
   "name": "witness",
-  "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun simctl only, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
-  "version": "0.2.0",
+  "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun, with a read-only git check, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },
@@ -20,8 +20,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "witness",
-    "shortDescription": "Prove an iOS change in the simulator with Apple's tools only.",
-    "longDescription": "Runs the tests of an Xcode project on a named simulator, installs and launches the app, takes a screenshot and writes a dated report with the commit, the simulator, the test result and the measured durations. Refuses to run in a main checkout.",
+    "shortDescription": "Prove an iOS change in the simulator or a local web page change in a headless browser.",
+    "longDescription": "Runs the tests of an Xcode project on a named simulator, installs and launches the app (optionally reaching a screen by deep link or UI test), or screenshots a local web page in a headless Chromium-family browser with a fresh profile; takes a screenshot and writes a dated report with the commit, the simulator or browser, the test result and the measured durations; compares a before and an after proof. Refuses to run in a main checkout.",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [
@@ -30,7 +30,8 @@
     ],
     "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/witness",
     "defaultPrompt": [
-      "Prove this iOS change in the simulator."
+      "Prove this iOS change in the simulator.",
+      "Prove this local web page change in a headless browser."
     ]
   }
 }

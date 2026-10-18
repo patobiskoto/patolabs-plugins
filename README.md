@@ -229,7 +229,7 @@ remains separate planned work.
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
 | [**blueprint**](plugins/blueprint/) | authorised-target inventory | Prepares pinned REA, Ghidra and JDK without a global install, refuses any target absent from the maintainer's registry, and writes a reproducible inventory with REA evidence; unreadable facts are unknown. |
-| [**witness**](plugins/witness/) | iOS and local web change proof | Runs the tests of an Xcode project on a named simulator, installs and launches the app, reaches a screen by a versioned deep link or UI test navigation, takes a screenshot and writes a dated report, with `xcodebuild` and `xcrun simctl` only; does the same for a local web page in a headless Chromium-family browser with a fresh profile; compares a before and an after proof. |
+| [**witness**](plugins/witness/) | iOS and local web change proof | Runs the tests of an Xcode project on a named simulator, installs and launches the app, reaches a screen by a versioned deep link or UI test navigation, takes a screenshot and writes a dated report, with `xcodebuild` and `xcrun` (plus a read-only `git` check); does the same for a local web page in a headless Chromium-family browser with a fresh profile; compares a before and an after proof. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
 (`query changelog <milestone>`); ship-ios turns it into per-locale release notes and

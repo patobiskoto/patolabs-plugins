@@ -14,8 +14,13 @@ Claude Code replaces the exact `${CLAUDE_PLUGIN_ROOT}` token before this skill r
 agent. Codex exposes no plugin-root variable: derive `<witness-root>` from this skill's
 absolute path by removing `/skills/web/SKILL.md`.
 
-1. Serve the app yourself on `localhost` or `127.0.0.1` (other hosts are refused). The project directory must
-   be in a linked git worktree or outside any repository.
+1. Serve the app yourself on `localhost` or `127.0.0.1` (other hosts are refused) and start the server first: one
+   GET is sent to the URL before the browser, and no answer or an HTTP error (400 or more) is refused. The
+   page is therefore requested twice (a side effect of the GET happens twice, the capture shows the state after the
+   probe) and the probe sends no cookie or browser header, so a server that varies on them may answer it
+   differently (deduced). The network is not isolated: a redirect or a remote resource of the page is followed by
+   the browser. The project
+   directory must be in a linked git worktree or outside any repository.
 2. A Chromium-family browser (Google Chrome, Chromium, Brave, Edge) must be installed; `WITNESS_BROWSER` names
    its executable otherwise. Do not use a browser tool of your agent host: this command line is the same under
    Claude Code and Codex, which is the point.
@@ -27,5 +32,5 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 
 4. Report the printed outcome and the two report paths as they are. The page may need more time than the fixed
-   `--virtual-time-budget` to settle: look at the screenshot. Never state a token cost: the report says it is
-   unknown.
+   `--virtual-time-budget` to settle: look at the screenshot. Read `browser.profile` in the report: if it says the
+   profile was not removed, say so. Never state a token cost: the report says it is unknown.

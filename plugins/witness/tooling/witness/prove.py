@@ -1,4 +1,4 @@
-"""One proof: reset (optional), test, build, install, launch, settle, screenshot, report (PAT-254)."""
+"""One iOS proof (web proofs: web.py): reset, test, build, install, launch, settle, screenshot, report (PAT-254)."""
 from __future__ import annotations
 
 import hashlib
@@ -43,6 +43,8 @@ def prove(*, project: Path, scheme: str, sim_name: str, runtime: str | None, lab
     if not project.exists():
         raise checkout.Refused(f"project path {project} does not exist")
     kind = checkout.guard(project)
+    if out:
+        checkout.guard_out(out)
     sim = simulator.resolve(sim_name, runtime)
     out = (out or Path(tempfile.mkdtemp(prefix="witness-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)

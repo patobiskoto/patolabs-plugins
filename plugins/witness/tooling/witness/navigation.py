@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 from pathlib import Path
 
 SCHEMA = "witness-navigation.v1"
@@ -37,7 +39,15 @@ def _text(data: dict, key: str, required: bool = True) -> str | None:
 def load(path: Path) -> dict:
     """Validated navigation: schema, mechanism, screen, url|test, attachment, sha256 (of the file bytes)."""
     try:
-        raw = path.read_bytes()
+        # O_NONBLOCK: opening a FIFO must not wait for a writer; the kind is checked on the open descriptor
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise NavigationError("navigation file must be a regular file")
+            with os.fdopen(fd, "rb", closefd=False) as fh:
+                raw = fh.read(MAX_BYTES + 1)  # never more than MAX_BYTES + 1 bytes are read
+        finally:
+            os.close(fd)
     except OSError as exc:
         raise NavigationError(f"navigation file cannot be read ({type(exc).__name__})") from None
     if len(raw) > MAX_BYTES:

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-10-18
+
+- PAT-262: settles the remarks deferred from the reviews of PAT-254 and PAT-255 (no new verb or option).
+  Navigation file: refused unless a regular file, read for at most `MAX_BYTES + 1` bytes. `web`: one GET to the URL
+  before the browser (nothing answering or HTTP 400 or more is refused, status recorded as
+  `navigation.probe_status`), a profile left in place after the removal is reported (also on a browser failure), the probe percent-encodes the path, the Markdown report shows the probe status, the page is requested twice (documented), the network is documented as
+  not isolated. `--label` is limited to `[A-Za-z0-9._-]+`; an explicit `--out` of `prove`, `web` and `compare` in a main checkout is refused; git
+  runs without inherited `GIT_*` variables and with `LC_ALL=C`; a timeout, SIGINT, SIGTERM or SIGHUP kills the whole process group.
+  `compare` validates every field it uses, `navigation` included, without `assert` (an unreadable report exits 3, also under
+  `python -O`), also compares the project name (iOS), the browser path (web), and refuses an `unknown` browser
+  version; it also checked the tests selection since 0.1.0, which the 0.1.0 entry below does not list. The
+  Markdown report shows the tests selection. The manifests, skills and README no longer say `xcodebuild` and
+  `xcrun simctl` only (git is also run) and the Codex manifest describes the web verb.
+
 ## 0.2.0 — 2026-10-18
 
 - PAT-255: scripted navigation and web. `prove --navigation FILE.json` reaches a screen by a versioned

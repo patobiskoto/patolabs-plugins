@@ -25,24 +25,47 @@ def nav_identity(r: dict) -> str:
     return navigation.identity(nav)
 
 
+def _need(r: dict, *paths: tuple[str, ...]) -> None:
+    """Each path must lead to a string (explicit checks: no `assert`, which `python -O` removes)."""
+    for path in paths:
+        node = r
+        for key in path:
+            node = node[key]
+        if not isinstance(node, str):
+            raise TypeError(".".join(path))
+
+
 def load(path: Path) -> dict:
+    """A report read back for comparison; every field `check`, `build` and `markdown` use is validated here."""
     try:
         r = json.loads(path.read_text(encoding="utf-8"))
-        assert r["schema"] == report.SCHEMA
-        r["start_state"]["mode"], r["start_state"]["tests_selection"], r["checkout"]["commit"], r["outcome"]
+        if r["schema"] != report.SCHEMA:
+            raise ValueError("schema")
+        _need(r, ("generated_at",), ("outcome",), ("tests", "result"), ("checkout", "commit"),
+              ("start_state", "mode"), ("start_state", "tests_selection"), ("project",))
+        if not isinstance(r["checkout"]["dirty"], bool) and r["checkout"]["dirty"] != "unknown":
+            raise TypeError("checkout.dirty")
+        if not isinstance(r["paths"], dict):
+            raise TypeError("paths")
         if platform(r) == "web":
-            r["browser"]["version"], r["viewport"], r["navigation"]["path"]
+            _need(r, ("browser", "version"), ("browser", "path"), ("browser", "profile"), ("viewport",),
+                  ("navigation", "path"))
+        elif platform(r) == "ios":
+            _need(r, ("simulator", "udid"), ("simulator", "runtime"), ("simulator", "name"), ("scheme",))
+            if r.get("navigation") is not None:  # `navigation.identity` reads these two
+                _need(r, ("navigation", "mechanism"), ("navigation", "sha256"))
         else:
-            assert platform(r) == "ios"
-            r["simulator"]["udid"], r["simulator"]["runtime"], r["scheme"]
-    except (OSError, ValueError, KeyError, TypeError, AssertionError):
+            raise ValueError("platform")
+    except (OSError, ValueError, KeyError, TypeError):
         raise Incomparable(f"{path} is not a readable {report.SCHEMA} report") from None
     return r
 
 
 def check(before: dict, after: dict) -> None:
-    """Compared sets: platform; navigation identity; then iOS: simulator udid, runtime, scheme and starting
-    state (mode, description, tests selection); web: viewport and browser version."""
+    """Compared sets: platform; navigation identity; then iOS: project name, simulator udid, runtime, scheme and
+    starting state (mode, description, tests selection); web: viewport, browser path and browser version (an
+    `unknown` version is never comparable). The web project directory name is not compared: before and after
+    may be served from two worktrees with different directory names (deduced)."""
     if platform(before) != platform(after):
         raise Incomparable(f"platform differs: {platform(before)!r} vs {platform(after)!r}")
     problems = []
@@ -54,9 +77,16 @@ def check(before: dict, after: dict) -> None:
             if before[key] != after[key]:
                 problems.append(f"{key} differs: {before[key]!r} vs {after[key]!r}")
         bv, av = before["browser"]["version"], after["browser"]["version"]
-        if bv != av:
+        if "unknown" in (bv, av):
+            problems.append("a browser version is unknown (its --version answer was unreadable): not comparable")
+        elif bv != av:
             problems.append(f"browser version differs: {bv!r} vs {av!r}")
+        bp, ap = before["browser"]["path"], after["browser"]["path"]
+        if bp != ap:
+            problems.append(f"browser path differs: {bp!r} vs {ap!r}")
     else:
+        if before["project"] != after["project"]:
+            problems.append(f"project differs: {before['project']!r} vs {after['project']!r}")
         for key in ("udid", "runtime"):
             if before["simulator"][key] != after["simulator"][key]:
                 problems.append(f"simulator {key} differs: {before['simulator'][key]!r} vs {after['simulator'][key]!r}")
