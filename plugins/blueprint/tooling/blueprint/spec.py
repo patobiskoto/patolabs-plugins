@@ -52,6 +52,21 @@ def evidence_ids(*docs) -> set[str]:
     return found
 
 
+def evidence_targets(*docs) -> set[str]:
+    """The arm64 slice sha256 each document declares (`target` of an inventory, `source` of a groups, decompilation,
+    analysis or rebuild document). A document that declares none (a screens document) is not counted."""
+    out: set[str] = set()
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        for key in ("target", "source"):
+            node = d.get(key)
+            sha = node.get("arm64_sha256") if isinstance(node, dict) else None
+            if isinstance(sha, str) and sha:
+                out.add(sha)
+    return out
+
+
 def evidence_errors(where: str, ev: object, known: set[str]) -> list[str]:
     if ev == UNKNOWN:
         return []
@@ -72,6 +87,8 @@ def check(spec: object, known: set[str], rebuild: dict | None = None) -> list[st
     for k in ("title", "summary"):
         if not isinstance(spec.get(k), str) or not spec[k].strip():
             errs.append(f"`{k}` is required")
+        else:
+            errs += _leak(f"`{k}`", spec[k])
     feats = spec.get("features")
     if not isinstance(feats, list) or not feats:
         return errs + ["`features` must be a non-empty list"]
@@ -85,8 +102,11 @@ def check(spec: object, known: set[str], rebuild: dict | None = None) -> list[st
         if f["name"] in names:
             errs.append(f"{where}: duplicate feature name")
         names.add(f["name"])
+        errs += _leak(where + " name", f["name"])
         if not isinstance(f.get("summary"), str) or not f["summary"].strip():
             errs.append(f"{where}: `summary` is required")
+        else:
+            errs += _leak(where + " summary", f["summary"])
         pts = f.get("points")
         if not isinstance(pts, list) or not pts:
             errs.append(f"{where}: `points` must be a non-empty list")
@@ -96,8 +116,7 @@ def check(spec: object, known: set[str], rebuild: dict | None = None) -> list[st
             if not isinstance(p, dict) or not isinstance(p.get("text"), str) or not p["text"].strip():
                 errs.append(f"{w}: `text` is required")
                 continue
-            if _LEAK.search(p["text"]) or _LEAK.search(f.get("summary") or ""):
-                errs.append(f"{w}: not product language (mangled symbol or raw address in the text)")
+            errs += _leak(w, p["text"])
             errs += evidence_errors(w, p.get("evidence"), known)
     return errs
 

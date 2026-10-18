@@ -70,6 +70,10 @@ def locate_binary(target: Path) -> tuple[Path, str, list[Path], Path]:
     binary = debug if debug.is_file() else target / exe
     if not binary.is_file():
         raise InventoryError("the bundle executable does not exist")
+    root = target.resolve()
+    for b in (binary, target / exe):
+        if b.is_file() and not b.resolve().is_relative_to(root):
+            raise InventoryError("the bundle executable resolves outside the bundle (symbolic link)")
     files = sorted(p for p in target.rglob("*") if p.is_file() and not p.is_symlink())
     return binary, "bundle-debug-dylib" if binary == debug else "bundle-executable", files, target / exe
 
@@ -122,9 +126,16 @@ class Rea:
         return doc, None
 
 
+def subject_sha256(doc: dict) -> str | None:
+    """`subject.digest.sha256` of a REA answer; None when any level is absent, null or not an object."""
+    subject = doc.get("subject")
+    digest = subject.get("digest") if isinstance(subject, dict) else None
+    sha = digest.get("sha256") if isinstance(digest, dict) else None
+    return sha if isinstance(sha, str) else None
+
+
 def _ev(doc: dict, address=None, file_offset=None) -> dict:
-    return {"rea_evidence_id": doc.get("evidence_id"),
-            "target_sha256": (doc.get("subject") or {}).get("digest", {}).get("sha256"),
+    return {"rea_evidence_id": doc.get("evidence_id"), "target_sha256": subject_sha256(doc),
             "address": address, "file_offset": file_offset}
 
 
@@ -151,6 +162,10 @@ def section_types(rea: Rea, binary: Path) -> dict:
     res = ((doc or {}).get("normalized_result") or {}).get("result")
     if doc is None or not isinstance(res, dict):
         return unknown(why or "dispatch metadata not readable")
+    keys = ("objc_classes", "objc_protocols", "swift_conformances")
+    absent = [k for k in keys if not isinstance(res.get(k), list)]
+    if len(absent) == len(keys):
+        return unknown("the answer holds none of " + ", ".join(keys))
     items = []
     for c in res.get("objc_classes") or []:
         items.append({"kind": "objc-class", "name": c.get("name"), "super": c.get("super_class"),
@@ -161,7 +176,7 @@ def section_types(rea: Rea, binary: Path) -> dict:
         items.append({"kind": "swift-conformance", "name": c.get("type_name"), "protocol": c.get("protocol_name"),
                       "module": c.get("module") or "unknown", "evidence": _ev(doc, *_loc(c))})
     partial = [f.get("facet") for f in res.get("coverage") or [] if f.get("status") != "complete"]
-    return ok(sort_items(items), incomplete_facets=sorted(x for x in partial if x))
+    return ok(sort_items(items), incomplete_facets=sorted(x for x in partial if x), absent_keys=absent)
 
 
 def section_strings(rea: Rea, binary: Path) -> dict:
@@ -172,7 +187,8 @@ def section_strings(rea: Rea, binary: Path) -> dict:
     items = [{"value": r.get("value"), "evidence": _ev(doc, r.get("address"))}
              for r in rows if isinstance(r, dict) and isinstance(r.get("value"), str)]
     items = sort_items(items)
-    return ok(items[:MAX_STRINGS], total=len(items), truncated=len(items) > MAX_STRINGS)
+    return ok(items[:MAX_STRINGS], total=len(items), truncated=len(items) > MAX_STRINGS,
+              dropped_rows=len(rows) - len(items))
 
 
 def section_modules(binary: Path, runner=proc.run) -> dict:
@@ -206,8 +222,12 @@ def section_resources(rea: Rea, app: Path | None, files: list[Path], main: Path)
         if doc is None or not isinstance(n, dict):
             parts[key] = f"unknown: {why or 'not readable'}"
             continue
-        rows = n.get("catalogs") if key == "asset_catalogs" else n.get("documents")
-        for r in rows or []:
+        field = "catalogs" if key == "asset_catalogs" else "documents"
+        rows = n.get(field)
+        if not isinstance(rows, list):
+            parts[key] = f"unknown: the answer has no `{field}` list"
+            continue
+        for r in rows:
             if isinstance(r, dict):
                 items.append({"kind": key, "path": r.get("path"), "record_count": r.get("record_count", "unknown"),
                               "evidence": _ev(doc) | {"sha256": r.get("sha256", "unknown")}})

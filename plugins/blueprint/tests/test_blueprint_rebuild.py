@@ -34,6 +34,8 @@ from blueprint import (
 )
 
 SHA = "ab" * 32
+TARGET_BYTES = b"x"  # the bytes of the fake target file of `CliTest`; its sha256 is the inventory's `target.sha256`
+TARGET_SHA = hashlib.sha256(TARGET_BYTES).hexdigest()
 MOD = "DemoApp"
 
 
@@ -58,7 +60,7 @@ def make_inv() -> dict:
     def f(path, size, sha):
         return {"kind": "file", "path": path, "size": size, "evidence": {"source": "sha256", "sha256": sha}}
     return {"format": inventory.FORMAT,
-            "target": {"name": "Demo.app", "sha256": "cd" * 32, "arm64_sha256": SHA, "analysed_binary": "Demo"},
+            "target": {"name": "Demo.app", "sha256": TARGET_SHA, "arm64_sha256": SHA, "analysed_binary": "Demo"},
             "types": {"status": "ok", "reason": None, "items": [
                 {"kind": "objc-class", "name": f"_TtC{len(MOD)}{MOD}7Session", "evidence": ev("0x1")}]},
             "ui_strings": {"status": "ok", "reason": None, "items": [
@@ -127,7 +129,7 @@ def make_analysis() -> dict:
     ]
     types = [{**t, "evidence": analysis.ghidra_evidence(SHA, t["address"], "prog1")} for t in types]
     return {"format": analysis.FORMAT,
-            "source": {"name": "Demo.app", "sha256": "cd" * 32, "arm64_sha256": SHA, "analysed_binary": "Demo"},
+            "source": {"name": "Demo.app", "sha256": TARGET_SHA, "arm64_sha256": SHA, "analysed_binary": "Demo"},
             "tools": {"ghidra": pins.GHIDRA_VERSION, "rea": pins.REA_VERSION, "jdk": pins.JDK_VERSION},
             "ghidra": {"program_id": "prog1", "project": SHA[:16], "program": "Demo.arm64"}, "module": MOD,
             "timing": {"analysis_seconds": 50.0, "analysis_reused": True, "export_seconds": 5.0, "demangle_seconds": 1.0,
@@ -691,7 +693,7 @@ class CliTest(unittest.TestCase):
         self.inv = self.tmp / "inv.json"
         self.inv.write_text(json.dumps(make_inv()))
         self.target = self.tmp / "Demo"
-        self.target.write_bytes(b"x")
+        self.target.write_bytes(TARGET_BYTES)
 
     def test_analyze_is_refused_for_an_unregistered_target_before_anything_runs(self):
         with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
@@ -765,7 +767,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(rc, blueprint_cli.EXIT_USAGE)
         self.assertIn("Session", err)
 
-    def test_view_body_and_computed_getters_are_candidates_but_not_wrapper_storage(self):
+    def test_view_body_and_getters_are_candidates_but_not_wrapper_storage(self):
         v = decompile._view_code
         self.assertTrue(v("_$s1A4HomeV4bodyQrvg", "A.Home.body.getter : some"))
         self.assertTrue(v("_$s1A4HomeV4hero33_XLLSbvg", "A.Home.(hero in _X).getter : Swift.Bool"))

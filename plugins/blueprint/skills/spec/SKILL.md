@@ -29,12 +29,15 @@ Write in product language: what the user sees and does, never a symbol name, man
 address. A point states only what a cited evidence id shows; what you could not establish gets
 `"evidence": "unknown"`. Do not infer from names alone and do not fill a gap with a guess. Take
 the ids from the files you read (`rea_evidence_id` / `evidence_id`).
+An id of the inventory names one REA call, not one item (all the strings share one id, all the types another), so
+the check cannot tell which string a point is about: prefer the ids of a decompilation, and name the item in the text.
 
 A spec detailed enough to rebuild the app uses format 2 with the sections `coverage`, `constants`, `data_model`,
 `resources`, `screens`: see `blueprint:rebuild` and the README of the plugin ("spec format 2").
 
 2. Check it. The check refuses a point whose id is absent from the evidence files you pass, a point
-with neither evidence nor `unknown`, and a text that leaks a mangled symbol or a raw address
+with neither evidence nor `unknown`, a title, summary, feature name or text that leaks a mangled symbol or a raw address,
+and evidence files that describe different targets
 (heuristic only: it does not prove the text is true, which you and the reviewer judge):
 
 ```bash

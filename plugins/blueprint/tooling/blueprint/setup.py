@@ -8,9 +8,11 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import re
 import shutil
 import sys
 import tarfile
+import time
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -97,18 +99,22 @@ def render_plan(d: Path) -> str:
 
 
 def fetch(url: str, dest: Path, checksum: str, timeout: float = pins.TIMEOUT_DOWNLOAD) -> None:
-    """Download over https to dest, verifying `checksum` (hex sha256); a mismatch deletes the file."""
+    """Download over https to dest, verifying `checksum` (hex sha256); a mismatch deletes the file. `timeout` bounds
+    each socket operation (`urlopen`) and also the whole transfer (checked after every chunk read)."""
     if not url.startswith("https://"):
         raise SetupError("refusing a non-https download")
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
     h = hashlib.sha256()
+    deadline = time.monotonic() + timeout
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp, open(part, "wb") as out:
             for chunk in iter(lambda: resp.read(1 << 20), b""):
                 h.update(chunk)
                 out.write(chunk)
-    except (OSError, ValueError) as exc:
+                if time.monotonic() > deadline:
+                    raise TimeoutError
+    except (OSError, ValueError) as exc:  # TimeoutError is an OSError
         part.unlink(missing_ok=True)
         raise SetupError(f"download failed ({type(exc).__name__})") from None
     if h.hexdigest() != checksum:
@@ -121,6 +127,13 @@ def _inside(root: Path, name: str) -> bool:
     return (root / name).resolve().is_relative_to(root.resolve())
 
 
+def _plain_relative(name: str) -> bool:
+    """A member name or link target with no absolute path and no `..` component. Containment alone is not enough: a link
+    `l -> .` followed by a member `l/../escape` resolves inside before the link exists and outside once it does."""
+    parts = name.replace("\\", "/").split("/")
+    return not name.startswith(("/", "\\")) and ".." not in parts
+
+
 def extract_tar(archive: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive) as tf:
@@ -131,7 +144,7 @@ def extract_zip(archive: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as zf:
         for info in zf.infolist():
-            if not _inside(dest, info.filename):
+            if not _plain_relative(info.filename) or not _inside(dest, info.filename):
                 raise SetupError("archive member outside the target directory")
         for info in zf.infolist():
             target = dest / info.filename
@@ -142,7 +155,7 @@ def extract_zip(archive: Path, dest: Path) -> None:
             mode = (info.external_attr >> 16) & 0o777
             if (info.external_attr >> 16) & 0o170000 == 0o120000:  # symlink
                 link = zf.read(info).decode("utf-8")
-                if not _inside(target.parent, link):
+                if not _plain_relative(link) or not _inside(target.parent, link):
                     raise SetupError("archive symlink outside the target directory")
                 target.symlink_to(link)
                 continue
@@ -153,8 +166,12 @@ def extract_zip(archive: Path, dest: Path) -> None:
 
 
 def pin_gradle(props: Path) -> None:
+    """Add the pinned `distributionSha256Sum`; an existing live line must already equal the pin, else SetupError."""
     text = props.read_text(encoding="utf-8")
-    if "distributionSha256Sum" in text:
+    found = re.findall(r"^\s*distributionSha256Sum\s*=\s*(\S*)", text, re.MULTILINE)
+    if found:
+        if any(x != pins.GRADLE_DIST_SHA256 for x in found):
+            raise SetupError("the wrapper properties pin a Gradle distribution checksum other than the one blueprint pins")
         return
     props.write_text(text.rstrip("\n") + f"\ndistributionSha256Sum={pins.GRADLE_DIST_SHA256}\n", encoding="utf-8")
 

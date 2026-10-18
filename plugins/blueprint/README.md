@@ -7,7 +7,7 @@ inventory with REA evidence, groups it into candidate screens and features, deco
 points of one group, runs one Ghidra analysis reused by every decompilation, measures coverage and extracts
 constants, the persistent data model, bundle resources and screens (PAT-260), and turns a
 product-language specification into Foundry payloads.
-Stdlib-only Python. Version 0.3.0 (PAT-252, PAT-253, PAT-260, decisions of PAT-181).
+Stdlib-only Python. Version 0.3.1 (PAT-252, PAT-253, PAT-260, PAT-259, decisions of PAT-181).
 
 ```
 python3 plugins/blueprint/tooling/blueprint_cli.py setup [--plan|--yes]
@@ -30,13 +30,17 @@ and `rebuild`.
 
 Exit codes (`EXIT_*` in `tooling/blueprint_cli.py`): 0 done, 2 usage or registry error,
 3 target refused (not authorised, or unreadable registry), 4 tooling not prepared,
-5 setup, inventory, decompile or analyze failed.
+5 setup, inventory, decompile or analyze failed (`decompile` also exits 5 when it decompiled nothing, or when the
+target is not the one the inventory describes; `cmd_decompile`).
 
 ## Data directory
 
-Everything blueprint writes goes under one directory outside any repository
+By default blueprint writes under one directory outside any repository
 (`data_dir` in `tooling/blueprint/paths.py`): `$BLUEPRINT_DATA_DIR` if set, else
-`~/Library/Application Support/blueprint` on macOS, else `~/.local/share/blueprint`.
+`~/Library/Application Support/blueprint` on macOS, else `~/.local/share/blueprint`. An explicit `--output FILE`
+(`inventory`, `groups`, `decompile`, `analyze`, `screens`, `rebuild`) or `--output DIR` (`spec to-foundry`) writes where it is
+told, and the processes blueprint launches may write elsewhere (temporary files under `TMPDIR`, and Ghidra under `HOME` and
+`/var/tmp`, see `analyze`).
 Layout: `downloads/`, `rea/` (with `node_modules/`), `jdk/`, `ghidra/`, `gradle-home/`,
 `npm-cache/`, `work/` (thin slices), `inventories/`, `decompilations/`, `payloads/`, `analyses/`,
 `ghidra-projects/` (one saved Ghidra project per slice, `ghidra_projects` in `paths.py`), `targets.json` (registry).
@@ -57,11 +61,17 @@ size) and every location written. Sizes are not recorded in the code: the plan p
 | `natives` | Gradle distribution, fetched by the wrapper | wrapper properties of the extracted Ghidra, `gradle-home/`, native decompiler | `GRADLE_DIST_SHA256`, `NATIVE_DECOMPILER` |
 
 - A downloaded file whose sha256 differs from the pin is deleted and the step fails
-  (`fetch`). npm verifies each package against the integrity of the lockfile.
+  (`fetch`). `TIMEOUT_DOWNLOAD` bounds each socket operation (`urlopen`) and also the whole transfer, checked after every
+  chunk read (`fetch`; `test_a_slow_download_is_refused_as_a_whole`). npm verifies each package against the integrity of the
+  lockfile.
+- Zip extraction (`extract_zip`) refuses, before writing anything, a member name or a symbolic-link target that is absolute or
+  holds a `..` component (`_plain_relative`), because containment alone is bypassed by a link `l -> .` followed by a member
+  `l/../escape` (`test_zip_symlink_then_dotdot_member_is_refused`). The pinned Ghidra archive holds no symbolic link and no
+  `..` member (checked on the downloaded archive, 2026-10-18).
 - `natives` compiles with `./gradlew --no-daemon buildNatives`, run from the Ghidra copy's
   `support/gradle` directory (`GRADLE_DIR`), only when `NATIVE_DECOMPILER` is absent; it
   first adds `distributionSha256Sum` to the extracted copy's wrapper properties
-  (`pin_gradle`), then copies each `build/os/mac_arm_64` output of `NATIVE_MODULES` to
+  (`pin_gradle`; a line already there must equal `GRADLE_DIST_SHA256`, otherwise the step fails), then copies each `build/os/mac_arm_64` output of `NATIVE_MODULES` to
   `os/mac_arm_64`, where the installed layout reads it (observed 2026-10-18). It needs the macOS developer command-line tools (a C++ compiler):
   deduced from the build, not checked by blueprint.
 - `setup --yes` refuses outside macOS arm64 (`perform`): the JDK and the decompiler are for
@@ -75,7 +85,8 @@ size) and every location written. Sizes are not recorded in the code: the plan p
   version `6.5.0` and the name `blueprint-rea`. The procedure was run once on a copy with
   `npm ci --ignore-scripts --dry-run --offline`, which resolved 178 packages and installed
   nothing. A real install was then run once, on 2026-10-18, with the maintainer's
-  authorisation, and completed after the two fixes described in the pull request.
+  authorisation, and completed after two fixes: the Gradle build runs from `support/gradle` (`GRADLE_DIR`), and each
+  module's `build/os/mac_arm_64` output is copied to `os/mac_arm_64` (`NATIVE_MODULES`; both described above).
 - Prerequisites not installed by blueprint: `npm` and `node` are taken from `PATH`, unpinned
   (`NPM_CI` in `setup.py`), and `rea` runs on that `node` at every inventory; the lockfile's
   `engines` ask for Node `^22.18.0 || >=24.11.0` (the 2026-10-18 run used Node 22.22.3).
@@ -93,6 +104,12 @@ path inside an authorised bundle, or another path to the same product, is not au
 unreadable or malformed registry authorises nothing (`inventory` exits 3). The skill
 `blueprint:targets` runs `add` only on the maintainer's explicit instruction.
 
+That instruction is the only protection of the registry: no code prevents an agent from running `targets add`, or from
+pointing `BLUEPRINT_DATA_DIR` at another directory with its own `targets.json` (`registry.py` and `paths.py` hold no such
+guard; read in the code). A guard would be a new capability and goes through `foundry:intake` (AGENTS.md#R3), not through
+this page. The registry identifies a path, not a content: a target replaced in place keeps its authorisation, and
+`decompile` and `analyze` compare its bytes with the inventory (sha256) before using it.
+
 ## inventory
 
 `inventory <target>` checks the registry first and exits 3 before reading the target or
@@ -102,10 +119,13 @@ is given (mode 600).
 
 Target: an app bundle (the executable named by `CFBundleExecutable`, or
 `<executable>.debug.dylib` when present: a Debug iOS build keeps the code there) or a
-Mach-O file (`locate_binary`, `tooling/blueprint/inventory.py`). A universal Mach-O is
+Mach-O file (`locate_binary`, `tooling/blueprint/inventory.py`; an executable or `.debug.dylib` that is a symbolic link
+resolving outside the bundle is refused, `test_executable_symlink_leaving_the_bundle_is_refused`). A universal Mach-O is
 reduced to its arm64 slice with `lipo -thin arm64` (`thin`) because REA refuses a universal
 binary with Ghidra (observed in the 2026-10-18 trials). Every external process has a
-timeout (`TIMEOUT_*` in `tooling/blueprint/pins.py`).
+timeout (`TIMEOUT_*` in `tooling/blueprint/pins.py`), runs in its own session and, at the timeout, the whole process group
+is killed (`proc.run`; `test_timeout_kills_the_whole_process_group`). A descendant that starts another session of its own
+escapes that kill (deduced from `setsid` semantics, not tried).
 
 The document has no timestamp, no absolute path and sorted lists; two runs on the same
 inputs give the same bytes by construction (checked on fakes only,
@@ -114,16 +134,21 @@ runs: unknown, not observed.
 
 | Section | Source | Evidence per item |
 |---|---|---|
-| `analysis` | `rea analyze --provider ghidra` on the slice | counts, provider and version, evidence id, slice sha256 |
+| `analysis` | `rea analyze --provider ghidra` on the slice | counts, provider and version as REA reports them, evidence id, slice sha256 |
 | `modules` | `otool -L` on the slice (linked libraries) | slice sha256 |
 | `types` | `rea inspect-native-dispatch-metadata` (Objective-C classes and protocols, Swift conformances) | evidence id, slice sha256, address, file offset |
-| `ui_strings` | `rea search --kind strings --mode regex --pattern .` (`STRING_PATTERN`) | evidence id, slice sha256, address |
+| `ui_strings` | `rea search --kind strings --mode regex --pattern .` (`STRING_PATTERN`): every string REA lists in the binary, system paths and symbol names included, not only the texts a person reads (`groups` keeps the label-like ones, `human_string`; 21,725 of 22,250 were not on the 2026-10-18 trial, observed) | evidence id, slice sha256, address |
 | `resources` | files of the bundle with sha256; `rea inspect-asset-catalog` and `rea decode-interface-builder` | sha256, evidence id |
 
 Each section is `{"status": "ok" | "unknown", "reason", "items"}`. A failed or timed-out
 REA call, or an answer without the expected fields, gives `unknown` with the reason; a
 partial decode is listed in `incomplete_facets`, and a field REA leaves null is `unknown`
-(Swift `module`). `ui_strings` keeps at most `MAX_STRINGS` and says `truncated`; `resources`
+(Swift `module`). An answer that lacks an expected list is not an empty `ok`: `types` is `unknown` when it holds none of
+`objc_classes`, `objc_protocols`, `swift_conformances` and otherwise names the absent ones in `absent_keys`; the catalogue
+and interface-builder lists of `resources` are `unknown` in `unknown_parts` when absent; `ui_strings` counts in
+`dropped_rows` the rows it could not read; a null `subject.digest` leaves the evidence `target_sha256` null instead of
+failing (`inventory.subject_sha256`; `test_absent_keys_are_not_an_empty_ok`, `test_null_digest_does_not_raise`).
+`ui_strings` keeps at most `MAX_STRINGS` and says `truncated`; `resources`
 lists at most `MAX_FILES` files and says what is beyond in `unknown_parts`.
 
 Limits, stated rather than hidden: the extraction of the `types`, `ui_strings` and
@@ -135,9 +160,16 @@ target: every section `ok` (38 modules, 31 types, 22,250 strings, 34 resources),
 this holds for other targets is unknown). In that run some accented strings came out
 mis-decoded (replacement characters), as they already did in REA's own `search` output of
 the earlier trial: the cause is in REA or Ghidra (observed), not in blueprint's reading.
-"Modules" are the linked libraries; Swift modules as such are not listed.
+"Modules" are the linked libraries; Swift modules as such are not listed. The `provider` and `provider_version` of the
+`analysis` section are what REA answers: they read `rea-workflow` and `1` in the 2026-10-18 run, not Ghidra 12.1.4
+(observed), so they do not attest which Ghidra ran. The pinned Ghidra is the one blueprint names in `tools.ghidra` and
+passes to REA through `GHIDRA_INSTALL_DIR` (`tool_env`); that REA used it for this call: unknown, not checked.
 
 ## groups, decompile, spec (PAT-253)
+
+The real trial of this section ran on 2026-10-18, before the final revision of the code: the exact commit it ran on was not
+recorded (unknown), so a current `groups` output can differ from the trial's in details such as the `accounting` note. The
+counts quoted in this README were re-checked offline on the same inventory on 2026-10-18 where a sentence says so.
 
 Flow: `inventory` -> `groups` -> `decompile` -> the agent writes the spec (skill `blueprint:spec`)
 -> `spec check` -> `spec to-foundry` -> maintainer confirmation -> Foundry commands run by the
@@ -159,22 +191,33 @@ strings in the inventory (`test_strings_are_assigned_by_group_name_and_accounted
 
 **decompile** applies the registry gate like `inventory` (exit 3 before anything runs), needs the
 prepared tooling (exit 4), and checks that the target's sha256 and arm64 slice are those of the inventory
-(`slice_for`, exit 5 otherwise). With `--group`, one `rea search --kind procedures --mode regex` finds
+(`slice_for`, exit 5 otherwise). `--entry` must be one `0x<hex>` address (`ADDRESS`), `--max` at least 1 and `--budget` a
+positive finite number of seconds, otherwise exit 2 before anything runs (`test_max_and_budget_are_validated`). With `--group`, one `rea search --kind procedures --mode regex` finds
 the Swift procedures of the group's classes, `entry_points` keeps functions (mangled name ending in `F`)
 and initialisers (`fC`) and drops accessors, closures, coroutine helpers and Observation boilerplate
 (`BOILERPLATE_METHODS`, `BOILERPLATE_MARKERS`), then one `rea decompile <slice> <address>` per entry
-point. `--list` stops after the search. Bounds: `--max` entry points (default `MAX_DECOMPILE`), each call
-at most `TIMEOUT_DECOMPILE` seconds, the procedure search at most `TIMEOUT_REA` seconds, and the whole run (search
-included) `BUDGET_DECOMPILE` seconds by default (`--budget`),
-all in `tooling/blueprint/pins.py`; pseudo-code is cut at `MAX_CODE_CHARS` and says `truncated`. Output
+point; a REA row whose address is not `0x<hex>` is skipped. `--list` stops after the search. Bounds: `--max` entry points
+(default `MAX_DECOMPILE`), each call at most `TIMEOUT_DECOMPILE` seconds, the procedure search at most `TIMEOUT_REA`
+seconds, and the search plus the calls `BUDGET_DECOMPILE` seconds by default (`--budget`), all in `tooling/blueprint/pins.py`.
+The budget starts in `decompile.run`: the target hash check and the arm64 extraction before it (`slice_for` ->
+`inventory.thin`, `TIMEOUT_LIPO`) are not counted in it; pseudo-code is cut at `MAX_CODE_CHARS` and says `truncated`. Output
 (default `<data dir>/decompilations/<name>-<group>.json`, mode 600) keeps per entry the address, the mangled
 symbol, the method name, the pseudo-code and the evidence (`rea_evidence_id`, `target_sha256`, `address`);
-REA's `local_path` is not copied. A failed call is `status: unknown` with the reason; a group whose classes
+REA's `local_path` is not copied. `candidates` gives `total`, `chosen`, and `listed` (at most `MAX_LISTED` = the first 200
+by address, `listed_truncated` says when more exist). An allocating initialiser (`fC`) or an async function (`YaF`) is a
+candidate whose decompilation is an intermediate (observed in the trial: the allocation and the call to the real
+initialiser `fc`, or the switch to partial functions `TY0_`); neither `fc` nor the partial functions are candidates, and
+those two kinds carry a `caveat` field saying so (`decompile.caveat`; `test_entry_points_skip_non_hex_addresses_and_mark_intermediate_candidates`).
+A failed call is `status: unknown` with the reason; a group whose classes
 have no known module (seen only as Swift conformances) has no search hint and says unknown.
 Observed on 2026-10-18 on the authorised target: `rea search --kind procedures` and `rea decompile` each
 took about 52 s, the first one re-analysing the binary, and `--snapshot` did not shorten a following call;
 whether the time depends on the target size is unknown. The pseudo-code is Ghidra output with mangled Swift
-names, not source (REA `limitations` field).
+names, not source (REA `limitations` field). An evidence id of an inventory identifies one REA call, not one item: all the
+strings share the id of the strings listing, all the types that of the metadata call (`test_inventory_evidence_id_is_one_per_rea_call_not_per_item`),
+so a spec point citing it passes `spec check` whatever string it is about, and the ticket body keeps the id but not the
+address. Prefer the ids of a decompilation (`ev_` per `rea decompile` call, `gh_` per function address) and name the
+item in the text of the point; whether a point is about the item it cites is judged by its author and the reviewer.
 
 ## analyze, rebuild, screens (PAT-260)
 
@@ -197,13 +240,27 @@ target against the inventory like `decompile` (`slice_for`, exit 5), then `analy
    the extended type and then `E`, or generic requirements ending in `l` and then `E` (a member of the app's extension,
    constrained or not, of another module's type; the `include` pattern built in `analysis.build`, then `analysis.extension_of`
    keeps only symbols whose extended type reads as a clean type), each limited to `DECOMPILE_FUNCTION_SECONDS`, and also reads the
-   Swift type descriptors (`__swift5_types`) with their field descriptors, the module's `vpZ` data symbols, the
+   Swift type descriptors (`__swift5_types`) with their field descriptors (a record of kind 0, a direct type descriptor, is
+   read; the other three kinds in the two low bits of the slot are skipped), the module's `vpZ` data symbols, the
    references to the strings that equal a bundle file name, and the UTF-8 bytes behind the labels the decompiler prints for
-   non-ASCII string literals. For every function it walks the instructions once (`walk` in the script: a forward walk following
+   non-ASCII string literals (the label address is read as 8 to 16 hex digits, so that an image loaded at `0x100000000`
+   is not skipped: deduced from the label format, untried; the observed Debug image uses 8). A Swift symbolic reference
+   inside a field's type name is read as a 4-byte relative offset for the marker bytes `0x01`..`0x17` and skipped as an
+   8-byte absolute pointer for `0x18`..`0x1f` (Swift ABI, deduced, not observed on the target; a field type may still be
+   misread where this is wrong, the data model takes its types from the getter signatures). For every function it walks the instructions once (`walk` in the script: a forward walk following
    immediate moves, register copies, `adrp`/`add` addresses, floating-point `fmov`/`movi` and loads from read-only
-   constants, and stores to and loads from frame-pointer slots; the state is dropped at a branch target, after an
-   unconditional jump or return, and `x0`..`x18` and `d0`..`d7` after a call; frame slots are dropped for good once an
-   `add`/`sub` forms a frame- or stack-pointer address). In a one-time initialiser (`_WZ`) it records, per call of a
+   constants, and stores to and loads from frame-pointer slots). What it forgets: at a branch target (`resetState`), after an
+   unconditional jump or a return, every known register, frame slot and the outgoing-argument area and its size
+   (`outArgsSize`); at a call, `x0`..`x18`, `x30`, `d0`..`d7`, `d16`..`d31`, the outgoing-argument area and its size; for
+   good, the frame slots once an `add`/`sub` forms a frame- or stack-pointer address or a `mov` copies `x29` into another
+   register (`escaped`); and every register an instruction writes that the walk does not model, including a second
+   loaded register (`ldp d0, d1`), the status register of an exclusive store (`stxr`) and a written-back base register
+   (`forgetResults`). A `mov xN, sp` is not counted as such a copy, because doing so dropped the correct value of `x6` in six
+   one-time initialisers of the 2026-10-18 target (observed on a run compared with the previous script); a frame slot
+   reached through a copy of `sp` could keep a stale value (deduced, not observed). Consequence (deduced from `outArgsSize`
+   being reset at a call): when a function's `sub sp, sp, #imm` comes before another call, the stack arguments of a later
+   constructor call are "not delimited" (`stack_arguments_known` false), which is safe but loses them; this is likely in a
+   Release build, not tried. In a one-time initialiser (`_WZ`) it records, per call of a
    constructor (`...fC`), the integer registers `x0`..`x7` that hold a constant at the call and the constants stored to
    the outgoing stack-argument area (only after a `sub sp, sp, #imm`, offsets below that size: `call_sites`). In any
    function it records, per call (at most `MAX_FLOAT_CALLS` per function), the constants in `d0`..`d7`/`s0`..`s7` and
@@ -225,9 +282,11 @@ status, pseudo-code cut at `MAX_CODE_CHARS` with `truncated`, evidence), the Swi
 references and `unknown_parts`. Evidence of an item is Ghidra evidence: slice sha256 and address (plus the Ghidra program
 id), with `evidence_id = gh_<slice sha256[:16]>_<address without 0x>` (`analysis.ghidra_evidence`), not a REA id.
 
-`decompile --analysis FILE` reads the pseudo-code from that document: same registry gate, same output shape, no Ghidra
-or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launches_nothing`), `from_analysis.ghidra_runs: 0`,
-and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs).
+`decompile --analysis FILE` reads the pseudo-code from that document: same registry gate, the target's own bytes compared
+with the inventory (sha256 of the analysed binary, `decompile.check_target`, exit 5 on a difference; the arm64 slice is not
+extracted), same output shape, no Ghidra or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launches_nothing`), `from_analysis.ghidra_runs: 0`,
+and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs). A malformed analysis file is a usage error (exit 2),
+not a traceback (`test_malformed_analysis_is_a_usage_error_not_a_traceback`).
 With `--analysis`, `--group` accepts every group that `rebuild` detects (`rebuild.detect_groups`: the Swift types of the
 image, structs and enums included, not only the inventory's Objective-C classes), and the entry points are the functions
 (mangled name ending in `F`, static `FZ`, private types included), initialisers (`fC`), getters (a SwiftUI view's `body` included) and the closures
@@ -236,7 +295,7 @@ of a `body` of that group's types, without property-wrapper storage and key path
 candidates and writes no file unless `--output` is given (`test_list_writes_nothing`). `--entry` must be one address
 `0x<hex>` (`decompile.ADDRESS`; anything else exits 2, `test_bad_entry_address_is_a_usage_error_and_unknown_is_not_success`).
 The summary line counts entries decompiled and unknown (`decompile.counts`), lists each unknown entry with its reason, and the
-exit code is 5 when none was decompiled (an address with no app function in the analysis is `unknown`). Checked once on
+exit code is 5 when none was decompiled (`return 0 if ok else EXIT_FAILED`; the skill `blueprint:decompile` says so too) (an address with no app function in the analysis is `unknown`). Checked once on
 2026-10-18 on the authorised target with an analysis: `--group Home` (14 candidates, 6 of 6 decompiled at the default maximum), `--group Breathing --list`
 (88 candidates, no file written), `--entry` with trailing text (exit 2), `--entry 0xdeadbeef` (0 of 1, exit 5).
 
@@ -264,7 +323,7 @@ the simulator or Witness.
 | `coverage` | detected and analysed counts for `groups`, `screens`, `functions`, screens captured, timing, `not_covered` sentences | groups are role-suffix stems (`SUFFIX_ROLES`) over the Swift types of the image (not the inventory's Objective-C classes, which miss value types), a screen is a group with a `View`, `ViewModel`, `Controller` or `Screen` type, a group is analysed when one of its functions is decompiled (`detect_groups`); preview records (names starting `$s`) are ignored |
 | `constants` | one item per static property getter of the app module: decoded value, type, evidence, or `unknown` with the reason | `constants.extract`: a getter that is a plain `return <literal>;` is decoded by its demangled type (`decode_literal`); a lazily initialised value is read from the `_WZ` one-time initialiser (string literals, and for an object the string literals, the stacked integer literals in code order, the constructor call arguments and, when the export holds one call site of the constructor, `constructor_parameters`); a static member of an extension of another module's type keeps its path without the `(extension in <module>):` prefix and the module in `extension_in_module`; SwiftUI preview records are excluded and counted (`excluded_preview_records`) |
 | `data_model` | classes carrying the field `_$backingData` (SwiftData `@Model` macro output; deduced, observed on one target), stored properties with the type of their getter signature or `unknown`; schema and migration type names | `rebuild.data_model`; constraints and relationships are always `unknown` |
-| `resources` | every bundle file of the inventory with sha256, size, kind (`resources.kind_of`) and usage | usage is known only when a binary string equals the file name or its stem (a name match, not proof of use), with the referencing functions when Ghidra finds references; otherwise `unknown`, never `unused` |
+| `resources` | every bundle file of the inventory with sha256, size, kind (`resources.kind_of`: `image`, `sound`, `asset-catalog`, else `other`; `.mp4` is `other`, it may hold video) and usage | usage is known only when a binary string equals the file name or its stem (a name match, not proof of use), with the referencing functions when Ghidra finds references; otherwise `unknown`, never `unused`. At most `MAX_USAGE` (5) matching strings are listed per file, by address; `usage_strings_total` and `usage_truncated` give the real count and `coverage.not_covered` counts the files cut (none was cut on the 2026-10-18 trial target: offline `rebuild`, observed) |
 | `screens` | detected screens with their capture `evidence_id` or `unknown`; captures not matched to a detected screen | the manifest name is compared, case-insensitively, with the group stem or one of its type names |
 
 Known limits, stated rather than hidden. The integer literals of a predefined object are listed in code order and which one
@@ -297,7 +356,8 @@ check` also refuses a constant name that still carries it (`_LEAK`). Screen navi
 catalog are `unknown` (the inventory holds record counts). Pseudo-code is Ghidra output: a decoded constant is as sound
 as it (deduced). The `not_covered` list states that analysis is static only, followed by the analysis's `unknown_parts` when there are
 any (`rebuild.coverage`). On the
-2026-10-18 trial `rebuild` reported groups 37/38, screens 29/29 (0 captured), functions 4180/4180, 46 constants (20
+2026-10-18 trial `rebuild` reported groups 37/38, screens 29/29 (0 captured: `rebuild` without a screens manifest always reports 0,
+observed on a re-run of 2026-10-18; whether the trial run had one: unknown), functions 4180/4180, 46 constants (20
 `unknown`, 75 preview records excluded), 3 data models, 33 resources (14 with unknown usage). After the extension and
 call-site changes, on the same target: groups 38/39 (the group `extensions` included), screens 29/29, functions
 4204/4204 (24 in extensions of other modules' types: 3 on `Date`, 16 on `Color` (5 palette colours with 3 functions
@@ -305,14 +365,18 @@ each and an initialiser from a hex string), 5 resource initialisers), 0 cut, 51 
 `analysis.json` 12.3 MB against 11.9 MB. After the constrained-extension, stack-argument and floating-point changes:
 groups 39/40, functions 4236/4236 (56 in extensions of other modules' types: 31 in the group `SessionStat`, the members
 of `Array where Element == SessionStat` that compute streaks and weekly figures; 25 in `extensions`), 179 calls with
-floating-point constants in 117 functions, 0 cut, `analysis.json` 12.6 MB.
+floating-point constants in 117 functions, 0 cut, `analysis.json` 12.6 MB. With a screens manifest, the same analysis gives
+`captured 7` of the 29 screens for the first manifest of Witness captures and `captured 12` for a later one (offline `rebuild` runs
+of 2026-10-18 on a copy of the data; the manifests are the maintainer's trial files, not shipped).
 
 **spec** file format: `{"format": 1, "title", "summary", "features": [{"name", "summary", "points":
 [{"text", "evidence": ["ev_..."] | "unknown"}]}]}` (`tooling/blueprint/spec.py`). `spec check`
 (`spec.check`) refuses a point whose evidence id is not found (any `rea_evidence_id` or `evidence_id` key,
 at any depth) in the evidence files passed, a point with neither a non-empty id list nor `unknown`, a
-duplicate feature name, and a text or feature summary containing a mangled symbol or a raw hex address
-(`_LEAK`). It does not and cannot prove that a point is true or that an id supports the sentence it is
+duplicate feature name, a title, global summary, feature name, feature summary or point text containing a mangled symbol or
+a raw hex address (`_LEAK`; each is checked once), and evidence files that describe different targets (the arm64 slice
+sha256 of the files that carry one: inventory, groups, decompilation, analysis, rebuild; `spec.evidence_targets`; a
+screens file carries none and is not compared; `test_evidence_files_of_two_targets_are_refused`). It does not and cannot prove that a point is true or that an id supports the sentence it is
 attached to: the author and the reviewer judge that. `spec to-foundry` runs the check first, writes
 `epic.json` (fields `Type: Epic`, `State: backlog`, as `campaign_defer.py` creates its companion Epic)
 and prints the `edit create-issue` command; with `--epic-id` it writes one `ticket-NN-<slug>.json` per
@@ -340,7 +404,7 @@ it is not used.
 
 | Artefact | Status |
 |---|---|
-| CLI verbs and options of `blueprint_cli.py` | documented here and in the three skills |
+| CLI verbs and options of `blueprint_cli.py` | documented here and in the six skills (`setup`, `targets`, `inventory`, `decompile`, `rebuild`, `spec`) |
 | `BLUEPRINT_DATA_DIR`, data directory layout | documented above |
 | Pins (`pins.py`), lockfile | documented above and in `CHANGELOG.md` |
 | Registry file format, inventory sections and limits | documented above |
@@ -355,4 +419,11 @@ it is not used.
 | Data directory entries `analyses/`, `ghidra-projects/`; evidence id prefixes `gh_`, `res_`, `wit_` | documented above |
 | Analysis, rebuild, screens manifest and spec format 2 | documented above |
 | Operational constraint: Ghidra writes outside the data directory (`HOME`, `/var/tmp`) | documented above (observed) |
+| PAT-259 (deferred remarks of PAT-252, PAT-253, PAT-260): `decompile` options `--max` (at least 1) and `--budget` (positive), `decompile --analysis` target check, exit 5 for nothing decompiled | documented above and in the skill `decompile` |
+| Constant `MAX_LISTED`; candidate field `caveat`; `candidates.listed_truncated`; `decompile.check_target`; `spec.evidence_targets` | documented above (names; values are in the code) |
+| Resource item fields `usage_strings_total`, `usage_truncated` (constant `MAX_USAGE`); `.mp4` kind `other` | documented above |
+| Inventory fields `absent_keys` (`types`), `dropped_rows` (`ui_strings`); `inventory.subject_sha256`; symbolic-link refusal in `locate_binary` | documented above |
+| Operational constraints: process-group kill at a timeout (`proc.run`), whole-transfer download deadline (`fetch`), zip names and link targets without `..` (`extract_zip`), `pin_gradle` refuses another checksum | documented above (`setup`, `inventory`) |
+| Operational constraint: the registry is protected only by the skill instruction (no code guard) | documented above (Registry of authorised targets) |
+| Limits of `BlueprintExport.java` `walk`, label address width, symbolic references 0x18..0x1f, record kinds | documented above (`analyze`), each stated as observed, deduced or untried |
 | Foundry docs | not necessary: no Foundry CLI, constant or skill changed; blueprint only prints `edit create-issue` commands whose payload keys are those `edit.py` already reads |
