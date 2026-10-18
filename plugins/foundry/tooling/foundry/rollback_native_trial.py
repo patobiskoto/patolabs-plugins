@@ -65,18 +65,26 @@ _UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|support
                           r"|model.{0,60}(does not exist|no access)|(does not exist|no access).{0,60}model)")
 _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           (re.compile(r"(?i)(bearer|basic)\s+[A-Za-z0-9._\-=+/]{8,}"), r"\1 <masked>"),
-          # an UPPER_CASE name (API_TOKEN=...) or a known lower-case one; never a word that merely contains "key" or
-          # "auth" ("monkey:", "Authentication: failed")
+          # an UPPER_CASE name containing TOKEN, SECRET, KEY, PASSWORD or AUTH (API_TOKEN=...), then any other name
+          # one of whose segments is a secret word (``_named_secret``): never "monkey:" or "Authentication: failed"
           (re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+"), r"\1=<masked>"),
-          (re.compile(r"(?i)\b((?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd"
-                      r"|private[_-]?key))\s*[=:]\s*\S+"),
-           r"\1=<masked>"),
+          (re.compile(r"\b([A-Za-z][A-Za-z0-9_\-]*)\s*[=:]\s*\S+"), lambda m: _named_secret(m)),
           # OpenAI identifiers shorter than 32 characters (org-..., proj_..., user-...): a digit is required so that a
           # plain word such as "user-configuration" is kept
           (re.compile(r"\b(?:org|proj|user)[-_](?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{10,}"), "<masked-id>"),
           (re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+"), "<masked-email>"),
           (re.compile(r"\b[A-Za-z0-9_\-]{32,}\b"), "<masked-long-token>"))
 _ERROR_LIMIT = 2000
+_SECRET_SEGMENTS = frozenset({"token", "secret", "password", "passwd", "key", "apikey", "auth", "authorization"})
+
+
+def _named_secret(match: "re.Match[str]") -> str:
+    """``name=value`` or ``name: value`` becomes ``name=<masked>`` when a segment of the name (split on ``_``, ``-`` and
+    camelCase boundaries, lower-cased) is a secret word; ``key`` and ``auth`` count only as a whole segment."""
+    name = match.group(1)
+    segments = re.split(r"[_\-]", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower())
+    return f"{name}=<masked>" if _SECRET_SEGMENTS.intersection(segments) else match.group(0)
+
 LEDGER_NAME = "pat198-native-rollback-ledger.jsonl"
 
 

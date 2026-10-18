@@ -72,7 +72,8 @@ here, not produced by the tool. Per case:
   `runs: 1`, one sample, no variance estimate). The launcher prints no promotion, removal or
   change;
 - `unknown`: partial run (cost ceiling, interruption, credential rejected), run error, case
-  absent, no suite case found (no `prompt.md`), a score at the threshold without every grader passed, or an
+  absent, no run recorded, no score (absent or NaN), no suite case found (no `prompt.md`), a score at or above the
+  threshold without every grader passed, or an
   unreadable result, unexpected `schemaVersion` or unexpected shape. Never counted as pass.
 
 The one run error that does not make a case `unknown`: `Reached maximum number of turns (N)`

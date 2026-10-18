@@ -374,9 +374,13 @@ of section 9, section 11 or the matrix is rewritten: the eight rows and their `r
 has a test in `tests/test_rollback_native_trial.py`).
 
 - `--max-budget-usd` must be finite and above 0 (`math.isfinite` in `_run_claude`): `inf` and `nan` are refused before the fixture, the ledger reservation and the matrix claim.
-- Masking (`_MASKS`, section 7 list). The `KEY`, `TOKEN`, `SECRET`, `PASSWORD` and `AUTH` names are masked when written in
-  upper case or as a known name in any case, alone or after prefix segments joined by `_` or `-` (`api_key`, `access_token`, `auth_token`, `token`, `secret`, `password`, `passwd`, `private_key`, so `db_password=` and `DB_Password=` are masked);
-  a word that merely contains one (`monkey:`, `Authentication: failed`) is kept. OpenAI-style identifiers `org-...`,
+- Masking (`_MASKS`, `_named_secret`, `_SECRET_SEGMENTS`, section 7 list). A name followed by `=` or `:` and a value is masked when it
+  is written in upper case and contains `TOKEN`, `SECRET`, `KEY`, `PASSWORD` or `AUTH`, or when one of its segments (split on
+  `_`, `-` and camelCase boundaries, compared in lower case) is `token`, `secret`, `password`, `passwd`, `key`, `apikey`, `auth`
+  or `authorization`: `db_password`, `DB_Password`, `clientSecret`, `refreshToken`, `secret_key`, `aws_secret_access_key`,
+  `password_hash`, `token_value`, `x-api-key` and a lower-case `authorization: <value>` are masked. A name that only contains
+  such a word inside a longer segment is kept (`monkey:`, `Authentication: failed`, `keyboard`, `author`), and so is its value.
+  Cases: `test_a_name_with_a_secret_segment_is_masked_whatever_its_case_or_shape` and `test_a_name_without_a_secret_segment_is_kept`. OpenAI-style identifiers `org-...`,
   `proj_...`, `user-...` of 10 characters or more after the prefix, with at least one digit, are masked even under 32
   characters. The committed matrix holds none (`test_the_committed_matrix_holds_no_short_openai_identifier`); check again before each commit
   of a matrix, as the pattern cannot recognise every identifier shape.

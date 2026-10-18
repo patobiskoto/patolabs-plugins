@@ -738,7 +738,7 @@ def test_the_data_dir_fingerprint_tells_two_data_directories_apart_without_writi
 
 
 @pytest.mark.parametrize("budget", [float("inf"), float("nan"), 0, -1])
-def test_a_budget_that_is_not_finite_and_positive_is_refused_before_any_write(tmp_path, budget):
+def test_a_budget_that_is_not_finite_and_positive_is_refused_before_the_fixture_reservation_and_claim(tmp_path, budget):
     calls = []
     with pytest.raises(rt.RollbackTrialError, match="finite"):
         rt.run(_args(tmp_path, "claude-scout", max_budget_usd=budget), launch=_host(tmp_path, "claude-scout", calls=calls))
@@ -757,12 +757,25 @@ def test_masking_keeps_ordinary_words_and_masks_short_openai_identifiers_and_nam
     out = rt.mask(text, home="/")
     for leaked in ("org-AbCdEf", "proj_abc123", "user-9fG8", "abcd1234", "hunter2", "xyz", "abc"):
         assert leaked not in out
-    compound = "db_password=hunter2 client_secret=s3 refresh_token=r4 private_key=k5 DB_Password=p6 x-api-key: k7"
-    out = rt.mask(compound, home="/")
-    for leaked in ("hunter2", "s3", "r4", "k5", "p6", "k7"):
-        assert leaked not in out
     kept = "monkey: yes. Authentication: failed. the user-configuration of an organisation"
     assert rt.mask(kept, home="/") == kept
+
+
+@pytest.mark.parametrize("name", [
+    "db_password", "client_secret", "refresh_token", "private_key", "DB_Password", "x-api-key", "secret_key",
+    "aws_secret_access_key", "session_key", "signing_key", "clientSecret", "refreshToken", "dbPassword",
+    "password_hash", "token_value", "authorization", "Authorization", "api_key", "apikey", "passwd", "auth",
+    "AWS_SECRET_ACCESS_KEY", "API_TOKEN", "MY_AUTH_HEADER"])
+@pytest.mark.parametrize("separator", ["=", ": "])
+def test_a_name_with_a_secret_segment_is_masked_whatever_its_case_or_shape(name, separator):
+    assert rt.mask(f"{name}{separator}v4lue9", home="/") == f"{name}=<masked>"
+
+
+@pytest.mark.parametrize("name", ["monkey", "Authentication", "keyboard", "author", "tokenizer", "model", "turkey",
+                                  "passwords", "secretary"])
+def test_a_name_without_a_secret_segment_is_kept(name):
+    text = f"{name}: failed {name}=v4lue9"
+    assert rt.mask(text, home="/") == text
 
 
 def test_the_committed_matrix_holds_no_short_openai_identifier():
