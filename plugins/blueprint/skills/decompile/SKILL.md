@@ -41,7 +41,7 @@ positive number of seconds (exit 2 otherwise).
 The command refuses (exit 3) a target absent from the registry: report the refusal and stop; do
 not add the target yourself. Exit 4: run `blueprint:setup`. Exit 5: the target is not the one the
 inventory describes, REA or Ghidra failed, or nothing was decompiled (every entry is `unknown`; read the reasons printed).
-A candidate with a `caveat` (an allocating initialiser or an async function) decompiles to an intermediate only: say so
+A candidate with a `caveat` (the allocating initialiser of a class or an async function) decompiles to an intermediate only: say so
 when you cite it, and prefer the function that holds the body. A `status: unknown` entry or an `unknown_parts` key says why
 something was not read: report it as unknown, never as empty. The pseudo-code is Ghidra output with
 mangled Swift names, not source. REA evidence stays on the machine except what you send to the

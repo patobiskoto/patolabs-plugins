@@ -491,6 +491,7 @@ public class BlueprintExport extends GhidraScript {
                 outArgs.clear();
                 Scalar sc = in.getNumOperands() == 3 ? in.getScalar(2) : null;
                 outArgsSize = m.equals("sub") && sc != null ? sc.getUnsignedValue() : -1;
+                forgetResults(in, -1);  // `ldp x19, x20, [sp], #32` also writes x19 and x20
                 continue;
             }
             // Stores and loads through the frame pointer or the stack area.

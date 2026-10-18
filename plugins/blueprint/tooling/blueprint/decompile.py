@@ -28,20 +28,22 @@ class DecompileError(Exception):
     pass
 
 
-def caveat(symbol: str) -> str | None:
+def caveat(symbol: str, kind: str | None) -> str | None:
     """A candidate whose decompilation is an intermediate (observed in the PAT-253 trial): the allocating initialiser
-    (`fC`) only allocates and calls the initialiser `fc`, an async function (`YaF`) only switches to its partial
-    functions (`TY0_`...). Neither `fc` nor the partial functions are listed as candidates."""
-    if symbol.endswith("fC"):
+    of a class (`fC` after the kind letter `C`) only allocates and calls the initialiser `fc`, an async function (`YaF`,
+    static `YaFZ`) only switches to its partial functions (`TY0_`...). Neither `fc` nor the partial functions are listed
+    as candidates. A struct or enum initialiser (kind `V`, `O`) is a value-type `fC` with no `fc`: its body is in itself,
+    and `kind` None (a member of an extension) gives no initialiser caveat either."""
+    if symbol.endswith("fC") and kind == "C":
         return "allocating initialiser: the body is in the `fc` initialiser, which is not a candidate"
-    if symbol.endswith("YaF"):
+    if symbol.endswith(("YaF", "YaFZ")):
         return "async function: the body is in partial functions (`TY0_`), which are not candidates"
     return None
 
 
-def _candidate(address: str, symbol: str, method: str, cls: str | None) -> dict:
+def _candidate(address: str, symbol: str, method: str, cls: str | None, kind: str | None = None) -> dict:
     c = {"address": address, "symbol": symbol, "method": method, "class": cls}
-    note = caveat(symbol)
+    note = caveat(symbol, kind)
     return {**c, "caveat": note} if note else c
 
 
@@ -98,7 +100,7 @@ def entry_points(rows: list, module: str, classes: list[str]) -> list[dict]:
         if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
             continue
         seen.add(r["address"])
-        out.append(_candidate(r["address"], v, method, prefixes[pre]))
+        out.append(_candidate(r["address"], v, method, prefixes[pre], "C"))  # the search prefix ends with the class letter `C`
     return sorted(out, key=lambda e: (int(e["address"], 16), e["symbol"]))
 
 
@@ -203,14 +205,14 @@ def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
             continue
         sym = e["symbol"]
         # A private type carries its scope discriminator (`33_<hash>LL`) between its name and its kind letter.
-        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?[A-Z](\d+)", sym)
+        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?([A-Z])(\d+)", sym)
         if not m or not (sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
             continue
         rest = sym[m.start():]
-        method = sym[m.end(): m.end() + int(m.group(1))]
+        method = sym[m.end(): m.end() + int(m.group(2))]
         if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
             continue
-        out.append(_candidate(e["address"], sym, method, owner))
+        out.append(_candidate(e["address"], sym, method, owner, m.group(1)))
     return sorted(out, key=lambda c: (int(c["address"], 16), c["symbol"]))
 
 

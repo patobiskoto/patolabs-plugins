@@ -1,8 +1,10 @@
 """Tests of the corrections that settle the deferred review remarks of PAT-252, PAT-253 and PAT-260 (PAT-259).
 
-Offline: fakes only, no network, no model, no Ghidra or REA. Each test names the remark it settles."""
+Offline: fakes only, no network, no model, no Ghidra or REA, except `ProcTest`, which runs real local `sh` and `python3`
+processes to check the timeout. Each test names the remark it settles."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -89,6 +91,17 @@ class ArchiveAndDownloadTest(Base):
             with self.subTest(member=member, link=link), self.assertRaises(setup.SetupError):
                 setup.extract_zip(bad, self.tmp / "out2")
 
+    def test_nothing_is_written_when_a_later_link_target_is_bad(self):  # PAT-259 review 1, remark 3
+        bad = self.tmp / "late.zip"
+        with zipfile.ZipFile(bad, "w") as zf:
+            zf.writestr("top/first", "x")
+            link = zipfile.ZipInfo("top/alias")
+            link.external_attr = (0o120777 << 16)
+            zf.writestr(link, "../../outside")
+        with self.assertRaises(setup.SetupError):
+            setup.extract_zip(bad, self.tmp / "out4")
+        self.assertEqual(list((self.tmp / "out4").iterdir()), [])
+
     def test_zip_inner_symlink_without_dotdot_is_kept(self):  # the safe case stays supported
         good = self.tmp / "good.zip"
         with zipfile.ZipFile(good, "w") as zf:
@@ -144,6 +157,24 @@ class ProcTest(unittest.TestCase):
             else:
                 os.kill(child, signal.SIGKILL)
                 self.fail("the child of the timed-out process survived")
+
+    def test_a_descendant_in_its_own_session_holding_the_pipes_does_not_block_blueprint(self):  # PAT-259 review 1, remark 1
+        with tempfile.TemporaryDirectory() as t:
+            pidfile = Path(t) / "grandchild.pid"
+            code = ("import subprocess,sys,time;"
+                    "p=subprocess.Popen(['sleep','60'],start_new_session=True);"
+                    f"open({str(pidfile)!r},'w').write(str(p.pid));time.sleep(60)")
+            t0 = time.monotonic()
+            try:
+                rc, _, why = proc.run([sys.executable, "-c", code], 1)
+                elapsed = time.monotonic() - t0
+            finally:
+                if pidfile.exists():
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+            self.assertIsNone(rc)
+            self.assertIn("timed out", why)
+            self.assertLess(elapsed, 1 + proc.DRAIN_SECONDS + 5)
 
     def test_normal_run_and_launch_failure(self):
         rc, out, _ = proc.run(["sh", "-c", "echo hi; exit 3"], 5)
@@ -259,6 +290,21 @@ class DecompileInputsTest(Base):
         self.assertIn("partial functions", by["0x30"]["caveat"])
         self.assertIn("`fc` initialiser", by["0x40"]["caveat"])
 
+    def test_value_type_initialisers_and_static_async_functions(self):  # PAT-259 review 1, remarks 2, 8
+        def an(*rows):
+            return {"entries": [{"address": a, "owner": "TipManager", "symbol": s, "demangled": ""} for a, s in rows]}
+        out = decompile.analysis_entry_points(an(
+            ("0x10", "_$s1A10TipManagerV3hex5scaleACSS_SdtcfC"),     # struct initialiser: the body is in itself
+            ("0x20", "_$s1A10TipManagerC3hex5scaleACSS_SdtcfC"),     # class allocating initialiser
+            ("0x30", "_$s1A10TipManagerV4loadyyYaFZ"),               # static async function
+            ("0x40", "_$s1A10TipManagerO4loadyyYaF")), "Tip")        # async function on an enum
+        by = {c["address"]: c for c in out}
+        self.assertNotIn("caveat", by["0x10"])
+        self.assertIn("`fc` initialiser", by["0x20"]["caveat"])
+        self.assertIn("partial functions", by["0x30"]["caveat"])
+        self.assertIn("partial functions", by["0x40"]["caveat"])
+        self.assertIsNone(decompile.caveat("_$s1A10TipManagerV3hexfC", None))
+
     def test_candidates_summary_says_when_the_listing_is_cut(self):  # PAT-253 round 1, remark 8
         cands = [{"address": hex(i)} for i in range(decompile.MAX_LISTED + 5)]
         s = decompile.candidates_summary(cands, cands[:6])
@@ -281,7 +327,7 @@ class DecompileInputsTest(Base):
         inv = self.tmp / "inv.json"
         inv.write_text(json.dumps(inv_doc()))
         with mock.patch.object(setup, "tools_ready", return_value=[]), \
-                mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
+                mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.Popen") as sub:
             for bad in (["--max", "-1"], ["--max", "0"], ["--budget", "0"], ["--budget", "-5"], ["--budget", "nan"],
                         ["--budget", "inf"]):
                 with self.subTest(bad=bad):
@@ -300,7 +346,7 @@ class DecompileInputsTest(Base):
         an.write_text(json.dumps({"swift_types": [], "entries": [], "source": {}}))
         self.assertEqual(decompile.check_target(target, json.loads(inv.read_text())), None)
         target.write_bytes(b"other bytes")
-        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
+        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.Popen") as sub:
             rc, _, err = cli("decompile", str(target), "--inventory", str(inv), "--analysis", str(an), "--list",
                              "--group", "X")
             run.assert_not_called()
@@ -314,14 +360,18 @@ class DecompileInputsTest(Base):
         registry.add(paths.registry_file(self.data), str(target), "own product")
         inv, an = self.tmp / "inv.json", self.tmp / "an.json"
         inv.write_text(json.dumps(inv_doc()))
-        for bad in ([], {"swift_types": [], "entries": [], "source": None, "ghidra": None},
-                    {"swift_types": [], "entries": [{"address": "0x10"}], "source": {"sha256": TARGET_SHA,
-                                                                                   "arm64_sha256": SHA}}):
+        src = {"sha256": TARGET_SHA, "arm64_sha256": SHA}
+        for bad, want in (([], blueprint_cli.EXIT_USAGE),  # not an object
+                          ({"swift_types": [], "entries": [{"address": "0x10"}], "source": src},
+                           blueprint_cli.EXIT_USAGE),  # an entry without its fields
+                          ({"swift_types": [], "entries": [], "source": src}, blueprint_cli.EXIT_USAGE),  # no `ghidra`
+                          ({"swift_types": [], "entries": [], "source": None, "ghidra": None},
+                           blueprint_cli.EXIT_FAILED)):  # readable, but not made from this target
             an.write_text(json.dumps(bad))
             with self.subTest(bad=bad):
                 rc, _, err = cli("decompile", str(target), "--inventory", str(inv), "--analysis", str(an),
                                  "--entry", "0x10")
-                self.assertIn(rc, (blueprint_cli.EXIT_USAGE, blueprint_cli.EXIT_FAILED))
+                self.assertEqual(rc, want, err)
                 self.assertNotIn("Traceback", err)
 
     def test_rebuild_malformed_analysis_exits_2(self):  # PAT-260 round 1, remark 9
@@ -424,8 +474,12 @@ class ExportScriptTest(unittest.TestCase):
         self.assertRegex(self.java, r"c >= 0x02 && c <= 0x17\)\s*\{[^}]*i \+= 5;")
         self.assertIn("(raw & 3) != 0", self.java)
 
+    def test_sp_writing_instructions_forget_their_other_results(self):  # PAT-259 review 1, remark 4
+        branch = self.java.split("if (writesSp) {", 1)[1].split("continue;", 1)[0]
+        self.assertIn("forgetResults(in, -1)", branch)
+
     def test_walk_forgets_every_written_register(self):  # PAT-260 round 3, remark 2
         self.assertIn("private void forgetResults(Instruction in, int keepFp)", self.java)
-        self.assertEqual(self.java.count("forgetResults(in,"), 2)  # floatMove and the store branch (definition excluded)
+        self.assertEqual(self.java.count("forgetResults(in,"), 3)  # floatMove, the sp branch and the store branch
         self.assertIn("plain && i < count", self.java)
         self.assertIn("copiesFrame", self.java)

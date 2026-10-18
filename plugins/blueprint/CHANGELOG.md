@@ -7,9 +7,9 @@
 Settles the non-blocking remarks deferred from the reviews of PAT-252, PAT-253 and PAT-260 (PAT-259). No new verb.
 
 - `decompile`: `--max` must be at least 1 and `--budget` a positive finite number (exit 2); `--analysis` also compares the
-  target's sha256 with the inventory without launching a tool (exit 5 on a difference); a malformed analysis file is a usage
-  error, not a traceback; a REA row with a non-hex address is skipped; `candidates.listed` is capped at `MAX_LISTED` and says so
-  (`listed_truncated`); allocating initialisers and async functions carry a `caveat` (their decompilation is an intermediate);
+  target's sha256 with the inventory without launching a tool (exit 5 on a difference); a malformed analysis file is never a
+  traceback (exit 2 when unreadable as an analysis, exit 5 when not made from the target); a REA row with a non-hex address is skipped; `candidates.listed` is capped at `MAX_LISTED` and says so
+  (`listed_truncated`); allocating initialisers of classes and async functions carry a `caveat` (their decompilation is an intermediate);
   the README states that the budget does not include the target check and the arm64 extraction.
 - `rebuild`: a malformed analysis or inventory exits 2; resource usage lists state `usage_strings_total` and `usage_truncated`
   when `MAX_USAGE` cuts them, and `coverage.not_covered` counts the files cut; `.mp4` is kind `other`, not `sound`.
@@ -20,10 +20,11 @@ Settles the non-blocking remarks deferred from the reviews of PAT-252, PAT-253 a
   raises.
 - `setup`: zip extraction refuses absolute names and `..` components in member names and link targets; `pin_gradle` fails
   when the wrapper properties already pin another checksum; a download slower than `TIMEOUT_DOWNLOAD` as a whole is refused;
-  every external process runs in its own session and its whole process group is killed at the timeout.
+  every external process runs in its own session and its whole process group is killed at the timeout, the pipes then being
+  drained for at most `DRAIN_SECONDS`; the zip link targets are checked before anything is written.
 - `BlueprintExport.java`: the walk forgets every register an instruction writes (second loaded register, exclusive-store
   status register, written-back base register) and `mov xN, x29` ends frame-slot tracking; the string-label address accepts 8
-  to 16 hex digits; symbolic references `0x18`..`0x1f` are skipped as 8-byte pointers; only direct type records are read. A real
+  to 16 hex digits; symbolic references `0x18`..`0x1f` are skipped as 8-byte pointers; only direct type records are read. The walk also forgets the other registers written by an `sp`-writing instruction. A real
   `analyze` of the authorised target before and after gave the same functions, call sites, floating-point calls and
   Swift types (observed, 2026-10-18); the tests guard the script text only.
 - Documentation: README corrected where the review found it inexact or incomplete (walk, data directory, `--output`,

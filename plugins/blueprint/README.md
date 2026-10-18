@@ -61,8 +61,8 @@ size) and every location written. Sizes are not recorded in the code: the plan p
 | `natives` | Gradle distribution, fetched by the wrapper | wrapper properties of the extracted Ghidra, `gradle-home/`, native decompiler | `GRADLE_DIST_SHA256`, `NATIVE_DECOMPILER` |
 
 - A downloaded file whose sha256 differs from the pin is deleted and the step fails
-  (`fetch`). `TIMEOUT_DOWNLOAD` bounds each socket operation (`urlopen`) and also the whole transfer, checked after every
-  chunk read (`fetch`; `test_a_slow_download_is_refused_as_a_whole`). npm verifies each package against the integrity of the
+  (`fetch`). `TIMEOUT_DOWNLOAD` bounds each socket operation (`urlopen`) and also the whole transfer, checked between 1 MiB
+  blocks (one read can last up to the timeout itself; `fetch`; `test_a_slow_download_is_refused_as_a_whole`). npm verifies each package against the integrity of the
   lockfile.
 - Zip extraction (`extract_zip`) refuses, before writing anything, a member name or a symbolic-link target that is absolute or
   holds a `..` component (`_plain_relative`), because containment alone is bypassed by a link `l -> .` followed by a member
@@ -125,7 +125,9 @@ reduced to its arm64 slice with `lipo -thin arm64` (`thin`) because REA refuses 
 binary with Ghidra (observed in the 2026-10-18 trials). Every external process has a
 timeout (`TIMEOUT_*` in `tooling/blueprint/pins.py`), runs in its own session and, at the timeout, the whole process group
 is killed (`proc.run`; `test_timeout_kills_the_whole_process_group`). A descendant that starts another session of its own
-escapes that kill (deduced from `setsid` semantics, not tried).
+escapes that kill (deduced from `setsid` semantics); `proc.run` then drains the pipes for at most `DRAIN_SECONDS` (2 s) and
+gives up on them, so blueprint returns but that descendant keeps running and what it still writes is dropped
+(`test_a_descendant_in_its_own_session_holding_the_pipes_does_not_block_blueprint`).
 
 The document has no timestamp, no absolute path and sorted lists; two runs on the same
 inputs give the same bytes by construction (checked on fakes only,
@@ -204,10 +206,12 @@ The budget starts in `decompile.run`: the target hash check and the arm64 extrac
 (default `<data dir>/decompilations/<name>-<group>.json`, mode 600) keeps per entry the address, the mangled
 symbol, the method name, the pseudo-code and the evidence (`rea_evidence_id`, `target_sha256`, `address`);
 REA's `local_path` is not copied. `candidates` gives `total`, `chosen`, and `listed` (at most `MAX_LISTED` = the first 200
-by address, `listed_truncated` says when more exist). An allocating initialiser (`fC`) or an async function (`YaF`) is a
-candidate whose decompilation is an intermediate (observed in the trial: the allocation and the call to the real
-initialiser `fc`, or the switch to partial functions `TY0_`); neither `fc` nor the partial functions are candidates, and
-those two kinds carry a `caveat` field saying so (`decompile.caveat`; `test_entry_points_skip_non_hex_addresses_and_mark_intermediate_candidates`).
+by address, `listed_truncated` says when more exist). The allocating initialiser of a class (`fC` after the kind letter `C`) or an async function (`YaF`, static `YaFZ`) is a
+candidate whose decompilation is an intermediate (observed in the trial for classes and async functions: the allocation
+and the call to the real initialiser `fc`, or the switch to partial functions `TY0_`); neither `fc` nor the partial
+functions are candidates, and those two kinds carry a `caveat` field saying so. A struct or enum initialiser is a
+value-type `fC` with no `fc`: its body is in itself and it has no caveat (deduced from the Swift ABI; not observed in the
+trial) (`decompile.caveat`; `test_value_type_initialisers_and_static_async_functions`; `test_entry_points_skip_non_hex_addresses_and_mark_intermediate_candidates`).
 A failed call is `status: unknown` with the reason; a group whose classes
 have no known module (seen only as Swift conformances) has no search hint and says unknown.
 Observed on 2026-10-18 on the authorised target: `rea search --kind procedures` and `rea decompile` each
@@ -254,8 +258,8 @@ target against the inventory like `decompile` (`slice_for`, exit 5), then `analy
    (`outArgsSize`); at a call, `x0`..`x18`, `x30`, `d0`..`d7`, `d16`..`d31`, the outgoing-argument area and its size; for
    good, the frame slots once an `add`/`sub` forms a frame- or stack-pointer address or a `mov` copies `x29` into another
    register (`escaped`); and every register an instruction writes that the walk does not model, including a second
-   loaded register (`ldp d0, d1`), the status register of an exclusive store (`stxr`) and a written-back base register
-   (`forgetResults`). A `mov xN, sp` is not counted as such a copy, because doing so dropped the correct value of `x6` in six
+   loaded register (`ldp d0, d1`), the status register of an exclusive store (`stxr`), a written-back base register and the
+   registers loaded by an instruction that also writes `sp` (`ldp x19, x20, [sp], #32`) (`forgetResults`). A `mov xN, sp` is not counted as such a copy, because doing so dropped the correct value of `x6` in six
    one-time initialisers of the 2026-10-18 target (observed on a run compared with the previous script); a frame slot
    reached through a copy of `sp` could keep a stale value (deduced, not observed). Consequence (deduced from `outArgsSize`
    being reset at a call): when a function's `sub sp, sp, #imm` comes before another call, the stack arguments of a later
@@ -285,8 +289,9 @@ id), with `evidence_id = gh_<slice sha256[:16]>_<address without 0x>` (`analysis
 `decompile --analysis FILE` reads the pseudo-code from that document: same registry gate, the target's own bytes compared
 with the inventory (sha256 of the analysed binary, `decompile.check_target`, exit 5 on a difference; the arm64 slice is not
 extracted), same output shape, no Ghidra or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launches_nothing`), `from_analysis.ghidra_runs: 0`,
-and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs). A malformed analysis file is a usage error (exit 2),
-not a traceback (`test_malformed_analysis_is_a_usage_error_not_a_traceback`).
+and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs). A malformed analysis file is never a traceback: exit 2 when it cannot be read
+as an analysis, exit 5 when it is readable but was not made from this inventory's target
+(`test_malformed_analysis_is_a_usage_error_not_a_traceback`, one assertion per case).
 With `--analysis`, `--group` accepts every group that `rebuild` detects (`rebuild.detect_groups`: the Swift types of the
 image, structs and enums included, not only the inventory's Objective-C classes), and the entry points are the functions
 (mangled name ending in `F`, static `FZ`, private types included), initialisers (`fC`), getters (a SwiftUI view's `body` included) and the closures

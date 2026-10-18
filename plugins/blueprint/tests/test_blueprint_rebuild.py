@@ -696,7 +696,7 @@ class CliTest(unittest.TestCase):
         self.target.write_bytes(TARGET_BYTES)
 
     def test_analyze_is_refused_for_an_unregistered_target_before_anything_runs(self):
-        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
+        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.Popen") as sub:
             rc, _, err = cli("analyze", str(self.target), "--inventory", str(self.inv))
         self.assertEqual(rc, blueprint_cli.EXIT_REFUSED)
         self.assertIn("not in the registry", err)
@@ -737,7 +737,7 @@ class CliTest(unittest.TestCase):
         self.inv.write_text(json.dumps(inv))
         an, out = self.tmp / "an.json", self.tmp / "dec.json"
         an.write_text(json.dumps(make_analysis()))
-        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
+        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.Popen") as sub:
             rc, _, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
                                   "--group", "Session", "--output", str(out))
             run.assert_not_called()

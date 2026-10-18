@@ -100,7 +100,8 @@ def render_plan(d: Path) -> str:
 
 def fetch(url: str, dest: Path, checksum: str, timeout: float = pins.TIMEOUT_DOWNLOAD) -> None:
     """Download over https to dest, verifying `checksum` (hex sha256); a mismatch deletes the file. `timeout` bounds
-    each socket operation (`urlopen`) and also the whole transfer (checked after every chunk read)."""
+    each socket operation (`urlopen`) and also the whole transfer, checked between 1 MiB blocks (one read can last up to
+    `timeout` itself)."""
     if not url.startswith("https://"):
         raise SetupError("refusing a non-https download")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +147,10 @@ def extract_zip(archive: Path, dest: Path) -> None:
         for info in zf.infolist():
             if not _plain_relative(info.filename) or not _inside(dest, info.filename):
                 raise SetupError("archive member outside the target directory")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:  # symlink: its target is checked before anything is written
+                link = zf.read(info).decode("utf-8", errors="replace")
+                if not _plain_relative(link) or not _inside((dest / info.filename).parent, link):
+                    raise SetupError("archive symlink outside the target directory")
         for info in zf.infolist():
             target = dest / info.filename
             if info.is_dir():
