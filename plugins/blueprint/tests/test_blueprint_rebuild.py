@@ -524,8 +524,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         doc = json.loads(out.read_text())
         self.assertEqual(doc["from_analysis"]["ghidra_runs"], 0)
-        self.assertEqual([(e["method"], e["status"]) for e in doc["entries"]], [("start", "ok"), ("stop", "unknown")])
-        self.assertEqual(doc["entries"][0]["evidence"]["evidence_id"], "gh_" + SHA[:16] + "_80")
+        self.assertEqual([(e["method"], e["status"]) for e in doc["entries"]], [("body", "ok"), ("start", "ok"), ("stop", "unknown")])
+        self.assertEqual(doc["entries"][1]["evidence"]["evidence_id"], "gh_" + SHA[:16] + "_80")
 
     def _auth(self):
         from blueprint import registry
@@ -540,11 +540,20 @@ class CliTest(unittest.TestCase):
         rc, _, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
                          "--group", "Session", "--output", str(out))
         self.assertEqual(rc, 0, err)
-        self.assertEqual([e["method"] for e in json.loads(out.read_text())["entries"]], ["start", "stop"])
+        self.assertEqual([e["method"] for e in json.loads(out.read_text())["entries"]], ["body", "start", "stop"])
         rc, _, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
                          "--group", "Nope")
         self.assertEqual(rc, blueprint_cli.EXIT_USAGE)
         self.assertIn("Session", err)
+
+    def test_view_body_and_computed_getters_are_candidates_but_not_wrapper_storage(self):
+        v = decompile._view_code
+        self.assertTrue(v("_$s1A4HomeV4bodyQrvg", "A.Home.body.getter : some"))
+        self.assertTrue(v("_$s1A4HomeV4hero33_XLLSbvg", "A.Home.(hero in _X).getter : Swift.Bool"))
+        self.assertTrue(v("_$s1A4HomeV4bodyQrvgyyXEfU_", "closure #1 () -> () in A.Home.body.getter : some"))
+        self.assertFalse(v("_$s1A4HomeV5_flag7SwiftUI5StateVySbGvg", "A.Home._flag.getter : SwiftUI.State<Swift.Bool>"))
+        self.assertFalse(v("_$s1A4HomeV5_flagvs", "A.Home._flag.setter : Swift.Bool"))
+        self.assertFalse(v("_$s1A4HomeV3runyyF", "A.Home.run() -> ()"))
 
     def test_list_writes_nothing(self):
         an = self._auth()

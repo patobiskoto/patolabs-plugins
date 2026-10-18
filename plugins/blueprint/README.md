@@ -212,14 +212,15 @@ or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launche
 and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs).
 With `--analysis`, `--group` accepts every group that `rebuild` detects (`rebuild.detect_groups`: the Swift types of the
 image, structs and enums included, not only the inventory's Objective-C classes), and the entry points are the functions
-(mangled name ending in `F`) and initialisers (`fC`) of that group's types, minus the same boilerplate
-(`decompile.analysis_entry_points`; `test_group_of_the_analysis_is_accepted_without_an_inventory_class`). `--list` prints the
+(mangled name ending in `F`), initialisers (`fC`), computed getters (a SwiftUI view's `body` included) and the closures
+of a `body` of that group's types, without property-wrapper storage and key paths (`decompile._view_code`,
+`_WRAPPERS`) and minus the same boilerplate (`decompile.analysis_entry_points`; `test_group_of_the_analysis_is_accepted_without_an_inventory_class`). `--list` prints the
 candidates and writes no file unless `--output` is given (`test_list_writes_nothing`). `--entry` must be one address
 `0x<hex>` (`decompile.ADDRESS`; anything else exits 2, `test_bad_entry_address_is_a_usage_error_and_unknown_is_not_success`).
 The summary line counts entries decompiled and unknown (`decompile.counts`), lists each unknown entry with its reason, and the
 exit code is 5 when none was decompiled (an address with no app function in the analysis is `unknown`). Checked once on
-2026-10-18 on the authorised target with an analysis: `--group Home` (3 of 3 decompiled), `--group Breathing --list`
-(20 candidates, no file written), `--entry` with trailing text (exit 2), `--entry 0xdeadbeef` (0 of 1, exit 5).
+2026-10-18 on the authorised target with an analysis: `--group Home` (14 candidates, 6 of 6 decompiled at the default maximum), `--group Breathing --list`
+(88 candidates, no file written), `--entry` with trailing text (exit 2), `--entry 0xdeadbeef` (0 of 1, exit 5).
 
 Observed on 2026-10-18 on the authorised target (Debug simulator build, code in `.debug.dylib`; Ghidra 12.1.4):
 first `analyze`: analysis 48.9 s, export 17.6 s, demangle 27.6 s, total 94.1 s; a second `analyze` reused the analysis
