@@ -580,7 +580,7 @@ class CliTest(unittest.TestCase):
         an = self._auth()
         base = ["decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an), "--output",
                 str(self.tmp / "e.json")]
-        rc, _, err = cli(*base, "--entry", "0x80 junk")
+        rc, _, _err = cli(*base, "--entry", "0x80 junk")
         self.assertEqual(rc, blueprint_cli.EXIT_USAGE)
         self.assertFalse((self.tmp / "e.json").exists())
         rc, out, _ = cli(*base, "--entry", "0xdead")
