@@ -555,6 +555,18 @@ class CliTest(unittest.TestCase):
         self.assertFalse(v("_$s1A4HomeV5_flagvs", "A.Home._flag.setter : Swift.Bool"))
         self.assertFalse(v("_$s1A4HomeV3runyyF", "A.Home.run() -> ()"))
 
+    def test_private_type_and_static_functions_are_candidates(self):
+        h = "D46F2947CCA3928677AC0B74CE72F766"
+        an = {"entries": [
+            {"address": "0x10", "owner": "RootView", "symbol": f"_$s1A8RootView33_{h}LLV4bodyQrvg",
+             "demangled": f"A.(RootView in _{h}).body.getter : some"},
+            {"address": "0x20", "owner": "TipManager", "symbol": "_$s1A10TipManagerV4markyyFZ",
+             "demangled": "static A.TipManager.mark() -> ()"},
+            {"address": "0x30", "owner": "RootView", "symbol": f"_$s1A8RootView33_{h}LLVMa",
+             "demangled": f"type metadata accessor for A.(RootView in _{h})"}]}
+        self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "Root")], ["body"])
+        self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "Tip")], ["mark"])
+
     def test_list_writes_nothing(self):
         an = self._auth()
         rc, out, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),

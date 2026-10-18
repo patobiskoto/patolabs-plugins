@@ -150,7 +150,7 @@ def _view_code(sym: str, demangled: str) -> bool:
 
 
 def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
-    """Functions (mangled name ending in `F`), initialisers (`fC`), computed getters and `body` closures (`_view_code`)
+    """Functions (mangled name ending in `F`, static `FZ`), initialisers (`fC`), computed getters and `body` closures (`_view_code`)
     of every type of a group detected by
     `rebuild.detect_groups`, structs and enums included (SwiftUI screens), from the saved analysis; the same
     boilerplate as `entry_points` is left out."""
@@ -161,8 +161,9 @@ def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
         if not r or r[0] != group_name:
             continue
         sym = e["symbol"]
-        m = re.search(re.escape(f"{len(owner)}{owner}") + r"[A-Z](\d+)", sym)
-        if not m or not (sym.endswith(("F", "fC")) or _view_code(sym, e.get("demangled") or "")):
+        # A private type carries its scope discriminator (`33_<hash>LL`) between its name and its kind letter.
+        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?[A-Z](\d+)", sym)
+        if not m or not (sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
             continue
         rest = sym[m.start():]
         method = sym[m.end(): m.end() + int(m.group(1))]

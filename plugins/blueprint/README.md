@@ -212,7 +212,7 @@ or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launche
 and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs).
 With `--analysis`, `--group` accepts every group that `rebuild` detects (`rebuild.detect_groups`: the Swift types of the
 image, structs and enums included, not only the inventory's Objective-C classes), and the entry points are the functions
-(mangled name ending in `F`), initialisers (`fC`), computed getters (a SwiftUI view's `body` included) and the closures
+(mangled name ending in `F`, static `FZ`, private types included), initialisers (`fC`), computed getters (a SwiftUI view's `body` included) and the closures
 of a `body` of that group's types, without property-wrapper storage and key paths (`decompile._view_code`,
 `_WRAPPERS`) and minus the same boilerplate (`decompile.analysis_entry_points`; `test_group_of_the_analysis_is_accepted_without_an_inventory_class`). `--list` prints the
 candidates and writes no file unless `--output` is given (`test_list_writes_nothing`). `--entry` must be one address
