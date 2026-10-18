@@ -211,7 +211,7 @@ candidate whose decompilation is an intermediate (observed in the trial for clas
 and the call to the real initialiser `fc`, or the switch to partial functions `TY0_`); neither `fc` nor the partial
 functions are candidates, and those two kinds carry a `caveat` field saying so. A struct or enum initialiser is a
 value-type `fC` with no `fc`: its body is in itself and it has no caveat (deduced from the Swift ABI; not observed in the
-trial); an initialiser declared in an extension has no kind letter and no caveat, even for a class (deduced) (`decompile.caveat`; `test_value_type_initialisers_and_static_async_functions`; `test_entry_points_skip_non_hex_addresses_and_mark_intermediate_candidates`).
+trial); an initialiser the app declares in an extension of another module's type (`analysis.extension_of`) is passed no kind and gets no caveat, even for a class (deduced); a generic async function (`…YalF`, `…YaKlF`) is not recognised either (deduced) (`decompile.caveat`; `test_value_type_initialisers_and_static_async_functions`; `test_entry_points_skip_non_hex_addresses_and_mark_intermediate_candidates`).
 A failed call is `status: unknown` with the reason; a group whose classes
 have no known module (seen only as Swift conformances) has no search hint and says unknown.
 Observed on 2026-10-18 on the authorised target: `rea search --kind procedures` and `rea decompile` each

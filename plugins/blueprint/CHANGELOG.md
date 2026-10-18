@@ -10,7 +10,7 @@ Settles the non-blocking remarks deferred from the reviews of PAT-252, PAT-253 a
   the target's sha256 with the inventory without launching a tool (exit 5 on a difference); a malformed analysis file is
   never a traceback (exit 2 when unreadable as an analysis, exit 5 when not made from the target); a REA row with a
   non-hex address is skipped; `candidates.listed` is capped at `MAX_LISTED` and says so (`listed_truncated`); allocating
-  initialisers of classes and async functions carry a `caveat` (their decompilation is an intermediate); the README
+  initialisers of classes and non-generic async functions (the suffixes listed in the README) carry a `caveat` (their decompilation is an intermediate); the README
   states that the budget does not include the target check and the arm64 extraction.
 - `rebuild`: a malformed analysis or inventory exits 2; resource usage lists state `usage_strings_total` and
   `usage_truncated` when `MAX_USAGE` cuts them, and `coverage.not_covered` counts the files cut; `.mp4` is kind `other`,

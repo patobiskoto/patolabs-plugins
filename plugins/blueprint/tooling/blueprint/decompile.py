@@ -33,7 +33,7 @@ def caveat(symbol: str, kind: str | None) -> str | None:
     of a class (`fC` after the kind letter `C`) only allocates and calls the initialiser `fc`, an async function (`YaF`,
     static `YaFZ`; `async throws`: `YaKF`, `YaKFZ`, deduced from the Swift mangling) only switches to its partial functions (`TY0_`...). Neither `fc` nor the partial functions are listed
     as candidates. A struct or enum initialiser (kind `V`, `O`) is a value-type `fC` with no `fc`: its body is in itself,
-    and `kind` None (a member of an extension) gives no initialiser caveat either."""
+    and `kind` None (a member of an extension of another module's type) gives no initialiser caveat either."""
     if symbol.endswith("fC") and kind == "C":
         return "allocating initialiser: the body is in the `fc` initialiser, which is not a candidate"
     if symbol.endswith(("YaF", "YaFZ", "YaKF", "YaKFZ")):
