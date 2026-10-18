@@ -17,7 +17,7 @@ def load(path: Path) -> dict:
     try:
         r = json.loads(path.read_text(encoding="utf-8"))
         assert r["schema"] == report.SCHEMA
-        r["simulator"]["udid"], r["simulator"]["runtime"], r["start_state"]["mode"]
+        r["simulator"]["udid"], r["simulator"]["runtime"], r["start_state"]["mode"], r["start_state"]["tests_selection"]
         r["checkout"]["commit"], r["scheme"], r["outcome"]
     except (OSError, ValueError, KeyError, TypeError, AssertionError):
         raise Incomparable(f"{path} is not a readable {report.SCHEMA} report") from None
@@ -25,7 +25,7 @@ def load(path: Path) -> dict:
 
 
 def check(before: dict, after: dict) -> None:
-    """Compared sets: simulator udid, runtime, scheme and starting state (mode and description)."""
+    """Compared sets: simulator udid, runtime, scheme and starting state (mode, description, tests selection)."""
     problems = []
     for key in ("udid", "runtime"):
         if before["simulator"][key] != after["simulator"][key]:
@@ -37,6 +37,9 @@ def check(before: dict, after: dict) -> None:
         problems.append("a proof has no declared starting state (use --reset or --state-description)")
     elif (bs["mode"], bs.get("description")) != (a_s["mode"], a_s.get("description")):
         problems.append(f"starting state differs: {bs} vs {a_s}")
+    if bs["tests_selection"] != a_s["tests_selection"]:
+        problems.append(f"tests selection differs: {bs['tests_selection']!r} vs {a_s['tests_selection']!r}"
+                        " (a test run can install and launch the app after the reset)")
     for name, r in (("before", before), ("after", after)):
         if not r.get("paths", {}).get("screenshot"):
             problems.append(f"the {name} proof has no screenshot (outcome: {r['outcome']})")
@@ -71,7 +74,8 @@ def markdown(c: dict) -> str:
     sim, st = c["simulator"], c["start_state"]
     lines = ["# witness before/after", "",
              f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}",
-             f"- Shared starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else ""),
+             f"- Shared starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else "")
+             + f" (tests: {st['tests_selection']})",
              f"- Screenshots pixel-identical (sha256): {c['screenshots_identical']}",
              f"- Coordinator token cost: {c['token_cost']}", "",
              "| | Commit | Dirty | Tests | Outcome | Seconds | Screenshot |", "|---|---|---|---|---|---|---|"]

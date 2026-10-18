@@ -201,6 +201,27 @@ class ProveTests(Base):
         self.assertIn("-only-testing:T/C", test_cmd)
         self.assertIn("P", test_cmd)
 
+    def test_refused_reset_exits_5_and_writes_report(self):
+        fake = Fake(state="Booted")
+        code, _, _ = self.prove(fake)
+        self.assertEqual(code, 5)
+        rep = json.loads(next((self.tmp / "out").glob("report-*.json")).read_text())
+        self.assertEqual(rep["outcome"], "failed at reset")
+        self.assertEqual(rep["steps"][0]["status"], "failed")
+        self.assertFalse([c for c in fake.calls if c[0] == "xcodebuild"])
+
+    def test_unknown_tests_result_exits_6(self):
+        code, _, _ = self.prove(Fake(tests="no summary\n"))
+        self.assertEqual(code, 6)
+
+    def test_tests_selection_recorded(self):
+        for extra, want in ((("--skip-tests",), "skipped"), ((), "all"), (("--only-testing", "T"), "only-testing"),
+                            (("--test-plan", "P"), "test-plan"),
+                            (("--test-plan", "P", "--only-testing", "T"), "test-plan+only-testing")):
+            self.prove(Fake(), label=want, extra=("--reset", *extra))
+            rep = json.loads(next((self.tmp / "out").glob(f"report-{want}-*.json")).read_text())
+            self.assertEqual(rep["start_state"]["tests_selection"], want)
+
     def test_reset_and_description_exclusive(self):
         code, _, _ = self.prove(Fake(), extra=("--reset", "--state-description", "d"))
         self.assertEqual(code, 2)
@@ -231,6 +252,19 @@ class CompareTests(Base):
         u = self.proof("unspec", ("--skip-tests",))
         code, _, err = self.run_cli(Fake(), "compare", "--before", str(u), "--after", str(b))
         self.assertEqual(code, 3)
+
+    def test_compare_refuses_different_tests_selection(self):
+        b = self.proof("before")
+        a = self.proof("after", ("--reset", "--skip-tests"))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(a))
+        self.assertEqual(code, 3)
+        self.assertIn("tests selection differs", err)
+        a2 = self.proof("after2", ("--reset", "--only-testing", "T"))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(a2))
+        self.assertEqual(code, 3)
+        s1 = self.proof("s1", ("--reset", "--skip-tests"))
+        s2 = self.proof("s2", ("--reset", "--skip-tests"))
+        self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(s1), "--after", str(s2))[0], 0)
 
     def test_compare_refuses_other_simulator_and_junk(self):
         b = self.proof("before")

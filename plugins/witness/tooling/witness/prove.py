@@ -39,6 +39,10 @@ def prove(*, project: Path, scheme: str, sim_name: str, runtime: str | None, lab
     start_state = ({"mode": "reset"} if reset else
                    {"mode": "described", "description": state_description} if state_description
                    else {"mode": "unspecified"})
+    selection = ("skipped" if skip_tests else
+                 "test-plan+only-testing" if test_plan and only else
+                 "test-plan" if test_plan else "only-testing" if only else "all")
+    start_state["tests_selection"] = selection
     rep: dict = {
         "schema": report.SCHEMA, "label": label, "generated_at": started.isoformat(timespec="seconds"),
         "project": project.name, "scheme": scheme, "checkout": {"kind": kind, **checkout.describe(project)},

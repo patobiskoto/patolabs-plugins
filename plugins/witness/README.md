@@ -11,8 +11,9 @@ python3 plugins/witness/tooling/witness_cli.py compare --before REPORT.json --af
 Skills: `/witness:prove`, `/witness:compare` (Claude Code); `$witness:prove`, `$witness:compare` (Codex).
 
 Exit codes (`EXIT_*` in `tooling/witness_cli.py`): 0 done, 2 usage, 3 refused (main checkout, simulator
-not found or ambiguous, reset impossible, incomparable proofs), 5 a step failed (a report is still written),
-6 tests failed (the screenshot is taken and the report written).
+not found or ambiguous, incomparable proofs), 5 a step failed, including a `reset` refused because the simulator
+is not shut down (a report is still written), 6 the tests result is `failed` or `unknown` (the screenshot is
+taken and the report written).
 
 ## prove
 
@@ -28,7 +29,9 @@ Steps, in order, each timed with `time.monotonic` (`prove` in `tooling/witness/p
 - The built app is the single `*.app` under `<derived>/Build/Products/*-iphonesimulator/` (the one named like the
   scheme if several; `*-Runner.app` ignored); its bundle id is `CFBundleIdentifier` of its `Info.plist`
   (`find_app`).
-- `--reset` runs `simctl erase` only if the simulator state is `Shutdown`; witness never shuts one down.
+- `--reset` runs `simctl erase` only if the simulator state is `Shutdown`; witness never shuts one down, and
+  `ensure_booted` leaves it booted. For a before/after pair with `--reset`, run
+  `xcrun simctl shutdown <UDID>` yourself before each proof after the first.
 - The test summary is read from the xcodebuild output: `** TEST SUCCEEDED **` / `** TEST FAILED **` and the last
   `Executed N tests, with F failures` line (`summarize`); a field it cannot read is `unknown`.
 - Every external process has a timeout (`TIMEOUT_*` constants in `xcode.py`, `simulator.py`, `checkout.py`);
@@ -46,14 +49,16 @@ report and on the first output line. Erasing and installing do change the named 
 
 `report-<label>-<UTC stamp>.json` and `.md` (`tooling/witness/report.py`, schema `witness-proof.v1`): generation time
 (UTC), project name, scheme, checkout kind, commit and dirty flag of the project's checkout (`unknown` outside git),
-simulator name, UDID and runtime, starting state (`reset`, `described` with its text, or `unspecified`), test summary,
+simulator name, UDID and runtime, starting state (`reset`, `described` with its text, or `unspecified`, plus `tests_selection`: `skipped`,
+`only-testing`, `test-plan`, `test-plan+only-testing` or `all`), test summary,
 steps with status and seconds, paths of logs and screenshot, sha256 of the screenshot. The coordinator's token cost
 is always the text `TOKEN_COST_UNKNOWN`: witness does not measure it.
 
 ## compare
 
 `compare.check` requires the two reports to share the simulator UDID, the runtime, the scheme and the starting state
-(`reset` on both, or `described` with the same text); a proof with state `unspecified`, or without a screenshot, is
+(`reset` on both, or `described` with the same text) and the same `tests_selection` (a test run installs and
+launches the app after the reset, deduced, not observed); a proof with state `unspecified`, or without a screenshot, is
 refused (exit 3). The result (`compare-<UTC stamp>.json`/`.md`, schema `witness-compare.v1`) lists both commits, test
 results, durations and screenshots, and `screenshots_identical` from the recorded sha256 (`unknown` if one is missing).
 It notes a shared commit and a dirty or unknown checkout.

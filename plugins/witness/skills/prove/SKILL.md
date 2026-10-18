@@ -18,7 +18,9 @@ absolute path by removing `/skills/prove/SKILL.md`.
    maintainer's main checkout (the command refuses it). Name the simulator you will use.
 2. For a before/after proof, run it twice (`--label before` at the old commit, `--label after` at the new
    one) with the same simulator and the same starting state: `--reset` (erases the simulator, which must
-   be shut down) or `--state-description "<text>"`.
+   be shut down) or `--state-description "<text>"`. Witness never shuts a simulator down and leaves it booted:
+   with `--reset`, run `xcrun simctl shutdown <UDID>` yourself between the two proofs. Run both with the same
+   test options (`compare` refuses a different tests selection).
 
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<witness-root>")/tooling/witness_cli.py" prove --project <P> --scheme <S> --simulator "<NAME>" --label before --reset
