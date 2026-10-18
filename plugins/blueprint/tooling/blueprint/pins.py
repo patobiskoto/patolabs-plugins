@@ -37,3 +37,8 @@ TIMEOUT_BUILD = 1800
 TIMEOUT_LIPO = 120
 TIMEOUT_OTOOL = 60
 TIMEOUT_REA = 900
+# Targeted decompilation (PAT-253). Each `rea decompile` or `rea search` re-analyses the binary: about 52 s each
+# on the 2026-10-18 trial (observed, `--snapshot` did not shorten it), hence a small default count and a budget.
+TIMEOUT_DECOMPILE = 300
+MAX_DECOMPILE = 6
+BUDGET_DECOMPILE = 1800

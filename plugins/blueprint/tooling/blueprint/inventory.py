@@ -104,12 +104,12 @@ def sort_items(items: list[dict]) -> list[dict]:
 class Rea:
     """One pinned REA call: JSON in, (document, None) or (None, reason). Always bounded."""
 
-    def __init__(self, data: Path, runner=proc.run):
-        self.data, self.runner = data, runner
+    def __init__(self, data: Path, runner=None):
+        self.data, self.runner = data, runner or proc.run
 
-    def call(self, args: list[str]) -> tuple[dict | None, str | None]:
+    def call(self, args: list[str], timeout: float = pins.TIMEOUT_REA) -> tuple[dict | None, str | None]:
         cmd = [str(paths.rea_bin(self.data)), *args, "--format", "json"]
-        rc, out, err = self.runner(cmd, pins.TIMEOUT_REA, env=setup.tool_env(self.data))
+        rc, out, err = self.runner(cmd, timeout, env=setup.tool_env(self.data))
         if rc is None:
             return None, err
         try:

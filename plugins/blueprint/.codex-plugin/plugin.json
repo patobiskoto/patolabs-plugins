@@ -1,7 +1,7 @@
 {
   "name": "blueprint",
-  "description": "Prepares pinned REA/Ghidra tooling without a global install, enforces a registry of targets the maintainer authorised, and writes a reproducible inventory of an authorised target with REA evidence.",
-  "version": "0.1.0",
+  "description": "Prepares pinned REA/Ghidra tooling without a global install, enforces a registry of targets the maintainer authorised, and writes a reproducible inventory of an authorised target with REA evidence, groups it into screens and features, and turns a product-language spec into Foundry payloads.",
+  "version": "0.2.0",
   "author": {
     "name": "pato"
   },
