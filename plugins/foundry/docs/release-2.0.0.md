@@ -78,7 +78,8 @@ issue number descending. No configuration key, routing default, model or effort 
 
 ## Other plugins of the same catalogue
 
-The commits below also merged these plugins. Each has its own version, README and
+The commits below also merged Gauge, Relay, Blueprint and Witness; Ship-iOS is listed for
+completeness. Each has its own version, README and
 changelog; this page does not summarise their behaviour beyond the description in their
 own manifest, and does not promote them.
 
