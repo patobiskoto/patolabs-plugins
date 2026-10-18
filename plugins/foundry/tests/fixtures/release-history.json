@@ -4,10 +4,10 @@
   "releases": {
     "2.0.0": {
       "date": "2026-10-18",
-      "changelog_sha256": "ce254f43f44f33995dfdcefdbd7cf39f3eea1881b2e7c887848d3bda37563e24",
+      "changelog_sha256": "9e0ff0135692e835151570201f5cac9df071ae56d81642f3ef46ca4e8b4982dd",
       "documents": {
-        "docs/migration-2.0.0.md": "e5caef237964f2a2c050057b11603182eb5b7d5dc85b8c7f5a8c6a500219a0e0",
-        "docs/release-2.0.0.md": "d4143f8e22a1dbc34147ffd6584adf00c8c7fdf11f3bec07d2a51f87aad4e090"
+        "docs/migration-2.0.0.md": "add9640e018bb15f189535b11c01b0dc6063f8130dc847a7f5f2df6b044b4ecd",
+        "docs/release-2.0.0.md": "a239fc2a2e65137baf60be3052bb1f74b750050b60bea362de47d1c8100c0224"
       }
     },
     "1.5.0": {

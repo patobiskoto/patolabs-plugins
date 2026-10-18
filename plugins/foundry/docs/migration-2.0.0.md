@@ -37,7 +37,7 @@ Two checks, for what the release note announces. Neither edits a cache.
    `expires_at`, at most `MAX_TTL` (7 days) after its approval (documented there, not run for
    this guide).
 2. **Scripts that parse Foundry output.** The replay hint of `issue accept --status` and
-   the unknown-flag message of `issue close-epic` changed (changelog entries of PAT-239 and
+   the unknown-flag messages of `issue accept` and `issue close-epic` changed (changelog entries of PAT-239 and
    PAT-242). `campaign-approval` and `campaign-cadence` emit codes in new cases, among them
    `journal_invalid` (now also for a journal that cannot be written),
    `review_proof_integrity`, `review_state_without_branch_or_pr`, `pr_head_not_in_branch`,

@@ -51,8 +51,9 @@ on a live workspace for this release preparation.
 
 ### 3. Small verb changes (PAT-239, PAT-242)
 
-`issue accept <ID> --status` words its replay hint by native state, and `issue close-epic`
-with an unknown flag now lists its four flags (changelog entries of PAT-239 and PAT-242;
+`issue accept <ID> --status` words its replay hint by native state, `issue accept` with an
+unknown flag lists its real flags, and `issue close-epic` with an unknown flag now lists its
+four flags (changelog entries of PAT-239 and PAT-242;
 [linear-tracker.md](linear-tracker.md)).
 
 ### 4. New tools, on demand (PAT-184, PAT-198, PAT-245, PAT-244)

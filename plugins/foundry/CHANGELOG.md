@@ -14,7 +14,7 @@ without a new verb: `campaign-approval approve` caps the approval at the preview
 `policy.expires_at` and refuses more inputs, and the Claude Bash guard denies a wider set of
 `campaign-approval approve` command shapes (PAT-234); the campaign next step, effects, review,
 correction and deferral decide differently in the cases listed by PAT-235, PAT-236, PAT-237
-and PAT-238; `issue accept --status` wording and the `issue close-epic` unknown-flag message change
+and PAT-238; `issue accept --status` wording and the `issue accept` and `issue close-epic` unknown-flag messages change
 (PAT-239, PAT-242), and `campaign_effects._save_summary` writes a lone surrogate as `?`
 instead of raising `UnicodeEncodeError` (PAT-242). PAT-240, PAT-241, PAT-246, PAT-248, PAT-251, PAT-252 and PAT-254 correct
 documentation, a code comment, tests or the CI jobs list. The same
