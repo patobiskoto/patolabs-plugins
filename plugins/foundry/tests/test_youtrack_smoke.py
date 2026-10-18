@@ -1771,6 +1771,7 @@ def test_public_ci_executes_only_internal_prs_on_ephemeral_secret_free_runners()
     public_jobs = {
         "foundry": "ubuntu-24.04",
         "ship-ios": "ubuntu-24.04",
+        "gauge": "ubuntu-24.04",
         "catalogue": "ubuntu-24.04",
     }
 

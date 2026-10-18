@@ -47,13 +47,17 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--config", metavar="PATH", help="configuration file (default: see README)")
     args = parser.parse_args(argv)
     if args.command == "check":
-        cfg, problems = gcheck.load_config(
-            Path(args.config) if args.config else gcheck.config_path())
-        warnings, monitored = gcheck.check(cfg)
-        lines = [f"gauge config: {p}" for p in problems] + [f"gauge: {w}" for w in warnings]
-        if not lines:
-            lines = ["gauge: all monitored counters read and below threshold"
-                     if monitored else "gauge: no counter monitored (all thresholds null)"]
+        try:
+            cfg, problems = gcheck.load_config(
+                Path(args.config) if args.config else gcheck.config_path(),
+                explicit=bool(args.config) or gcheck.explicit_config())
+            warnings, monitored = gcheck.check(cfg)
+            lines = [f"gauge config: {p}" for p in problems] + [f"gauge: {w}" for w in warnings]
+            if not lines:
+                lines = ["gauge: all monitored counters read and below threshold"
+                         if monitored else "gauge: no counter monitored (all thresholds null)"]
+        except Exception:  # noqa: BLE001 - `check` never fails: exit 0 whatever happens
+            lines = ["gauge: inconnu (internal error)"]
         print("\n".join(lines))
         return 0
     readings = collect(args)

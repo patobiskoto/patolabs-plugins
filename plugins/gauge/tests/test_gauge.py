@@ -1,4 +1,4 @@
-"""Offline tests on recorded, anonymised responses. No network, no paid call; one test runs the hook script as a subprocess with an empty PATH."""
+"""Offline tests on recorded, anonymised responses. No network, no paid call. Tests that start a process: two run the hook script with an empty PATH, one starts a `sleep` child and kills it."""
 from __future__ import annotations
 
 import io
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -92,9 +93,12 @@ class CodexTest(unittest.TestCase):
             seen["call"] = (pid, sig)
             proc.group_killed.set()
 
+        start = time.monotonic()
         with mock.patch.object(readers.os, "killpg", side_effect=killpg):
             r = readers.read_codex(popen=lambda *a, **k: seen.update(kw=k) or proc,
                                    which=lambda n: "x", timeout=0.05)
+        # Without the timer the reader only ends after the 5 s wait of the fake.
+        self.assertLess(time.monotonic() - start, 2.0)
         self.assertEqual(r.status, "unknown")
         self.assertEqual(seen["call"], (4242, signal.SIGKILL))
         self.assertTrue(seen["kw"]["start_new_session"])
@@ -281,7 +285,7 @@ class GithubTest(unittest.TestCase):
         self.assertEqual(by["2026-09"]["gross_usd"], 0.5)
         self.assertIsNone(by["2026-09"]["net_usd"])
         self.assertIsNone(by["2026-08"]["minutes_used"])  # unexpected unit: unknown
-        self.assertEqual(by["2026-08"]["net_usd"], 0)  # a real zero stays a value
+        self.assertIsNone(by["2026-08"]["net_usd"])  # amounts of non-minute items are not summed
         text = render([r.as_dict()])
         self.assertIn("gross unknown USD", text)
         self.assertIn("unknown min", text)
@@ -302,6 +306,131 @@ class GithubTest(unittest.TestCase):
         self.assertEqual(readers.read_github_actions(which=lambda n: None).status, "unknown")
         r = readers.read_github_actions(run=self.runner(usage='{"usageItems":[]}'), which=lambda n: "x")
         self.assertEqual(r.status, "unknown")
+
+
+    def test_amounts_follow_minutes_items_only(self):
+        body = json.dumps({"usageItems": [
+            {"product": "actions", "date": "2026-10-01", "unitType": "Minutes", "quantity": 10,
+             "grossAmount": 1, "netAmount": 0.5},
+            {"product": "actions", "date": "2026-10-01", "unitType": "GigabyteHours", "quantity": 99,
+             "grossAmount": 7, "netAmount": 7},
+        ]})
+        r = readers.read_github_actions(run=self.runner(usage=body), which=lambda n: "x")
+        e = r.entries[0]
+        self.assertEqual((e["minutes_used"], e["gross_usd"], e["net_usd"]), (10, 1, 0.5))
+
+
+class NonFiniteTest(unittest.TestCase):
+    def test_nan_and_infinity_are_not_numbers(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            self.assertIsNone(readers._num(value))
+        for raw in ("nan", "inf", "-inf", "abc"):
+            self.assertIsNone(readers._header_number({"h": raw}, "h"))
+        self.assertEqual(readers._header_number({"h": "12"}, "h"), 12.0)
+
+    def test_codex_nan_percent_is_unknown_entry(self):
+        entries = readers.parse_codex_rate_limits(
+            {"rateLimits": {"primary": {"usedPercent": float("nan")}}})
+        self.assertIsNone(entries[0]["used_percent"])
+
+
+class CodexWindowTest(unittest.TestCase):
+    def test_present_but_unreadable_secondary_is_kept_unknown_and_absent_is_dropped(self):
+        base = {"primary": {"usedPercent": 5, "resetsAt": 1790000000}}
+        absent = readers.parse_codex_rate_limits({"rateLimits": dict(base)})
+        null = readers.parse_codex_rate_limits({"rateLimits": {**base, "secondary": None}})
+        bad = readers.parse_codex_rate_limits(
+            {"rateLimits": {**base, "secondary": {"usedPercent": "high"}}})
+        self.assertEqual([e["label"] for e in absent], ["primary"])
+        self.assertEqual([e["label"] for e in null], ["primary"])
+        self.assertEqual([e["label"] for e in bad], ["primary", "secondary"])
+        self.assertIsNone(bad[1]["used_percent"])
+
+    def test_unreadable_secondary_warns_inconnu(self):
+        from gauge import check
+        reading = {"status": "ok", "reason": "", "entries": readers.parse_codex_rate_limits(
+            {"rateLimits": {"primary": {"usedPercent": 5},
+                            "secondary": {"usedPercent": "high"}}})}
+        lines = check.evaluate("codex", reading, 80)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("codex secondary: inconnu", lines[0])
+
+
+class LinearRefusalTest(unittest.TestCase):
+    def test_non_429_error_with_headers_is_unknown(self):
+        headers = json.loads((FIX / "linear_headers.json").read_text())
+        closed = []
+
+        class Err(urllib.error.HTTPError):
+            def close(self):
+                closed.append(True)
+
+        for code in (400, 401, 403, 500):
+            def opener(req, timeout, code=code):
+                raise Err("u", code, "x", headers, None)
+
+            r = readers.read_linear({"LINEAR_API_TOKEN": "TOKEN-PLACEHOLDER"}, opener=opener)
+            self.assertEqual(r.status, "unknown", code)
+            self.assertEqual(r.entries, [])
+            self.assertIn(str(code), r.reason)
+            self.assertTrue(closed)
+
+    def test_http_client_exception_is_unknown(self):
+        import http.client
+
+        def opener(req, timeout):
+            raise http.client.RemoteDisconnected("gone")
+
+        r = readers.read_linear({"LINEAR_API_TOKEN": "t"}, opener=opener)
+        self.assertEqual(r.status, "unknown")
+
+    def test_probe_passes_the_normalised_budget(self):
+        out = (FIX / "claude_stream.jsonl").read_text()
+        run = mock.Mock(return_value=subprocess.CompletedProcess([], 0, out, ""))
+        readers.read_claude_probe("1_0", run=run, which=lambda n: "x")
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "10.0")
+
+
+class LiveProcessTest(unittest.TestCase):
+    def test_kill_live_kills_a_running_tracked_child(self):
+        outcome = {}
+
+        def worker():
+            try:
+                done = readers.run_tracked(["sleep", "30"], timeout=60)
+                outcome["rc"] = done.returncode
+            except Exception as exc:  # noqa: BLE001
+                outcome["exc"] = exc
+
+        thread = threading.Thread(target=worker, daemon=True)
+        start = time.monotonic()
+        thread.start()
+        deadline = start + 5
+        while not readers._LIVE and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(readers._LIVE)
+        readers.kill_live()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertNotEqual(outcome.get("rc"), 0)
+        self.assertFalse(readers._LIVE)
+
+    def test_run_tracked_timeout_kills_the_child(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            readers.run_tracked(["sleep", "30"], timeout=0.2)
+        self.assertFalse(readers._LIVE)
+
+
+class VersionTest(unittest.TestCase):
+    def test_constant_equals_both_manifests_and_changelog(self):
+        root = HERE.parent
+        for host in (".claude-plugin", ".codex-plugin"):
+            doc = json.loads((root / host / "plugin.json").read_text(encoding="utf-8"))
+            self.assertEqual(doc["version"], readers.GAUGE_VERSION, host)
+        changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## {readers.GAUGE_VERSION} — ", changelog)
 
 
 class RenderTest(unittest.TestCase):
@@ -389,8 +518,6 @@ class CheckTests(unittest.TestCase):
         self.assertIn("inconnu", warnings[0])
 
     def test_deadline_bounds_the_total_with_several_hanging_readers(self):
-        import time
-
         from gauge import check
         cfg = self._cfg(**{"github-actions": 100})
         release = threading.Event()
@@ -435,7 +562,6 @@ class CheckTests(unittest.TestCase):
         self.assertIn("claude_statusline_json", warnings[0])
 
     def test_hook_error_prints_minimal_message_and_exits_zero(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             env = {"PATH": "", "GAUGE_CONFIG": tmp, "HOME": tmp}  # a directory: not a file
             env["PYTHONPATH"] = ""
@@ -463,7 +589,6 @@ class CheckTests(unittest.TestCase):
         self.assertIn("150 min", warnings[2])
 
     def test_config_file_override_null_and_problems(self):
-        import tempfile
 
         from gauge import check
         with tempfile.TemporaryDirectory() as tmp:
@@ -486,7 +611,6 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(check.config_path({"XDG_CONFIG_HOME": "/x"}), Path("/x/gauge/config.json"))
 
     def test_hook_exits_zero_and_prints_nothing_secret(self):
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "c.json"
             cfg.write_text("{broken")
@@ -498,6 +622,91 @@ class CheckTests(unittest.TestCase):
         self.assertIn("inconnu", doc["systemMessage"])
         self.assertIn("SessionStart", doc["hookSpecificOutput"]["hookEventName"])
         self.assertFalse(has_found(done.stdout + done.stderr))
+
+    def test_github_only_current_month_is_judged(self):
+        from datetime import datetime, timezone
+
+        from gauge import check
+        now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        entries = [{"label": "2026-09", "minutes_used": 9999},
+                   {"label": "2026-08", "minutes_used": None},
+                   {"label": "2026-10", "minutes_used": 50}]
+        reading = {"status": "ok", "reason": "", "entries": entries}
+        self.assertEqual(check.evaluate("github-actions", reading, 100, now), [])
+        entries[2]["minutes_used"] = None
+        self.assertIn("inconnu", check.evaluate("github-actions", reading, 100, now)[0])
+        reading["entries"] = entries[:2]
+        self.assertIn("current month 2026-10", check.evaluate("github-actions", reading, 100, now)[0])
+
+    def test_claude_window_past_its_reset_is_stale_inconnu(self):
+        from datetime import datetime, timezone
+
+        from gauge import check
+        now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+        reading = {"status": "ok", "reason": "", "entries": [
+            {"label": "five_hour", "used_percent": 10, "resets_at": "2026-10-18T10:00:00+00:00"},
+            {"label": "seven_day", "used_percent": 10, "resets_at": "2026-10-20T10:00:00+00:00"}]}
+        lines = check.evaluate("claude", reading, 80, now)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("claude five_hour: inconnu", lines[0])
+        # other counters are fresh reads: a past reset time is not judged
+        reading["entries"][0]["label"] = "primary"
+        self.assertEqual(check.evaluate("codex", {"status": "ok", "reason": "",
+                                                   "entries": [reading["entries"][0]]}, 80, now), [])
+
+    def test_named_config_file_missing_is_reported_default_one_is_silent(self):
+        from gauge import check
+        missing = Path(tempfile.gettempdir()) / "gauge-absent-config.json"
+        self.assertEqual(check.load_config(missing)[1], [])
+        problems = check.load_config(missing, explicit=True)[1]
+        self.assertEqual(problems, ["configuration file not found: defaults used"])
+        self.assertTrue(check.explicit_config({"GAUGE_CONFIG": "x"}))
+        self.assertFalse(check.explicit_config({}))
+
+    def test_deeply_nested_config_is_a_problem_not_a_crash(self):
+        from gauge import check
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.json"
+            path.write_text("[" * 200000, encoding="utf-8")
+            cfg, problems = check.load_config(path)
+        self.assertEqual(cfg["thresholds"], check.DEFAULT_THRESHOLDS)
+        self.assertEqual(len(problems), 1)
+
+    def test_unreadable_config_path_does_not_raise(self):
+        from gauge import check
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("no")):
+            problems = check.load_config(Path("/x/c.json"))[1]
+        self.assertEqual(len(problems), 1)
+
+    def test_cli_check_exits_zero_even_on_an_internal_error(self):
+        with mock.patch.object(gauge_cli.gcheck, "load_config", side_effect=PermissionError("no")), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(gauge_cli.main(["check"]), 0)
+        self.assertIn("inconnu", out.call_args[0][0])
+
+    def test_cli_check_reports_a_missing_named_config(self):
+        missing = str(Path(tempfile.gettempdir()) / "gauge-absent-config.json")
+        with mock.patch.object(gauge_cli.gcheck, "check", return_value=([], [])), \
+                mock.patch("builtins.print") as out:
+            self.assertEqual(gauge_cli.main(["check", "--config", missing]), 0)
+        self.assertIn("configuration file not found", out.call_args[0][0])
+
+    def test_hook_kills_live_children_before_exiting(self):
+        script = (
+            f"import sys; sys.path.insert(0, {str(HERE.parent / 'hooks')!r}); "
+            f"sys.path.insert(0, {str(HERE.parent / 'tooling')!r}); "
+            "import session_start as h; from gauge import readers, check; "
+            "calls = []; readers.kill_live = lambda: calls.append(1); "
+            "check.check = lambda *a, **k: ([], []); "
+            "import os; os._exit = lambda code: (print('killed', len(calls)), sys.exit(0)); "
+            "h.main()")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": "", "HOME": tmp, "GAUGE_CONFIG": str(Path(tmp) / "none.json")}
+            done = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                                  text=True, env=env, timeout=30, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("killed 1", done.stdout)
+        self.assertIn("configuration file not found", done.stdout)
 
     def test_hook_manifest_is_shared_document(self):
         doc = json.loads((HERE.parent / "hooks" / "hooks.json").read_text())

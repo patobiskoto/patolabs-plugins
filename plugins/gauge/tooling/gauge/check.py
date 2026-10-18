@@ -11,6 +11,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,17 +45,27 @@ def config_path(env: dict[str, str] | None = None) -> Path:
     return Path(base) / "gauge" / "config.json"
 
 
-def load_config(path: Path) -> tuple[dict[str, Any], list[str]]:
-    """Return (config, problems). A missing file is the defaults, silently; a broken one
-    is the defaults plus a problem line, never an exception."""
+def explicit_config(env: dict[str, str] | None = None) -> bool:
+    """True when the operator named the file (``GAUGE_CONFIG``)."""
+    return bool((os.environ if env is None else env).get(CONFIG_ENV))
+
+
+def load_config(path: Path, explicit: bool = False) -> tuple[dict[str, Any], list[str]]:
+    """Return (config, problems). A missing default file is the defaults, silently; a
+    missing file the operator named (``explicit``), or a broken one, is the defaults plus
+    a problem line, never an exception."""
     cfg: dict[str, Any] = {"thresholds": dict(DEFAULT_THRESHOLDS)}
-    if not path.exists():
-        return cfg, []
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return cfg, (["configuration file not found: defaults used"] if explicit else [])
+    except OSError:
+        return cfg, ["configuration file unreadable or invalid: defaults used"]
+    try:
+        doc = json.loads(text)
         if not isinstance(doc, dict):
             raise TypeError("root is not an object")
-    except (OSError, ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return cfg, ["configuration file unreadable or invalid: defaults used"]
     problems = [f"unknown configuration key ignored: {key}" for key in doc if key not in CONFIG_KEYS]
     given = doc.get("thresholds", {})
@@ -94,21 +105,45 @@ def used_amount(counter: str, entry: dict[str, Any]) -> float | None:
     return entry.get("used_percent")
 
 
-def evaluate(counter: str, reading: dict[str, Any], threshold: float) -> list[str]:
-    """Warning lines for one counter; empty only when every value is read and below."""
+def _already_reset(entry: dict[str, Any], now: datetime) -> bool:
+    """True when the window's ``resets_at`` is in the past: the value predates the reset."""
+    raw = entry.get("resets_at")
+    try:
+        when = datetime.fromisoformat(raw) if isinstance(raw, str) else None
+    except ValueError:
+        return False
+    return when is not None and when.tzinfo is not None and when <= now
+
+
+def evaluate(
+    counter: str, reading: dict[str, Any], threshold: float, now: datetime | None = None
+) -> list[str]:
+    """Warning lines for one counter; empty only when every value is read and below.
+
+    ``github-actions`` is judged on the current UTC month only. A Claude window whose
+    reset time has passed was read from an operator-provided file and is stale: inconnu."""
     unit = UNITS[counter]
+    now = now or datetime.now(timezone.utc)
     if reading["status"] != "ok":
         return [f"{counter}: inconnu ({reading['reason']})"]
+    entries = reading["entries"]
+    if counter == "github-actions":
+        month = now.strftime("%Y-%m")
+        entries = [e for e in entries if e.get("label") == month]
+        if not entries:
+            return [f"{counter}: inconnu (no usage item for the current month {month})"]
     lines = []
-    for entry in reading["entries"]:
+    for entry in entries:
         value = used_amount(counter, entry)
         label = entry.get("label", "?")
-        if value is None:
+        if counter == "claude" and _already_reset(entry, now):
+            lines.append(f"{counter} {label}: inconnu (value read before the window reset: stale)")
+        elif value is None:
             lines.append(f"{counter} {label}: inconnu (value missing in the response)")
         elif value >= threshold:
             lines.append(f"{counter} {label}: {round(value, 1)}{unit} used, threshold "
                          f"{threshold}{unit}")
-    seen = {entry.get("label") for entry in reading["entries"]}
+    seen = {entry.get("label") for entry in entries}
     for label in EXPECTED_LABELS.get(counter, ()):
         if label not in seen:
             lines.append(f"{counter} {label}: inconnu (window missing in the response)")

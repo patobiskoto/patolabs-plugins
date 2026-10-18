@@ -1,7 +1,7 @@
 {
   "name": "gauge",
   "description": "Read-only quota gauge for Codex, Claude, Linear and GitHub Actions counters.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },
