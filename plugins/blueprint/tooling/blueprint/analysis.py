@@ -63,47 +63,118 @@ _STD_TYPES = {"Sa": "Array", "Sb": "Bool", "Sd": "Double", "Sf": "Float", "Si": 
               "Sh": "Set", "SD": "Dictionary", "Sq": "Optional"}
 
 
+_ACCESSORS = {"getter", "setter", "modify", "read", "unsafeMutableAddressor", "unsafeAddressor", "modify2", "read2"}
+
+
 def extension_of(symbol: str, module: str) -> dict | None:
-    """`{"extended_type", "member"}` when the symbol is a member of an extension, declared in the app module, of a type of
-    another module: `_$s<extended type><len><module>E<len><member>...` (`<len><module>E` right after the extended type;
-    a constrained extension, where requirements sit between the module and `E`, is not recognised). `extended_type` is
-    the last name of the extended type, or None when it is a substitution not in `_STD_TYPES`; `member` None when the
-    member name is not a plain `<len><name>`."""
+    """`{"extended_type", "member", "related_types"}` when the symbol is a member of an extension, declared in the app
+    module, of a type of another module: `_$s<extended type><len><module>[<requirements>]E<member>...`. The extended type
+    must be a clean mangled type (`_extended_type`): a standard substitution or `<len><name>[kind]` repeated, so that a
+    type which only mentions the module as a generic argument is not taken for it. `<requirements>` (a constrained
+    extension, ending in `l` before `E`) gives `related_types`: the names it carries (`Array where Element == T` gives
+    `T`). `extended_type` is its last name (None for a substitution not in `_STD_TYPES`); `member` is the first name after
+    `E` (the leading `0` of a word-substitution form skipped; None when unreadable)."""
     if not symbol.startswith("_$s") or symbol.startswith(symbol_prefix(module)):
         return None
-    key = f"{len(module)}{module}E"
+    key = f"{len(module)}{module}"
     i = symbol.find(key, 3)
     while i >= 0:
         head = symbol[3:i]
-        m = re.match(r"(\d+)", symbol[i + len(key):])
-        if head and (m is None or int(m.group(1)) > 0):
-            typ = _extended_type(head)
+        rest = symbol[i + len(key):]
+        m = re.match(r"(?:([A-Za-z0-9_]{1,80}?)l)?E(?=0?\d)", rest)
+        ok, typ = _extended_type(head) if head and m else (False, None)
+        if ok:
+            reqs = m.group(1) or ""
+            after = rest[m.end():]
+            mm = re.match(r"0?(\d+)", after)
             member = None
-            if m:
-                n, rest = int(m.group(1)), symbol[i + len(key) + m.end():]
-                member = rest[:n] if n <= len(rest) else None
-            return {"extended_type": typ, "member": member}
+            if mm:
+                n, tail = int(mm.group(1)), after[mm.end():]
+                member = tail[:n] if 0 < n <= len(tail) else None
+            return {"extended_type": typ, "member": member, "related_types": _names(reqs)}
         i = symbol.find(key, i + 1)
     return None
 
 
-def _extended_type(head: str) -> str | None:
-    """The last `<len><name>` of a mangled type prefix (`10Foundation4DateV` -> `Date`), or a standard substitution."""
-    if head in _STD_TYPES:
-        return _STD_TYPES[head]
-    names, pos = [], 0
-    while pos < len(head):
-        m = re.match(r"(\d+)", head[pos:])
+def _names(text: str) -> list[str]:
+    """The `<len><name>` identifiers of a mangled fragment, in order."""
+    out, pos = [], 0
+    while pos < len(text):
+        m = re.match(r"(\d+)", text[pos:])
         if not m:
             pos += 1
             continue
-        n = int(m.group(1))
-        start = pos + m.end()
-        if n == 0 or start + n > len(head):
+        n, start = int(m.group(1)), pos + m.end()
+        if n == 0 or start + n > len(text):
             break
+        out.append(text[start:start + n])
+        pos = start + n
+    return out
+
+
+def _extended_type(head: str) -> tuple[bool, str | None]:
+    """(clean, last name): `Sa` -> Array; `10Foundation4DateV` -> Date; `7SwiftUI10ShapeStyleP` -> ShapeStyle. Not clean
+    when anything else (generic arguments, operators, nested forms) is left over."""
+    if re.fullmatch(r"S[A-Za-z]", head):
+        return True, _STD_TYPES.get(head)
+    names, pos = [], 0
+    if head.startswith("So") and head[2:3].isdigit():
+        pos = 2  # an Objective-C imported type (`So7UIColorC`)
+    while pos < len(head):
+        m = re.match(r"(\d+)", head[pos:])
+        if not m:
+            return False, None
+        n, start = int(m.group(1)), pos + m.end()
+        if n == 0 or start + n > len(head):
+            return False, None
         names.append(head[start:start + n])
         pos = start + n
-    return names[-1] if names else None
+        if pos < len(head) and head[pos] in "VCOPa" and (pos + 1 == len(head) or head[pos + 1].isdigit()):
+            pos += 1
+    return (True, names[-1]) if names else (False, None)
+
+
+def refine_member(ext: dict, demangled: str | None) -> dict:
+    """The member name read from the demangled text when it extends the mangled one (a word-substitution form such as
+    `daysWithC0` is cut in the symbol): `(extension in M):Swift.Array<A where A == M.T>.daysWithActivity.getter` gives
+    `daysWithActivity`; and the requirement types kept are those the text qualifies with the extension's module `M`
+    (the symbol does not say which module a substituted name belongs to). Otherwise `ext` unchanged."""
+    m = re.search(r"\(extension in (\w+)\):(.*)", demangled or "")
+    if not m:
+        return ext
+    ext = {**ext, "related_types": [t for t in ext.get("related_types") or [] if f"{m.group(1)}.{t}" in demangled]}
+    if not ext.get("member"):
+        return ext
+    rest = m.group(2)
+    while re.search(r"<[^<>]*>", rest):
+        rest = re.sub(r"<[^<>]*>", "", rest)
+    head = re.match(r"[\w.]+", rest)
+    parts = [x for x in (head.group(0).split(".") if head else []) if x not in _ACCESSORS]
+    name = parts[-1] if parts else ""
+    return {**ext, "member": name} if name.startswith(ext["member"]) and len(name) > len(ext["member"]) else ext
+
+
+_FLOAT_TYPE = re.compile(r"CoreGraphics\.CGFloat|Swift\.Double|Swift\.Float")
+
+
+def float_calls(raw: list, names: dict[str, str]) -> list[dict]:
+    """Calls with a constant in a floating-point register (kept as is) or an integer register that holds a Double bit
+    pattern (kept only when the callee's demangled signature mentions CGFloat, Double or Float, since a large integer
+    could be anything else). Keyed by the callee, mangled and demangled; the register is not mapped to a parameter."""
+    out = []
+    for c in raw:
+        text = names.get(c["callee"])
+        ints = c.get("integer_registers_as_double") or {}
+        keep_ints = ints if text and _FLOAT_TYPE.search(text) else {}
+        if not c.get("floats") and not keep_ints:
+            continue
+        item = {"address": c["address"], "callee": c["callee"], "callee_demangled": text}
+        if c.get("floats"):
+            item["floats"] = c["floats"]
+        if keep_ints:
+            item["integer_registers_as_double"] = keep_ints
+        out.append(item)
+    return out
 
 
 def demangle(rea: inventory.Rea, slice_path: Path, symbols: list[str]) -> tuple[dict[str, str], str | None]:
@@ -138,17 +209,21 @@ def build(inv: dict, slice_path: Path, data: Path, *, module: str | None = None,
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     xr_file = out_dir / "xrefs-input.txt"
     xr_file.write_text("".join(a + "\n" for a in xr_addrs), encoding="utf-8")
-    # The app module's own symbols, and the members of its extensions of other modules' types (`<len><module>E`).
-    include = "^" + re.escape(symbol_prefix(module)) + "|^_\\$s.*" + re.escape(f"{len(module)}{module}E")
+    # The app module's own symbols, and the members of its extensions of other modules' types: the module name followed
+    # by `E`, or by generic requirements ending in `l` and then `E`, and a name (`extension_of` keeps only the real ones).
+    include = ("^" + re.escape(symbol_prefix(module)) + "|^_\\$s.*" + re.escape(f"{len(module)}{module}")
+               + r"(?:[A-Za-z0-9_]{1,80}?l)?E\d")
     raw, export_seconds = ghidra.export(
         data, marker, out_dir / "ghidra-export.json", include=include,
         data_pattern=f"(?:{include}).*vpZ$", xrefs_file=xr_file if xr_addrs else None, runner=runner, clock=clock)
     prog = raw.get("program_id")
     entries = []
     for f in raw.get("functions") or []:
+        if not f["symbol"].startswith(symbol_prefix(module)) and extension_of(f["symbol"], module) is None:
+            continue  # matched the include pattern only by chance
         code = f.get("pseudo_code")
         e = {"address": f["address"], "symbol": f["symbol"], "owner": owner_of(f["symbol"], module),
-             "extension": extension_of(f["symbol"], module), "call_sites": f.get("call_sites") or [],
+             "extension": extension_of(f["symbol"], module), "call_sites": f.get("call_sites") or [], "_float_calls": f.get("float_calls") or [],
              "size": f.get("size"), "status": "ok" if isinstance(code, str) else "unknown",
              "reason": None if isinstance(code, str) else (f.get("error") or "not decompiled"),
              "string_literals": f.get("string_literals") or {}, "pseudo_code": code[:MAX_CODE_CHARS] if isinstance(code, str) else None,
@@ -157,10 +232,14 @@ def build(inv: dict, slice_path: Path, data: Path, *, module: str | None = None,
         entries.append(e)
     entries.sort(key=lambda e: (int(e["address"], 16), e["symbol"]))
     td = clock()
-    names, why = demangle(inventory.Rea(data, runner), slice_path, [e["symbol"] for e in entries])
+    callees = sorted({c["callee"] for e in entries for c in e["_float_calls"]})
+    names, why = demangle(inventory.Rea(data, runner), slice_path, [e["symbol"] for e in entries] + callees)
     demangle_seconds = round(clock() - td, 1)
     for e in entries:
         e["demangled"] = names.get(e["symbol"])
+        if e["extension"]:
+            e["extension"] = refine_member(e["extension"], e["demangled"])
+        e["float_calls"] = float_calls(e.pop("_float_calls"), names)
     types = [{**t, "evidence": ghidra_evidence(sha, t["address"], prog)} for t in raw.get("swift_types") or []]
     unknown: dict[str, str] = {}
     if why:
@@ -182,8 +261,9 @@ def build(inv: dict, slice_path: Path, data: Path, *, module: str | None = None,
         "timing": {"analysis_seconds": marker["analysis_seconds"], "analysis_reused": marker["reused"],
                    "export_seconds": export_seconds, "demangle_seconds": demangle_seconds,
                    "total_seconds": round(clock() - t0, 1)},
-        "functions": {"total": raw.get("functions_total"), "app": raw.get("functions_matched"),
-                      "decompiled": raw.get("decompiled"), "failed": raw.get("decompile_failed"),
+        "functions": {"total": raw.get("functions_total"), "app": len(entries),
+                      "decompiled": sum(e["status"] == "ok" for e in entries),
+                      "failed": sum(e["status"] != "ok" for e in entries),
                       "truncated": sum(1 for e in entries if e["truncated"]),
                       "decompile_seconds": raw.get("decompile_seconds")},
         "entries": entries,

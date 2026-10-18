@@ -31,6 +31,11 @@
   the argument registers that hold a constant at each constructor call of a one-time initialiser and `rebuild` uses them
   in `constructor_call_arguments` (with `constructor_call_argument_sources`) and maps them to the declared parameters in
   `constructor_parameters`; `MAX_CODE_CHARS` of the analysis goes from 30000 to 200000 so no SwiftUI `body` is cut.
+- Second round of gaps: constrained extensions (`extension Array where Element == T`, requirements between the module
+  and `E` in the symbol) are exported, named by their requirement type and counted; `constructor_call_arguments`
+  keeps `x7` and `constructor_parameters` reads stack-passed parameters from constant stores before the call
+  (`call_sites.stack_arguments`); the export records floating-point constants in `d0`..`d7` and Double bit patterns in
+  integer registers per call (`float_calls`, keyed by callee, also in `decompile --analysis` output).
 - Run once on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), a second one reused
   the analysis; 4180 app functions decompiled; tests use fakes. The maintainer's judgement of the spec ("can the app be
   rebuilt from it alone") is not part of this entry.

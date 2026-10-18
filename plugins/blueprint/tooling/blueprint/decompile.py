@@ -162,7 +162,7 @@ def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
             # A member of the app's extension of another module's type: attributed to a group by `rebuild.extension_group`.
             sym = e["symbol"]
             if stems is None:
-                stems = sorted(n for n in rebuild.detect_groups(an) if n != groups_mod.EXTENSIONS_GROUP)
+                stems = sorted(n for n, g in rebuild.detect_groups(an).items() if not g.get("extension_only"))
             if rebuild.extension_group(e, stems) == group_name and e["extension"].get("member") and (
                     sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
                 out.append({"address": e["address"], "symbol": sym, "method": e["extension"]["member"],
@@ -216,6 +216,7 @@ def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None,
             continue
         doc["entries"].append({"address": c["address"], "status": e["status"], "reason": e["reason"],
                                "pseudo_code": e["pseudo_code"], "truncated": e["truncated"],
+                               "float_calls": e.get("float_calls") or [],
                                "evidence": e["evidence"], "symbol": c["symbol"] or e["symbol"],
                                "method": c["method"]})
     return doc

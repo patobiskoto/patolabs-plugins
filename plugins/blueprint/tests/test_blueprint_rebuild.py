@@ -228,8 +228,10 @@ class ConstantsTest(unittest.TestCase):
                      "inhale: Swift.Int, holdIn: Swift.Int, exhale: Swift.Int) -> DemoApp.Pgm", body("return;"), "0x58")
         item = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]
         obj = item["value"]
-        self.assertEqual(obj["constructor_call_arguments"][5:], [5, 0])
-        self.assertEqual(obj["constructor_call_argument_sources"][5:], ["pseudo-code literal", "instruction immediate"])
+        # The pseudo-code call has 7 arguments; x7 (exhale), dropped by the decompiler, is still listed.
+        self.assertEqual(obj["constructor_call_arguments"][5:], [5, 0, 5])
+        self.assertEqual(obj["constructor_call_argument_sources"][5:],
+                         ["pseudo-code literal", "instruction immediate", "instruction immediate"])
         self.assertEqual({p["label"]: p["value"] for p in obj["constructor_parameters"]}["exhale"], 5)
         self.assertIn("deduced", obj["mapping_to_parameters"])
         # Two call sites of the same constructor: no register is attributed.
@@ -237,6 +239,26 @@ class ConstantsTest(unittest.TestCase):
         obj = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]["value"]
         self.assertEqual((obj["mapping_to_parameters"], "constructor_parameters" in obj), ("unknown", False))
         self.assertEqual(obj["constructor_call_arguments"][6], "not a literal")
+
+    def test_parameters_after_x7_are_read_from_the_stack_stores(self):
+        sig = ("DemoApp.Pgm.__allocating_init(id: Foundation.UUID, name: Swift.String, description: Swift.String, "
+               "inhale: Swift.Int, holdIn: Swift.Int, exhale: Swift.Int, holdOut: Swift.Int, target: Swift.Int, "
+               "flag: Swift.Bool) -> DemoApp.Pgm")
+        stack = [{"offset": 0, "bits": 64, "value": 0}, {"offset": 8, "bits": 64, "value": 5},
+                 {"offset": 16, "bits": 8, "value": 1}]
+        ps, why = constants.constructor_parameters(sig, {"x5": 5, "x6": 0, "x7": 5}, stack)
+        self.assertIsNone(why)
+        self.assertEqual([(p["label"], p["value"], p.get("stack_offset")) for p in ps[6:]],
+                         [("holdOut", 0, 0), ("target", 5, 8), ("flag", True, 16)])
+        self.assertEqual({p["source"] for p in ps[6:]}, {"instruction immediate"})
+        # No stack list (the area could not be delimited) or no store at the offset: not a literal, with the reason.
+        ps, _ = constants.constructor_parameters(sig, {}, None)
+        self.assertEqual((ps[6]["value"], "delimited" in ps[6]["reason"]), ("not a literal", True))
+        ps, _ = constants.constructor_parameters(sig, {}, stack[:1])
+        self.assertEqual((ps[7]["value"], "no constant stored" in ps[7]["reason"]), ("not a literal", True))
+        # A parameter of unknown stack size ends the mapping.
+        ps, why = constants.constructor_parameters(sig.replace("target: Swift.Int", "target: Swift.String"), {}, stack)
+        self.assertIn("unknown stack size", why)
 
     def test_static_member_of_an_extension_loses_the_extension_prefix_in_its_name(self):
         g = entry("_$s7SwiftUI5ColorV7DemoAppE4tealACvgZ", "static (extension in DemoApp):SwiftUI.Color.teal.getter : "
@@ -546,7 +568,8 @@ class AnalysisTest(unittest.TestCase):
                          ("_$sSa7DemoAppE5totalSiyF", ("Array", "total")),
                          ("_$s7SwiftUI5ColorV7DemoAppE4teal_WZ", ("Color", "teal")),
                          ("_$sSz7DemoAppE5totalSiyF", (None, "total")),
-                         ("_$sSa7DemoAppE", ("Array", None))):
+                         ("_$sSo7UIColorC7DemoAppE4tealABvgZ", ("UIColor", "teal")),
+                         ("_$sSa7DemoAppE", None)):
             got = analysis.extension_of(s_, MOD)
             self.assertEqual(got and (got["extended_type"], got["member"]), want, s_)
         self.assertIsNone(analysis.extension_of(sym("Session", "4nameSSvg"), MOD))
@@ -557,7 +580,7 @@ class AnalysisTest(unittest.TestCase):
         fake = GhidraFake(fns)
         doc = analysis.build(make_inv(), self.slice, self.data, runner=fake)
         e = doc["entries"][0]
-        self.assertEqual((e["owner"], e["extension"]), (None, {"extended_type": "Date", "member": "isSameDay"}))
+        self.assertEqual((e["owner"], e["extension"]), (None, {"extended_type": "Date", "member": "isSameDay", "related_types": []}))
         self.assertEqual(e["call_sites"][0]["registers"], {"x0": 1})
         args = fake.headless("-process")[0]
         include = re.compile(next(a for a in args if a.startswith("include="))[8:])
@@ -569,6 +592,75 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(data_pattern.search("_$s7SwiftUI5ColorV7DemoAppE4tealACvpZ"))
         self.assertTrue(data_pattern.search("_$s7DemoApp9ConstantsV3fooSivpZ"))
         self.assertFalse(data_pattern.search("_$s5Other4TypeC3fooSivpZ"))
+
+    def test_constrained_extension_members_name_their_requirement_types(self):
+        mod = "DemoApp"
+        e = analysis.extension_of(f"_$sSa{len(mod)}{mod}AA4StatCRszlE08daysWithC0Sivg", mod)
+        self.assertEqual(e, {"extended_type": "Array", "member": "daysWith", "related_types": ["Stat"]})
+        self.assertEqual(analysis.refine_member(e, "(extension in DemoApp):Swift.Array<A where A == DemoApp.Stat>."
+                                                    "daysWithActivity.getter : Swift.Int")["member"], "daysWithActivity")
+        self.assertEqual(analysis.refine_member(e, "unrelated")["member"], "daysWith")
+        other = analysis.refine_member(e, "(extension in DemoApp):Swift.Array<A where A == Other.Stat>.total.getter")
+        self.assertEqual(other["related_types"], [])
+        # A type that only mentions the module as a generic argument is not an extension of it.
+        self.assertIsNone(analysis.extension_of("_$s7SwiftUI15ModifiedContentVy7DemoApp4MainV0E0OAAE7tabItemyyF", mod))
+        fns = [{"address": "0x10", "name": "n", "symbol": f"_$sSa{len(mod)}{mod}AA4StatCRszlE5totalSivg", "size": 1,
+                "pseudo_code": "c", "string_literals": {}, "error": None},
+               {"address": "0x20", "name": "n", "symbol": f"_$s7SwiftUI15ModifiedContentVy{len(mod)}{mod}4MainVAAE7tabItemyyF",
+                "size": 1, "pseudo_code": "c", "string_literals": {}, "error": None}]
+        doc = analysis.build(make_inv(), self.slice, self.data, runner=GhidraFake(fns))
+        self.assertEqual([x["address"] for x in doc["entries"]], ["0x10"])
+        self.assertEqual(doc["functions"]["app"], 1)
+        include = re.compile(r"^_\$s.*" + re.escape(f"{len(mod)}{mod}") + r"(?:[A-Za-z0-9_]{1,80}?l)?E\d")
+        self.assertTrue(include.search(fns[0]["symbol"]))
+        # The group of such a function is the first requirement type when no group stem relates to it.
+        an = make_analysis()
+        x = entry(fns[0]["symbol"], "(extension in DemoApp):Swift.Array<A where A == DemoApp.Stat>.total.getter",
+                  body("return;"), "0xd0")
+        x["extension"] = {"extended_type": "Array", "member": "total", "related_types": ["Stat"]}
+        an["entries"].append(x)
+        doc = rebuild.build(an, make_inv())
+        g = {y["name"]: y for y in doc["groups"]}
+        self.assertEqual((g["Stat"]["functions"], g["Stat"]["types"], "extensions" in g), (1, [], False))
+        self.assertEqual(doc["coverage"]["functions"]["in_extensions_of_other_modules_types"]["per_group"], {"Stat": 1})
+        self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "Stat")], ["total"])
+        x["float_calls"] = [{"address": "0xd4", "callee": "c", "callee_demangled": "X.pad(CoreGraphics.CGFloat)",
+                             "floats": {"d0": 12.0}}]
+        an["entries"][-1]["status"] = "ok"
+        inv = make_inv()
+        out = decompile.from_analysis(an, inv, group={"name": "Stat"}, entry=None, list_only=False, maximum=5)
+        self.assertEqual(out["entries"][0]["float_calls"][0]["floats"], {"d0": 12.0})
+        out = decompile.from_analysis(an, inv, group=None, entry="0xd0", list_only=False, maximum=5)
+        self.assertEqual(out["entries"][0]["status"], "ok")
+
+    def test_float_calls_are_kept_by_callee_and_integer_patterns_only_for_float_signatures(self):
+        mod = "DemoApp"
+        fns = [{"address": "0x10", "name": "n", "symbol": sym("A", "4bodyQrvg"), "size": 1, "pseudo_code": "c",
+                "string_literals": {}, "error": None, "float_calls": [
+                    {"address": "0x12", "callee": "_$sPad", "floats": {"d0": 12.0}, "integer_registers_as_double": {}},
+                    {"address": "0x14", "callee": "_$sSpace", "floats": {},
+                     "integer_registers_as_double": {"x1": 24.0}},
+                    {"address": "0x16", "callee": "_$sOther", "floats": {},
+                     "integer_registers_as_double": {"x1": 24.0}}]}]
+        fake = GhidraFake(fns)
+        inner = fake.__call__
+
+        def runner(cmd, timeout, cwd=None, env=None):
+            if len(cmd) > 1 and cmd[1] == "demangle-swift":
+                names = {"_$sSpace": "X.stack(spacing: CoreGraphics.CGFloat?) -> X", "_$sPad": "X.pad(Swift.Int) -> X",
+                         "_$sOther": "X.other(Swift.Int) -> X"}
+                rows = [{"input": s_, "output": names.get(s_, "DemoApp.A.body.getter : some"), "status": "demangled"}
+                        for s_ in cmd[3:-2]]
+                return 0, json.dumps({"evidence_id": "ev_d", "normalized_result": {"symbols": rows}}), ""
+            return inner(cmd, timeout, cwd=cwd, env=env)
+
+        doc = analysis.build(make_inv(), self.slice, self.data, runner=runner)
+        calls = doc["entries"][0]["float_calls"]
+        self.assertEqual([(c["address"], c["callee_demangled"], c.get("floats"), c.get("integer_registers_as_double"))
+                          for c in calls],
+                         [("0x12", "X.pad(Swift.Int) -> X", {"d0": 12.0}, None),
+                          ("0x14", "X.stack(spacing: CoreGraphics.CGFloat?) -> X", None, {"x1": 24.0})])
+        self.assertEqual(mod, "DemoApp")
 
     def test_long_swiftui_body_is_kept_whole(self):
         fns = [{"address": "0x10", "name": "n", "symbol": sym("A", "4bodyQrvg"), "size": 1,

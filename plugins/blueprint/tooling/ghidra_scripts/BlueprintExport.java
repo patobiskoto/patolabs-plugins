@@ -187,12 +187,102 @@ public class BlueprintExport extends GhidraScript {
         return r.equals("wzr") || r.equals("xzr");
     }
 
-    // The abstract value a move leaves in its destination: an immediate (`mov`/`movz` constant, `orr <d>, wzr/xzr, #const`),
-    // zero (`mov <d>, wzr/xzr`) or a copy of a known register (`mov <d>, <m>`, `orr <d>, wzr/xzr, <m>`). `known` and `val`
-    // are the register state; the result is null when the instruction is none of these or the source is unknown.
-    private static Long moved(Instruction in, boolean[] known, long[] val) {
+    // Number 0..31 of the floating-point/vector register an object designates (d3, s3, q3 are all 3), or -1.
+    private static int fpNumber(Object o) {
+        if (!(o instanceof Register)) return -1;
+        String n = ((Register) o).getBaseRegister().getName().toLowerCase();
+        if (n.length() < 2 || "zqvdshb".indexOf(n.charAt(0)) < 0) return -1;
+        try {
+            int v = Integer.parseInt(n.substring(1));
+            return v <= 31 ? v : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static boolean isSp(Object o) {
+        return o instanceof Register && ((Register) o).getBaseRegister().getName().equalsIgnoreCase("sp");
+    }
+
+    // True when the instruction reads the frame pointer (x29) or the stack pointer.
+    private static boolean readsFrameOrStack(Instruction in) {
+        for (Object o : in.getInputObjects()) {
+            if (regNumber(o) == 29 || isSp(o)) return true;
+        }
+        return false;
+    }
+
+    // The base register number (or -2 for sp) and the offset of a memory operand `[base]`, `[base, #imm]`; null otherwise.
+    private static long[] memOperand(Instruction in, int op) {
+        Object[] ops = in.getOpObjects(op);
+        if (ops.length == 0) return null;
+        int base = isSp(ops[0]) ? -2 : regNumber(ops[0]);
+        if (base == -1) return null;
+        long off = 0;
+        for (int i = 1; i < ops.length; i++) {
+            if (!(ops[i] instanceof Scalar)) return null;
+            off += ((Scalar) ops[i]).getSignedValue();
+        }
+        return new long[] {base, off};
+    }
+
+    private static final int MAX_FLOAT_CALLS = 300;
+
+    private static String num(double d) {
+        return Double.toString(d);
+    }
+
+    // State of the forward walk: the constants known in x0..x30, in the floating-point registers, in frame slots and in
+    // the outgoing stack-argument area.
+    private final boolean[] known = new boolean[31];
+    private final boolean[] isAddr = new boolean[31];
+    private final long[] val = new long[31];
+    private final boolean[] fknown = new boolean[32];
+    private final long[] fval = new long[32];
+    private final int[] fbits = new int[32];
+    private final Long[] spOff = new Long[31];
+    private final java.util.HashMap<Long, Long> slot = new java.util.HashMap<>();
+    private final java.util.TreeMap<Long, long[]> outArgs = new java.util.TreeMap<>();
+    private long outArgsSize = -1;
+    private boolean escaped = false;
+
+    private void resetState() {
+        java.util.Arrays.fill(known, false);
+        java.util.Arrays.fill(fknown, false);
+        java.util.Arrays.fill(spOff, null);
+        slot.clear();
+        outArgs.clear();
+        outArgsSize = -1;
+    }
+
+    // Value moved into the destination by `mov`/`movz`/`orr <d>,wzr,..`/`add <d>,<address>,#imm`/`adrp`, or null.
+    // `addr[0]` tells whether the value is an address (an `adrp` result, or one plus an offset).
+    private Long moved(Instruction in, boolean[] addr) {
         String m = in.getMnemonicString().toLowerCase();
         int n = in.getNumOperands();
+        addr[0] = false;
+        if (m.equals("adrp") && n == 2) {
+            Address a = in.getAddress(1);
+            if (a != null) {
+                addr[0] = true;
+                return a.getOffset();
+            }
+            Scalar sc = in.getScalar(1);
+            if (sc != null) {
+                addr[0] = true;
+                return sc.getUnsignedValue();
+            }
+            return null;
+        }
+        if (m.equals("add") && n == 3) {
+            Object[] a = in.getOpObjects(1);
+            Scalar sc = in.getScalar(2);
+            if (a.length == 1 && regNumber(a[0]) >= 0 && known[regNumber(a[0])] && isAddr[regNumber(a[0])] && sc != null) {
+                addr[0] = true;
+                return val[regNumber(a[0])] + sc.getUnsignedValue();
+            }
+            return null;
+        }
         int srcOp = -1;
         if ((m.equals("mov") || m.equals("movz")) && n == 2) srcOp = 1;
         else if (m.equals("orr") && n == 3) {
@@ -207,46 +297,94 @@ public class BlueprintExport extends GhidraScript {
         if (isZeroRegister(ops[0])) return 0L;
         int r = regNumber(ops[0]);
         if (r < 0 || !known[r]) return null;
+        addr[0] = isAddr[r];
         boolean w = ((Register) ops[0]).getBitLength() <= 32;
         return w ? (val[r] & 0xffffffffL) : val[r];
     }
 
-    // True when the instruction reads the frame pointer (x29) or the stack pointer.
-    private static boolean readsFrameOrStack(Instruction in) {
-        for (Object o : in.getInputObjects()) {
-            if (regNumber(o) == 29) return true;
-            if (o instanceof Register && ((Register) o).getBaseRegister().getName().equalsIgnoreCase("sp")) return true;
+    // Floating-point instruction effect on d/s registers (fmov from immediate, general register, register or zero;
+    // movi zero; ldr from a read-only constant pool at a known address). Returns true when the instruction was one of them.
+    private boolean floatMove(Instruction in) {
+        String m = in.getMnemonicString().toLowerCase();
+        Object[] dst = in.getNumOperands() > 0 ? in.getOpObjects(0) : new Object[0];
+        if (dst.length != 1 || fpNumber(dst[0]) < 0) return false;
+        int d = fpNumber(dst[0]);
+        int bits = ((Register) dst[0]).getBitLength();
+        Long v = null;
+        if (m.equals("fmov") && in.getNumOperands() == 2) {
+            Object[] src = in.getOpObjects(1);
+            Scalar sc = in.getScalar(1);
+            if (sc != null) {
+                v = fmovImmediate(sc, bits);
+            } else if (src.length == 1 && isZeroRegister(src[0])) {
+                v = 0L;
+            } else if (src.length == 1 && regNumber(src[0]) >= 0 && known[regNumber(src[0])] && !isAddr[regNumber(src[0])]) {
+                long x = val[regNumber(src[0])];
+                v = bits == 32 ? (x & 0xffffffffL) : x;
+            } else if (src.length == 1 && fpNumber(src[0]) >= 0 && fknown[fpNumber(src[0])]
+                       && fbits[fpNumber(src[0])] == bits) {
+                v = fval[fpNumber(src[0])];
+            }
+        } else if (m.equals("movi") && in.getNumOperands() == 2) {
+            Scalar sc = in.getScalar(1);
+            if (sc != null && sc.getUnsignedValue() == 0) { v = 0L; bits = 64; }
+        } else if (m.equals("ldr") && in.getNumOperands() == 2 && bits <= 64) {
+            long[] mo = memOperand(in, 1);
+            if (mo != null && mo[0] >= 0 && known[(int) mo[0]] && isAddr[(int) mo[0]]) {
+                try {
+                    Address a = toAddr(val[(int) mo[0]] + mo[1]);
+                    MemoryBlock b = a == null ? null : currentProgram.getMemory().getBlock(a);
+                    if (b != null && !b.isWrite()) {
+                        v = bits == 32 ? (currentProgram.getMemory().getInt(a) & 0xffffffffL)
+                                       : currentProgram.getMemory().getLong(a);
+                    }
+                } catch (MemoryAccessException | RuntimeException e) {
+                    v = null;
+                }
+            }
         }
-        return false;
+        fknown[d] = v != null;
+        if (v != null) { fval[d] = v; fbits[d] = bits; }
+        return true;
     }
 
-    // The frame-pointer offset of a memory operand `[x29, #imm]` of operand `op`, or null for any other addressing.
-    private static Long frameOffset(Instruction in, int op) {
-        Object[] ops = in.getOpObjects(op);
-        if (ops.length == 0 || regNumber(ops[0]) != 29) return null;
-        long off = 0;
-        for (int i = 1; i < ops.length; i++) {
-            if (!(ops[i] instanceof Scalar)) return null;
-            off += ((Scalar) ops[i]).getSignedValue();
-        }
-        return off;
+    // `fmov d0, #imm`: Ghidra gives the immediate as a Scalar; decoded as the 8-bit AArch64 floating-point immediate
+    // when it is below 256, else taken as the IEEE bit pattern.
+    private static Long fmovImmediate(Scalar sc, int bits) {
+        long raw = sc.getUnsignedValue();
+        if (raw > 0xff) return raw;
+        int sign = (int) (raw >> 7) & 1, e = (int) (raw >> 4) & 7, f = (int) raw & 15;
+        double mant = 1.0 + f / 16.0;
+        // AArch64 imm8 (VFPExpandImm): value = (-1)^s * (16 + f) / 16 * 2^r, r = UInt(NOT(b):c:d) - 3 for the bits b c d.
+        int eb = e ^ 4;
+        int r = eb - 3;
+        double dv = (sign == 1 ? -1.0 : 1.0) * mant * Math.pow(2, r);
+        return bits == 32 ? (Float.floatToIntBits((float) dv) & 0xffffffffL) : Double.doubleToLongBits(dv);
     }
 
-    // For each constructor call (callee symbol ending `fC`) in a one-time initialiser: the integer registers x0..x7 that
-    // hold a constant at the call, by a forward walk of the function's instructions in address order. The walk follows
-    // immediate moves, register copies and stores to and loads from frame-pointer slots (`stur/str/stp/ldur/ldr/ldp
-    // [x29, #imm]`). Everything it knows is dropped at an instruction another instruction jumps or branches to and after
-    // an unconditional jump or a return; the registers x0..x18 and x30 are dropped after a call. The slots are dropped
-    // for good once an `add`/`sub` forms the address of the frame or stack pointer (the slot may be written through it).
-    // Any other write makes the register unknown. `{"address","callee","registers":{"x5":5}}` (64-bit register value).
-    private String callSites(Function f) {
-        StringBuilder b = new StringBuilder();
-        int n = 0;
-        boolean[] known = new boolean[31];
-        long[] val = new long[31];
-        java.util.HashMap<Long, Long> slot = new java.util.HashMap<>();
-        boolean escaped = false;
+    private String floatText(int r, int bits) {
+        if (bits == 32) {
+            float f = Float.intBitsToFloat((int) fval[r]);
+            return Float.isFinite(f) ? "\"s" + r + "\":" + Float.toString(f) : null;
+        }
+        double d = Double.longBitsToDouble(fval[r]);
+        return Double.isFinite(d) ? "\"d" + r + "\":" + num(d) : null;
+    }
+
+    // Forward walk over the instructions of one function in address order, following immediate moves, register copies,
+    // address arithmetic (`adrp`, `add`), floating-point moves and loads from read-only constants, stores to and loads
+    // from frame-pointer slots (`[x29, #imm]`) and stores of constants to the outgoing stack-argument area (after a
+    // `sub sp, sp, #imm`). Everything known is dropped at an instruction another instruction jumps or branches to and
+    // after an unconditional jump or a return; the registers x0..x18, x30, d0..d7 and d16..d31 are dropped after a call.
+    // Frame slots are dropped for good once an `add`/`sub` forms the address of the frame or stack pointer.
+    // Result: [constructor call sites (only when `ctor`), calls with floating-point constants (up to MAX_FLOAT_CALLS)].
+    private String[] walk(Function f, boolean ctor) {
+        StringBuilder sites = new StringBuilder(), floats = new StringBuilder();
+        int ns = 0, nf = 0;
+        escaped = false;
+        resetState();
         Instruction prev = null;
+        boolean[] addr = new boolean[1];
         for (Instruction in : currentProgram.getListing().getInstructions(f.getBody(), true)) {
             boolean reset = prev == null || !in.getAddress().equals(prev.getFallThrough());
             if (!reset) {
@@ -254,82 +392,151 @@ public class BlueprintExport extends GhidraScript {
                     if (r.getReferenceType().isFlow() && !r.getReferenceType().equals(RefType.FALL_THROUGH)) reset = true;
                 }
             }
-            if (reset) {
-                java.util.Arrays.fill(known, false);
-                slot.clear();
-            }
+            if (reset) resetState();
             prev = in;
             String m = in.getMnemonicString().toLowerCase();
             if (in.getFlowType().isCall()) {
                 Address[] flows = in.getFlows();
                 Function callee = flows != null && flows.length == 1 ? getFunctionAt(flows[0]) : null;
+                if (callee != null && callee.isThunk() && callee.getThunkedFunction(true) != null) {
+                    callee = callee.getThunkedFunction(true);
+                }
                 String cn = callee == null ? null : (callee.getSymbol() == null ? callee.getName() : callee.getSymbol().getName());
-                if (cn != null && cn.endsWith("fC") && !cn.contains("builtinStringLiteral")) {
-                    StringBuilder regs = new StringBuilder();
+                if (ctor && cn != null && cn.endsWith("fC") && !cn.contains("builtinStringLiteral")) {
+                    StringBuilder regs = new StringBuilder(), stack = new StringBuilder();
                     int k = 0;
                     for (int r = 0; r < 8; r++) {
-                        if (!known[r]) continue;
+                        if (!known[r] || isAddr[r]) continue;
                         if (k++ > 0) regs.append(",");
                         regs.append("\"x").append(r).append("\":").append(val[r]);
                     }
-                    if (n++ > 0) b.append(",");
-                    b.append("{\"address\":").append(q("0x" + in.getAddress().toString())).append(",\"callee\":")
-                     .append(q(cn)).append(",\"registers\":{").append(regs).append("}}");
-                }
-                for (int r = 0; r <= 18; r++) known[r] = false;
-                known[30] = false;
-                continue;
-            }
-            Long off = null;
-            int memOp = m.startsWith("st") || m.startsWith("ld") ? in.getNumOperands() - 1 : -1;
-            if (memOp >= 1) off = frameOffset(in, memOp);
-            if (m.startsWith("st") && memOp >= 1) {
-                boolean plain = (m.equals("str") || m.equals("stur") || m.equals("stp")) && off != null && !escaped;
-                if (off != null && !plain) slot.clear();
-                if (plain) {
-                    int regsInOp = m.equals("stp") ? 2 : 1;
-                    for (int i = 0; i < regsInOp; i++) {
-                        Object[] so = in.getOpObjects(i);
-                        Long v = null;
-                        if (so.length == 1 && isZeroRegister(so[0])) v = 0L;
-                        else if (so.length == 1 && regNumber(so[0]) >= 0 && known[regNumber(so[0])]) {
-                            boolean w = ((Register) so[0]).getBitLength() <= 32;
-                            v = w ? (val[regNumber(so[0])] & 0xffffffffL) : val[regNumber(so[0])];
+                    k = 0;
+                    if (outArgsSize >= 0) {
+                        for (java.util.Map.Entry<Long, long[]> e : outArgs.entrySet()) {
+                            if (e.getKey() >= outArgsSize) continue;
+                            if (k++ > 0) stack.append(",");
+                            stack.append("{\"offset\":").append(e.getKey()).append(",\"bits\":").append(e.getValue()[1])
+                                 .append(",\"value\":").append(e.getValue()[0]).append("}");
                         }
-                        boolean w = so.length == 1 && so[0] instanceof Register && ((Register) so[0]).getBitLength() <= 32;
-                        long key = off + i * (w ? 4 : 8);
-                        // A 32-bit store only describes a 32-bit slot: kept under a distinct key so a 64-bit load misses it.
-                        slot.remove(off + i * 8L);
-                        slot.remove(off + i * 8L + 4);
-                        if (v != null) slot.put(w ? -(key + 1) : key, v);
+                    }
+                    if (ns++ > 0) sites.append(",");
+                    sites.append("{\"address\":").append(q("0x" + in.getAddress().toString())).append(",\"callee\":")
+                         .append(q(cn)).append(",\"registers\":{").append(regs).append("},\"stack_arguments\":[")
+                         .append(stack).append("],\"stack_arguments_known\":").append(outArgsSize >= 0).append("}");
+                }
+                if (cn != null && nf < MAX_FLOAT_CALLS) {
+                    StringBuilder fl = new StringBuilder();
+                    int k = 0;
+                    for (int r = 0; r < 8; r++) {
+                        if (!fknown[r]) continue;
+                        String t = floatText(r, fbits[r] == 32 ? 32 : 64);
+                        if (t == null) continue;
+                        if (k++ > 0) fl.append(",");
+                        fl.append(t);
+                    }
+                    // A Double or CGFloat (also inside an Optional) is passed in an integer register by the Swift convention
+                    // when it is not a plain argument: its bit pattern is a value in the range of a layout number.
+                    StringBuilder bits = new StringBuilder();
+                    int kb = 0;
+                    for (int r = 0; r < 8; r++) {
+                        if (!known[r] || isAddr[r]) continue;
+                        double d = Double.longBitsToDouble(val[r]);
+                        if (val[r] < 0x3c00000000000000L || val[r] >= 0x41f0000000000000L || !Double.isFinite(d)) continue;
+                        if (kb++ > 0) bits.append(",");
+                        bits.append("\"x").append(r).append("\":").append(num(d));
+                    }
+                    if (k > 0 || kb > 0) {
+                        if (nf++ > 0) floats.append(",");
+                        floats.append("{\"address\":").append(q("0x" + in.getAddress().toString())).append(",\"callee\":")
+                              .append(q(cn)).append(",\"floats\":{").append(fl).append("},\"integer_registers_as_double\":{")
+                              .append(bits).append("}}");
                     }
                 }
+                for (int r = 0; r <= 18; r++) { known[r] = false; spOff[r] = null; }
+                known[30] = false;
+                for (int r = 0; r < 8; r++) fknown[r] = false;
+                for (int r = 16; r < 32; r++) fknown[r] = false;
+                outArgs.clear();
+                outArgsSize = -1;
                 continue;
             }
-            Long v = null;
-            if (m.startsWith("ld") && off != null && !escaped && (m.equals("ldr") || m.equals("ldur") || m.equals("ldp"))) {
-                int regsInOp = m.equals("ldp") ? 2 : 1;
-                for (int i = 0; i < regsInOp; i++) {
-                    Object[] lo = in.getOpObjects(i);
-                    if (lo.length != 1 || regNumber(lo[0]) < 0) continue;
-                    boolean w = ((Register) lo[0]).getBitLength() <= 32;
-                    long key = off + i * (w ? 4 : 8);
-                    Long sv = slot.get(w ? -(key + 1) : key);
-                    int rn = regNumber(lo[0]);
-                    known[rn] = sv != null;
-                    if (sv != null) val[rn] = sv;
+            boolean writesSp = false;
+            for (Object o : in.getResultObjects()) if (isSp(o)) writesSp = true;
+            if (writesSp) {
+                java.util.Arrays.fill(spOff, null);
+                outArgs.clear();
+                Scalar sc = in.getNumOperands() == 3 ? in.getScalar(2) : null;
+                outArgsSize = m.equals("sub") && sc != null ? sc.getUnsignedValue() : -1;
+                continue;
+            }
+            // Stores and loads through the frame pointer or the stack area.
+            if (m.startsWith("st") || m.startsWith("ld")) {
+                int memOp = in.getNumOperands() - 1;
+                long[] mo = memOp >= 1 ? memOperand(in, memOp) : null;
+                if (m.startsWith("st") && mo != null) {
+                    boolean fp = mo[0] == 29;
+                    boolean stk = mo[0] == -2 || (mo[0] >= 0 && spOff[(int) mo[0]] != null);
+                    long off = mo[0] == -2 ? mo[1] : (stk ? spOff[(int) mo[0]] + mo[1] : mo[1]);
+                    boolean plain = m.equals("str") || m.equals("stur") || m.equals("stp") || m.equals("strb") || m.equals("strh");
+                    int count = m.equals("stp") ? 2 : 1;
+                    if (fp && !plain) slot.clear();
+                    for (int i = 0; i < count && (fp || stk); i++) {
+                        Object[] so = in.getOpObjects(i);
+                        boolean isReg = so.length == 1 && so[0] instanceof Register;
+                        int w = !isReg ? 64 : m.equals("strb") ? 8 : m.equals("strh") ? 16 : ((Register) so[0]).getBitLength() <= 32 ? 32 : 64;
+                        Long v = null;
+                        if (isReg && isZeroRegister(so[0])) v = 0L;
+                        else if (isReg && regNumber(so[0]) >= 0 && known[regNumber(so[0])] && !isAddr[regNumber(so[0])]) {
+                            long x = val[regNumber(so[0])];
+                            v = w == 64 ? x : x & ((1L << w) - 1);
+                        }
+                        long o2 = off + i * (w / 8);
+                        if (fp && plain && !escaped) {
+                            slot.remove(o2); slot.remove(-(o2 + 1));
+                            if (v != null) slot.put(w == 32 ? -(o2 + 1) : o2, v);
+                        } else if (stk && plain) {
+                            for (long k = o2; k < o2 + w / 8; k++) outArgs.remove(k);
+                            if (v != null) outArgs.put(o2, new long[] {v, w});
+                        }
+                    }
+                    continue;
                 }
-                continue;
+                if (m.startsWith("ld") && mo != null && mo[0] == 29 && !escaped
+                        && (m.equals("ldr") || m.equals("ldur") || m.equals("ldp"))
+                        && in.getOpObjects(0).length == 1 && regNumber(in.getOpObjects(0)[0]) >= 0) {
+                    int count = m.equals("ldp") ? 2 : 1;
+                    for (int i = 0; i < count; i++) {
+                        Object[] lo = in.getOpObjects(i);
+                        if (lo.length != 1 || regNumber(lo[0]) < 0) continue;
+                        boolean w = ((Register) lo[0]).getBitLength() <= 32;
+                        long key = mo[1] + i * (w ? 4 : 8);
+                        Long sv = slot.get(w ? -(key + 1) : key);
+                        int rn = regNumber(lo[0]);
+                        known[rn] = sv != null;
+                        isAddr[rn] = false;
+                        spOff[rn] = null;
+                        if (sv != null) val[rn] = sv;
+                    }
+                    continue;
+                }
             }
-            v = moved(in, known, val);
+            if (floatMove(in)) continue;
+            Long v = moved(in, addr);
+            // `mov xN, sp` / `add xN, sp, #k`: xN designates the stack-argument area.
+            Long newSp = null;
+            if (m.equals("mov") && in.getNumOperands() == 2 && in.getOpObjects(1).length == 1 && isSp(in.getOpObjects(1)[0])) newSp = 0L;
             boolean writesOther = false;
             for (Object o : in.getResultObjects()) {
+                int fr = fpNumber(o);
+                if (fr >= 0) { fknown[fr] = false; continue; }
                 int rn = regNumber(o);
                 if (rn < 0) continue;
                 if (rn != 29) writesOther = true;
                 boolean w = ((Register) o).getBitLength() <= 32;
+                spOff[rn] = newSp;
                 if (v != null) {
                     known[rn] = true;
+                    isAddr[rn] = addr[0];
                     val[rn] = w ? (v & 0xffffffffL) : v;
                 } else {
                     known[rn] = false;
@@ -340,7 +547,7 @@ public class BlueprintExport extends GhidraScript {
                 slot.clear();
             }
         }
-        return "[" + b + "]";
+        return new String[] {"[" + sites + "]", "[" + floats + "]"};
     }
 
     @Override
@@ -381,6 +588,7 @@ public class BlueprintExport extends GhidraScript {
             matched++;
             if (decompiled + failed >= max) continue;
             String code = null, err = null;
+            String[] walked = walk(f, sym.endsWith("_WZ"));
             DecompileResults r = ifc.decompileFunction(f, timeout, monitor);
             if (r != null && r.decompileCompleted() && r.getDecompiledFunction() != null) {
                 code = r.getDecompiledFunction().getC();
@@ -395,7 +603,7 @@ public class BlueprintExport extends GhidraScript {
                .append(",\"symbol\":").append(q(sym))
                .append(",\"size\":").append(f.getBody().getNumAddresses())
                .append(",\"string_literals\":").append(code == null ? "{}" : literals(code))
-               .append(",\"call_sites\":").append(sym.endsWith("_WZ") ? callSites(f) : "[]")
+               .append(",\"call_sites\":").append(walked[0]).append(",\"float_calls\":").append(walked[1])
                .append(",\"pseudo_code\":").append(q(code))
                .append(",\"error\":").append(q(err)).append("}");
         }

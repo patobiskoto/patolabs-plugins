@@ -34,7 +34,8 @@ def detect_groups(an: dict) -> dict[str, dict]:
         r = groups.role_of(e["owner"]) if e.get("owner") else None
         stem = r[0] if r and r[0] in found else extension_group(e, stems)
         if stem:
-            g = found.setdefault(stem, {"name": stem, "kind": "feature", "types": [], "functions": 0, "analysed": 0})
+            g = found.setdefault(stem, {"name": stem, "kind": "feature", "types": [], "functions": 0, "analysed": 0,
+                                        "extension_only": True})
             g["functions"] += 1
             g["analysed"] += e["status"] == "ok"
     for g in found.values():
@@ -44,17 +45,19 @@ def detect_groups(an: dict) -> dict[str, dict]:
 
 def extension_group(e: dict, stems: list[str]) -> str | None:
     """The group of a function defined in the app's extension of another module's type: the related group stem
-    (`groups.extension_stem`), else `groups.EXTENSIONS_GROUP`; None for any other function."""
+    (`groups.extension_stem`), else the first type named by its generic requirements (`Array where Element == T` joins
+    the group `T`), else `groups.EXTENSIONS_GROUP`; None for any other function."""
     ext = e.get("extension")
     if e.get("owner") or not ext:
         return None
-    return groups.extension_stem(ext, stems) or groups.EXTENSIONS_GROUP
+    return groups.extension_stem(ext, stems) or next(iter(ext.get("related_types") or []), None) \
+        or groups.EXTENSIONS_GROUP
 
 
 def extension_counts(an: dict, found: dict[str, dict]) -> dict:
     """Functions of the app's extensions of other modules' types: detected, analysed, per group they were attributed to."""
     ext = [e for e in an["entries"] if not e.get("owner") and e.get("extension")]
-    stems = sorted(n for n in found if n != groups.EXTENSIONS_GROUP)
+    stems = sorted(n for n, g in found.items() if not g.get("extension_only"))
     per: dict[str, int] = {}
     for e in ext:
         g = extension_group(e, stems)
@@ -99,8 +102,8 @@ def coverage(an: dict, found: dict[str, dict], scr: dict | None, consts: dict, r
                   "(frameworks glue, Objective-C bridges, runtime) and are not analysed")
     ext = c["functions"]["in_extensions_of_other_modules_types"]
     nc.append(f"{ext['detected']} function(s) defined in the app's extensions of types of another module are exported and "
-              f"counted in `functions.in_extensions_of_other_modules_types` ({ext['analysed']} decompiled); an extension with generic requirements (requirements between "
-              "the module and the extension marker in the symbol) is not recognised and stays in the outside-app-module count")
+              f"counted in `functions.in_extensions_of_other_modules_types` ({ext['analysed']} decompiled); a symbol whose extension "
+              "context does not read `<extended type><module>[<requirements>]E` is not recognised and stays in the outside-app-module count")
     if c["screens_captured"]["not_captured"]:
         nc.append("screens without a captured screenshot: " + ", ".join(c["screens_captured"]["not_captured"]))
     if consts["unknown_count"]:

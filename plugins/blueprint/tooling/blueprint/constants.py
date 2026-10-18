@@ -69,13 +69,16 @@ def call_arguments(args_text: str, registers: dict | None = None) -> tuple[list,
     passes a plain integer literal (source "pseudo-code literal"); else, when `registers` (the call site's x0..x7 constants
     from the export, `{"x5": 5}`) holds the register of the same position, that immediate (source "instruction
     immediate": the decompiler's n-th argument is the n-th integer argument register, deduced); else "not a literal"
-    (source None). A literal that contradicts the register's constant makes the registers unusable for this call."""
+    (source None). The list is as long as the pseudo-code call or, when a later register among x0..x7 holds a constant
+    the decompiler dropped from the call, up to that register. A literal that contradicts the register's constant makes
+    the registers unusable for this call."""
     args = split_args(args_text)
     regs = registers or {}
     lits = [_num(a) if re.fullmatch(r"-?\d+|0x[0-9a-fA-F]+", a) else None for a in args]
     if any(v is not None and f"x{i}" in regs and regs[f"x{i}"] != v for i, v in enumerate(lits)):
         regs = {}
     out, src = [], []
+    lits = lits + [None] * (max([int(k[1:]) + 1 for k in regs if int(k[1:]) < 8] + [0]) - len(lits))
     for i, v in enumerate(lits):
         if v is not None:
             out.append(v)
@@ -103,14 +106,25 @@ _BY_ADDRESS = {"Foundation.UUID"}
 _INIT_PARAMS = re.compile(r"init\((.*)\)(?: -> [^()]*)?\s*$", re.DOTALL)
 
 
-def constructor_parameters(demangled: str | None, registers: dict) -> tuple[list | None, str | None]:
+def _stack_size(typ: str) -> int | None:
+    """Size (and alignment) in bytes of a parameter type passed on the stack, None when not deducible here."""
+    if typ in INTS:
+        return abs(INTS[typ]) // 8
+    return 1 if typ == "Swift.Bool" else None
+
+
+def constructor_parameters(demangled: str | None, registers: dict, stack: list | None = None) -> tuple[list | None, str | None]:
     """(parameters, None) or (None, reason): each declared parameter of the constructor with the integer registers its
-    type takes and, for an integer or Bool parameter whose register holds a constant at the call, that value. The layout
-    stops being deducible at the first type of unknown width (reason) and after x7 (the rest is on the stack)."""
+    type takes and, for an integer or Bool parameter whose register holds a constant at the call, that value. After x7 the
+    parameters are on the stack, each at its natural alignment from offset 0 in declaration order (the Swift arm64
+    convention for integer and Bool types, deduced): `stack` is the export's list of constants stored to the outgoing
+    argument area before the call (`[{"offset", "bits", "value"}]`), None when the export could not delimit that area.
+    The layout stops being deducible at the first type of unknown width or size (reason)."""
     m = _INIT_PARAMS.search(demangled or "")
     if not m:
         return None, "the constructor's declared parameters were not found in its demangled name"
-    params, reg = [], 0
+    params, reg, off = [], 0, 0
+    stored = {x["offset"]: x for x in stack or []}
     for text in split_args(m.group(1)):
         label, _, typ = text.rpartition(": ") if ": " in text else ("", "", text)
         typ = typ.strip()
@@ -123,9 +137,27 @@ def constructor_parameters(demangled: str | None, registers: dict) -> tuple[list
         if typ in FLOATS:
             item["reason"] = "passed in a floating-point register, not read"
             continue
-        if reg + width > 8:
-            item["reason"] = "passed on the stack (after x7) or split between x7 and the stack, not read"
+        if reg + width > 8 or reg == 8 and width:
+            size = _stack_size(typ) if reg == 8 or width == 1 else None
+            if size is None:
+                item["reason"] = "passed on the stack or split between x7 and the stack: its layout is not deducible here"
+                return params, "a parameter after x7 has a type of unknown stack size"
+            off = -(-off // size) * size
             reg = 8
+            item["stack_offset"] = off
+            at = stored.get(off)
+            if stack is None:
+                item["reason"] = "the stack-argument area could not be delimited in the export"
+            elif at is None or at["bits"] < size * 8:
+                item["reason"] = "no constant stored at this stack offset before the call"
+            else:
+                n = at["value"] & ((1 << (size * 8)) - 1)
+                if typ == "Swift.Bool":
+                    item["value"] = bool(n)
+                else:
+                    item["value"] = n - (1 << (size * 8)) if INTS[typ] > 0 and n >= 1 << (size * 8 - 1) else n
+                item["source"] = IMMEDIATE
+            off += size
             continue
         item["registers"] = [f"x{reg + k}" for k in range(width)]
         if typ in _BY_ADDRESS:
@@ -262,8 +294,9 @@ def _from_initialiser(item: dict, init: dict, typ: str, by_c_name: dict) -> None
     ctor = by_c_name.get(call.group(1)) if call else None
     sites = [c for c in init.get("call_sites") or [] if call and c["callee"] == "_$s" + call.group(1)[3:]]
     regs = sites[0]["registers"] if len(sites) == 1 else {}
+    stack = sites[0].get("stack_arguments") if len(sites) == 1 and sites[0].get("stack_arguments_known") else None
     values, sources = call_arguments(call.group(2), regs) if call else ("unknown", [])
-    params, why = constructor_parameters((ctor or {}).get("demangled"), regs) if len(sites) == 1 else (
+    params, why = constructor_parameters((ctor or {}).get("demangled"), regs, stack) if len(sites) == 1 else (
         None, "no single call site of the constructor was exported" if call else None)
     item["value"] = {"kind": "object", "string_literals": [s["value"] for s in lits],
                      "integer_literals_in_order": stores,

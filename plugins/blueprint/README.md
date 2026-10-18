@@ -193,16 +193,22 @@ target against the inventory like `decompile` (`slice_for`, exit 5), then `analy
 2. `ghidra.export`: `analyzeHeadless <project> -process <program> -noanalysis -readOnly -postScript BlueprintExport.java`
    (`tooling/ghidra_scripts/BlueprintExport.java`, compiled by Ghidra with the pinned JDK). It decompiles every
    function whose symbol starts with the app module prefix (`_$s<len><module>`; the module is the one owning most plain
-   Swift classes of the inventory, or `--module`) or carries the module as extension context, `<len><module>E` after
-   the extended type (a member of the app's extension of another module's type; the `include` pattern built in
-   `analysis.build`), each limited to `DECOMPILE_FUNCTION_SECONDS`, and also reads the
+   Swift classes of the inventory, or `--module`) or carries the module as extension context, `<len><module>` after
+   the extended type and then `E`, or generic requirements ending in `l` and then `E` (a member of the app's extension,
+   constrained or not, of another module's type; the `include` pattern built in `analysis.build`, then `analysis.extension_of`
+   keeps only symbols whose extended type reads as a clean type), each limited to `DECOMPILE_FUNCTION_SECONDS`, and also reads the
    Swift type descriptors (`__swift5_types`) with their field descriptors, the module's `vpZ` data symbols, the
    references to the strings that equal a bundle file name, and the UTF-8 bytes behind the labels the decompiler prints for
-   non-ASCII string literals. For each one-time initialiser (`_WZ`) it also records, per call of a constructor (`...fC`),
-   the integer registers `x0`..`x7` that hold a constant at the call (`callSites` in the script: a forward walk of the
-   function's instructions following immediate moves, register copies and stores to and loads from frame-pointer
-   slots; the state is dropped at a branch target, after an unconditional jump or return, and `x0`..`x18` after a call;
-   frame slots are dropped for good once an `add`/`sub` forms a frame- or stack-pointer address). The export always
+   non-ASCII string literals. For every function it walks the instructions once (`walk` in the script: a forward walk following
+   immediate moves, register copies, `adrp`/`add` addresses, floating-point `fmov`/`movi` and loads from read-only
+   constants, and stores to and loads from frame-pointer slots; the state is dropped at a branch target, after an
+   unconditional jump or return, and `x0`..`x18` and `d0`..`d7` after a call; frame slots are dropped for good once an
+   `add`/`sub` forms a frame- or stack-pointer address). In a one-time initialiser (`_WZ`) it records, per call of a
+   constructor (`...fC`), the integer registers `x0`..`x7` that hold a constant at the call and the constants stored to
+   the outgoing stack-argument area (only after a `sub sp, sp, #imm`, offsets below that size: `call_sites`). In any
+   function it records, per call (at most `MAX_FLOAT_CALLS` per function), the constants in `d0`..`d7`/`s0`..`s7` and
+   the integer registers whose value is the bit pattern of a Double in the range of layout numbers (`float_calls`; Swift
+   passes an optional or non-plain CGFloat in integer registers). The export always
    re-runs (`ghidra.export`); the saved analysis marker covers only the import (`ghidra.read_marker`: slice sha256 and
    Ghidra version), so a changed script is run at the next `analyze` (observed on 2026-10-18: three script edits, each
    used by the next run). Timeout `TIMEOUT_GHIDRA_EXPORT`. The script's arguments are checked against the ones Python
@@ -213,7 +219,9 @@ Output `<data dir>/analyses/<name>-<sha256[:16]>/analysis.json` (mode 600) plus 
 Ghidra project and program ids, `timing` (`analysis_seconds` of the saved analysis, `analysis_reused`,
 `export_seconds`, `demangle_seconds`, `total_seconds` of this run), function counts, one entry per app function (address,
 symbol, demangled name, `extension` (`extended_type`, `member`, for a member of an extension of another module's type,
-`analysis.extension_of`), `call_sites`, status, pseudo-code cut at `MAX_CODE_CHARS` with `truncated`, evidence), the Swift types, the
+`analysis.extension_of`), `call_sites`, `float_calls` (callee mangled and demangled, `floats`, `integer_registers_as_double`; integer patterns are
+kept only when the demangled callee mentions CGFloat, Double or Float; the register is not mapped to a parameter),
+status, pseudo-code cut at `MAX_CODE_CHARS` with `truncated`, evidence), the Swift types, the
 references and `unknown_parts`. Evidence of an item is Ghidra evidence: slice sha256 and address (plus the Ghidra program
 id), with `evidence_id = gh_<slice sha256[:16]>_<address without 0x>` (`analysis.ghidra_evidence`), not a REA id.
 
@@ -270,15 +278,20 @@ argument is taken as `x<n>`, deduced; ignored for the call when a pseudo-code li
 null) (`constants.call_arguments`). `constructor_parameters` maps the registers to the constructor's declared
 parameters by the Swift arm64 convention (`constants.constructor_parameters`): `x0`..`x7` take the integer arguments
 in order, a `String` two registers, a `Foundation.UUID` one (by address, deduced), a floating-point type none; the
-mapping stops, with a reason, at a type of unknown width, and parameters after `x7` are passed on the stack and are not
-read (`not a literal`). Observed on 2026-10-18 on the authorised target (five presets and the discovery program): the
-register constants give inhale, hold and exhale of each; the hold-out, target duration and `isPreset` parameters of
-those constructors are stack-passed and stay `not a literal`. Functions defined in extensions of types of another
-module (standard library `Array` or `Date`, frameworks) are exported when their symbol carries `<len><module>E`
-(`analysis.extension_of`); they join the group whose stem is contained in, or contains, the member or extended type
-name (`groups.extension_stem`, a name match), else the group `extensions`, and are counted in
-`coverage.functions.in_extensions_of_other_modules_types`. An extension with generic requirements, where requirements
-sit between the module and `E`, is not recognised (observed: one such symbol on the target, a resource accessor). A private type is named by Swift `(Type in _<32 hex>)`:
+mapping stops, with a reason, at a type of unknown width. Parameters after `x7` are on the stack, each at its natural
+alignment from offset 0 in declaration order (deduced for integer and Bool types) and are read from the stack stores
+of `call_sites.stack_arguments`; with no store at the offset, or no delimited area, they stay `not a literal` with the
+reason. `constructor_call_arguments` lists the registers up to the last `x0`..`x7` that holds a constant, also when the
+decompiler dropped that argument from its call. Observed on 2026-10-18 on the authorised target (five presets and the
+discovery program): every parameter after the three strings is read from instructions, except `isPreset` of the
+discovery program. Functions defined in extensions of types of another
+module (standard library `Array` or `Date`, frameworks) are exported when their symbol reads
+`<extended type><len><module>[<requirements>]E` (`analysis.extension_of`); they join the group whose stem is contained
+in, or contains, the member or extended type name (`groups.extension_stem`, a name match), else the group named by the
+first app type of the generic requirements (`Array where Element == T` joins `T`; the type is kept when the demangled
+text qualifies it with the module, `analysis.refine_member`), else the group `extensions`, and are counted in
+`coverage.functions.in_extensions_of_other_modules_types`. The member name is cut in the symbol when it uses Swift word
+substitution; it is completed from the demangled text when that extends it. A private type is named by Swift `(Type in _<32 hex>)`:
 `constants.readable_name` writes `Type` in the constant name and keeps the hash in the item field `private_scope`; `spec
 check` also refuses a constant name that still carries it (`_LEAK`). Screen navigation is `unknown` (nothing extracts links between screens). The contents of an asset
 catalog are `unknown` (the inventory holds record counts). Pseudo-code is Ghidra output: a decoded constant is as sound
@@ -289,7 +302,10 @@ any (`rebuild.coverage`). On the
 call-site changes, on the same target: groups 38/39 (the group `extensions` included), screens 29/29, functions
 4204/4204 (24 in extensions of other modules' types: 3 on `Date`, 16 on `Color` (5 palette colours with 3 functions
 each and an initialiser from a hex string), 5 resource initialisers), 0 cut, 51 constants (21 `unknown`, 75 preview records excluded);
-`analysis.json` 12.3 MB against 11.9 MB.
+`analysis.json` 12.3 MB against 11.9 MB. After the constrained-extension, stack-argument and floating-point changes:
+groups 39/40, functions 4236/4236 (56 in extensions of other modules' types: 31 in the group `SessionStat`, the members
+of `Array where Element == SessionStat` that compute streaks and weekly figures; 25 in `extensions`), 179 calls with
+floating-point constants in 117 functions, 0 cut, `analysis.json` 12.6 MB.
 
 **spec** file format: `{"format": 1, "title", "summary", "features": [{"name", "summary", "points":
 [{"text", "evidence": ["ev_..."] | "unknown"}]}]}` (`tooling/blueprint/spec.py`). `spec check`
