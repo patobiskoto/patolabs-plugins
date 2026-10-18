@@ -1,0 +1,34 @@
+{
+  "name": "witness",
+  "description": "Proves a change of an iOS app in the simulator with xcodebuild and xcrun simctl only: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
+  "version": "0.1.0",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/witness",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "ios",
+    "simulator",
+    "xcodebuild",
+    "simctl",
+    "codex",
+    "claude"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "witness",
+    "shortDescription": "Prove an iOS change in the simulator with Apple's tools only.",
+    "longDescription": "Runs the tests of an Xcode project on a named simulator, installs and launches the app, takes a screenshot and writes a dated report with the commit, the simulator, the test result and the measured durations. Refuses to run in a main checkout.",
+    "developerName": "patolabs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/witness",
+    "defaultPrompt": [
+      "Prove this iOS change in the simulator."
+    ]
+  }
+}
