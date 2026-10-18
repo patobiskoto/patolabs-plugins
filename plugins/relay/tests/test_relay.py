@@ -419,11 +419,15 @@ class RobustnessTests(RelayCase):
         self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
 
     def test_deeply_nested_draft_is_refused_without_traceback(self):
-        for depth in (100000, 900):
-            with self.subTest(depth=depth):
-                code, _, err = self.run_cli("[" * depth + "]" * depth)
-                self.assertIn(code, (2, 3))
-                self.assertNotIn("Traceback", err)
+        code, _, err = self.run_cli("[" * 100000 + "]" * 100000)  # json.loads itself gives up
+        self.assertEqual(code, 2)
+        self.assertIn("nested too deeply", err)
+        # the secret scan gives up (json.loads accepted the text): same refusal
+        with mock.patch.object(secrets, "find", side_effect=RecursionError):
+            code, _, err = self.run_cli(good())
+        self.assertEqual(code, 2)
+        self.assertIn("nested too deeply", err)
+        self.assertNotIn("Traceback", err)
 
     def test_timeout_of_one_command_is_not_reported_as_budget(self):
         self.foundry.write_text("import time\ntime.sleep(20)\n")
@@ -615,7 +619,9 @@ class LoadTests(RelayCase):
         code, _, _ = self.run_cli(good(branch="nope"))
         self.assertEqual(code, 0)
         out = self.load()[1]
-        self.assertIn("draft says nope", out)
+        self.assertIn("[divergence] branch: draft says nope, real is main (recorded at writing)", out)
+        self.assertNotIn("[recovered]", out)
+        self.assertIn("0 recovered", out)
 
     def test_absent_state_said_as_such(self):
         code, out, _ = self.load()
@@ -768,11 +774,6 @@ class LoadTests(RelayCase):
         self.assertEqual(self.run_cli(None, "show")[0], 1)
 
     def test_recovered_check_is_counted_apart_from_divergences(self):
-        (self.repo / "b.txt").write_text("y")
-        self.assertEqual(self.run_cli(good(files=["a.txt", "b.txt"]))[0], 0)
-        # b.txt was untracked (dirty worktree, recorded); now it exists and is committed.
-        git(self.repo, "add", "b.txt")
-        git(self.repo, "commit", "-q", "-m", "more")
         # a pointed file that was missing at writing and exists now
         self.assertEqual(self.run_cli(good(files=["c.txt"]))[0], 0)
         (self.repo / "c.txt").write_text("z")

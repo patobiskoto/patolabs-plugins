@@ -51,9 +51,9 @@ argument parsing (exit 2, `budget_seconds` in `tooling/relay_cli.py`).
 
 | Check now | Compared with | Reported as |
 |---|---|---|
-| branch, HEAD | `real` recorded at writing | `divergence` when different; `unknown` when unreadable or not recorded |
+| branch, HEAD | `real` recorded at writing | `divergence` when different; `unknown` when unreadable or not recorded; a non-ok check recorded at writing (a wrong declaration in the draft) is repeated as `(recorded at writing)`, never `recovered` |
 | working tree | nothing (state of now) | `divergence` when uncommitted changes exist |
-| files, tickets, pull requests | the check recorded at writing (same name) | `divergence` when now missing, or when the answer changed (for example PR `OPEN` to `MERGED`); `unknown` when it cannot be read now; `recovered` (with the old status) when it was non-ok at writing and is `ok` now; `ok ... (not checked at writing)` when it was not recorded |
+| files, tickets, pull requests | the check recorded at writing (same name) | `divergence` when now missing, or when the answer changed (for example PR `OPEN` to `MERGED`); `unknown` when it cannot be read now; `recovered` (with the old status) when it was non-ok at writing and is `ok` now; its current status with `(not checked at writing)` when it was not recorded |
 | any check recorded non-ok at writing and absent now (for example a dirty working tree that is clean now) | the recorded one | repeated as `(recorded at writing)`, counted under its own status |
 
 Absent state: `relay: no resume state for this repository.` Unreadable or malformed
@@ -72,7 +72,9 @@ instructions.
 daemon thread with a re-verification budget of `HOOK_DEADLINE_S` (6 s, `tooling/relay/load.py`)
 shared by the commands launched by the re-verification (`present`), joined for at most `HOOK_DEADLINE_S` + `JOIN_MARGIN_S`
 (2 s) and then leaves with `os._exit(0)`. A check not done in the budget is `unknown`
-("verification time budget exhausted"). If the thread does not finish, the state body is
+("verification time budget exhausted"; for the git checks of the load path the detail is
+`branch unreadable now`, `commit unreadable now` or `git status unreadable`, `_git_checks` in
+`tooling/relay/load.py`). If the thread does not finish, the state body is
 shown followed by a line saying the re-verification did not finish. On an unexpected error
 it prints `relay: resume state unknown (hook error).`. Outside a git repository it prints
 nothing. If its standard output is closed or broken it leaves silently, exit 0 (`main` in

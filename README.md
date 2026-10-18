@@ -248,8 +248,8 @@ plugins/
   relay/       .claude-plugin/ .codex-plugin/ hooks/ skills/ tooling/ tests/
   blueprint/   .claude-plugin/ .codex-plugin/ skills/ tooling/ tests/
   witness/     .claude-plugin/ .codex-plugin/ skills/ tooling/ tests/
-.github/workflows/ci.yml          one CI: one job per plugin (foundry, ship-ios, gauge, relay,
-                                  blueprint, witness) + the catalogue validation
+.github/workflows/ci.yml          one CI: a `plan` job, one job per plugin (foundry, ship-ios, gauge, relay, blueprint, witness)
+                                  and the catalogue validation
 ```
 
 Each plugin keeps its own `version`, `CHANGELOG`, and lifecycle — the monorepo unifies

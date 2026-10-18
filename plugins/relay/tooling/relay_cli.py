@@ -147,9 +147,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     if path is None:
         return fail("cannot locate the git common directory")
     try:
-        if not path.is_file():
-            return fail(f"no state written yet ({path})", 1)
         state = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return fail(f"no state written yet ({path})", 1)
     except (OSError, ValueError, RecursionError):
         return fail("the stored state is unreadable or malformed", 1)
     if not well_formed(state):

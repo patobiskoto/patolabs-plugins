@@ -15,10 +15,13 @@ changes, each with a test:
   counted in a new `R recovered` field of the summary line; the line format gains that field.
 - `load --budget`: `nan`, `inf` and negative values are refused (exit 2).
 - `write`: a failing store (`OSError`, lone surrogate), a deeply nested draft: exit 2 with
-  the exception type only, never a traceback. Ticket identifiers are matched with
-  `fullmatch` (a trailing newline is refused).
-- Session-start hook: a closed or broken output ends silently, exit 0. A command killed by
-  the budget now reports "verification time budget exhausted".
+  the exception type only, never a traceback.
+- Verification (`write` and `load`): a command killed by the budget now reports
+  "verification time budget exhausted" (`run`, `verify.py`); ticket identifiers are matched
+  with `fullmatch` (a trailing newline is refused).
+- Session-start hook: a closed or broken output ends silently, exit 0.
+- `load`: a branch or commit divergence recorded at writing (wrong declaration in the draft)
+  stays a recorded line, never `[recovered]`.
 - Tests: the hook manifest asserts `HOOK_DEADLINE_S + JOIN_MARGIN_S < timeout`; the
   hanging-command, unfinished-thread and recorded-non-ok-absent-now paths are tested; the
   known false negatives and false positives of the secret filter are fixed by tests.
