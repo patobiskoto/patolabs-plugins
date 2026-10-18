@@ -76,8 +76,8 @@ def plan(d: Path) -> list[dict]:
                         "checksum": "sha256:" + pins.GRADLE_DIST_SHA256, "size": "unknown (not recorded)",
                         "note": "fetched by the Gradle wrapper; the checksum is added to the wrapper properties of the extracted copy"}],
          "writes": [str(gh / pins.GRADLE_PROPERTIES), str(paths.gradle_home(d)), str(gh / pins.NATIVE_DECOMPILER)],
-         "commands": [(f"cd {gh} && JAVA_HOME={java_home(d)} GRADLE_USER_HOME={paths.gradle_home(d)} "
-                      f"{pins.GRADLEW} buildNatives")]},
+         "commands": [(f"cd {gh / pins.GRADLE_DIR} && JAVA_HOME={java_home(d)} GRADLE_USER_HOME={paths.gradle_home(d)} "
+                      "./gradlew --no-daemon buildNatives")]},
     ]
 
 
@@ -198,9 +198,18 @@ def perform(d: Path, log: Callable[[str], None] = print, *, fetcher=fetch, runne
         pin_gradle(gh / pins.GRADLE_PROPERTIES)
         paths.gradle_home(d).mkdir(parents=True, exist_ok=True)
         os.chmod(gh / pins.GRADLEW, 0o755)
-        rc, _, err = runner([str(gh / pins.GRADLEW), "buildNatives"], pins.TIMEOUT_BUILD, cwd=gh, env=tool_env(d))
+        # The build is driven from support/gradle (its own settings file), as in the 2026-10-18 trial; from the
+        # Ghidra root Gradle finds no build ("does not contain a Gradle build", observed 2026-10-18).
+        rc, _, err = runner([str(gh / pins.GRADLEW), "--no-daemon", "buildNatives"], pins.TIMEOUT_BUILD,
+                            cwd=gh / pins.GRADLE_DIR, env=tool_env(d))
         if rc != 0:
             raise SetupError(f"buildNatives failed ({err.strip()[-300:] or rc})")
+        # buildNatives leaves its outputs under <module>/build/os/mac_arm_64; the installed layout reads
+        # <module>/os/mac_arm_64 (observed 2026-10-18: the trial copied them by hand).
+        for module in pins.NATIVE_MODULES:
+            built = gh / module / "build" / "os" / pins.NATIVE_PLATFORM
+            if built.is_dir():
+                shutil.copytree(built, gh / module / "os" / pins.NATIVE_PLATFORM, dirs_exist_ok=True)
     if not (gh / pins.NATIVE_DECOMPILER).exists():
         raise SetupError("the native decompiler is absent after the build")
     log("setup complete")

@@ -45,9 +45,11 @@ size) and every location written. Sizes are not recorded in the code: the plan p
 
 - A downloaded file whose sha256 differs from the pin is deleted and the step fails
   (`fetch`). npm verifies each package against the integrity of the lockfile.
-- `natives` compiles with `gradlew buildNatives` only when `NATIVE_DECOMPILER` is absent; it
+- `natives` compiles with `./gradlew --no-daemon buildNatives`, run from the Ghidra copy's
+  `support/gradle` directory (`GRADLE_DIR`), only when `NATIVE_DECOMPILER` is absent; it
   first adds `distributionSha256Sum` to the extracted copy's wrapper properties
-  (`pin_gradle`). It needs the macOS developer command-line tools (a C++ compiler):
+  (`pin_gradle`), then copies each `build/os/mac_arm_64` output of `NATIVE_MODULES` to
+  `os/mac_arm_64`, where the installed layout reads it (observed 2026-10-18). It needs the macOS developer command-line tools (a C++ compiler):
   deduced from the build, not checked by blueprint.
 - `setup --yes` refuses outside macOS arm64 (`perform`): the JDK and the decompiler are for
   that platform.
@@ -107,7 +109,12 @@ lists at most `MAX_FILES` files and says what is beyond in `unknown_parts`.
 Limits, stated rather than hidden: the extraction of the `types`, `ui_strings` and
 `resources` sections follows the field names seen in the 2026-10-18 trial outputs; the
 regex `.` for the strings listing and the behaviour of `rea search` on a very large result
-have not been run through blueprint. They are verified by the first real inventory.
+were first run through blueprint on 2026-10-18 on a Debug iOS build of an authorised
+target: every section `ok` (38 modules, 31 types, 22,250 strings, 34 resources), about
+2 minutes, and a second run gave the same modules, types and strings (observed; whether
+this holds for other targets is unknown). In that run some accented strings came out
+mis-decoded (replacement characters), as they already did in REA's own `search` output of
+the earlier trial: the cause is in REA or Ghidra (observed), not in blueprint's reading.
 "Modules" are the linked libraries; Swift modules as such are not listed.
 
 ## Data and confidentiality

@@ -23,8 +23,12 @@ JDK_DIRNAME = "jdk-21.0.12.1+1"
 GRADLE_VERSION = "9.7.1"
 GRADLE_DIST_SHA256 = "acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a"
 GRADLE_PROPERTIES = "support/gradle/gradle-wrapper.properties"
-GRADLEW = "support/gradle/gradlew"
+GRADLE_DIR = "support/gradle"
+GRADLEW = GRADLE_DIR + "/gradlew"
+NATIVE_PLATFORM = "mac_arm_64"
 NATIVE_DECOMPILER = "Ghidra/Features/Decompiler/os/mac_arm_64/decompile"
+# Modules whose buildNatives outputs are copied from build/os/<platform> to os/<platform>.
+NATIVE_MODULES = ("Ghidra/Features/Decompiler", "GPL/DemanglerGnu", "Ghidra/Features/FileFormats")
 
 # Seconds, per external process.
 TIMEOUT_DOWNLOAD = 1800

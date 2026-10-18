@@ -199,7 +199,9 @@ def section_resources(rea: Rea, app: Path | None, files: list[Path], main: Path)
     if app is None:
         parts["files"] = "unknown: the target is a single file, not a bundle"
     for op, key in (("inspect-asset-catalog", "asset_catalogs"), ("decode-interface-builder", "interface_builder")):
-        doc, why = rea.call([op, str(main)])
+        # These two read the bundle's resources: REA answers unsupported_target for the executable and reads the
+        # catalogs when given the .app bundle (both observed 2026-10-18).
+        doc, why = rea.call([op, str(app if app is not None else main)])
         n = (doc or {}).get("normalized_result")
         if doc is None or not isinstance(n, dict):
             parts[key] = f"unknown: {why or 'not readable'}"

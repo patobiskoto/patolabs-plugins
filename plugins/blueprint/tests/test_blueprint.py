@@ -175,7 +175,9 @@ class PerformTest(Base):
                 rea.parent.mkdir(parents=True)
                 rea.write_text("#!/bin/sh\n")
             else:
-                dec = paths.ghidra_dir(self.data, pins.GHIDRA_DIRNAME) / pins.NATIVE_DECOMPILER
+                # Like the real build: outputs under build/os/<platform>, not os/<platform>.
+                gh = paths.ghidra_dir(self.data, pins.GHIDRA_DIRNAME)
+                dec = gh / "Ghidra/Features/Decompiler/build/os" / pins.NATIVE_PLATFORM / "decompile"
                 dec.parent.mkdir(parents=True)
                 dec.write_text("bin")
             return 0, "", ""
@@ -190,8 +192,9 @@ class PerformTest(Base):
         npm_cmd, npm_cwd, _ = log[0]
         self.assertEqual(npm_cmd[:3], ["npm", "ci", "--ignore-scripts"])
         self.assertEqual(npm_cwd, paths.rea_dir(self.data))
-        gr_cmd, _, env = log[1]
-        self.assertEqual(gr_cmd[1:], ["buildNatives"])
+        gr_cmd, gr_cwd, env = log[1]
+        self.assertEqual(gr_cmd[1:], ["--no-daemon", "buildNatives"])
+        self.assertEqual(gr_cwd, paths.ghidra_dir(self.data, pins.GHIDRA_DIRNAME) / pins.GRADLE_DIR)
         self.assertEqual(env["JAVA_HOME"], str(setup.java_home(self.data)))
         self.assertEqual(env["GRADLE_USER_HOME"], str(paths.gradle_home(self.data)))
         props = (paths.ghidra_dir(self.data, pins.GHIDRA_DIRNAME) / pins.GRADLE_PROPERTIES).read_text()
@@ -337,7 +340,7 @@ class InventoryTest(Base):
             op = cmd[1]
             if op in fail_ops:
                 return 1, json.dumps({"error": "x", "code": "provider_unavailable"}), ""
-            sha = hashlib.sha256(Path(cmd[2]).read_bytes()).hexdigest() if Path(cmd[2]).exists() else "?"
+            sha = hashlib.sha256(Path(cmd[2]).read_bytes()).hexdigest() if Path(cmd[2]).is_file() else "?"
             return 0, json.dumps(rea_answer(op, evidence="ev_" + op, sha=sha)), ""
         return runner
 
@@ -356,6 +359,8 @@ class InventoryTest(Base):
         for c in rea_calls:  # deep analysis only ever sees the thin slice
             if c[1] in ("analyze", "search", "inspect-native-dispatch-metadata"):
                 self.assertTrue(c[2].endswith(".arm64"))
+            if c[1] in ("inspect-asset-catalog", "decode-interface-builder"):  # resources: the bundle itself
+                self.assertEqual(c[2], str(app))
         self.assertEqual(doc["analysis"]["procedure_count"], 3)
         types = doc["types"]["items"]
         self.assertEqual([t["name"] for t in types if t["kind"] == "objc-class"], ["ClassA", "ClassB"])
