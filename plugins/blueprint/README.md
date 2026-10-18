@@ -3,18 +3,24 @@
 Reverse-engineering inventory for Claude Code and Codex, restricted to targets the
 maintainer authorised. It prepares pinned REA, Ghidra and JDK in its own data directory
 (never globally), refuses any target absent from a registry, and writes a reproducible
-inventory with REA evidence. Stdlib-only Python. Version 0.1.0 (PAT-252, decisions of
-PAT-181).
+inventory with REA evidence, groups it into candidate screens and features, decompiles the entry
+points of one group, and turns a product-language specification into Foundry payloads.
+Stdlib-only Python. Version 0.2.0 (PAT-252, PAT-253, decisions of PAT-181).
 
 ```
 python3 plugins/blueprint/tooling/blueprint_cli.py setup [--plan|--yes]
 python3 plugins/blueprint/tooling/blueprint_cli.py targets add <target> --reason TEXT [--date YYYY-MM-DD]
 python3 plugins/blueprint/tooling/blueprint_cli.py targets list
 python3 plugins/blueprint/tooling/blueprint_cli.py inventory <target> [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py groups <inventory.json> [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py decompile <target> --inventory FILE (--group NAME | --entry ADDR) [--list] [--max N] [--budget SECONDS] [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py spec check <spec.json> <evidence.json>...
+python3 plugins/blueprint/tooling/blueprint_cli.py spec to-foundry <spec.json> <evidence.json>... [--output DIR] [--epic-id ID]
 ```
 
-Skills: `/blueprint:setup`, `/blueprint:targets`, `/blueprint:inventory` (Claude Code);
-`$blueprint:setup`, `$blueprint:targets`, `$blueprint:inventory` (Codex).
+Skills: `/blueprint:setup`, `/blueprint:targets`, `/blueprint:inventory`, `/blueprint:decompile`,
+`/blueprint:spec` (Claude Code); `$blueprint:setup`, `$blueprint:targets`, `$blueprint:inventory`,
+`$blueprint:decompile`, `$blueprint:spec` (Codex).
 
 Exit codes (`EXIT_*` in `tooling/blueprint_cli.py`): 0 done, 2 usage or registry error,
 3 target refused (not authorised, or unreadable registry), 4 tooling not prepared,
@@ -26,7 +32,8 @@ Everything blueprint writes goes under one directory outside any repository
 (`data_dir` in `tooling/blueprint/paths.py`): `$BLUEPRINT_DATA_DIR` if set, else
 `~/Library/Application Support/blueprint` on macOS, else `~/.local/share/blueprint`.
 Layout: `downloads/`, `rea/` (with `node_modules/`), `jdk/`, `ghidra/`, `gradle-home/`,
-`npm-cache/`, `work/` (thin slices), `inventories/`, `targets.json` (registry).
+`npm-cache/`, `work/` (thin slices), `inventories/`, `decompilations/`, `payloads/`, `targets.json`
+(registry).
 
 ## setup
 
@@ -124,6 +131,66 @@ mis-decoded (replacement characters), as they already did in REA's own `search` 
 the earlier trial: the cause is in REA or Ghidra (observed), not in blueprint's reading.
 "Modules" are the linked libraries; Swift modules as such are not listed.
 
+## groups, decompile, spec (PAT-253)
+
+Flow: `inventory` -> `groups` -> `decompile` -> the agent writes the spec (skill `blueprint:spec`)
+-> `spec check` -> `spec to-foundry` -> maintainer confirmation -> Foundry commands run by the
+coordinator. The evidence files given to `spec check` are the inventory and the decompilation files.
+
+**groups** reads only the inventory (no REA call, no registry, `cmd_groups`) and is deterministic
+(`test_deterministic_and_unknown_sections_reported`). A type joins a group by the role suffix of its
+name (`SUFFIX_ROLES` in `tooling/blueprint/groups.py`: for example `ViewModel`, `View`, `Controller`
+make a `screen`; `Manager`, `Service`, `Store` make a `feature`); records of one type name (Swift
+conformance and Objective-C class) are merged; a plain Swift runtime class name `_TtC<n><module><n><class>`
+gives the module (`split_swift_class`). A UI string joins the group whose name (4 characters or more,
+`MIN_STEM_FOR_STRINGS`) it contains, case-insensitively, the longest name first, and only if it looks like
+a label (`human_string`: heuristic, the symbol names, paths and keys it rejects stay in the inventory).
+That is a naming and substring heuristic: a group is a candidate, not a fact about the product. Everything
+else is in `ungrouped` with a reason (nested or private classes, protocols, types without a role
+suffix, strings without a group), and `accounting` gives three counts (in groups, ungrouped, not user-facing) that add up to the number of
+strings in the inventory (`test_strings_are_assigned_by_group_name_and_accounted`). A group items list is capped at `MAX_GROUP_STRINGS` (ungrouped strings:
+`MAX_UNGROUPED_STRINGS`) and says `truncated`.
+
+**decompile** applies the registry gate like `inventory` (exit 3 before anything runs), needs the
+prepared tooling (exit 4), and checks that the target's sha256 and arm64 slice are those of the inventory
+(`slice_for`, exit 5 otherwise). With `--group`, one `rea search --kind procedures --mode regex` finds
+the Swift procedures of the group's classes, `entry_points` keeps functions (mangled name ending in `F`)
+and initialisers (`fC`) and drops accessors, closures, coroutine helpers and Observation boilerplate
+(`BOILERPLATE_METHODS`, `BOILERPLATE_MARKERS`), then one `rea decompile <slice> <address>` per entry
+point. `--list` stops after the search. Bounds: `--max` entry points (default `MAX_DECOMPILE`), each call
+at most `TIMEOUT_DECOMPILE` seconds, the procedure search at most `TIMEOUT_REA` seconds, and the whole run (search
+included) `BUDGET_DECOMPILE` seconds by default (`--budget`),
+all in `tooling/blueprint/pins.py`; pseudo-code is cut at `MAX_CODE_CHARS` and says `truncated`. Output
+(default `<data dir>/decompilations/<name>-<group>.json`, mode 600) keeps per entry the address, the mangled
+symbol, the method name, the pseudo-code and the evidence (`rea_evidence_id`, `target_sha256`, `address`);
+REA's `local_path` is not copied. A failed call is `status: unknown` with the reason; a group whose classes
+have no known module (seen only as Swift conformances) has no search hint and says unknown.
+Observed on 2026-10-18 on the authorised target: `rea search --kind procedures` and `rea decompile` each
+took about 52 s, the first one re-analysing the binary, and `--snapshot` did not shorten a following call;
+whether the time depends on the target size is unknown. The pseudo-code is Ghidra output with mangled Swift
+names, not source (REA `limitations` field).
+
+**spec** file format: `{"format": 1, "title", "summary", "features": [{"name", "summary", "points":
+[{"text", "evidence": ["ev_..."] | "unknown"}]}]}` (`tooling/blueprint/spec.py`). `spec check`
+(`spec.check`) refuses a point whose evidence id is not found (any `rea_evidence_id` or `evidence_id` key,
+at any depth) in the evidence files passed, a point with neither a non-empty id list nor `unknown`, a
+duplicate feature name, and a text or feature summary containing a mangled symbol or a raw hex address
+(`_LEAK`). It does not and cannot prove that a point is true or that an id supports the sentence it is
+attached to: the author and the reviewer judge that. `spec to-foundry` runs the check first, writes
+`epic.json` (fields `Type: Epic`, `State: backlog`, as `campaign_defer.py` creates its companion Epic)
+and prints the `edit create-issue` command; with `--epic-id` it writes one `ticket-NN-<slug>.json` per
+feature with `parent` set, whose acceptance criteria are the evidenced points and whose body cites their
+ids; points with `unknown` go to an "Unknown" section, not to acceptance criteria. A feature without any
+evidenced point is refused. The payload keys `title`, `body`, `fields`, `parent` are those read by
+`edit.create_issue` (`plugins/foundry/tooling/foundry/edit.py`). The command never calls the tracker and never
+runs Foundry (`test_cli_to_foundry_writes_payloads_prints_commands_and_never_calls_anything`): the
+commands are printed with `<foundry-root>` and run only after the maintainer's explicit confirmation, by
+the coordinating Foundry skill (`foundry:intake`, "3. Apply (human-confirmed)"). The two phases exist
+because a ticket's parent identifier is known only once the Epic is created.
+
+The trial on the compiled authorised target and the real tracker writes are not part of this release
+note: see the pull request of PAT-253.
+
 ## Data and confidentiality
 
 REA evidence stays on the machine. It leaves it only to Claude Code or Codex under the
@@ -140,3 +207,8 @@ it is not used.
 | Registry file format, inventory sections and limits | documented above |
 | Operational constraint: macOS arm64 only for `setup --yes` | documented above |
 | Foundry `README.md` CI job list (seven jobs) | updated; fragment `plugins/foundry/changelog.d/PAT-252.md` |
+| CLI verbs `groups`, `decompile`, `spec check`, `spec to-foundry` and their options | documented above and in the skills `decompile` and `spec` |
+| Constants `SUFFIX_ROLES`, `MAX_GROUP_STRINGS`, `MAX_DECOMPILE`, `TIMEOUT_DECOMPILE`, `BUDGET_DECOMPILE`, `MAX_CODE_CHARS` | documented above (names; values are in the code) |
+| Spec file format, groups and decompilation output | documented above |
+| Operational constraint: one REA call is about 52 s | documented above (observed once) |
+| Foundry docs | not necessary: no Foundry CLI, constant or skill changed; blueprint only prints `edit create-issue` commands whose payload keys are those `edit.py` already reads |

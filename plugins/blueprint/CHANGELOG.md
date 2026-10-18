@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-18
+
+- `blueprint_cli.py groups <inventory>`: offline, deterministic grouping of an inventory's types and
+  UI strings into candidate screens and features; what cannot be grouped is listed in `ungrouped`
+  with the reason, and `accounting` makes the string counts add up.
+- `blueprint_cli.py decompile <target> --inventory FILE --group NAME | --entry ADDR`: same registry
+  gate as `inventory`; finds the group's entry points with one `rea search` and decompiles a bounded
+  number of them (`--max`, `--budget`, `TIMEOUT_DECOMPILE`), each with its REA evidence; `--list`
+  only lists the candidates.
+- `blueprint_cli.py spec check` and `spec to-foundry`: a product-language spec whose every point
+  cites REA evidence ids present in the files given, or `unknown`; `to-foundry` writes the
+  payloads of `edit create-issue` (the Epic, then the tickets with `--epic-id`) and prints the commands.
+  It never calls the tracker: the maintainer confirms before the coordinator runs them.
+- Skills `blueprint:decompile` and `blueprint:spec`.
+- `groups` and `decompile` (one entry point and one group listing) were run once on 2026-10-18 on the
+  authorised target; the tests use fakes.
+
 ## 0.1.0 — 2026-10-18
 
 - First brick (PAT-252): `blueprint_cli.py setup [--plan|--yes]` prints, then on `--yes`
