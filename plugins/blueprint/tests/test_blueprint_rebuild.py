@@ -22,6 +22,7 @@ from blueprint import (
     constants,
     decompile,
     ghidra,
+    groups,
     inventory,
     paths,
     pins,
@@ -172,7 +173,7 @@ class ConstantsTest(unittest.TestCase):
 
     def test_register_arguments_are_read_from_the_constructor_call(self):
         self.assertEqual(constants.split_args("a, f(b, c), \"x,y\", 5"), ["a", "f(b, c)", "\"x,y\"", "5"])
-        self.assertEqual(constants.call_arguments("p,q,4,7,0x8,-1,uVar1"),
+        self.assertEqual(constants.call_arguments("p,q,4,7,0x8,-1,uVar1")[0],
                          ["not a literal", "not a literal", 4, 7, 8, -1, "not a literal"])
         e = entry("_$s7DemoApp14PresetProgramsV5calmeAA3PgmCvgZ", "static DemoApp.PresetPrograms.calme.getter : DemoApp.Pgm",
                   body("calme();\n  return 1;"), "0x52")
@@ -183,6 +184,65 @@ class ConstantsTest(unittest.TestCase):
         obj = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]["value"]
         self.assertEqual(obj["constructor_call_arguments"], ["not a literal", "not a literal", 5, 4, "not a literal"])
         self.assertEqual(obj["integer_literals_in_order"], [])
+
+    def test_register_immediates_fill_variables_with_their_source(self):
+        values, sources = constants.call_arguments("p,q,r,s,t,uVar1,uVar2,5", {"x5": 4, "x6": 7, "x2": 9})
+        self.assertEqual(values, ["not a literal"] * 2 + [9] + ["not a literal"] * 2 + [4, 7, 5])
+        self.assertEqual(sources, [None, None, "instruction immediate", None, None, "instruction immediate",
+                                   "instruction immediate", "pseudo-code literal"])
+        # A pseudo-code literal that contradicts the register's constant: the registers are not trusted for this call.
+        values, sources = constants.call_arguments("a,b,c,d,e,5,v", {"x5": 6, "x6": 7})
+        self.assertEqual((values[5:], sources[5:]), ([5, "not a literal"], ["pseudo-code literal", None]))
+        self.assertEqual(constants.call_arguments("a,b", {"x1": 0xffffffffffffffff})[0][1], -1)
+
+    def test_preset_parameters_follow_the_arm64_registers_of_the_declared_signature(self):
+        sig = ("DemoApp.Pgm.__allocating_init(id: Foundation.UUID, name: Swift.String, description: Swift.String, "
+               "inhale: Swift.Int, holdIn: Swift.Int, exhale: Swift.Int, holdOut: Swift.Int, flag: Swift.Bool) "
+               "-> DemoApp.Pgm")
+        ps, why = constants.constructor_parameters(sig, {"x5": 4, "x6": 0, "x7": 8})
+        self.assertIsNone(why)
+        self.assertEqual([(p["label"], p["registers"], p["value"]) for p in ps],
+                         [("id", ["x0"], "not a literal"), ("name", ["x1", "x2"], "not a literal"),
+                          ("description", ["x3", "x4"], "not a literal"), ("inhale", ["x5"], 4), ("holdIn", ["x6"], 0),
+                          ("exhale", ["x7"], 8), ("holdOut", [], "not a literal"), ("flag", [], "not a literal")])
+        self.assertIn("stack", ps[6]["reason"])
+        # A type of unknown width ends the mapping: later parameters keep "not a literal" and nothing is guessed.
+        ps, why = constants.constructor_parameters("A.B.init(x: Foo.Bar, n: Swift.Int)", {"x0": 3, "x1": 3})
+        self.assertEqual([p["value"] for p in ps], ["not a literal"])
+        self.assertIn("not known", why)
+        self.assertIsNone(constants.constructor_parameters("A.B.make()", {})[0])
+        # A 32-bit integer type is cut to its width, a Bool reads the low byte.
+        ps, _ = constants.constructor_parameters("A.B.init(a: Swift.Int32, b: Swift.Bool)", {"x0": 0xfffffffe, "x1": 1})
+        self.assertEqual([p["value"] for p in ps], [-2, True])
+
+    def test_object_constant_uses_register_immediates_and_marks_the_source(self):
+        e = entry("_$s7DemoApp14PresetProgramsV5calmeAA3PgmCvgZ", "static DemoApp.PresetPrograms.calme.getter : DemoApp.Pgm",
+                  body("calme();\n  return 1;"), "0x52")
+        z = entry("_$s7DemoApp14PresetProgramsV5calme_WZ", None,
+                  body('__sSS21_builtinStringLiteral17utf8CodeUnitCount7isASCIISSBp_BwBi1_tcfC("Calm",4,1);\n'
+                       '  __s7DemoApp3PgmC4name6inhalecfC(a,b,c,d,e,5,v);'), "0x56")
+        z["call_sites"] = [{"address": "0x60", "callee": "_$s7DemoApp3PgmC4name6inhalecfC",
+                            "registers": {"x5": 5, "x6": 0, "x7": 5}}]
+        ctor = entry("_$s7DemoApp3PgmC4name6inhalecfC",
+                     "DemoApp.Pgm.__allocating_init(id: Foundation.UUID, name: Swift.String, description: Swift.String, "
+                     "inhale: Swift.Int, holdIn: Swift.Int, exhale: Swift.Int) -> DemoApp.Pgm", body("return;"), "0x58")
+        item = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]
+        obj = item["value"]
+        self.assertEqual(obj["constructor_call_arguments"][5:], [5, 0])
+        self.assertEqual(obj["constructor_call_argument_sources"][5:], ["pseudo-code literal", "instruction immediate"])
+        self.assertEqual({p["label"]: p["value"] for p in obj["constructor_parameters"]}["exhale"], 5)
+        self.assertIn("deduced", obj["mapping_to_parameters"])
+        # Two call sites of the same constructor: no register is attributed.
+        z["call_sites"] = z["call_sites"] * 2
+        obj = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]["value"]
+        self.assertEqual((obj["mapping_to_parameters"], "constructor_parameters" in obj), ("unknown", False))
+        self.assertEqual(obj["constructor_call_arguments"][6], "not a literal")
+
+    def test_static_member_of_an_extension_loses_the_extension_prefix_in_its_name(self):
+        g = entry("_$s7SwiftUI5ColorV7DemoAppE4tealACvgZ", "static (extension in DemoApp):SwiftUI.Color.teal.getter : "
+                  "SwiftUI.Color", body("return 3;"), "0x10")
+        item = constants.extract([g])["items"][0]
+        self.assertEqual((item["name"], item["extension_in_module"]), ("SwiftUI.Color.teal", "DemoApp"))
 
     def test_private_scope_discriminator_is_moved_out_of_the_name(self):
         h = "9BBA4E908B17CF21996F356C5D461E56" * 1
@@ -211,10 +271,40 @@ class RebuildTest(unittest.TestCase):
         self.assertEqual((c["screens"]["detected"], c["screens"]["analysed"]), (2, 1))
         self.assertEqual(c["functions"]["outside_app_module"], 30 - 16)
         text = "\n".join(c["not_covered"])
-        for needle in ("Orphan", "1 app function(s) not decompiled", "outside the app module", "extensions of types that belong to another module",
+        for needle in ("Orphan", "1 app function(s) not decompiled", "outside the app module", "function(s) defined in the app's extensions",
                        "without a captured screenshot",
                        "static analysis only"):
             self.assertIn(needle, text)
+
+    def test_extension_functions_join_a_related_group_else_extensions_and_are_counted(self):
+        an = make_analysis()
+        ext = [
+            ("_$sSa7DemoAppE12sessionTotalSiyF", "(extension in DemoApp):Swift.Array.sessionTotal() -> Swift.Int", "Array",
+             "sessionTotal", "0xd0", "ok"),
+            ("_$s10Foundation4DateV7DemoAppE9isSameDay2asSbAC_tF",
+             "(extension in DemoApp):Foundation.Date.isSameDay(as: Foundation.Date) -> Swift.Bool", "Date", "isSameDay",
+             "0xd8", "ok"),
+            ("_$s10Foundation4DateV7DemoAppE10startOfDayACvg", "(extension in DemoApp):Foundation.Date.startOfDay.getter",
+             "Date", "startOfDay", "0xe0", "unknown")]
+        for symbol, dem, typ, member, addr, status in ext:
+            an["entries"].append(entry(symbol, dem, body("return;"), addr, None, status=status))
+            an["entries"][-1]["extension"] = {"extended_type": typ, "member": member}
+        doc = rebuild.build(an, make_inv())
+        g = {x["name"]: x for x in doc["groups"]}
+        self.assertEqual((g["Session"]["functions"], g["Session"]["analysed"]), (4, 3))
+        self.assertEqual((g["extensions"]["kind"], g["extensions"]["types"], g["extensions"]["functions"],
+                          g["extensions"]["analysed"]), ("feature", [], 2, 1))
+        c = doc["coverage"]
+        self.assertEqual(c["functions"]["in_extensions_of_other_modules_types"],
+                         {"detected": 3, "analysed": 2, "in_related_group": 1, "in_extensions_group": 2,
+                          "per_group": {"Session": 1, "extensions": 2}})
+        self.assertEqual(c["groups"]["detected"], 3)
+        text = "\n".join(c["not_covered"])
+        self.assertIn("3 function(s) defined in the app's extensions of types of another module are exported", text)
+        self.assertNotIn("not measurable", text)
+        self.assertEqual(groups.extension_stem({"member": "x", "extended_type": "Date"}, ["Session"]), None)
+        self.assertEqual(groups.extension_stem({"member": "sessionTotal"}, ["Ses", "Session", "SessionTotal"]),
+                         "SessionTotal")
 
     def test_data_model_properties_come_from_the_macro_marker_and_getters(self):
         dm = rebuild.build(make_analysis(), make_inv())["data_model"]
@@ -451,6 +541,43 @@ class AnalysisTest(unittest.TestCase):
         include = next(a for a in fake.headless("-process")[0] if a.startswith("include="))
         self.assertTrue(include.startswith("include=^_"))
 
+    def test_extension_members_are_exported_with_their_extended_type(self):
+        for s_, want in (("_$s10Foundation4DateV7DemoAppE10startOfDayACvg", ("Date", "startOfDay")),
+                         ("_$sSa7DemoAppE5totalSiyF", ("Array", "total")),
+                         ("_$s7SwiftUI5ColorV7DemoAppE4teal_WZ", ("Color", "teal")),
+                         ("_$sSz7DemoAppE5totalSiyF", (None, "total")),
+                         ("_$sSa7DemoAppE", ("Array", None))):
+            got = analysis.extension_of(s_, MOD)
+            self.assertEqual(got and (got["extended_type"], got["member"]), want, s_)
+        self.assertIsNone(analysis.extension_of(sym("Session", "4nameSSvg"), MOD))
+        self.assertIsNone(analysis.extension_of("_$s10Foundation4DateV5OtherE3fooyyF", MOD))
+        fns = [{"address": "0x10", "name": "n", "symbol": "_$s10Foundation4DateV7DemoAppE9isSameDayyyF", "size": 1,
+                "pseudo_code": "c", "string_literals": {}, "error": None,
+                "call_sites": [{"address": "0x12", "callee": "c", "registers": {"x0": 1}}]}]
+        fake = GhidraFake(fns)
+        doc = analysis.build(make_inv(), self.slice, self.data, runner=fake)
+        e = doc["entries"][0]
+        self.assertEqual((e["owner"], e["extension"]), (None, {"extended_type": "Date", "member": "isSameDay"}))
+        self.assertEqual(e["call_sites"][0]["registers"], {"x0": 1})
+        args = fake.headless("-process")[0]
+        include = re.compile(next(a for a in args if a.startswith("include="))[8:])
+        data_pattern = re.compile(next(a for a in args if a.startswith("data="))[5:])
+        for want, symbol in ((True, "_$s7DemoApp7SessionC4nameSSvg"), (True, fns[0]["symbol"]),
+                             (True, "_$s7SwiftUI5ColorV7DemoAppE4teal_WZ"), (False, "_$s7SwiftUI5ColorV4tealACvgZ"),
+                             (False, "_$s5Other4TypeC3fooyyF")):
+            self.assertEqual(bool(include.search(symbol)), want, symbol)
+        self.assertTrue(data_pattern.search("_$s7SwiftUI5ColorV7DemoAppE4tealACvpZ"))
+        self.assertTrue(data_pattern.search("_$s7DemoApp9ConstantsV3fooSivpZ"))
+        self.assertFalse(data_pattern.search("_$s5Other4TypeC3fooSivpZ"))
+
+    def test_long_swiftui_body_is_kept_whole(self):
+        fns = [{"address": "0x10", "name": "n", "symbol": sym("A", "4bodyQrvg"), "size": 1,
+                "pseudo_code": "x" * 75000, "string_literals": {}, "error": None}]
+        doc = analysis.build(make_inv(), self.slice, self.data, runner=GhidraFake(fns))
+        self.assertFalse(doc["entries"][0]["truncated"])
+        self.assertEqual(len(doc["entries"][0]["pseudo_code"]), 75000)
+        self.assertEqual(doc["functions"]["truncated"], 0)
+
     def test_long_pseudo_code_is_cut_and_says_so(self):
         fns = [{"address": "0x10", "name": "n", "symbol": sym("A", "1fyyF"), "size": 1,
                 "pseudo_code": "x" * (analysis.MAX_CODE_CHARS + 5), "string_literals": {}, "error": None}]
@@ -566,6 +693,19 @@ class CliTest(unittest.TestCase):
              "demangled": f"type metadata accessor for A.(RootView in _{h})"}]}
         self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "Root")], ["body"])
         self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "Tip")], ["mark"])
+
+    def test_extension_members_are_candidates_of_their_group(self):
+        an = make_analysis()
+        for symbol, dem, member, addr in (
+                ("_$sSa7DemoAppE12sessionTotalSiyF", "(extension in DemoApp):Swift.Array.sessionTotal() -> Swift.Int",
+                 "sessionTotal", "0xd0"),
+                ("_$s10Foundation4DateV7DemoAppE9isSameDay2asSbAC_tF", "(extension in DemoApp):Foundation.Date.isSameDay",
+                 "isSameDay", "0xd8"),
+                ("_$s10Foundation4DateV7DemoAppE7_hiddenSiyF", "x", None, "0xe0")):
+            an["entries"].append(entry(symbol, dem, body("return;"), addr))
+            an["entries"][-1]["extension"] = {"extended_type": "Array", "member": member}
+        self.assertEqual([c["method"] for c in decompile.analysis_entry_points(an, "extensions")], ["isSameDay"])
+        self.assertIn("sessionTotal", [c["method"] for c in decompile.analysis_entry_points(an, "Session")])
 
     def test_list_writes_nothing(self):
         an = self._auth()

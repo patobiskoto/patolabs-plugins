@@ -24,6 +24,13 @@
   unknown entries (exit 5 when none decompiled); preset-object constants gain `constructor_call_arguments` and say that
   `integer_literals_in_order` is partial; `not_covered` states that extensions of other modules' types are not analysed;
   constant names lose the private-scope hash (kept in `private_scope`) and `spec check` refuses it.
+- Gaps found by the maintainer's judgement of the trial spec: `analyze` also exports the members of the app's extensions of
+  other modules' types (`<len><module>E` in the symbol; `Date`, `Color` and resource initialisers on the trial target),
+  `rebuild` attributes them to a related group or to the group `extensions` and counts them in
+  `coverage.functions.in_extensions_of_other_modules_types` instead of the "not measurable" sentence; the export records
+  the argument registers that hold a constant at each constructor call of a one-time initialiser and `rebuild` uses them
+  in `constructor_call_arguments` (with `constructor_call_argument_sources`) and maps them to the declared parameters in
+  `constructor_parameters`; `MAX_CODE_CHARS` of the analysis goes from 30000 to 200000 so no SwiftUI `body` is cut.
 - Run once on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), a second one reused
   the analysis; 4180 app functions decompiled; tests use fakes. The maintainer's judgement of the spec ("can the app be
   rebuilt from it alone") is not part of this entry.

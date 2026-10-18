@@ -15,7 +15,7 @@ from pathlib import Path
 from . import ghidra, groups, inventory, paths, pins, proc, resources
 
 FORMAT = 1
-MAX_CODE_CHARS = 30000
+MAX_CODE_CHARS = 200000  # above the longest SwiftUI `body` observed on the 2026-10-18 target (73725 characters)
 
 
 class AnalysisError(Exception):
@@ -58,6 +58,54 @@ def owner_of(symbol: str, module: str) -> str | None:
     return rest[:n] if 0 < n <= len(rest) else None
 
 
+# Swift standard-library substitutions that can name the extended type (`Sa` = Array, ...).
+_STD_TYPES = {"Sa": "Array", "Sb": "Bool", "Sd": "Double", "Sf": "Float", "Si": "Int", "Su": "UInt", "SS": "String",
+              "Sh": "Set", "SD": "Dictionary", "Sq": "Optional"}
+
+
+def extension_of(symbol: str, module: str) -> dict | None:
+    """`{"extended_type", "member"}` when the symbol is a member of an extension, declared in the app module, of a type of
+    another module: `_$s<extended type><len><module>E<len><member>...` (`<len><module>E` right after the extended type;
+    a constrained extension, where requirements sit between the module and `E`, is not recognised). `extended_type` is
+    the last name of the extended type, or None when it is a substitution not in `_STD_TYPES`; `member` None when the
+    member name is not a plain `<len><name>`."""
+    if not symbol.startswith("_$s") or symbol.startswith(symbol_prefix(module)):
+        return None
+    key = f"{len(module)}{module}E"
+    i = symbol.find(key, 3)
+    while i >= 0:
+        head = symbol[3:i]
+        m = re.match(r"(\d+)", symbol[i + len(key):])
+        if head and (m is None or int(m.group(1)) > 0):
+            typ = _extended_type(head)
+            member = None
+            if m:
+                n, rest = int(m.group(1)), symbol[i + len(key) + m.end():]
+                member = rest[:n] if n <= len(rest) else None
+            return {"extended_type": typ, "member": member}
+        i = symbol.find(key, i + 1)
+    return None
+
+
+def _extended_type(head: str) -> str | None:
+    """The last `<len><name>` of a mangled type prefix (`10Foundation4DateV` -> `Date`), or a standard substitution."""
+    if head in _STD_TYPES:
+        return _STD_TYPES[head]
+    names, pos = [], 0
+    while pos < len(head):
+        m = re.match(r"(\d+)", head[pos:])
+        if not m:
+            pos += 1
+            continue
+        n = int(m.group(1))
+        start = pos + m.end()
+        if n == 0 or start + n > len(head):
+            break
+        names.append(head[start:start + n])
+        pos = start + n
+    return names[-1] if names else None
+
+
 def demangle(rea: inventory.Rea, slice_path: Path, symbols: list[str]) -> tuple[dict[str, str], str | None]:
     """symbol -> demangled text for every symbol REA could demangle; and a reason when a batch failed."""
     out: dict[str, str] = {}
@@ -90,15 +138,17 @@ def build(inv: dict, slice_path: Path, data: Path, *, module: str | None = None,
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     xr_file = out_dir / "xrefs-input.txt"
     xr_file.write_text("".join(a + "\n" for a in xr_addrs), encoding="utf-8")
-    include = "^" + re.escape(symbol_prefix(module))
+    # The app module's own symbols, and the members of its extensions of other modules' types (`<len><module>E`).
+    include = "^" + re.escape(symbol_prefix(module)) + "|^_\\$s.*" + re.escape(f"{len(module)}{module}E")
     raw, export_seconds = ghidra.export(
         data, marker, out_dir / "ghidra-export.json", include=include,
-        data_pattern=include + r".*vpZ$", xrefs_file=xr_file if xr_addrs else None, runner=runner, clock=clock)
+        data_pattern=f"(?:{include}).*vpZ$", xrefs_file=xr_file if xr_addrs else None, runner=runner, clock=clock)
     prog = raw.get("program_id")
     entries = []
     for f in raw.get("functions") or []:
         code = f.get("pseudo_code")
         e = {"address": f["address"], "symbol": f["symbol"], "owner": owner_of(f["symbol"], module),
+             "extension": extension_of(f["symbol"], module), "call_sites": f.get("call_sites") or [],
              "size": f.get("size"), "status": "ok" if isinstance(code, str) else "unknown",
              "reason": None if isinstance(code, str) else (f.get("error") or "not decompiled"),
              "string_literals": f.get("string_literals") or {}, "pseudo_code": code[:MAX_CODE_CHARS] if isinstance(code, str) else None,

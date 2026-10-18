@@ -10,6 +10,10 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.lang.Register;
+import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
@@ -164,6 +168,181 @@ public class BlueprintExport extends GhidraScript {
         return "{" + b + "}";
     }
 
+    // The number 0..30 of the general register an object designates (w5 and x5 are both 5), or -1 when it is not one.
+    private static int regNumber(Object o) {
+        if (!(o instanceof Register)) return -1;
+        String n = ((Register) o).getBaseRegister().getName().toLowerCase();
+        if (n.length() < 2 || n.charAt(0) != 'x') return -1;
+        try {
+            int v = Integer.parseInt(n.substring(1));
+            return v <= 30 ? v : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static boolean isZeroRegister(Object o) {
+        if (!(o instanceof Register)) return false;
+        String r = ((Register) o).getName().toLowerCase();
+        return r.equals("wzr") || r.equals("xzr");
+    }
+
+    // The abstract value a move leaves in its destination: an immediate (`mov`/`movz` constant, `orr <d>, wzr/xzr, #const`),
+    // zero (`mov <d>, wzr/xzr`) or a copy of a known register (`mov <d>, <m>`, `orr <d>, wzr/xzr, <m>`). `known` and `val`
+    // are the register state; the result is null when the instruction is none of these or the source is unknown.
+    private static Long moved(Instruction in, boolean[] known, long[] val) {
+        String m = in.getMnemonicString().toLowerCase();
+        int n = in.getNumOperands();
+        int srcOp = -1;
+        if ((m.equals("mov") || m.equals("movz")) && n == 2) srcOp = 1;
+        else if (m.equals("orr") && n == 3) {
+            Object[] a = in.getOpObjects(1);
+            if (a.length != 1 || !isZeroRegister(a[0])) return null;
+            srcOp = 2;
+        } else return null;
+        Scalar sc = in.getScalar(srcOp);
+        if (sc != null) return sc.getUnsignedValue();
+        Object[] ops = in.getOpObjects(srcOp);
+        if (ops.length != 1) return null;
+        if (isZeroRegister(ops[0])) return 0L;
+        int r = regNumber(ops[0]);
+        if (r < 0 || !known[r]) return null;
+        boolean w = ((Register) ops[0]).getBitLength() <= 32;
+        return w ? (val[r] & 0xffffffffL) : val[r];
+    }
+
+    // True when the instruction reads the frame pointer (x29) or the stack pointer.
+    private static boolean readsFrameOrStack(Instruction in) {
+        for (Object o : in.getInputObjects()) {
+            if (regNumber(o) == 29) return true;
+            if (o instanceof Register && ((Register) o).getBaseRegister().getName().equalsIgnoreCase("sp")) return true;
+        }
+        return false;
+    }
+
+    // The frame-pointer offset of a memory operand `[x29, #imm]` of operand `op`, or null for any other addressing.
+    private static Long frameOffset(Instruction in, int op) {
+        Object[] ops = in.getOpObjects(op);
+        if (ops.length == 0 || regNumber(ops[0]) != 29) return null;
+        long off = 0;
+        for (int i = 1; i < ops.length; i++) {
+            if (!(ops[i] instanceof Scalar)) return null;
+            off += ((Scalar) ops[i]).getSignedValue();
+        }
+        return off;
+    }
+
+    // For each constructor call (callee symbol ending `fC`) in a one-time initialiser: the integer registers x0..x7 that
+    // hold a constant at the call, by a forward walk of the function's instructions in address order. The walk follows
+    // immediate moves, register copies and stores to and loads from frame-pointer slots (`stur/str/stp/ldur/ldr/ldp
+    // [x29, #imm]`). Everything it knows is dropped at an instruction another instruction jumps or branches to and after
+    // an unconditional jump or a return; the registers x0..x18 and x30 are dropped after a call. The slots are dropped
+    // for good once an `add`/`sub` forms the address of the frame or stack pointer (the slot may be written through it).
+    // Any other write makes the register unknown. `{"address","callee","registers":{"x5":5}}` (64-bit register value).
+    private String callSites(Function f) {
+        StringBuilder b = new StringBuilder();
+        int n = 0;
+        boolean[] known = new boolean[31];
+        long[] val = new long[31];
+        java.util.HashMap<Long, Long> slot = new java.util.HashMap<>();
+        boolean escaped = false;
+        Instruction prev = null;
+        for (Instruction in : currentProgram.getListing().getInstructions(f.getBody(), true)) {
+            boolean reset = prev == null || !in.getAddress().equals(prev.getFallThrough());
+            if (!reset) {
+                for (Reference r : getReferencesTo(in.getAddress())) {
+                    if (r.getReferenceType().isFlow() && !r.getReferenceType().equals(RefType.FALL_THROUGH)) reset = true;
+                }
+            }
+            if (reset) {
+                java.util.Arrays.fill(known, false);
+                slot.clear();
+            }
+            prev = in;
+            String m = in.getMnemonicString().toLowerCase();
+            if (in.getFlowType().isCall()) {
+                Address[] flows = in.getFlows();
+                Function callee = flows != null && flows.length == 1 ? getFunctionAt(flows[0]) : null;
+                String cn = callee == null ? null : (callee.getSymbol() == null ? callee.getName() : callee.getSymbol().getName());
+                if (cn != null && cn.endsWith("fC") && !cn.contains("builtinStringLiteral")) {
+                    StringBuilder regs = new StringBuilder();
+                    int k = 0;
+                    for (int r = 0; r < 8; r++) {
+                        if (!known[r]) continue;
+                        if (k++ > 0) regs.append(",");
+                        regs.append("\"x").append(r).append("\":").append(val[r]);
+                    }
+                    if (n++ > 0) b.append(",");
+                    b.append("{\"address\":").append(q("0x" + in.getAddress().toString())).append(",\"callee\":")
+                     .append(q(cn)).append(",\"registers\":{").append(regs).append("}}");
+                }
+                for (int r = 0; r <= 18; r++) known[r] = false;
+                known[30] = false;
+                continue;
+            }
+            Long off = null;
+            int memOp = m.startsWith("st") || m.startsWith("ld") ? in.getNumOperands() - 1 : -1;
+            if (memOp >= 1) off = frameOffset(in, memOp);
+            if (m.startsWith("st") && memOp >= 1) {
+                boolean plain = (m.equals("str") || m.equals("stur") || m.equals("stp")) && off != null && !escaped;
+                if (off != null && !plain) slot.clear();
+                if (plain) {
+                    int regsInOp = m.equals("stp") ? 2 : 1;
+                    for (int i = 0; i < regsInOp; i++) {
+                        Object[] so = in.getOpObjects(i);
+                        Long v = null;
+                        if (so.length == 1 && isZeroRegister(so[0])) v = 0L;
+                        else if (so.length == 1 && regNumber(so[0]) >= 0 && known[regNumber(so[0])]) {
+                            boolean w = ((Register) so[0]).getBitLength() <= 32;
+                            v = w ? (val[regNumber(so[0])] & 0xffffffffL) : val[regNumber(so[0])];
+                        }
+                        boolean w = so.length == 1 && so[0] instanceof Register && ((Register) so[0]).getBitLength() <= 32;
+                        long key = off + i * (w ? 4 : 8);
+                        // A 32-bit store only describes a 32-bit slot: kept under a distinct key so a 64-bit load misses it.
+                        slot.remove(off + i * 8L);
+                        slot.remove(off + i * 8L + 4);
+                        if (v != null) slot.put(w ? -(key + 1) : key, v);
+                    }
+                }
+                continue;
+            }
+            Long v = null;
+            if (m.startsWith("ld") && off != null && !escaped && (m.equals("ldr") || m.equals("ldur") || m.equals("ldp"))) {
+                int regsInOp = m.equals("ldp") ? 2 : 1;
+                for (int i = 0; i < regsInOp; i++) {
+                    Object[] lo = in.getOpObjects(i);
+                    if (lo.length != 1 || regNumber(lo[0]) < 0) continue;
+                    boolean w = ((Register) lo[0]).getBitLength() <= 32;
+                    long key = off + i * (w ? 4 : 8);
+                    Long sv = slot.get(w ? -(key + 1) : key);
+                    int rn = regNumber(lo[0]);
+                    known[rn] = sv != null;
+                    if (sv != null) val[rn] = sv;
+                }
+                continue;
+            }
+            v = moved(in, known, val);
+            boolean writesOther = false;
+            for (Object o : in.getResultObjects()) {
+                int rn = regNumber(o);
+                if (rn < 0) continue;
+                if (rn != 29) writesOther = true;
+                boolean w = ((Register) o).getBitLength() <= 32;
+                if (v != null) {
+                    known[rn] = true;
+                    val[rn] = w ? (v & 0xffffffffL) : v;
+                } else {
+                    known[rn] = false;
+                }
+            }
+            if ((m.equals("add") || m.equals("sub")) && writesOther && readsFrameOrStack(in)) {
+                escaped = true;
+                slot.clear();
+            }
+        }
+        return "[" + b + "]";
+    }
+
     @Override
     public void run() throws Exception {
         String out = null, include = ".*", data = null, xrefs = null;
@@ -216,6 +395,7 @@ public class BlueprintExport extends GhidraScript {
                .append(",\"symbol\":").append(q(sym))
                .append(",\"size\":").append(f.getBody().getNumAddresses())
                .append(",\"string_literals\":").append(code == null ? "{}" : literals(code))
+               .append(",\"call_sites\":").append(sym.endsWith("_WZ") ? callSites(f) : "[]")
                .append(",\"pseudo_code\":").append(q(code))
                .append(",\"error\":").append(q(err)).append("}");
         }

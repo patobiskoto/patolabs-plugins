@@ -29,14 +29,39 @@ def detect_groups(an: dict) -> dict[str, dict]:
             g["kind"] = "screen"
         if name not in g["types"]:
             g["types"].append(name)
+    stems = sorted(found)
     for e in an["entries"]:
         r = groups.role_of(e["owner"]) if e.get("owner") else None
-        if r and r[0] in found:
-            found[r[0]]["functions"] += 1
-            found[r[0]]["analysed"] += e["status"] == "ok"
+        stem = r[0] if r and r[0] in found else extension_group(e, stems)
+        if stem:
+            g = found.setdefault(stem, {"name": stem, "kind": "feature", "types": [], "functions": 0, "analysed": 0})
+            g["functions"] += 1
+            g["analysed"] += e["status"] == "ok"
     for g in found.values():
         g["types"].sort()
     return found
+
+
+def extension_group(e: dict, stems: list[str]) -> str | None:
+    """The group of a function defined in the app's extension of another module's type: the related group stem
+    (`groups.extension_stem`), else `groups.EXTENSIONS_GROUP`; None for any other function."""
+    ext = e.get("extension")
+    if e.get("owner") or not ext:
+        return None
+    return groups.extension_stem(ext, stems) or groups.EXTENSIONS_GROUP
+
+
+def extension_counts(an: dict, found: dict[str, dict]) -> dict:
+    """Functions of the app's extensions of other modules' types: detected, analysed, per group they were attributed to."""
+    ext = [e for e in an["entries"] if not e.get("owner") and e.get("extension")]
+    stems = sorted(n for n in found if n != groups.EXTENSIONS_GROUP)
+    per: dict[str, int] = {}
+    for e in ext:
+        g = extension_group(e, stems)
+        per[g] = per.get(g, 0) + 1
+    return {"detected": len(ext), "analysed": sum(e["status"] == "ok" for e in ext),
+            "in_related_group": sum(n for g, n in per.items() if g != groups.EXTENSIONS_GROUP),
+            "in_extensions_group": per.get(groups.EXTENSIONS_GROUP, 0), "per_group": dict(sorted(per.items()))}
 
 
 def _count(detected: list, analysed: list) -> dict:
@@ -56,7 +81,8 @@ def coverage(an: dict, found: dict[str, dict], scr: dict | None, consts: dict, r
     c = {"groups": _count(allg, ok_g), "screens": _count(screens, ok_s),
          "functions": {"detected": len(entries), "analysed": len(fn_ok),
                        "failed": len(entries) - len(fn_ok), "truncated": f["truncated"],
-                       "binary_total": f["total"], "outside_app_module": (f["total"] or 0) - len(entries)},
+                       "binary_total": f["total"], "outside_app_module": (f["total"] or 0) - len(entries),
+                       "in_extensions_of_other_modules_types": extension_counts(an, found)},
          "screens_captured": {"detected": len(screens), "captured": len(cap),
                               "not_captured": sorted(set(screens) - set(cap))},
          "timing": an["timing"]}
@@ -71,9 +97,10 @@ def coverage(an: dict, found: dict[str, dict], scr: dict | None, consts: dict, r
     if c["functions"]["outside_app_module"]:
         nc.append(f"{c['functions']['outside_app_module']} function(s) of the binary are outside the app module "
                   "(frameworks glue, Objective-C bridges, runtime) and are not analysed")
-    nc.append("functions defined in extensions of types that belong to another module (standard library types such as "
-              "Array or Date, frameworks) have a symbol outside the app module prefix: they are not exported or analysed, "
-              "and their number is not measurable from the analysis (they are inside the outside-app-module count)")
+    ext = c["functions"]["in_extensions_of_other_modules_types"]
+    nc.append(f"{ext['detected']} function(s) defined in the app's extensions of types of another module are exported and "
+              f"counted in `functions.in_extensions_of_other_modules_types` ({ext['analysed']} decompiled); an extension with generic requirements (requirements between "
+              "the module and the extension marker in the symbol) is not recognised and stays in the outside-app-module count")
     if c["screens_captured"]["not_captured"]:
         nc.append("screens without a captured screenshot: " + ", ".join(c["screens_captured"]["not_captured"]))
     if consts["unknown_count"]:

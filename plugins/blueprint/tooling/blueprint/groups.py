@@ -18,6 +18,7 @@ MAX_UNGROUPED_STRINGS = 200
 MIN_STEM_FOR_STRINGS = 4
 MIN_STRING = 2
 MAX_STRING = 120
+EXTENSIONS_GROUP = "extensions"  # members of the app's extensions of other modules' types that relate to no other group
 
 # (suffix, role): longest suffix first, so `ViewModel` wins over `View`.
 SUFFIX_ROLES = (("ViewModel", "screen"), ("Coordinator", "feature"), ("Controller", "screen"),
@@ -54,6 +55,15 @@ def role_of(name: str) -> tuple[str, str] | None:
         if name.endswith(suffix) and len(name) > len(suffix):
             return name[: -len(suffix)], role
     return None
+
+
+def extension_stem(ext: dict, stems: list[str]) -> str | None:
+    """The group stem an extension member relates to, else None: a stem of at least `MIN_STEM_FOR_STRINGS` characters that
+    contains, or is contained in, the member name or the extended type name, case-insensitively (a name match, not proof).
+    The longest stem wins; ties go to the first in alphabetical order."""
+    names = [n.lower() for n in (ext.get("member"), ext.get("extended_type")) if n and len(n) >= MIN_STEM_FOR_STRINGS]
+    hits = [s for s in stems if len(s) >= MIN_STEM_FOR_STRINGS and any(n in s.lower() or s.lower() in n for n in names)]
+    return min(hits, key=lambda s: (-len(s), s)) if hits else None
 
 
 def human_string(value: str) -> bool:

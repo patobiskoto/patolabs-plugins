@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from . import groups as groups_mod
-from . import inventory, paths, pins, proc
+from . import inventory, paths, pins, proc, rebuild
 
 FORMAT = 1
 MAX_CODE_CHARS = 30000
@@ -155,8 +155,19 @@ def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
     `rebuild.detect_groups`, structs and enums included (SwiftUI screens), from the saved analysis; the same
     boilerplate as `entry_points` is left out."""
     out = []
+    stems = None
     for e in an["entries"]:
         owner = e.get("owner")
+        if not owner and e.get("extension"):
+            # A member of the app's extension of another module's type: attributed to a group by `rebuild.extension_group`.
+            sym = e["symbol"]
+            if stems is None:
+                stems = sorted(n for n in rebuild.detect_groups(an) if n != groups_mod.EXTENSIONS_GROUP)
+            if rebuild.extension_group(e, stems) == group_name and e["extension"].get("member") and (
+                    sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
+                out.append({"address": e["address"], "symbol": sym, "method": e["extension"]["member"],
+                            "class": e["extension"].get("extended_type")})
+            continue
         r = groups_mod.role_of(owner) if owner else None
         if not r or r[0] != group_name:
             continue
