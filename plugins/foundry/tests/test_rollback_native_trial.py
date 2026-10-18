@@ -765,17 +765,33 @@ def test_masking_keeps_ordinary_words_and_masks_short_openai_identifiers_and_nam
     "db_password", "client_secret", "refresh_token", "private_key", "DB_Password", "x-api-key", "secret_key",
     "aws_secret_access_key", "session_key", "signing_key", "clientSecret", "refreshToken", "dbPassword",
     "password_hash", "token_value", "authorization", "Authorization", "api_key", "apikey", "passwd", "auth",
-    "AWS_SECRET_ACCESS_KEY", "API_TOKEN", "MY_AUTH_HEADER"])
+    "AWS_SECRET_ACCESS_KEY", "API_TOKEN", "MY_AUTH_HEADER", "tokens", "secrets", "api_keys", "access_tokens",
+    "accesstoken", "authtoken", "secretkey", "privatekey", "apitoken", "oauth", "OAuth", "token2", "secret1",
+    "passwords", "keys"])
 @pytest.mark.parametrize("separator", ["=", ": "])
 def test_a_name_with_a_secret_segment_is_masked_whatever_its_case_or_shape(name, separator):
     assert rt.mask(f"{name}{separator}v4lue9", home="/") == f"{name}=<masked>"
 
 
 @pytest.mark.parametrize("name", ["monkey", "Authentication", "keyboard", "author", "tokenizer", "model", "turkey",
-                                  "passwords", "secretary"])
+                                  "secretary", "tokenizers", "secretaries"])
 def test_a_name_without_a_secret_segment_is_kept(name):
     text = f"{name}: failed {name}=v4lue9"
     assert rt.mask(text, home="/") == text
+
+
+@pytest.mark.parametrize("line", [
+    "Error: password: v4lue9", "failed: db_password=v4lue9", "Error: DB_Password=v4lue9", "config: clientSecret=v4lue9",
+    "https://h/p?api_key=v4lue9&token=v4lue9&x=1", "monkey: ok author=me token: v4lue9",
+    "Authentication: failed model=x; secret=v4lue9, other", "a: b: c: access_token=v4lue9"])
+def test_a_secret_pair_is_masked_even_inside_the_value_of_a_kept_pair(line):
+    out = rt.mask(line, home="/")
+    assert "v4lue9" not in out and "<masked>" in out
+
+
+def test_a_url_value_stops_at_the_ampersand_and_a_kept_pair_stays_whole():
+    assert rt.mask("https://h/p?token=v4lue9&x=1&api_key=w5", home="/") == "https://h/p?token=<masked>&x=1&api_key=<masked>"
+    assert rt.mask("Error: monkey: failed", home="/") == "Error: monkey: failed"
 
 
 def test_the_committed_matrix_holds_no_short_openai_identifier():
