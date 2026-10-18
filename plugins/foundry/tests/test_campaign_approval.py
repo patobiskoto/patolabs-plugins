@@ -140,8 +140,9 @@ def test_invalid_root_preview_is_refused_and_journal_stays_readable(env, monkeyp
     before = ca.journal_path().read_bytes()
     bad_path, bad = preview_file(env, epic="not-an-issue")
     fake_tty(monkeypatch, bad["preview_digest"][:12])
-    with pytest.raises(ca.ApprovalError):
+    with pytest.raises(ca.ApprovalError, match="enregistrement d'approbation refusé") as refused:
         ca.approve("not-an-issue", bad_path, max_sessions=1, max_sessions_per_issue=None, now=NOW)
+    assert not isinstance(refused.value, ca.ApproverRefused)
     assert ca.journal_path().read_bytes() == before
     assert len(ca.read_journal()) == 1
     assert ca.check("PAT-100", preview["preview_digest"], STRUCT, NOW)["epic"] == "PAT-100"
