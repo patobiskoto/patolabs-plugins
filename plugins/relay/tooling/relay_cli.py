@@ -89,6 +89,14 @@ def cmd_write(args: argparse.Namespace) -> int:
         "verification": checks,
         "state": draft,
     }
+    # Second scan, on the final state: values read from git, gh and Foundry are not the draft's.
+    hits = secrets.find(state)
+    if hits:
+        print("relay: state refused, nothing written: possible secret(s) in the verified "
+              "state (values not shown):", file=sys.stderr)
+        for loc, name in hits:
+            print(f"  - {loc}: {name}", file=sys.stderr)
+        return 3
     write_atomic(path, json.dumps(state, indent=2, ensure_ascii=False) + "\n")
     print(f"relay: state written to {path} (mode 600)")
     print(render_verification(checks))
@@ -119,8 +127,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(state, indent=2, ensure_ascii=False))
         return 0
-    print(f"written {state.get('written_at')} on {state['real'].get('branch')} "
-          f"@ {str(state['real'].get('head'))[:12]}")
+    branch = state["real"].get("branch") or "unknown"
+    head = (state["real"].get("head") or "unknown")[:12]
+    print(f"written {state.get('written_at')} on {branch} @ {head}")
     print(f"summary: {s['summary']}")
     for title, key in (("decisions", "decisions"), ("blockers", "blockers"),
                        ("pitfalls", "pitfalls"), ("files", "files"),

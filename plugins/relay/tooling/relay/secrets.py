@@ -18,10 +18,23 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "credential-assignment",
         re.compile(
-            r"(?i)\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\b"
+            r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*"
+            r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key)(?:_[A-Za-z0-9_]*)?"
             r"[\"']?\s*[:=]\s*[\"']?[^\s\"',;]{8,}"
         ),
     ),
+    # pwd is also the shell's working directory: a path value is not a credential.
+    (
+        "credential-assignment-pwd",
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*pwd(?:_[A-Za-z0-9_]*)?"
+            r"[\"']?\s*[:=]\s*[\"']?(?![/~.]|[A-Za-z]:[\\/])[^\s\"',;]{8,}"
+        ),
+    ),
+    ("authorization-bearer",
+     re.compile(r"(?i)\bauthorization\s*[:=]\s*[\"']?bearer\s+[A-Za-z0-9._~+/=-]{8,}")),
+    ("url-credentials", re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
+    ("youtrack-permanent-token", re.compile(r"\bperm:[A-Za-z0-9+/=._-]{16,}")),
 )
 
 

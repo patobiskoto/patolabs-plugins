@@ -44,17 +44,21 @@ and printed; a divergence is reported, not blocking.
 
 | Check | Source | Divergence | Unknown |
 |---|---|---|---|
-| branch, commit | `git symbolic-ref`, `git rev-parse HEAD`, compared with `branch`/`commit` when given | differs | git cannot answer |
+| branch, commit | `git symbolic-ref`, `git rev-parse HEAD`, compared with `branch`/`commit` when given; when omitted, recorded as read from git, not declared | differs | git cannot answer |
 | worktree | `git status --porcelain` | uncommitted changes | git cannot answer |
 | file pointers | filesystem | path does not exist | never |
 | tickets | Foundry: `foundry_cli.py query issue <ID>` (tracker-agnostic; reads the tracker bound to the repository) | identifier malformed | Foundry not found, or it cannot read the ticket |
 | pull requests | `gh pr view <ref> --json state` (not through Foundry: Foundry's issue read gives only the `pr_url` link) | not a number or URL | `gh` absent or cannot answer |
 
-Locating Foundry (`locate_foundry`): the `RELAY_FOUNDRY_CLI` environment variable (path of
-`foundry_cli.py`), else `../foundry/tooling/foundry_cli.py` next to this plugin in a
-checkout of this repository. If neither is a file, every ticket is `unknown` ("Foundry not
-found"); nothing is guessed and an unreadable fact is never `ok`. Each launched command is
-bounded at 30 s (`TIMEOUT`).
+Locating Foundry (`locate_foundry`), in this order: (1) the `RELAY_FOUNDRY_CLI` environment
+variable (path of `foundry_cli.py`); (2) checkout layout: `plugins/foundry/tooling/foundry_cli.py`
+next to `plugins/relay`; (3) installed-cache layout (`<marketplace>/relay/<version>/` on
+Claude Code and Codex): `<marketplace>/foundry/<version>/tooling/foundry_cli.py`, the highest
+numeric version present (the highest present, not proven to be the one the host loads;
+directories whose name is not a numeric dotted version are ignored). If none is a file,
+every ticket is `unknown` ("Foundry not found"); nothing is guessed and an unreadable fact
+is never `ok`. Each ticket check's detail names the Foundry path and how it was found. Each
+launched command is bounded at 30 s (`TIMEOUT`).
 
 ## Secrets
 
@@ -66,9 +70,14 @@ on; the author removes it and retries. Patterns: GitHub tokens (`ghp_`, `gho_`, 
 `ghs_`, `ghr_`, `github_pat_`), Anthropic (`sk-ant-`), OpenAI-style (`sk-`), Linear
 (`lin_api_`, `lin_oauth_`), Slack (`xox[abprs]-`), AWS access keys (`AKIA`/`ASIA`), PEM
 private key headers, JWT-shaped tokens, and `password`/`passwd`/`pwd`/`secret`/`token`/
-`api_key`/`access_key` assignments (`=` or `:`) with a value of 8 or more characters. One
+`api_key`/`access_key` assignments (`=` or `:`) with a value of 8 or more characters, also
+when the name is prefixed or suffixed (`DB_PASSWORD`, `refresh_token`, `AWS_SECRET_ACCESS_KEY`;
+a `pwd` value starting like a path is not refused), `Authorization: Bearer` headers,
+credentials in URLs (`scheme://user:pass@host`) and YouTrack permanent tokens (`perm:`).
+The final state, including what is read from git, `gh` and Foundry, is scanned again before
+the write (exit 3). One
 test per pattern in `tests/test_relay.py`. This is a pattern filter: a secret in an
-unknown format passes (observed limit, not a guarantee).
+unknown format passes (deduced limit, not a guarantee).
 
 ## Documentation status (AGENTS.md#R5)
 

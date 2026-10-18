@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -17,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tooling"))
 
 import relay_cli
-from relay import secrets
+from relay import secrets, verify
 
 # Built by concatenation so that no literal in this file looks like a real credential.
 SECRET_SAMPLES = {
@@ -35,6 +36,18 @@ SECRET_SAMPLES = {
     "pem-private-key": "-----BEGIN " + "RSA PRIVATE KEY-----\nabc",
     "jwt": "eyJ" + "hbGciOiJIUzI1" + "." + "eyJ" + "zdWIiOiIxMjM0" + "." + "abcdefghij",
     "credential-assignment": "pass" + "word=" + "hunter2hunter2",
+    "credential-assignment-pwd": "pw" + "d=" + "hunter2hunter2",
+    "authorization-bearer": "Authorization: Bear" + "er " + "abcdef0123456789",
+    "url-credentials": "https" + "://user:hunter2@example.invalid/x",
+    "youtrack-permanent-token": "pe" + "rm:" + "cm9vdA==.NDQtMQ==.abcdef012345",
+}
+# Prefixed names that a bare-word boundary missed (B1); each must be refused by "credential-assignment".
+PREFIXED_SAMPLES = {
+    "db-password": "DB_PASS" + "WORD=" + "hunter2hunter2",
+    "access-token": "access_" + "token=" + "hunter2hunter2",
+    "client-secret": "client_" + "secret=" + "hunter2hunter2",
+    "refresh-token": "refresh_" + "token: " + "hunter2hunter2",
+    "aws-secret-access-key": "AWS_SECRET_" + "ACCESS_KEY=" + "hunter2hunter2",
 }
 
 
@@ -192,13 +205,93 @@ class VerifyTests(RelayCase):
         self.assertIn("Foundry not found", c["issue T-1"]["detail"])
 
     def test_gh_absent_is_unknown(self):
-        (self.bin / "gh").unlink()
-        with mock.patch.dict(os.environ, {"PATH": str(self.bin) + os.pathsep + "/usr/bin" + os.pathsep + "/bin"}):
-            if subprocess.run(["sh", "-c", "command -v gh"], capture_output=True,
-                            check=False).returncode == 0:
-                self.skipTest("a real gh is on the system path")
+        # Minimal PATH: only a directory holding git, never a system dir where gh may be installed.
+        minimal = Path(self.tmp.name) / "minimal"
+        minimal.mkdir()
+        (minimal / "git").symlink_to(shutil.which("git"))
+        with mock.patch.dict(os.environ, {"PATH": str(minimal)}):
             c, _ = self.checks(prs=["7"])
         self.assertEqual(c["pr 7"]["status"], "unknown")
+
+    def test_branch_and_commit_checked_when_not_declared(self):
+        c, _ = self.checks()
+        for k in ("branch", "commit"):
+            self.assertEqual(c[k]["status"], "ok")
+            self.assertIn("read from git, not declared", c[k]["detail"])
+
+    def test_no_commit_is_unknown_and_show_prints_unknown(self):
+        empty = Path(self.tmp.name) / "empty"
+        empty.mkdir()
+        git(empty, "init", "-q", "-b", "main")
+        os.chdir(empty)
+        self.repo = empty
+        c, _ = self.checks()
+        self.assertEqual(c["commit"]["status"], "unknown")
+        out = self.run_cli(None, "show")[1]
+        self.assertIn("@ unknown", out)
+        self.assertNotIn("None", out)
+
+    def test_ticket_check_records_the_foundry_used(self):
+        c, _ = self.checks(issues=["T-1"])
+        self.assertIn("RELAY_FOUNDRY_CLI", c["issue T-1"]["detail"])
+        self.assertIn(str(self.foundry), c["issue T-1"]["detail"])
+
+
+class LocateFoundryTests(unittest.TestCase):
+    """Fake directory trees; RELAY_FOUNDRY_CLI is cleared."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        env = {k: v for k, v in os.environ.items() if k != "RELAY_FOUNDRY_CLI"}
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def cli(self, *parts):
+        p = self.base.joinpath(*parts, "tooling", "foundry_cli.py")
+        p.parent.mkdir(parents=True)
+        p.write_text("")
+        return p
+
+    def test_env_wins_and_must_be_a_file(self):
+        mine = self.base / "mine.py"
+        mine.write_text("")
+        self.cli("plugins", "foundry")
+        with mock.patch.dict(os.environ, {"RELAY_FOUNDRY_CLI": str(mine)}):
+            self.assertEqual(verify.locate_foundry(self.base / "plugins" / "relay"),
+                             (mine, "RELAY_FOUNDRY_CLI"))
+        with mock.patch.dict(os.environ, {"RELAY_FOUNDRY_CLI": str(self.base / "nope")}):
+            self.assertIsNone(verify.locate_foundry(self.base / "plugins" / "relay")[0])
+
+    def test_checkout_layout(self):
+        want = self.cli("plugins", "foundry")
+        got, how = verify.locate_foundry(self.base / "plugins" / "relay")
+        self.assertEqual((got, how), (want, "checkout layout"))
+
+    def test_installed_cache_layout_picks_highest_numeric_version(self):
+        for v in ("1.0.0", "1.5.0", "1.10.0", "1.9.0", "latest"):
+            self.cli("cache", "mkt", "foundry", v)
+        best = self.base / "cache" / "mkt" / "foundry" / "1.10.0" / "tooling" / "foundry_cli.py"
+        (self.base / "cache" / "mkt" / "relay" / "0.1.0").mkdir(parents=True)
+        got, how = verify.locate_foundry(self.base / "cache" / "mkt" / "relay" / "0.1.0")
+        self.assertEqual(got, best)
+        self.assertIn("1.10.0", how)
+        self.assertIn("not proven", how)
+
+    def test_cache_version_without_cli_is_ignored(self):
+        ok = self.cli("cache", "mkt", "foundry", "1.0.0")
+        (self.base / "cache" / "mkt" / "foundry" / "2.0.0").mkdir()
+        (self.base / "cache" / "mkt" / "relay" / "0.1.0").mkdir(parents=True)
+        got, _ = verify.locate_foundry(self.base / "cache" / "mkt" / "relay" / "0.1.0")
+        self.assertEqual(got, ok)
+
+    def test_nothing_found_is_none(self):
+        (self.base / "cache" / "mkt" / "relay" / "0.1.0").mkdir(parents=True)
+        got, why = verify.locate_foundry(self.base / "cache" / "mkt" / "relay" / "0.1.0")
+        self.assertIsNone(got)
+        self.assertIn("RELAY_FOUNDRY_CLI", why)
 
 
 class SecretTests(RelayCase):
@@ -224,9 +317,34 @@ class SecretTests(RelayCase):
             self.assertEqual(code, 3)
             self.assertNotIn(s, out + err)
 
+    def test_prefixed_credential_names_refused(self):
+        for name, sample in PREFIXED_SAMPLES.items():
+            with self.subTest(sample=name):
+                code, out, err = self.run_cli(good(pitfalls=[f"env {sample}"]))
+                self.assertEqual(code, 3)
+                self.assertIn("credential-assignment", err)
+                self.assertNotIn("hunter2", out + err)
+
     def test_innocent_text_passes(self):
         code, _, err = self.run_cli(good(summary="the token budget is 1000, password reset flow"))
         self.assertEqual(code, 0, err)
+
+    def test_pwd_with_a_path_is_not_a_credential(self):
+        for text in ("pwd: /some/path/here", "PWD=/Users/x/work/dir", "pwd: ~/work/dir"):
+            code, _, err = self.run_cli(good(pitfalls=[text]))
+            self.assertEqual(code, 0, f"{text}: {err}")
+
+    def test_final_state_is_rescanned(self):
+        # A value read from Foundry (here the PR link) is not in the draft: the second scan catches it.
+        secret = "https" + "://user:hunter2@example.invalid/pull/7"
+        self.foundry.write_text(
+            "import json,sys\n"
+            f"print(json.dumps({{'issue':{{'id':'T-1','state':'Done','pr_url':{secret!r}}}}}))\n")
+        code, out, err = self.run_cli(good(issues=["T-1"]))
+        self.assertEqual(code, 3)
+        self.assertIn("url-credentials", err)
+        self.assertNotIn("hunter2", out + err)
+        self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
 
 
 class ShowTests(RelayCase):

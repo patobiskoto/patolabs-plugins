@@ -39,19 +39,25 @@ def git_state(root: Path) -> dict[str, Any]:
 
 def check_git(draft: dict[str, Any], real: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    if "branch" in draft:
-        if real["branch"] is None:
-            out.append({"check": "branch", "status": "unknown", "detail": "branch unreadable"})
-        elif draft["branch"] != real["branch"]:
+    if real["branch"] is None:
+        out.append({"check": "branch", "status": "unknown", "detail": "branch unreadable"})
+    elif "branch" not in draft:
+        out.append({"check": "branch", "status": "ok",
+                    "detail": f"{real['branch']}: read from git, not declared"})
+    else:
+        if draft["branch"] != real["branch"]:
             out.append({"check": "branch", "status": "divergence",
                         "detail": f"draft says {draft['branch']}, real is {real['branch']}"})
         else:
             out.append({"check": "branch", "status": "ok", "detail": real["branch"]})
-    if "commit" in draft:
-        head = real["head"]
-        if head is None:
-            out.append({"check": "commit", "status": "unknown", "detail": "HEAD unreadable"})
-        elif not head.startswith(draft["commit"].lower()):
+    head = real["head"]
+    if head is None:
+        out.append({"check": "commit", "status": "unknown", "detail": "HEAD unreadable"})
+    elif "commit" not in draft:
+        out.append({"check": "commit", "status": "ok",
+                    "detail": f"{head[:12]}: read from git, not declared"})
+    else:
+        if not head.startswith(draft["commit"].lower()):
             out.append({"check": "commit", "status": "divergence",
                         "detail": f"draft says {draft['commit']}, real HEAD is {head[:12]}"})
         else:
@@ -74,16 +80,38 @@ def check_files(files: list[str], root: Path) -> list[dict[str, Any]]:
     return out
 
 
-def locate_foundry() -> tuple[Path | None, str]:
-    """RELAY_FOUNDRY_CLI, else the sibling plugin of this checkout; never a guess."""
+_VERSION = re.compile(r"\d+(?:\.\d+)*")
+_CLI = ("tooling", "foundry_cli.py")
+
+
+def locate_foundry(plugin_root: Path | None = None) -> tuple[Path | None, str]:
+    """Return (foundry_cli.py or None, how it was found or why not). Never a guess.
+
+    Order: (1) RELAY_FOUNDRY_CLI; (2) checkout layout, `plugins/foundry` next to
+    `plugins/relay`; (3) installed-cache layout, `<marketplace>/foundry/<version>/` next to
+    `<marketplace>/relay/<version>/`, highest numeric version present (the highest present,
+    not proven to be the one the host loads; a directory whose name is not numeric dotted is
+    ignored).
+    """
     env = os.environ.get(FOUNDRY_ENV)
     if env:
         p = Path(env)
-        return (p, "env") if p.is_file() else (None, f"{FOUNDRY_ENV} is not a file")
-    sibling = Path(__file__).resolve().parents[3] / "foundry" / "tooling" / "foundry_cli.py"
+        return (p, FOUNDRY_ENV) if p.is_file() else (None, f"{FOUNDRY_ENV} is not a file")
+    root = plugin_root or Path(__file__).resolve().parents[2]
+    sibling = root.parent / "foundry" / Path(*_CLI)
     if sibling.is_file():
-        return sibling, "sibling"
-    return None, f"{FOUNDRY_ENV} unset and no sibling foundry plugin"
+        return sibling, "checkout layout"
+    foundry_dir = root.parent.parent / "foundry"
+    versions = []
+    if foundry_dir.is_dir():
+        for d in foundry_dir.iterdir():
+            if _VERSION.fullmatch(d.name) and (d / Path(*_CLI)).is_file():
+                versions.append((tuple(int(x) for x in d.name.split(".")), d))
+    if versions:
+        best = max(versions, key=lambda v: v[0])[1]
+        return best / Path(*_CLI), (f"installed cache layout, version {best.name} (highest "
+                                    "present, not proven to be the one the host loads)")
+    return None, f"{FOUNDRY_ENV} unset and no foundry plugin next to this one"
 
 
 def check_issues(issues: list[str], root: Path) -> list[dict[str, Any]]:
@@ -104,11 +132,12 @@ def check_issues(issues: list[str], root: Path) -> list[dict[str, Any]]:
             issue = None
         if not isinstance(issue, dict):
             out.append({"check": label, "status": "unknown",
-                        "detail": "Foundry could not read it (not found, tracker unavailable or unbound)"})
+                        "detail": "Foundry could not read it (not found, tracker unavailable "
+                                  f"or unbound) [Foundry: {cli}, {why}]"})
         else:
             state = issue.get("state") or "no state"
             pr = f", pr_url {issue['pr_url']}" if issue.get("pr_url") else ""
-            out.append({"check": label, "status": "ok", "detail": f"{state}{pr}"})
+            out.append({"check": label, "status": "ok", "detail": f"{state}{pr} [Foundry: {cli}, {why}]"})
     return out
 
 

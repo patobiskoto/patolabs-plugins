@@ -28,6 +28,9 @@ absolute path by removing `/skills/write/SKILL.md`.
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<relay-root>")/tooling/relay_cli.py" write --draft <draft.json>
 ```
 
+Foundry is found through `RELAY_FOUNDRY_CLI` (path of `foundry_cli.py`) when set, else next
+to this plugin (order: `plugins/relay/README.md`, "Verification").
+
 Report the output as is, including every `divergence` and `unknown` line: do not describe
 an `unknown` as verified. If the tool refuses the draft, fix the draft; never bypass the
 tool by writing the file yourself.
