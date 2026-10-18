@@ -22,6 +22,11 @@
       "name": "relay",
       "source": "./plugins/relay",
       "description": "Session hand-over: writes a verified, secret-free resume state at the end of a session, as a local owner-only file outside git tracking."
+    },
+    {
+      "name": "blueprint",
+      "source": "./plugins/blueprint",
+      "description": "Pinned REA/Ghidra tooling, registry of authorised targets and a reproducible evidence-backed inventory of an authorised target."
     }
   ]
 }
