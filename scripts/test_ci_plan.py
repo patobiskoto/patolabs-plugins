@@ -212,7 +212,7 @@ class WorkflowWiring(unittest.TestCase):
     """The pure rule only matters if the workflow consumes it the way the docs say."""
 
     def test_required_checks_keep_their_names_and_fork_guard(self):
-        for name in ("plan", "foundry", "ship-ios", "catalogue"):
+        for name in ("plan", "foundry", "ship-ios", "gauge", "catalogue"):
             self.assertIn(GUARD, job_text(name), name)
 
     def test_only_foundry_is_conditional_on_the_plan(self):
@@ -224,7 +224,7 @@ class WorkflowWiring(unittest.TestCase):
         self.assertNotIn("== 'true'", condition)
         self.assertIn("!cancelled()", condition)
         self.assertIn(GUARD, condition)
-        for name in ("ship-ios", "catalogue"):
+        for name in ("ship-ios", "gauge", "catalogue"):
             self.assertNotIn("needs", job_text(name), name)
             self.assertNotIn("run_foundry", job_text(name), name)
 

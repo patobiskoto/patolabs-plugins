@@ -10,6 +10,7 @@ Claude Code:
 /plugin marketplace add patobiskoto/patolabs-plugins
 /plugin install foundry@patolabs
 /plugin install ship-ios@patolabs
+/plugin install gauge@patolabs
 ```
 
 Codex:
@@ -18,10 +19,11 @@ Codex:
 codex plugin marketplace add patobiskoto/patolabs-plugins
 codex plugin add foundry@patolabs
 codex plugin add ship-ios@patolabs
+codex plugin add gauge@patolabs
 ```
 
 The skill names are identical. Invoke them as `/foundry:frame` in Claude Code and
-`$foundry:frame` in Codex (same rule for `ship-ios`).
+`$foundry:frame` in Codex (same rule for `ship-ios` and `gauge`).
 
 **Published on 2026-10-03:** Foundry **1.0.0** on both hosts (tag `foundry-v1.0.0`),
 compatible with Ship-iOS **0.3.0**. The [release notes](plugins/foundry/docs/release-1.0.0.md)

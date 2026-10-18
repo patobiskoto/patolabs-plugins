@@ -8,6 +8,7 @@ identifier, credits balance or repository name is ever copied into a Reading.
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
 import math
 import os
@@ -29,7 +30,7 @@ CODEX_TIMEOUT_S = 15.0
 SUBPROCESS_TIMEOUT_S = 30.0
 PROBE_TIMEOUT_S = 180.0
 PROBE_PROMPT = "Reply with the single word: ok"
-GAUGE_VERSION = "0.2.0"
+GAUGE_VERSION = "0.2.1"  # must equal both manifests: tests/test_gauge.py::VersionTest
 
 
 @dataclass
@@ -62,6 +63,8 @@ def unknown(counter: str, source: str, reason: str) -> Reading:
 
 def _num(value: Any) -> float | int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):  # NaN and infinity compare false: never a reading
         return None
     return value
 
@@ -99,6 +102,8 @@ def parse_codex_rate_limits(result: Any) -> list[dict[str, Any]]:
     entries = []
     for key in ("primary", "secondary"):
         window = limits.get(key)
+        if window is None:  # absent: the account has no such window
+            continue
         if isinstance(window, dict) and _num(window.get("usedPercent")) is not None:
             entries.append(
                 _window(
@@ -108,7 +113,57 @@ def parse_codex_rate_limits(result: Any) -> list[dict[str, Any]]:
                     window.get("windowDurationMins"),
                 )
             )
+        else:  # present but unreadable: kept with a null value, reported inconnu
+            entries.append(_window(key, None, None))
     return entries
+
+
+_LIVE: set[Any] = set()
+_LIVE_LOCK = threading.Lock()
+
+
+def _track(proc: Any) -> None:
+    with _LIVE_LOCK:
+        _LIVE.add(proc)
+
+
+def _untrack(proc: Any) -> None:
+    with _LIVE_LOCK:
+        _LIVE.discard(proc)
+
+
+def kill_live() -> None:
+    """Kill the process group of every registered child still running now (the hook calls
+    it before it exits, so a slow ``gh`` or ``codex app-server`` is not left orphaned); a
+    child registered after the call is not killed."""
+    with _LIVE_LOCK:
+        procs = list(_LIVE)
+    for proc in procs:
+        _kill_group(proc)
+
+
+def run_tracked(
+    argv: list[str],
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess:
+    """Run a command, capturing text output, like ``subprocess.run`` with no ``check``: the
+    child leads its own process group and is registered for ``kill_live``; on timeout its
+    group is killed and ``TimeoutExpired`` is raised."""
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    _track(proc)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(proc)
+        with contextlib.suppress(Exception):
+            proc.communicate(timeout=5)
+        raise
+    finally:
+        _untrack(proc)
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
 def _kill_group(proc: Any) -> None:
@@ -147,6 +202,7 @@ def read_codex(
         )
     except OSError:
         return unknown("codex", source, "codex app-server could not start")
+    _track(proc)
     result: Any = None
     error = ""
     try:
@@ -178,10 +234,11 @@ def read_codex(
         with contextlib.suppress(Exception):  # best-effort cleanup
             _kill_group(proc)
             proc.wait(timeout=5)
+        _untrack(proc)
     if error:
         return unknown("codex", source, error)
     entries = parse_codex_rate_limits(result)
-    if not entries:
+    if not any(e["used_percent"] is not None for e in entries):
         return unknown("codex", source, "no rate-limit window in the response (or timeout)")
     return Reading("codex", "ok", source, now_iso(), entries=entries)
 
@@ -308,7 +365,7 @@ def read_claude_probe(
     try:
         done = run(
             ["claude", "-p", "--output-format", "stream-json", "--verbose",
-             "--max-budget-usd", str(budget_usd), PROBE_PROMPT],
+             "--max-budget-usd", str(amount), PROBE_PROMPT],
             capture_output=True, text=True, timeout=PROBE_TIMEOUT_S, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -327,9 +384,10 @@ def _header_number(headers: Any, name: str) -> float | None:
     if raw is None:
         return None
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         return None
+    return value if math.isfinite(value) else None
 
 
 def read_linear(
@@ -350,9 +408,13 @@ def read_linear(
     try:
         with opener(request, timeout=SUBPROCESS_TIMEOUT_S) as response:
             headers = response.headers
-    except urllib.error.HTTPError as exc:  # a 429 still carries the counters
-        headers = exc.headers
-    except (urllib.error.URLError, OSError):
+    except urllib.error.HTTPError as exc:
+        code, headers = exc.code, exc.headers
+        with contextlib.suppress(Exception):
+            exc.close()
+        if code != 429:  # only a rate-limit answer carries counters worth trusting
+            return unknown("linear", source, f"request refused (HTTP {code})")
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
         return unknown("linear", source, "request failed")
     entries = []
     for kind in ("requests", "complexity"):
@@ -383,9 +445,9 @@ def parse_github_usage(doc: Any) -> list[dict[str, Any]]:
         date = item.get("date")
         month = date[:7] if isinstance(date, str) and len(date) >= 7 else "unknown-month"
         bucket = months.setdefault(month, {"minutes": None, "gross": None, "net": None})
-        pairs = [("gross", "grossAmount"), ("net", "netAmount")]
-        if item.get("unitType") == "Minutes":
-            pairs.append(("minutes", "quantity"))
+        if item.get("unitType") != "Minutes":  # storage and other units are not minutes
+            continue
+        pairs = [("gross", "grossAmount"), ("net", "netAmount"), ("minutes", "quantity")]
         for key, field_name in pairs:
             value = _num(item.get(field_name))
             if value is not None:
@@ -407,7 +469,7 @@ def _round(value: float | None, digits: int) -> float | None:
 
 
 def read_github_actions(
-    run: Callable[..., Any] = subprocess.run,
+    run: Callable[..., Any] = run_tracked,
     which: Callable[[str], str | None] = shutil.which,
 ) -> Reading:
     source = "gh api /users/<login>/settings/billing/usage"
@@ -416,8 +478,7 @@ def read_github_actions(
 
     def call(args: list[str]) -> str | None:
         try:
-            done = run(["gh", *args], capture_output=True, text=True,
-                       timeout=SUBPROCESS_TIMEOUT_S, check=False)
+            done = run(["gh", *args], timeout=SUBPROCESS_TIMEOUT_S)
         except (OSError, subprocess.SubprocessError):
             return None
         return done.stdout if done.returncode == 0 else None

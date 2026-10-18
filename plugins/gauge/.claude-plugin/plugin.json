@@ -1,7 +1,7 @@
 {
   "name": "gauge",
   "description": "Read-only quota gauge: shows the Codex, Claude, Linear and GitHub Actions usage counters with their source and read time, and reports unreadable data as unknown, never zero.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },

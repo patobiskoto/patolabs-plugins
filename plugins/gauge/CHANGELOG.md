@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-10-18
+
+Deferred review remarks of PAT-246 and PAT-247 (PAT-251). No new CLI verb, option,
+configuration key or hook.
+
+- `check` judges GitHub Actions on the current UTC month only; a Claude window whose reset
+  time has passed is `inconnu` (stale); a configuration file named by `--config` or
+  `GAUGE_CONFIG` that is absent is reported; `check` exits 0 on any internal error, printing
+  `gauge: inconnu (internal error)`.
+- Linear: only a 2xx or 429 answer is read; any other HTTP status is `unknown`
+  (`request refused (HTTP n)`).
+- Codex: a present but unreadable window is `inconnu`, an absent one is not. NaN and
+  infinity are never a reading. GitHub: gross and net amounts now sum the `Minutes` items
+  only, like the minutes. The probe passes the normalised budget to `--max-budget-usd`.
+- Before it exits, the session-start hook kills any `gh` or `codex app-server` child registered
+  and still running when it calls `kill_live`.
+- README: install commands, units of reset times, Codex manifest `Write` capability,
+  GitHub minutes definition; CI: the `gauge` job is covered by the fork-guard tests.
+
 ## 0.2.0 — 2026-10-18
 
 - Threshold alert (PAT-247): `gauge_cli.py check [--config PATH]`, skill `gauge:check`,
