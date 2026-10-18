@@ -1,4 +1,4 @@
-"""Offline tests on recorded, anonymised responses. No network, no subprocess, no paid call."""
+"""Offline tests on recorded, anonymised responses. No network, no paid call; one test runs the hook script as a subprocess with an empty PATH."""
 from __future__ import annotations
 
 import io
@@ -324,10 +324,6 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(all(d["status"] == "unknown" for d in docs))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CheckTests(unittest.TestCase):
     """PAT-247: thresholds, inconnu, hook exit code. Fake readers only."""
 
@@ -351,9 +347,11 @@ class CheckTests(unittest.TestCase):
     def test_below_threshold_is_silent_and_at_threshold_warns(self):
         from gauge import check
         cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
-        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 79.9}])}
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 79.9},
+                                                {"label": "secondary", "used_percent": 1}])}
         self.assertEqual(check.check(cfg, reader_map=rmap)[0], [])
-        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 80}])}
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 80},
+                                                {"label": "secondary", "used_percent": 1}])}
         warnings = check.check(cfg, reader_map=rmap)[0]
         self.assertEqual(len(warnings), 1)
         self.assertIn("primary", warnings[0])
@@ -373,7 +371,8 @@ class CheckTests(unittest.TestCase):
         def boom():
             raise RuntimeError("x")
 
-        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": None}]),
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": None},
+                                                {"label": "secondary", "used_percent": 1}]),
                 "linear": boom}
         warnings = check.check(cfg, reader_map=rmap)[0]
         self.assertEqual(len(warnings), 2)
@@ -387,6 +386,50 @@ class CheckTests(unittest.TestCase):
         warnings = check.check(cfg, deadline=0.2, reader_map=rmap)[0]
         release.set()
         self.assertIn("inconnu", warnings[0])
+
+    def test_deadline_bounds_the_total_with_several_hanging_readers(self):
+        import time
+
+        from gauge import check
+        cfg = self._cfg(**{"github-actions": 100})
+        release = threading.Event()
+        hang = lambda: (release.wait(30), None)[1]
+        rmap = {c: hang for c in ("codex", "claude", "linear", "github-actions")}
+        start = time.monotonic()
+        warnings = check.check(cfg, deadline=0.5, reader_map=rmap)[0]
+        elapsed = time.monotonic() - start
+        release.set()
+        self.assertLess(elapsed, 0.5 + 0.4)
+        self.assertEqual(len(warnings), 4)
+
+    def test_missing_expected_window_is_inconnu(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 10}])}
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("codex secondary: inconnu", warnings[0])
+
+    def test_claude_without_source_names_the_config_keys(self):
+        from gauge import check
+        cfg = self._cfg(codex=None, linear=None, **{"github-actions": None})
+        warnings = check.check(cfg)[0]
+        self.assertIn("claude_stream", warnings[0])
+        self.assertIn("claude_statusline_json", warnings[0])
+
+    def test_hook_error_prints_minimal_message_and_exits_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": "", "GAUGE_CONFIG": tmp, "HOME": tmp}  # a directory: not a file
+            env["PYTHONPATH"] = ""
+            done = subprocess.run(
+                [sys.executable, "-c",
+                 (f"import sys; sys.path.insert(0, {str(HERE.parent / 'hooks')!r}); "
+                  "import session_start as h; import gauge.check as c; c.check = None; h.main()")],
+                capture_output=True, text=True, env=env, timeout=30, check=False)
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(json.loads(done.stdout), {"systemMessage": "gauge: inconnu (hook error)"})
+        self.assertNotIn("Traceback", done.stderr)
 
     def test_linear_percent_and_github_minutes(self):
         from gauge import check
@@ -426,20 +469,23 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(check.config_path({"XDG_CONFIG_HOME": "/x"}), Path("/x/gauge/config.json"))
 
     def test_hook_exits_zero_and_prints_nothing_secret(self):
-        import os
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "c.json"
             cfg.write_text("{broken")
-            env = {"PATH": os.environ.get("PATH", ""), "GAUGE_CONFIG": str(cfg),
-                   "HOME": tmp}
+            env = {"PATH": "", "GAUGE_CONFIG": str(cfg), "HOME": tmp}
             done = subprocess.run([sys.executable, str(HERE.parent / "hooks" / "session_start.py")],
                                   capture_output=True, text=True, env=env, timeout=30, check=False)
         self.assertEqual(done.returncode, 0)
         doc = json.loads(done.stdout)
         self.assertIn("inconnu", doc["systemMessage"])
         self.assertIn("SessionStart", doc["hookSpecificOutput"]["hookEventName"])
+        self.assertFalse(has_found(done.stdout + done.stderr))
 
     def test_hook_manifest_is_shared_document(self):
         doc = json.loads((HERE.parent / "hooks" / "hooks.json").read_text())
         self.assertIn("SessionStart", doc["hooks"])
+
+
+if __name__ == "__main__":
+    unittest.main()

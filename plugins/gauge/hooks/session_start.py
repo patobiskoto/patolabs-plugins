@@ -26,8 +26,8 @@ def main() -> None:
                 "hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": text},
             }))
-    except BaseException:  # noqa: BLE001, S110 - never block a session
-        pass
+    except BaseException:  # noqa: BLE001 - never block a session, never print a traceback
+        print(json.dumps({"systemMessage": "gauge: inconnu (hook error)"}))
     sys.stdout.flush()
     os._exit(0)  # do not wait for a reader thread still running
 

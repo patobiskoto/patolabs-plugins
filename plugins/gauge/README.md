@@ -19,7 +19,9 @@ python3 plugins/gauge/tooling/gauge_cli.py check [--config PATH]
 
 Skill: `/gauge:check`, `$gauge:check`. `check` prints one `gauge: ...` line per counter at
 or above its threshold, and one line saying `inconnu` per value it could not read (reason
-included). A value that cannot be read is never reported as below the threshold. It
+included) or per expected window missing from a response (`EXPECTED_LABELS` in
+`tooling/gauge/check.py`: Codex `primary`/`secondary`, Claude `five_hour`/`seven_day`,
+Linear `requests`/`complexity`). A value that cannot be read is never reported as below the threshold. It
 prints a single "all read and below" line only when every monitored value was read.
 It always exits 0 and never blocks.
 
@@ -63,6 +65,14 @@ total, the Codex reader with `HOOK_CODEX_TIMEOUT_S` (4 s); a reader still runnin
 `inconnu`. Note that, within that bound, it starts `codex app-server` (as `status` does)
 when `codex` is monitored. The `hooks.json` timeout is 10 s.
 
+Operational constraints. The hook runs at every session start (`startup|resume`) of the
+machine where the plugin is enabled, and injects its text as `additionalContext` into the
+model's context. When `linear` is monitored it sends one `{ viewer { id } }` request to
+Linear at each session start (`read_linear`), which consumes the monitored quota. With the
+defaults the Claude counter is `inconnu` at each start, a permanent warning, until
+`claude_stream` or `claude_statusline_json` is set or its threshold is `null`. On an
+unexpected internal error the hook prints `gauge: inconnu (hook error)` and exits 0.
+
 Hosts. Claude Code: runs `hooks/hooks.json` of an enabled plugin (same mechanism as
 Foundry, `plugins/foundry/hooks/hooks.json`); not run end to end here. Codex: Foundry's
 README reports its session-start hook running on Codex 0.155.1 (observed, from the shared
@@ -100,7 +110,7 @@ re-verified); gauge reads a file your own statusline script may write.
 python3 -m unittest discover -s plugins/gauge/tests -p 'test_*.py'
 ```
 
-Offline: subprocess and HTTP are replaced by fakes; fixtures in `tests/fixtures` are
+Offline: subprocess and HTTP are replaced by fakes (one test runs `hooks/session_start.py` with an empty `PATH`); fixtures in `tests/fixtures` are
 anonymised recorded shapes (placeholders for account, login, token, repository).
 
 ## Documentation status (R5, FOUNDRY-ADR-0018)

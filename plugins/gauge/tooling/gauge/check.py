@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,12 @@ DEFAULT_THRESHOLDS: dict[str, float | None] = {
     "claude": 80,
     "linear": 80,
     "github-actions": None,
+}
+# Windows a monitored counter is expected to return; one missing is reported inconnu.
+EXPECTED_LABELS = {
+    "codex": ("primary", "secondary"),
+    "claude": ("five_hour", "seven_day"),
+    "linear": ("requests", "complexity"),
 }
 UNITS = {"codex": "%", "claude": "%", "linear": "%", "github-actions": " min"}
 CONFIG_ENV = "GAUGE_CONFIG"
@@ -95,6 +102,10 @@ def evaluate(counter: str, reading: dict[str, Any], threshold: float) -> list[st
         elif value >= threshold:
             lines.append(f"{counter} {label}: {round(value, 1)}{unit} used, threshold "
                          f"{threshold}{unit}")
+    seen = {entry.get("label") for entry in reading["entries"]}
+    for label in EXPECTED_LABELS.get(counter, ()):
+        if label not in seen:
+            lines.append(f"{counter} {label}: inconnu (window missing in the response)")
     return lines
 
 
@@ -102,7 +113,11 @@ def _readers_for(cfg: dict[str, Any], codex_timeout: float) -> dict[str, Callabl
     def claude() -> readers.Reading:
         if cfg.get("claude_statusline_json"):
             return readers.read_claude_statusline(cfg["claude_statusline_json"])
-        return readers.read_claude_streams(cfg.get("claude_stream", []))
+        if not cfg.get("claude_stream"):
+            return readers.unknown(
+                "claude", "gauge configuration",
+                "no Claude source: set claude_stream or claude_statusline_json, or the claude threshold to null")
+        return readers.read_claude_streams(cfg["claude_stream"])
 
     return {
         "codex": lambda: readers.read_codex(timeout=codex_timeout),
@@ -133,8 +148,9 @@ def check(
     threads = {c: threading.Thread(target=run, args=(c,), daemon=True) for c in monitored}
     for t in threads.values():
         t.start()
+    end = None if deadline is None else time.monotonic() + deadline
     for t in threads.values():
-        t.join(deadline)
+        t.join(None if end is None else max(0.0, end - time.monotonic()))
     warnings = []
     for counter in monitored:
         reading = results.get(counter)
