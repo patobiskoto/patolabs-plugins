@@ -19,7 +19,8 @@
 - Spec format 2: format 1 plus the sections `coverage`, `constants`, `data_model`, `resources`, `screens`, validated by
   `spec check`; format 1 unchanged. Skill `blueprint:rebuild`.
 - Fixes after the real trial: `decompile --analysis --group` accepts every group `rebuild` detects (SwiftUI screens
-  included); `--list` prints and writes no file; `--entry` must be one `0x` address and the summary counts decompiled and
+  included), and its candidates include computed getters (a SwiftUI view's `body`) without property-wrapper storage;
+  `--list` prints and writes no file; `--entry` must be one `0x` address and the summary counts decompiled and
   unknown entries (exit 5 when none decompiled); preset-object constants gain `constructor_call_arguments` and say that
   `integer_literals_in_order` is partial; `not_covered` states that extensions of other modules' types are not analysed;
   constant names lose the private-scope hash (kept in `private_scope`) and `spec check` refuses it.
