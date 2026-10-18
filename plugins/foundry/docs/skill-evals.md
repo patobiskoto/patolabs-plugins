@@ -36,7 +36,7 @@ in a `foundry-skill-evals` folder of the system temporary directory, `tempfile.g
 `main` deletes that file before a launch, so a stale result is never read. The default is outside
 `evals/` on purpose: `claude plugin eval` reads that folder, what it would do with an extra
 sub-folder without `prompt.md` is unknown, and from an installed plugin the folder is a cache.
-`tests/test_skill_evals.py` checks that `DEFAULT_OUT` is outside the plugin.
+`tests/test_skill_evals.py` checks that `DEFAULT_OUT` is outside the plugin. The path is predictable: where the temporary directory is shared (typically `/tmp` on Linux), another local user could pre-create that folder or a symlink; on macOS `TMPDIR` is per user (not tested here). Pass `--out` in a private folder in that case.
 
 The launched command is built by `build_argv` in `scripts/skill_evals.py`:
 `claude plugin eval <plugin dir> --model <model> --ablation none --runs 1 --no-publish
@@ -72,7 +72,7 @@ here, not produced by the tool. Per case:
   `runs: 1`, one sample, no variance estimate). The launcher prints no promotion, removal or
   change;
 - `unknown`: partial run (cost ceiling, interruption, credential rejected), run error, case
-  absent, no suite case found (no `prompt.md`), a score with no passed grader result, or an
+  absent, no suite case found (no `prompt.md`), a score at the threshold without every grader passed, or an
   unreadable result, unexpected `schemaVersion` or unexpected shape. Never counted as pass.
 
 The one run error that does not make a case `unknown`: `Reached maximum number of turns (N)`

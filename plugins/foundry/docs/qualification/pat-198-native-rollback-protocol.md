@@ -349,7 +349,7 @@ of section 9, section 11 or the matrix is rewritten: the eight rows and their `r
   (`test_a_real_effort_logged_on_haiku_stays_divergent`). No recorded run is affected: the `claude-scout` row logged no effort.
 - What the Claude check proves about the routing. The agent type read in the child's `.meta.json` (`foundry:<profile>`)
   is what is compared. It does not prove that this checkout did the routing: the same profile names exist in an
-  installed copy of the plugin (deduced from the reviewers' remark, not observed here). The tool keeps the hook's own
+  installed copy of the plugin (observed in an installed 1.5.0 copy on 2026-10-18: it contains `agents/routed-readonly-high-opus-5.md`). The tool keeps the hook's own
   statement in the result (`hook`, from `claude_profile_trial._hook_context`) but does not compute `plugin_source` or
   `profile_listed_at_init`, which `claude_profile_trial` reports for PAT-125; for the four recorded runs the question
   stays `unknown`.
@@ -373,9 +373,9 @@ of section 9, section 11 or the matrix is rewritten: the eight rows and their `r
 **Corrections of the tool** (`tooling/foundry/rollback_native_trial.py`; they apply to runs made from now on; each
 has a test in `tests/test_rollback_native_trial.py`).
 
-- `--max-budget-usd` must be finite and above 0 (`math.isfinite` in `_run_claude`): `inf` and `nan` are refused before any write.
+- `--max-budget-usd` must be finite and above 0 (`math.isfinite` in `_run_claude`): `inf` and `nan` are refused before the fixture, the ledger reservation and the matrix claim.
 - Masking (`_MASKS`, section 7 list). The `KEY`, `TOKEN`, `SECRET`, `PASSWORD` and `AUTH` names are masked when written in
-  upper case or as a known lower-case name (`api_key`, `access_token`, `auth_token`, `token`, `secret`, `password`, `passwd`);
+  upper case or as a known name in any case, alone or after prefix segments joined by `_` or `-` (`api_key`, `access_token`, `auth_token`, `token`, `secret`, `password`, `passwd`, `private_key`, so `db_password=` and `DB_Password=` are masked);
   a word that merely contains one (`monkey:`, `Authentication: failed`) is kept. OpenAI-style identifiers `org-...`,
   `proj_...`, `user-...` of 10 characters or more after the prefix, with at least one digit, are masked even under 32
   characters. The committed matrix holds none (`test_the_committed_matrix_holds_no_short_openai_identifier`); check again before each commit

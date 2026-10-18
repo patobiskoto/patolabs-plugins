@@ -68,7 +68,8 @@ _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           # an UPPER_CASE name (API_TOKEN=...) or a known lower-case one; never a word that merely contains "key" or
           # "auth" ("monkey:", "Authentication: failed")
           (re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+"), r"\1=<masked>"),
-          (re.compile(r"(?i)\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd))\s*[=:]\s*\S+"),
+          (re.compile(r"(?i)\b((?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd"
+                      r"|private[_-]?key))\s*[=:]\s*\S+"),
            r"\1=<masked>"),
           # OpenAI identifiers shorter than 32 characters (org-..., proj_..., user-...): a digit is required so that a
           # plain word such as "user-configuration" is kept
@@ -295,7 +296,7 @@ def codex_command(codex: str, work: Path, model: str, effort: str) -> list[str]:
 
 
 def codex_environment() -> dict[str, str]:
-    """The R6 allow-list of the Claude child plus ``CODEX_HOME`` if set; no API key or other variable is forwarded."""
+    """The R6 allow-list of the Claude child (with its isolation marker) plus ``CODEX_HOME`` if set; no API key or other variable is forwarded."""
     environment = dict(_claude_child_environment())
     for name in CODEX_ENV_EXTRA:
         if os.environ.get(name):

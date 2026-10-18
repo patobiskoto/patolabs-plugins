@@ -757,13 +757,18 @@ def test_masking_keeps_ordinary_words_and_masks_short_openai_identifiers_and_nam
     out = rt.mask(text, home="/")
     for leaked in ("org-AbCdEf", "proj_abc123", "user-9fG8", "abcd1234", "hunter2", "xyz", "abc"):
         assert leaked not in out
+    compound = "db_password=hunter2 client_secret=s3 refresh_token=r4 private_key=k5 DB_Password=p6 x-api-key: k7"
+    out = rt.mask(compound, home="/")
+    for leaked in ("hunter2", "s3", "r4", "k5", "p6", "k7"):
+        assert leaked not in out
     kept = "monkey: yes. Authentication: failed. the user-configuration of an organisation"
     assert rt.mask(kept, home="/") == kept
 
 
 def test_the_committed_matrix_holds_no_short_openai_identifier():
     text = (QUAL / "pat-198-native-rollback-2026-10-17.json").read_text()
-    assert not re.search(r"\b(?:org|proj|user)[-_][A-Za-z0-9_\-]*\d[A-Za-z0-9_\-]{9,}", text)
+    openai_id = next(p for p, replacement in rt._MASKS if replacement == "<masked-id>")
+    assert not openai_id.search(text)
 
 
 @pytest.mark.parametrize("text", ["model gpt-x: unknown error", "model claude-opus-5 returned an unknown error",
