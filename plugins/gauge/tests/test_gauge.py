@@ -276,6 +276,8 @@ class GithubTest(unittest.TestCase):
              "grossAmount": 0.5},
             {"product": "actions", "date": "2026-08-01", "unitType": "Hours", "quantity": 3,
              "netAmount": 0},
+            {"product": "actions", "date": "2026-07-01", "unitType": "Minutes", "quantity": 4,
+             "netAmount": 0},
         ]})
         r = readers.read_github_actions(run=self.runner(usage=body), which=lambda n: "x")
         by = {e["label"]: e for e in r.entries}
@@ -286,6 +288,7 @@ class GithubTest(unittest.TestCase):
         self.assertIsNone(by["2026-09"]["net_usd"])
         self.assertIsNone(by["2026-08"]["minutes_used"])  # unexpected unit: unknown
         self.assertIsNone(by["2026-08"]["net_usd"])  # amounts of non-minute items are not summed
+        self.assertEqual(by["2026-07"]["net_usd"], 0)  # a real zero stays a value
         text = render([r.as_dict()])
         self.assertIn("gross unknown USD", text)
         self.assertIn("unknown min", text)
@@ -417,7 +420,8 @@ class LiveProcessTest(unittest.TestCase):
         thread.join(5)
         self.assertFalse(thread.is_alive())
         self.assertLess(time.monotonic() - start, 10)
-        self.assertNotEqual(outcome.get("rc"), 0)
+        self.assertNotIn("exc", outcome)
+        self.assertEqual(outcome.get("rc"), -signal.SIGKILL)
         self.assertFalse(readers._LIVE)
 
     def test_run_tracked_timeout_kills_the_child(self):
@@ -683,6 +687,21 @@ class CheckTests(unittest.TestCase):
         with mock.patch.object(Path, "read_text", side_effect=PermissionError("no")):
             problems = check.load_config(Path("/x/c.json"))[1]
         self.assertEqual(len(problems), 1)
+
+    def test_non_utf8_config_is_a_problem_not_a_crash(self):
+        from gauge import check
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.json"
+            path.write_bytes(b"\xff")
+            cfg, problems = check.load_config(path)
+            self.assertEqual(cfg["thresholds"], check.DEFAULT_THRESHOLDS)
+            self.assertEqual(problems, ["configuration file unreadable or invalid: defaults used"])
+            with mock.patch.object(gauge_cli.gcheck, "check", return_value=([], [])), \
+                    mock.patch("builtins.print") as out:
+                self.assertEqual(gauge_cli.main(["check", "--config", str(path)]), 0)
+        printed = out.call_args[0][0]
+        self.assertIn("gauge config: configuration file unreadable or invalid", printed)
+        self.assertNotIn("internal error", printed)
 
     def test_cli_check_exits_zero_even_on_an_internal_error(self):
         with mock.patch.object(gauge_cli.gcheck, "load_config", side_effect=PermissionError("no")), \

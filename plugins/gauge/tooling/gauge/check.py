@@ -59,7 +59,7 @@ def load_config(path: Path, explicit: bool = False) -> tuple[dict[str, Any], lis
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return cfg, (["configuration file not found: defaults used"] if explicit else [])
-    except OSError:
+    except (OSError, ValueError):  # ValueError: UnicodeDecodeError on non-UTF-8 bytes
         return cfg, ["configuration file unreadable or invalid: defaults used"]
     try:
         doc = json.loads(text)

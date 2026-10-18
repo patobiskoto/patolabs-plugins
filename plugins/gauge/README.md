@@ -112,7 +112,7 @@ here: unknown. Fallback that does not depend on it: run `gauge check` (skill
 |---|---|---|
 | Codex | `codex app-server --listen stdio://`, request `account/rateLimits/read` (JSON-RPC over JSONL; no model call). Reads `primary` and `secondary` `usedPercent`, `windowDurationMins`, `resetsAt`. The process group is killed after the read, with a 15 s bound (`CODEX_TIMEOUT_S`). | `codex` absent, error, timeout, no window |
 | Claude | Last `rate_limit_event` of a stream file you give with `--claude-stream <path>` (repeatable), or the statusLine JSON `rate_limits.five_hour\|seven_day.used_percentage/resets_at` with `--claude-statusline-json <path>`. | no file given (default), no event, no field |
-| Linear | One `{ viewer { id } }` GraphQL request to `https://api.linear.app/graphql`; reads `x-ratelimit-requests-*` and `x-ratelimit-complexity-*` headers. Token from `LINEAR_API_TOKEN` only. | token absent, request failed, no header |
+| Linear | One `{ viewer { id } }` GraphQL request to `https://api.linear.app/graphql`; reads `x-ratelimit-requests-*` and `x-ratelimit-complexity-*` headers. Token from `LINEAR_API_TOKEN` only. | token absent, request failed, request refused (HTTP n), no header |
 | GitHub Actions | `gh api /users/<login>/settings/billing/usage` (needs the `user` scope); sums `quantity` of `product == "actions"` items with unit `Minutes`, plus gross and net amounts, per month. | `gh` absent, scope or right missing (403/404/410), no item |
 
 The included free quota of GitHub Actions is not in the response: it is always `unknown`.
@@ -179,8 +179,9 @@ anonymised recorded shapes (placeholders for account, login, token, repository).
 - 0.2.1 (PAT-251): no new CLI verb, option, configuration key or hook. Behaviour changes
   documented above: current-month rule for GitHub Actions, stale Claude windows, explicit
   configuration file that is absent, Linear read only from 2xx and 429, reset-time units, GitHub
-  minutes definition, hook child cleanup, install commands. Foundry docs: not necessary, no
-  Foundry constant, CLI or hook changed.
+  minutes definition, hook child cleanup, install commands. Foundry docs: `plugins/foundry/README.md`
+  (CI jobs list: the fork-guard test now covers five of the eight jobs) and
+  `plugins/foundry/changelog.d/PAT-251.md` updated; no Foundry constant, CLI or hook changed.
 - Codex manifest capability `Write`: gauge is read-only, but `.codex-plugin/plugin.json`
   declares `Read` and `Write` because `validate_semantic_parity`
   (`scripts/validate_plugins.py`) requires the same capabilities on both hosts and Claude's
