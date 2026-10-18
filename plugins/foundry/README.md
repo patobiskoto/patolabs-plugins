@@ -171,6 +171,21 @@ release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not verified: the Foun
 Ship-iOS 0.3.0 pair on a host, the sandbox of campaign sessions beyond the one live trial of
 PAT-220, and the cause of the State return of PAT-230 (deduced).
 
+**2.0.0 is a major release by version number only, prepared by its release pull request.**
+The number is a milestone chosen by the maintainer on 2026-10-18; the changelog fragments
+record no breaking change. That pull request sets both host manifests to 2.0.0 and
+carries the dated `2.0.0` section of the [CHANGELOG](CHANGELOG.md), the [release
+notes](docs/release-2.0.0.md), the [upgrade and rollback guide](docs/migration-2.0.0.md)
+and the freeze entry of `tests/fixtures/release-history.json`; it deletes the eighteen
+changelog fragments it assembles. The release notes open with the behaviour changes
+and claim no gain. Both pages are frozen from the release pull request on, so they state
+no tag and no installation. Not done by that pull request, and not claimed here: the tag
+`foundry-v2.0.0`, the update of the installed plugin on Claude Code and on Codex, and the
+readback of the version a host actually loads; they come after the merge; the tag and the
+host update each need the maintainer's explicit authorization, and all are recorded on the
+release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not verified: the Foundry 2.0.0 /
+Ship-iOS 0.3.0 pair on a host, and the real display of the Gauge alert on the hosts.
+
 ## Why
 
 The skills this replaces were *too binary*: they sorted and counted, they didn't reason —
@@ -247,7 +262,8 @@ verification, and rollback constraints) is in
 is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2.0 to
 1.3.0 is in [`docs/migration-1.3.0.md`](docs/migration-1.3.0.md); the upgrade from 1.3.0 to
 1.4.0 is in [`docs/migration-1.4.0.md`](docs/migration-1.4.0.md); the upgrade from 1.4.0 to
-1.5.0 is in [`docs/migration-1.5.0.md`](docs/migration-1.5.0.md). The former
+1.5.0 is in [`docs/migration-1.5.0.md`](docs/migration-1.5.0.md); the upgrade from 1.5.0 to
+2.0.0 is in [`docs/migration-2.0.0.md`](docs/migration-2.0.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -737,7 +753,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1, 1.2.0, 1.3.0, 1.4.0 and 1.5.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0 and 2.0.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
