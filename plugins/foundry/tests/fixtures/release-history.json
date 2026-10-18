@@ -4,9 +4,9 @@
   "releases": {
     "2.0.0": {
       "date": "2026-10-18",
-      "changelog_sha256": "2bcc7d2ee03e5097bfce7db8e7a83509f7fb0b0b0423933b6aaea656ef4ff8e5",
+      "changelog_sha256": "ce254f43f44f33995dfdcefdbd7cf39f3eea1881b2e7c887848d3bda37563e24",
       "documents": {
-        "docs/migration-2.0.0.md": "f7fc584c3ea177cf16c9ee1e6d44eda57cf35e44d0761222831dca360350c39a",
+        "docs/migration-2.0.0.md": "e5caef237964f2a2c050057b11603182eb5b7d5dc85b8c7f5a8c6a500219a0e0",
         "docs/release-2.0.0.md": "2adc8a362c9d1a670a971289bba458c27c4f4603d4e394ccb1eb5d409ccdd780"
       }
     },
