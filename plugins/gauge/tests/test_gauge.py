@@ -1,4 +1,4 @@
-"""Offline tests on recorded, anonymised responses. No network, no subprocess, no paid call."""
+"""Offline tests on recorded, anonymised responses. No network, no paid call; one test runs the hook script as a subprocess with an empty PATH."""
 from __future__ import annotations
 
 import io
@@ -7,6 +7,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -322,6 +323,185 @@ class RenderTest(unittest.TestCase):
         docs = json.loads(out.call_args[0][0])
         self.assertEqual([d["counter"] for d in docs], ["codex", "claude", "linear", "github-actions"])
         self.assertTrue(all(d["status"] == "unknown" for d in docs))
+
+
+class CheckTests(unittest.TestCase):
+    """PAT-247: thresholds, inconnu, hook exit code. Fake readers only."""
+
+    def _cfg(self, **thresholds):
+        from gauge import check
+        cfg, _ = check.load_config(Path("/nonexistent/gauge.json"))
+        cfg["thresholds"].update(thresholds)
+        return cfg
+
+    @staticmethod
+    def _ok(counter, entries):
+        return lambda: readers.Reading(counter, "ok", "fake", "t", entries=entries)
+
+    def test_defaults_documented_in_readme(self):
+        from gauge import check
+        readme = (HERE.parent / "README.md").read_text(encoding="utf-8")
+        for key, value in check.DEFAULT_THRESHOLDS.items():
+            self.assertIn(f"| `{key}` | {'none (not monitored)' if value is None else value} |",
+                          readme)
+
+    def test_below_threshold_is_silent_and_at_threshold_warns(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 79.9},
+                                                {"label": "secondary", "used_percent": 1}])}
+        self.assertEqual(check.check(cfg, reader_map=rmap)[0], [])
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 80},
+                                                {"label": "secondary", "used_percent": 1}])}
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("primary", warnings[0])
+
+    def test_unknown_reading_is_inconnu_never_below(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": lambda: readers.unknown("codex", "fake", "codex executable not found")}
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("inconnu", warnings[0])
+
+    def test_missing_value_and_crashing_reader_are_inconnu(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, **{"github-actions": None})
+
+        def boom():
+            raise RuntimeError("x")
+
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": None},
+                                                {"label": "secondary", "used_percent": 1}]),
+                "linear": boom}
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(all("inconnu" in w for w in warnings))
+
+    def test_hanging_reader_is_inconnu_within_deadline(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        release = threading.Event()
+        rmap = {"codex": lambda: (release.wait(30), None)[1]}
+        warnings = check.check(cfg, deadline=0.2, reader_map=rmap)[0]
+        release.set()
+        self.assertIn("inconnu", warnings[0])
+
+    def test_deadline_bounds_the_total_with_several_hanging_readers(self):
+        import time
+
+        from gauge import check
+        cfg = self._cfg(**{"github-actions": 100})
+        release = threading.Event()
+        hang = lambda: (release.wait(30), None)[1]
+        rmap = {c: hang for c in ("codex", "claude", "linear", "github-actions")}
+        start = time.monotonic()
+        warnings = check.check(cfg, deadline=0.5, reader_map=rmap)[0]
+        elapsed = time.monotonic() - start
+        release.set()
+        self.assertLess(elapsed, 0.5 + 0.4)
+        self.assertEqual(len(warnings), 4)
+
+    def test_missing_expected_window_is_inconnu(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": self._ok("codex", [{"label": "secondary", "used_percent": 10}])}
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("codex primary: inconnu", warnings[0])
+
+    def test_unknown_or_mistyped_config_keys_are_reported(self):
+        from gauge import check
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "c.json"
+            path.write_text('{"claude": null, "claude_stream": "one.ndjson"}', encoding="utf-8")
+            cfg, problems = check.load_config(path)
+        self.assertEqual(cfg["thresholds"], check.DEFAULT_THRESHOLDS)
+        self.assertIn("unknown configuration key ignored: claude", problems)
+        self.assertIn("claude_stream is not a list of paths: ignored", problems)
+
+    def test_codex_without_secondary_window_is_not_inconnu(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 10}])}
+        self.assertEqual(check.check(cfg, reader_map=rmap)[0], [])
+
+    def test_claude_without_source_names_the_config_keys(self):
+        from gauge import check
+        cfg = self._cfg(codex=None, linear=None, **{"github-actions": None})
+        warnings = check.check(cfg)[0]
+        self.assertIn("claude_stream", warnings[0])
+        self.assertIn("claude_statusline_json", warnings[0])
+
+    def test_hook_error_prints_minimal_message_and_exits_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": "", "GAUGE_CONFIG": tmp, "HOME": tmp}  # a directory: not a file
+            env["PYTHONPATH"] = ""
+            done = subprocess.run(
+                [sys.executable, "-c",
+                 (f"import sys; sys.path.insert(0, {str(HERE.parent / 'hooks')!r}); "
+                  "import session_start as h; import gauge.check as c; c.check = None; h.main()")],
+                capture_output=True, text=True, env=env, timeout=30, check=False)
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(json.loads(done.stdout), {"systemMessage": "gauge: inconnu (hook error)"})
+        self.assertNotIn("Traceback", done.stderr)
+
+    def test_linear_percent_and_github_minutes(self):
+        from gauge import check
+        cfg = self._cfg(codex=None, claude=None, **{"github-actions": 100})
+        rmap = {
+            "linear": self._ok("linear", [{"label": "requests", "limit": 100, "remaining": 10},
+                                           {"label": "complexity", "limit": 100, "remaining": None}]),
+            "github-actions": self._ok("github-actions", [{"label": "2026-10", "minutes_used": 150}]),
+        }
+        warnings = check.check(cfg, reader_map=rmap)[0]
+        self.assertEqual(len(warnings), 3)
+        self.assertIn("90.0%", warnings[0])
+        self.assertIn("inconnu", warnings[1])
+        self.assertIn("150 min", warnings[2])
+
+    def test_config_file_override_null_and_problems(self):
+        import tempfile
+
+        from gauge import check
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.json"
+            path.write_text(json.dumps({"thresholds": {"codex": 50, "linear": None,
+                                                       "bogus": 1, "claude": -3}}))
+            cfg, problems = check.load_config(path)
+            self.assertEqual(cfg["thresholds"]["codex"], 50)
+            self.assertIsNone(cfg["thresholds"]["linear"])
+            self.assertEqual(cfg["thresholds"]["claude"], 80)
+            self.assertEqual(len(problems), 2)
+            path.write_text("{not json")
+            cfg, problems = check.load_config(path)
+            self.assertEqual(cfg["thresholds"]["codex"], 80)
+            self.assertEqual(len(problems), 1)
+
+    def test_config_path_resolution(self):
+        from gauge import check
+        self.assertEqual(check.config_path({"GAUGE_CONFIG": "/a/b.json"}), Path("/a/b.json"))
+        self.assertEqual(check.config_path({"XDG_CONFIG_HOME": "/x"}), Path("/x/gauge/config.json"))
+
+    def test_hook_exits_zero_and_prints_nothing_secret(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "c.json"
+            cfg.write_text("{broken")
+            env = {"PATH": "", "GAUGE_CONFIG": str(cfg), "HOME": tmp}
+            done = subprocess.run([sys.executable, str(HERE.parent / "hooks" / "session_start.py")],
+                                  capture_output=True, text=True, env=env, timeout=30, check=False)
+        self.assertEqual(done.returncode, 0)
+        doc = json.loads(done.stdout)
+        self.assertIn("inconnu", doc["systemMessage"])
+        self.assertIn("SessionStart", doc["hookSpecificOutput"]["hookEventName"])
+        self.assertFalse(has_found(done.stdout + done.stderr))
+
+    def test_hook_manifest_is_shared_document(self):
+        doc = json.loads((HERE.parent / "hooks" / "hooks.json").read_text())
+        self.assertIn("SessionStart", doc["hooks"])
 
 
 if __name__ == "__main__":

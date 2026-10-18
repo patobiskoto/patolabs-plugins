@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gauge import check as gcheck
 from gauge import readers
 from gauge.render import render
 
@@ -42,7 +43,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="paid, opt-in: run one minimal claude -p call")
     status.add_argument("--probe-budget-usd", metavar="AMOUNT",
                         help="required with --probe-claude (passed as --max-budget-usd)")
+    chk = sub.add_parser("check", help="warn when a counter reaches its threshold (exit 0)")
+    chk.add_argument("--config", metavar="PATH", help="configuration file (default: see README)")
     args = parser.parse_args(argv)
+    if args.command == "check":
+        cfg, problems = gcheck.load_config(
+            Path(args.config) if args.config else gcheck.config_path())
+        warnings, monitored = gcheck.check(cfg)
+        lines = [f"gauge config: {p}" for p in problems] + [f"gauge: {w}" for w in warnings]
+        if not lines:
+            lines = ["gauge: all monitored counters read and below threshold"
+                     if monitored else "gauge: no counter monitored (all thresholds null)"]
+        print("\n".join(lines))
+        return 0
     readings = collect(args)
     print(json.dumps(readings, indent=2) if args.json else render(readings))
     return 0
