@@ -28,8 +28,7 @@ such pass counts as a step. The output is one JSON object (`EFFECTS_CONTRACT`) w
 outcome of each pass. The exit code is 2 for a missing capability, 1 when an effect failed,
 0 when none did; an error that `cli` does not catch (network, code host, the `SystemExit` of a
 tracker binding) ends the command with that error instead. An approval must exist
-(`campaign-approval.md`); without a valid one the pass
-returns `refuse` and launches nothing.
+(`campaign-approval.md`); without a valid one the pass returns `refuse` and launches nothing.
 
 ## Effects
 
@@ -781,15 +780,13 @@ three rounds returns `suspend` `review_rounds_exhausted`; a `correct` decision a
 returns `suspend` `corrections_exhausted` (also for remarks to fix: they are never merged over).
 `decide` stays pure: the counts are facts of the observation (`TicketFacts`). These two are not the
 only suspensions: the others are `human_required`, `technical_blocked` and any other `action`
-outside `CONTINUE_ACTIONS` (correction effect),
-`description_correction_not_settled`, `description_worktree_head_moved`, `attempt_already_made`
-(`claim`, and `plan_correct` through `refusal`), `attempts_journal_invalid`,
-`ci_failing_not_executed`, `worktree_branch_mismatch`, and those of
-`campaign_cadence.decide` (`deferral_retries_exhausted`, `node_unreadable`, `structure_changed`,
-`dependency_state_behind`,
-`several_in_progress`, `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_head_not_in_branch`,
-`pr_ambiguous`, `pr_head_unreadable`, `no_eligible_ticket`). The approval ceilings (`refuse`) also
-apply.
+outside `CONTINUE_ACTIONS` (correction effect), `description_correction_not_settled`,
+`description_worktree_head_moved`, `attempt_already_made` (`claim`, and `plan_correct` through
+`refusal`), `attempts_journal_invalid`, `ci_failing_not_executed`, `worktree_branch_mismatch`, and
+those of `campaign_cadence.decide` (`deferral_retries_exhausted`, `node_unreadable`,
+`structure_changed`, `dependency_state_behind`, `several_in_progress`, `merged_pr_state_behind`,
+`pr_closed_unmerged`, `pr_head_not_in_branch`, `pr_ambiguous`, `pr_head_unreadable`,
+`no_eligible_ticket`). The approval ceilings (`refuse`) also apply.
 
 ## Partial review and proof carry
 

@@ -437,7 +437,10 @@ def _parse_session(stdout: object, session_id: str) -> dict:
 _REDACTED = "[REDACTED]"
 _CREDENTIAL_PATTERNS = (
     re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@:]*:?[^\s/@]*@"),
-    re.compile(r"""(?i)\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)"""
+    re.compile(r"""(?i)\b(authorization|proxy-authorization)(\s*[:=]\s*)"""
+               r"""(?:(?:bearer|basic|token)\s+)?[^\s'"]+"""),
+    # JSON-quoted header, applied after the pattern above, which therefore keeps masking all it did
+    re.compile(r"""(?i)\b(authorization|proxy-authorization)(["']\s*[:=]\s*["']?)"""
                r"""(?:(?:bearer|basic|token)\s+)?[^\s'"]+"""),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}"
                r"|lin_api_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,})\b"),
@@ -447,8 +450,9 @@ _CREDENTIAL_PATTERNS = (
 def mask_credentials(text: str) -> str:
     """Mask URL userinfo, authorization header values and well-known token shapes."""
     text = _CREDENTIAL_PATTERNS[0].sub(lambda m: f"{m.group(1)}{_REDACTED}@", text)
-    text = _CREDENTIAL_PATTERNS[1].sub(lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", text)
-    return _CREDENTIAL_PATTERNS[2].sub(_REDACTED, text)
+    for pattern in _CREDENTIAL_PATTERNS[1:3]:
+        text = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}{_REDACTED}", text)
+    return _CREDENTIAL_PATTERNS[3].sub(_REDACTED, text)
 
 
 def _save_summary(path: Path, attempt: str, text: str) -> str:

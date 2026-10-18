@@ -871,6 +871,8 @@ def test_header_masking_still_masks_everything_the_previous_pattern_masked():
         "Proxy-Authorization : token t0k3n", "http.extraHeader = Authorization: Bearer abc",
         "Authorization:\nBearer nextline", "AUTHORIZATION:   plainvalue",
         "Authorization: x\nAuthorization: y",
+        '"Authorization": "Authorization: Bearer secret"',
+        'authorization: "Authorization: Bearer x"',
     ]
     for sample in samples:
         old = _PREVIOUS_AUTHORIZATION_PATTERN.sub(r"\1\2[REDACTED]", sample)
@@ -880,6 +882,11 @@ def test_header_masking_still_masks_everything_the_previous_pattern_masked():
             value = match.group(0)[len(match.group(1)) + len(match.group(2)):]
             value = value.split()[-1]
             assert value not in new, (sample, value)
+
+
+def test_quoted_header_pass_never_leaks_a_nested_header_value():
+    assert "secret" not in ce.mask_credentials('"Authorization": "Authorization: Bearer secret"')
+    assert "Bearer" not in ce.mask_credentials('authorization: "Authorization: Bearer x"')
 
 
 def test_saved_summary_is_cut_on_a_character_boundary(tmp_path):

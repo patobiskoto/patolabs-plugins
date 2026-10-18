@@ -21,8 +21,8 @@ file only: it recomputes `preview_digest` over the file's material with
 missing or non-hex digests (`digests_from_preview`, `campaign_approval.py`), and an Epic
 identifier outside the issue-id format (`_validate_record`, which `approve` calls on the
 complete record before any append; nothing is written otherwise). It then prints the
-digests, the retained expiry and ceilings and
-requires the human to retype the first 12 hex characters of `preview_digest`
+digests, the retained expiry and ceilings and requires the human to retype the first 12 hex
+characters of `preview_digest`
 (`CONFIRMATION_LENGTH`). Bounds: `--max-sessions` 1 to
 `MAX_SESSIONS_CEILING`, `--max-sessions-per-issue` 1 to `--max-sessions`, a lifetime of at
 most `MAX_TTL` (default `DEFAULT_TTL`).
