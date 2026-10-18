@@ -297,12 +297,16 @@ class DecompileInputsTest(Base):
             ("0x10", "_$s1A10TipManagerV3hex5scaleACSS_SdtcfC"),     # struct initialiser: the body is in itself
             ("0x20", "_$s1A10TipManagerC3hex5scaleACSS_SdtcfC"),     # class allocating initialiser
             ("0x30", "_$s1A10TipManagerV4loadyyYaFZ"),               # static async function
-            ("0x40", "_$s1A10TipManagerO4loadyyYaF")), "Tip")        # async function on an enum
+            ("0x40", "_$s1A10TipManagerO4loadyyYaF"),                # async function on an enum
+            ("0x50", "_$s1A10TipManagerC4syncyyYaKF"),               # async throws function
+            ("0x60", "_$s1A10TipManagerV4syncyyYaKFZ")), "Tip")      # static async throws function
         by = {c["address"]: c for c in out}
         self.assertNotIn("caveat", by["0x10"])
         self.assertIn("`fc` initialiser", by["0x20"]["caveat"])
         self.assertIn("partial functions", by["0x30"]["caveat"])
         self.assertIn("partial functions", by["0x40"]["caveat"])
+        self.assertIn("partial functions", by["0x50"]["caveat"])
+        self.assertIn("partial functions", by["0x60"]["caveat"])
         self.assertIsNone(decompile.caveat("_$s1A10TipManagerV3hexfC", None))
 
     def test_candidates_summary_says_when_the_listing_is_cut(self):  # PAT-253 round 1, remark 8
