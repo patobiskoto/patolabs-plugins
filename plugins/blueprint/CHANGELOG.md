@@ -6,36 +6,39 @@
 
 Settles the non-blocking remarks deferred from the reviews of PAT-252, PAT-253 and PAT-260 (PAT-259). No new verb.
 
-- `decompile`: `--max` must be at least 1 and `--budget` a positive finite number (exit 2); `--analysis` also compares the
-  target's sha256 with the inventory without launching a tool (exit 5 on a difference); a malformed analysis file is never a
-  traceback (exit 2 when unreadable as an analysis, exit 5 when not made from the target); a REA row with a non-hex address is skipped; `candidates.listed` is capped at `MAX_LISTED` and says so
-  (`listed_truncated`); allocating initialisers of classes and async functions carry a `caveat` (their decompilation is an intermediate);
-  the README states that the budget does not include the target check and the arm64 extraction.
-- `rebuild`: a malformed analysis or inventory exits 2; resource usage lists state `usage_strings_total` and `usage_truncated`
-  when `MAX_USAGE` cuts them, and `coverage.not_covered` counts the files cut; `.mp4` is kind `other`, not `sound`.
-- `spec check`: the title, the global summary and the feature names are checked for leaks like the point texts (the feature
-  summary once, not once per point); evidence files that describe different targets are refused.
-- `inventory`: an executable or `.debug.dylib` that is a symbolic link leaving the bundle is refused; an answer that lacks
-  expected lists is not an empty `ok` (`absent_keys`, `dropped_rows`, `unknown_parts`), and a null `subject.digest` no longer
-  raises.
-- `setup`: zip extraction refuses absolute names and `..` components in member names and link targets; `pin_gradle` fails
-  when the wrapper properties already pin another checksum; a download slower than `TIMEOUT_DOWNLOAD` as a whole is refused;
-  every external process runs in its own session and its whole process group is killed at the timeout, the pipes then being
-  drained for at most `DRAIN_SECONDS`; the zip link targets are checked before anything is written.
+- `decompile`: `--max` must be at least 1 and `--budget` a positive finite number (exit 2); `--analysis` also compares
+  the target's sha256 with the inventory without launching a tool (exit 5 on a difference); a malformed analysis file is
+  never a traceback (exit 2 when unreadable as an analysis, exit 5 when not made from the target); a REA row with a
+  non-hex address is skipped; `candidates.listed` is capped at `MAX_LISTED` and says so (`listed_truncated`); allocating
+  initialisers of classes and async functions carry a `caveat` (their decompilation is an intermediate); the README
+  states that the budget does not include the target check and the arm64 extraction.
+- `rebuild`: a malformed analysis or inventory exits 2; resource usage lists state `usage_strings_total` and
+  `usage_truncated` when `MAX_USAGE` cuts them, and `coverage.not_covered` counts the files cut; `.mp4` is kind `other`,
+  not `sound`.
+- `spec check`: the title, the global summary and the feature names are checked for leaks like the point texts (the
+  feature summary once, not once per point); evidence files that describe different targets are refused.
+- `inventory`: an executable or `.debug.dylib` that is a symbolic link leaving the bundle is refused; an answer that
+  lacks expected lists is not an empty `ok` (`absent_keys`, `dropped_rows`, `unknown_parts`), and a null
+  `subject.digest` no longer raises.
+- `setup`: zip extraction refuses absolute names and `..` components in member names and link targets; `pin_gradle`
+  fails when the wrapper properties already pin another checksum; a download slower than `TIMEOUT_DOWNLOAD` as a whole
+  is refused; every external process runs in its own session and its whole process group is killed at the timeout, the
+  pipes then being drained for at most `DRAIN_SECONDS`; the zip link targets are checked before anything is written.
 - `BlueprintExport.java`: the walk forgets every register an instruction writes (second loaded register, exclusive-store
-  status register, written-back base register) and `mov xN, x29` ends frame-slot tracking; the string-label address accepts 8
-  to 16 hex digits; symbolic references `0x18`..`0x1f` are skipped as 8-byte pointers; only direct type records are read. The walk also forgets the other registers written by an `sp`-writing instruction. A real
-  `analyze` of the authorised target before and after gave the same functions, call sites, floating-point calls and
-  Swift types (observed, 2026-10-18); the tests guard the script text only.
+  status register, written-back base register) and `mov xN, x29` ends frame-slot tracking; the string-label address
+  accepts 8 to 16 hex digits; symbolic references `0x18`..`0x1f` are skipped as 8-byte pointers; only direct type
+  records are read. The walk also forgets the other registers written by an `sp`-writing instruction. A real `analyze`
+  of the authorised target before and after gave the same functions, call sites, floating-point calls and Swift types
+  (observed, 2026-10-18); the tests guard the script text only.
 - Documentation: README corrected where the review found it inexact or incomplete (walk, data directory, `--output`,
-  registry protection, evidence ids per REA call, provider, `ui_strings`, trial numbers, exit code 5, skills count, trial
-  revision); skill `decompile` (`argument-hint`, exit 5); skill `spec`; root README row. The 0.1.0 reference
-  `(README, "Inventory")` and the line wrapping of the 0.3.0 "Run on" bullet are corrected in place (no meaning changed); the
-  Codex manifest description is now the one of the Claude manifest (they were identical until 0.2.0).
-- Not changed, stated rather than hidden: a frame slot reached through a copy of `sp` could keep a stale value (deduced); the
-  decompiler pseudo-code cut of the REA path (`decompile.MAX_CODE_CHARS`, 30000) stays; register-passed constructor arguments
-  that are not literals stay `not a literal`; Witness recording the taps of a UI test as navigation evidence is a Witness
-  matter, not done here.
+  registry protection, evidence ids per REA call, provider, `ui_strings`, trial numbers, exit code 5, skills count,
+  trial revision); skill `decompile` (`argument-hint`, exit 5); skill `spec`; root README row. The 0.1.0 reference
+  `(README, "Inventory")` and the line wrapping of the 0.3.0 "Run on" bullet are corrected in place (no meaning
+  changed); the Codex manifest description is now the one of the Claude manifest (they were identical until 0.2.0).
+- Not changed, stated rather than hidden: a frame slot reached through a copy of `sp` could keep a stale value
+  (deduced); the decompiler pseudo-code cut of the REA path (`decompile.MAX_CODE_CHARS`, 30000) stays; register-passed
+  constructor arguments that are not literals stay `not a literal`; Witness recording the taps of a UI test as
+  navigation evidence is a Witness matter, not done here.
 
 ## 0.3.0 — 2026-10-18
 
