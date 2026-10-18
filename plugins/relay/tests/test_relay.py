@@ -21,25 +21,23 @@ import relay_cli
 from relay import secrets, verify
 
 # Built by concatenation so that no literal in this file looks like a real credential.
+# Keyed by the exact pattern name (secrets.PATTERNS) that must refuse each sample.
 SECRET_SAMPLES = {
-    "github-token": "ghp" + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4",
-    "github-token-gho": "gho" + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4",
-    "github-token-ghu": "ghu" + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4",
-    "github-token-ghs": "ghs" + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4",
-    "github-token-ghr": "ghr" + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4",
-    "github-fine-grained-token": "github" + "_pat_" + "A1b2C3d4E5f6G7h8I9j0K1l2",
-    "anthropic-key": "sk" + "-ant-" + "api03-A1b2C3d4E5f6G7h8",
-    "openai-style-key": "sk" + "-" + "A1b2C3d4E5f6G7h8I9j0K1l2",
-    "linear-key": "lin" + "_api_" + "A1b2C3d4E5f6G7h8I9j0K1l2",
-    "slack-token": "xox" + "b-" + "1234567890-abcdefghij",
-    "aws-access-key": "AK" + "IA" + "ABCDEFGHIJKLMNOP",
-    "pem-private-key": "-----BEGIN " + "RSA PRIVATE KEY-----\nabc",
-    "jwt": "eyJ" + "hbGciOiJIUzI1" + "." + "eyJ" + "zdWIiOiIxMjM0" + "." + "abcdefghij",
-    "credential-assignment": "pass" + "word=" + "hunter2hunter2",
-    "credential-assignment-pwd": "pw" + "d=" + "hunter2hunter2",
-    "authorization-bearer": "Authorization: Bear" + "er " + "abcdef0123456789",
-    "url-credentials": "https" + "://user:hunter2@example.invalid/x",
-    "youtrack-permanent-token": "pe" + "rm:" + "cm9vdA==.NDQtMQ==.abcdef012345",
+    "github-token": tuple(p + "_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"
+                          for p in ("ghp", "gho", "ghu", "ghs", "ghr")),
+    "github-fine-grained-token": ("github" + "_pat_" + "A1b2C3d4E5f6G7h8I9j0K1l2",),
+    "anthropic-key": ("sk" + "-ant-" + "api03-A1b2C3d4E5f6G7h8",),
+    "openai-style-key": ("sk" + "-" + "A1b2C3d4E5f6G7h8I9j0K1l2",),
+    "linear-key": ("lin" + "_api_" + "A1b2C3d4E5f6G7h8I9j0K1l2",),
+    "slack-token": ("xox" + "b-" + "1234567890-abcdefghij",),
+    "aws-access-key": ("AK" + "IA" + "ABCDEFGHIJKLMNOP",),
+    "pem-private-key": ("-----BEGIN " + "RSA PRIVATE KEY-----\nabc",),
+    "jwt": ("eyJ" + "hbGciOiJIUzI1" + "." + "eyJ" + "zdWIiOiIxMjM0" + "." + "abcdefghij",),
+    "credential-assignment": ("pass" + "word=" + "hunter2hunter2",),
+    "credential-assignment-pwd": ("pw" + "d=" + "hunter2hunter2",),
+    "authorization-bearer": ("Authorization: Bear" + "er " + "abcdef0123456789",),
+    "url-credentials": ("https" + "://user:hunter2@example.invalid/x",),
+    "youtrack-permanent-token": ("pe" + "rm:" + "cm9vdA==.NDQtMQ==.abcdef012345",),
 }
 # Prefixed names that a bare-word boundary missed (B1); each must be refused by "credential-assignment".
 PREFIXED_SAMPLES = {
@@ -49,6 +47,33 @@ PREFIXED_SAMPLES = {
     "refresh-token": "refresh_" + "token: " + "hunter2hunter2",
     "aws-secret-access-key": "AWS_SECRET_" + "ACCESS_KEY=" + "hunter2hunter2",
 }
+# Name forms the `[A-Za-z0-9]+[_-]` prefix / `_` suffix regex missed (B3), and a quoted
+# passphrase (N11); each must be refused by "credential-assignment".
+CREDENTIAL_FORMS = {
+    "camel-json-access-token": '"access' + 'Token": "hunter2hunter2"',
+    "camel-json-client-secret": '"client' + 'Secret": "hunter2hunter2"',
+    "camel-db-password": "db" + "Password=hunter2hunter2",
+    "camel-auth-token": "auth" + "Token=hunter2hunter2",
+    "camel-refresh-token": "refresh" + "Token: hunter2hunter2",
+    "glued-uppercase": "PG" + "PASSWORD=hunter2hunter2",
+    "camel-key-suffix": "secret" + "Key=hunter2hunter2",
+    "dash-key-suffix": "secret" + "-key: hunter2hunter2",
+    "dash-suffix": "token" + "-value=hunter2hunter2",
+    "glued-api-key": "API" + "KEY=hunter2hunter2",
+    "quoted-passphrase": "pass" + 'word: "correct horse battery staple"',
+}
+# Must pass: no credential, or a shell reference naming where the secret is (N11).
+NOT_CREDENTIALS = (
+    "tokenizer: sentencepiece", "max_tokens: 4096", "PWD=/path", "password reset flow",
+    "token_count=12345678", "the token budget is 1000, password reset flow",
+    "PG" + "PASSWORD=$DATABASE_PASSWORD", "pass" + "word=${DB_PASSWORD}",
+    "pass" + "word=$(security find-generic-password -w)", "pass" + 'word: "$(pass show db)"',
+)
+
+
+def refused_names(err):
+    """Pattern names listed by a refusal, one per `  - <location>: <name>` line."""
+    return [line.rsplit(": ", 1)[1] for line in err.splitlines() if line.startswith("  - ")]
 
 
 def git(cwd, *args):
@@ -150,6 +175,35 @@ class WriteTests(RelayCase):
             self.assertTrue(err.strip())
             self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
 
+    def test_existing_state_dir_tightened_to_700(self):
+        d = self.repo / ".git" / "relay"
+        d.mkdir(mode=0o755)
+        d.chmod(0o755)
+        self.assertEqual(self.run_cli(good())[0], 0)
+        self.assertEqual(stat.S_IMODE(d.stat().st_mode), 0o700)
+
+    def test_non_utf8_draft_refused_without_echo(self):
+        raw = b'\xff\xfe{"summary": "visible-marker"}'
+        f = Path(self.tmp.name) / "latin.json"
+        f.write_bytes(raw)
+        code, out, err = self.run_cli(None, "write", "--draft", str(f))
+        self.assertEqual(code, 2)
+        self.assertIn("UTF-8", err)
+        self.assertNotIn("visible-marker", out + err)
+        self.assertNotIn("xff", out + err)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["relay_cli.py", "write", "--draft", "-"]), \
+                mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw))), \
+                redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(relay_cli.main(), 2)
+        self.assertNotIn("visible-marker", out.getvalue() + err.getvalue())
+        self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
+
+    def test_missing_draft_file_exit_2(self):
+        code, _, err = self.run_cli(None, "write", "--draft", str(self.repo / "nope.json"))
+        self.assertEqual(code, 2)
+        self.assertIn("not found", err)
+
     def test_outside_git_refused(self):
         os.chdir(self.tmp.name)
         code, _, err = self.run_cli(good())
@@ -173,6 +227,52 @@ class VerifyTests(RelayCase):
         head = self.run_git_head()
         c, _ = self.checks(commit=head[:8])
         self.assertEqual(c["commit"]["status"], "ok")
+
+    def test_commit_prefix_shorter_than_4_is_malformed(self):
+        head = self.run_git_head()
+        for bad in (head[:1], head[:3], "zzzz", head[:8] + " "):
+            with self.subTest(commit=bad):
+                c, _ = self.checks(commit=bad)
+                self.assertEqual(c["commit"]["status"], "divergence")
+                self.assertIn("malformed", c["commit"]["detail"])
+        c, _ = self.checks(commit=head[:4].upper())
+        self.assertEqual(c["commit"]["status"], "ok")
+
+    def test_line_pointers_and_home(self):
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        (home / "h.txt").write_text("x")
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            c, _ = self.checks(files=["a.txt:12", "a.txt:12:3", "gone.txt:12", "a.txt:x",
+                                      "a.txt:1:2:3", "~/h.txt", "~/h.txt:4", "~/gone.txt"])
+        for ok in ("a.txt:12", "a.txt:12:3", "~/h.txt", "~/h.txt:4"):
+            self.assertEqual(c[f"file {ok}"]["status"], "ok", ok)
+        for bad in ("gone.txt:12", "a.txt:x", "a.txt:1:2:3", "~/gone.txt"):
+            self.assertEqual(c[f"file {bad}"]["status"], "divergence", bad)
+
+    def test_stat_error_is_unknown(self):
+        with mock.patch.object(verify.os, "stat", side_effect=PermissionError(13, "denied")):
+            [c] = verify.check_files(["a.txt"], self.repo)
+        self.assertEqual(c["status"], "unknown")
+        self.assertIn("PermissionError", c["detail"])
+
+    def test_every_subprocess_gets_closed_stdin(self):
+        with mock.patch("subprocess.run", wraps=subprocess.run) as spy:
+            self.checks(issues=["T-1"], prs=["7"])
+        self.assertGreaterEqual(spy.call_count, 5)
+        for call in spy.call_args_list:
+            self.assertIs(call.kwargs.get("stdin"), subprocess.DEVNULL, call.args)
+
+    def test_time_budget_leaves_remaining_checks_unknown(self):
+        # Fake Foundry sleeps past a 1 s budget: it is killed at the budget, later checks never run.
+        self.foundry.write_text("import time\ntime.sleep(20)\n")
+        with mock.patch.object(verify, "BUDGET", 1):
+            c, _ = self.checks(issues=["T-1", "T-2"], prs=["7"])
+        self.assertEqual(c["file a.txt"]["status"], "ok")
+        self.assertEqual(c["issue T-1"]["status"], "unknown")
+        for later in ("issue T-2", "pr 7"):
+            self.assertEqual(c[later]["status"], "unknown", later)
+            self.assertEqual(c[later]["detail"], verify.EXHAUSTED, later)
 
     def run_git_head(self):
         return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
@@ -296,21 +396,20 @@ class LocateFoundryTests(unittest.TestCase):
 
 class SecretTests(RelayCase):
     def test_one_test_per_pattern(self):
-        for name, sample in SECRET_SAMPLES.items():
-            with self.subTest(pattern=name):
-                code, out, err = self.run_cli(good(pitfalls=[f"found {sample} here"]))
-                self.assertEqual(code, 3)
-                self.assertIn(name.split("-gh")[0] if name.startswith("github-token") else name, err)
-                self.assertNotIn(sample, out + err)
-                self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
+        for name, samples in SECRET_SAMPLES.items():
+            for sample in samples:
+                with self.subTest(pattern=name, sample=sample[:4]):
+                    code, out, err = self.run_cli(good(pitfalls=[f"found {sample} here"]))
+                    self.assertEqual(code, 3)
+                    self.assertIn(name, refused_names(err))
+                    self.assertNotIn(sample, out + err)
+                    self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
 
     def test_all_pattern_names_are_exercised(self):
-        names = {n for n, _ in secrets.PATTERNS}
-        covered = {n if n in names else "github-token" for n in SECRET_SAMPLES}
-        self.assertEqual(names, covered)
+        self.assertEqual({n for n, _ in secrets.PATTERNS}, set(SECRET_SAMPLES))
 
     def test_secret_in_any_field_and_key_never_echoed(self):
-        s = SECRET_SAMPLES["github-token"]
+        s = SECRET_SAMPLES["github-token"][0]
         for draft in (good(summary=s), good(next_step=s), good(files=[s]), good(**{s: "x"}),
                       good(issues=[s])):
             code, out, err = self.run_cli(draft)
@@ -322,12 +421,23 @@ class SecretTests(RelayCase):
             with self.subTest(sample=name):
                 code, out, err = self.run_cli(good(pitfalls=[f"env {sample}"]))
                 self.assertEqual(code, 3)
-                self.assertIn("credential-assignment", err)
+                self.assertIn("credential-assignment", refused_names(err))
                 self.assertNotIn("hunter2", out + err)
 
+    def test_credential_name_forms_refused(self):
+        for name, sample in CREDENTIAL_FORMS.items():
+            with self.subTest(form=name):
+                code, out, err = self.run_cli(good(pitfalls=[f"config {sample}"]))
+                self.assertEqual(code, 3, name)
+                self.assertEqual(refused_names(err), ["credential-assignment"])
+                self.assertNotIn("hunter2", out + err)
+                self.assertNotIn("horse", out + err)
+
     def test_innocent_text_passes(self):
-        code, _, err = self.run_cli(good(summary="the token budget is 1000, password reset flow"))
-        self.assertEqual(code, 0, err)
+        for text in NOT_CREDENTIALS:
+            with self.subTest(text=text):
+                code, _, err = self.run_cli(good(summary=text))
+                self.assertEqual(code, 0, err)
 
     def test_pwd_with_a_path_is_not_a_credential(self):
         for text in ("pwd: /some/path/here", "PWD=/Users/x/work/dir", "pwd: ~/work/dir"):
@@ -362,6 +472,34 @@ class ShowTests(RelayCase):
         self.run_cli(good())
         (self.repo / ".git" / "relay" / "state.json").write_text("{")
         self.assertEqual(self.run_cli(None, "show")[0], 1)
+
+    def test_show_malformed_structure_exit_1_without_traceback(self):
+        self.run_cli(good(prs=["7"]))
+        p = self.repo / ".git" / "relay" / "state.json"
+        valid = json.loads(p.read_text())
+        broken = {
+            "missing real": {k: v for k, v in valid.items() if k != "real"},
+            "real not an object": {**valid, "real": "x"},
+            "head not a string": {**valid, "real": {"branch": "main", "head": 5}},
+            "state not an object": {**valid, "state": "x"},
+            "state missing summary": {**valid, "state": {**valid["state"], "summary": None}},
+            "verification not a list": {**valid, "verification": "x"},
+            "check without status": {**valid, "verification": [{"check": "c", "detail": "d"}]},
+            "check without detail": {**valid, "verification": [{"check": "c", "status": "ok"}]},
+            "not an object": [1],
+        }
+        for name, state in broken.items():
+            for args in (("show",), ("show", "--json")):
+                with self.subTest(case=name, args=args):
+                    p.write_text(json.dumps(state))
+                    code, out, err = self.run_cli(None, *args)
+                    self.assertEqual(code, 1)
+                    self.assertIn("malformed", err)
+                    self.assertEqual(out, "")
+
+    def test_show_outside_git_exit_2(self):
+        os.chdir(self.tmp.name)
+        self.assertEqual(self.run_cli(None, "show")[0], 2)
 
 
 if __name__ == "__main__":

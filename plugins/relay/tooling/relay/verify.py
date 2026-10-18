@@ -9,30 +9,41 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
-TIMEOUT = 30
+TIMEOUT = 30  # seconds, per launched command
+BUDGET = 120  # seconds, for the whole verification; a check past it is unknown
 FOUNDRY_ENV = "RELAY_FOUNDRY_CLI"
+EXHAUSTED = "verification time budget exhausted"
 _TICKET = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
+_COMMIT = re.compile(r"[0-9A-Fa-f]{4,64}")
+_LINE_SUFFIX = re.compile(r"(.+?)(?::\d+){1,2}")
 
 
-def run(cmd: list[str], cwd: Path) -> tuple[int | None, str]:
-    """Run a command; (None, reason) when it cannot be launched or times out."""
+def run(cmd: list[str], cwd: Path, deadline: float | None = None) -> tuple[int | None, str]:
+    """Run a command, stdin from /dev/null; (None, reason) when it cannot be launched, times out
+    or the deadline (time.monotonic()) has passed."""
+    timeout: float = TIMEOUT
+    if deadline is not None:
+        timeout = min(timeout, deadline - time.monotonic())
+        if timeout <= 0:
+            return None, EXHAUSTED
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT,
-                           check=False)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return None, type(exc).__name__
     return p.returncode, p.stdout
 
 
-def git_state(root: Path) -> dict[str, Any]:
-    rc, branch = run(["git", "symbolic-ref", "--short", "-q", "HEAD"], root)
+def git_state(root: Path, deadline: float | None = None) -> dict[str, Any]:
+    rc, branch = run(["git", "symbolic-ref", "--short", "-q", "HEAD"], root, deadline)
     branch_v = branch.strip() if rc == 0 else ("(detached)" if rc == 1 else None)
-    rc, head = run(["git", "rev-parse", "HEAD"], root)
+    rc, head = run(["git", "rev-parse", "HEAD"], root, deadline)
     head_v = head.strip() if rc == 0 else None
-    rc, status = run(["git", "status", "--porcelain"], root)
+    rc, status = run(["git", "status", "--porcelain"], root, deadline)
     dirty = bool(status.strip()) if rc == 0 else None
     return {"branch": branch_v, "head": head_v, "dirty": dirty}
 
@@ -56,6 +67,10 @@ def check_git(draft: dict[str, Any], real: dict[str, Any]) -> list[dict[str, Any
     elif "commit" not in draft:
         out.append({"check": "commit", "status": "ok",
                     "detail": f"{head[:12]}: read from git, not declared"})
+    elif not _COMMIT.fullmatch(draft["commit"]):
+        out.append({"check": "commit", "status": "divergence",
+                    "detail": "malformed: not a commit hash or a prefix of at least 4 hex "
+                              "characters"})
     else:
         if not head.startswith(draft["commit"].lower()):
             out.append({"check": "commit", "status": "divergence",
@@ -70,12 +85,35 @@ def check_git(draft: dict[str, Any], real: dict[str, Any]) -> list[dict[str, Any
     return out
 
 
-def check_files(files: list[str], root: Path) -> list[dict[str, Any]]:
+def _exists(pointer: str, root: Path) -> bool:
+    """`~` expanded, relative to root. OSError (other than absence) and RuntimeError propagate."""
+    p = Path(pointer).expanduser()
+    try:
+        os.stat(p if p.is_absolute() else root / p)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
+def check_files(files: list[str], root: Path,
+                deadline: float | None = None) -> list[dict[str, Any]]:
+    """A `path:line` or `path:line:col` pointer is ok when the bare path exists."""
     out = []
     for f in files:
-        p = Path(f)
-        exists = (p if p.is_absolute() else root / p).exists()
-        out.append({"check": f"file {f}", "status": "ok" if exists else "divergence",
+        label = f"file {f}"
+        if deadline is not None and time.monotonic() >= deadline:
+            out.append({"check": label, "status": "unknown", "detail": EXHAUSTED})
+            continue
+        try:
+            exists = _exists(f, root)
+            m = None if exists else _LINE_SUFFIX.fullmatch(f)
+            if m and _exists(m.group(1), root):
+                exists = True
+        except (OSError, RuntimeError, ValueError) as exc:
+            out.append({"check": label, "status": "unknown",
+                        "detail": f"cannot be checked ({type(exc).__name__})"})
+            continue
+        out.append({"check": label, "status": "ok" if exists else "divergence",
                     "detail": "exists" if exists else "does not exist"})
     return out
 
@@ -114,7 +152,8 @@ def locate_foundry(plugin_root: Path | None = None) -> tuple[Path | None, str]:
     return None, f"{FOUNDRY_ENV} unset and no foundry plugin next to this one"
 
 
-def check_issues(issues: list[str], root: Path) -> list[dict[str, Any]]:
+def check_issues(issues: list[str], root: Path,
+                 deadline: float | None = None) -> list[dict[str, Any]]:
     out = []
     cli, why = locate_foundry() if issues else (None, "")
     for iid in issues:
@@ -125,12 +164,14 @@ def check_issues(issues: list[str], root: Path) -> list[dict[str, Any]]:
         if cli is None:
             out.append({"check": label, "status": "unknown", "detail": f"Foundry not found: {why}"})
             continue
-        rc, text = run(["python3", str(cli), "query", "issue", iid], root)
+        rc, text = run(["python3", str(cli), "query", "issue", iid], root, deadline)
         try:
             issue = json.loads(text)["issue"] if rc == 0 else None
         except (ValueError, KeyError, TypeError):
             issue = None
-        if not isinstance(issue, dict):
+        if text == EXHAUSTED and rc is None:
+            out.append({"check": label, "status": "unknown", "detail": EXHAUSTED})
+        elif not isinstance(issue, dict):
             out.append({"check": label, "status": "unknown",
                         "detail": "Foundry could not read it (not found, tracker unavailable "
                                   f"or unbound) [Foundry: {cli}, {why}]"})
@@ -141,7 +182,8 @@ def check_issues(issues: list[str], root: Path) -> list[dict[str, Any]]:
     return out
 
 
-def check_prs(prs: list[str], root: Path) -> list[dict[str, Any]]:
+def check_prs(prs: list[str], root: Path,
+              deadline: float | None = None) -> list[dict[str, Any]]:
     """PR state through `gh pr view <ref> --json state`; no gh or no answer is unknown."""
     out = []
     for ref in prs:
@@ -150,12 +192,14 @@ def check_prs(prs: list[str], root: Path) -> list[dict[str, Any]]:
             out.append({"check": label, "status": "divergence",
                         "detail": "not a PR number or URL"})
             continue
-        rc, text = run(["gh", "pr", "view", ref.lstrip("#"), "--json", "state"], root)
+        rc, text = run(["gh", "pr", "view", ref.lstrip("#"), "--json", "state"], root, deadline)
         try:
             state = json.loads(text)["state"] if rc == 0 else None
         except (ValueError, KeyError, TypeError):
             state = None
-        if not isinstance(state, str):
+        if text == EXHAUSTED and rc is None:
+            out.append({"check": label, "status": "unknown", "detail": EXHAUSTED})
+        elif not isinstance(state, str):
             out.append({"check": label, "status": "unknown", "detail": "gh could not read it"})
         else:
             out.append({"check": label, "status": "ok", "detail": state})
@@ -163,7 +207,9 @@ def check_prs(prs: list[str], root: Path) -> list[dict[str, Any]]:
 
 
 def verify(draft: dict[str, Any], root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    real = git_state(root)
-    checks = (check_git(draft, real) + check_files(draft["files"], root)
-              + check_issues(draft["issues"], root) + check_prs(draft["prs"], root))
+    deadline = time.monotonic() + BUDGET
+    real = git_state(root, deadline)
+    checks = (check_git(draft, real) + check_files(draft["files"], root, deadline)
+              + check_issues(draft["issues"], root, deadline)
+              + check_prs(draft["prs"], root, deadline))
     return real, checks

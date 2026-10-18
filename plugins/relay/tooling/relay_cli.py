@@ -33,6 +33,7 @@ def state_path(root: Path) -> Path | None:
 
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)  # mkdir's mode does not apply to an existing directory
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".state-")  # created 0600
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -58,12 +59,17 @@ def cmd_write(args: argparse.Namespace) -> int:
     path = state_path(root)
     if path is None:
         return fail("cannot locate the git common directory")
-    if args.draft == "-":
-        raw = sys.stdin.read()
-    elif Path(args.draft).is_file():
-        raw = Path(args.draft).read_text(encoding="utf-8")
-    else:
+    if args.draft != "-" and not Path(args.draft).is_file():
         return fail(f"draft file not found: {args.draft}")
+    try:
+        if args.draft == "-":
+            buf = getattr(sys.stdin, "buffer", None)
+            raw = buf.read().decode("utf-8") if buf is not None else sys.stdin.read()
+        else:
+            raw = Path(args.draft).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # The exception text may quote draft bytes: only its type is shown.
+        return fail(f"the draft cannot be read as UTF-8 text ({type(exc).__name__})")
     try:
         data = json.loads(raw)
     except ValueError:
@@ -112,6 +118,20 @@ def render_verification(checks: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def well_formed(state: object) -> bool:
+    """What `show` reads: `real` and `state` objects, a valid draft, complete checks."""
+    if not isinstance(state, dict):
+        return False
+    real, s, checks = state.get("real"), state.get("state"), state.get("verification", [])
+    return (isinstance(real, dict)
+            and all(isinstance(real.get(k), (str, type(None))) for k in ("branch", "head"))
+            and isinstance(s, dict) and not schema.validate(s)[1]
+            and isinstance(checks, list)
+            and all(isinstance(c, dict) and all(isinstance(c.get(k), str)
+                                                for k in ("check", "status", "detail"))
+                    for c in checks))
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     root = repo_root()
     path = state_path(root) if root else None
@@ -121,9 +141,11 @@ def cmd_show(args: argparse.Namespace) -> int:
         return fail(f"no state written yet ({path})", 1)
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-        s = state["state"]
-    except (ValueError, KeyError, TypeError):
+    except (OSError, ValueError):
         return fail("the stored state is unreadable or malformed", 1)
+    if not well_formed(state):
+        return fail("the stored state is unreadable or malformed", 1)
+    s = state["state"]
     if args.json:
         print(json.dumps(state, indent=2, ensure_ascii=False))
         return 0
