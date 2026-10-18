@@ -870,7 +870,7 @@ def test_header_masking_still_masks_everything_the_previous_pattern_masked():
         "Authorization: Bearer abc.def-123", "authorization=Basic dXNlcjpwYXNz",
         "Proxy-Authorization : token t0k3n", "http.extraHeader = Authorization: Bearer abc",
         "Authorization:\nBearer nextline", "AUTHORIZATION:   plainvalue",
-        "Authorization: x\nAuthorization: y",
+        "Authorization: firstvalue\nAuthorization: secondvalue",
         '"Authorization": "Authorization: Bearer secret"',
         'authorization: "Authorization: Bearer x"',
     ]
