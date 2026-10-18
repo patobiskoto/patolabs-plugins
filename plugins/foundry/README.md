@@ -224,7 +224,7 @@ that imports `foundry` does the same check but stays fail-open: it prints one
 `hook-python.json` in the data directory (with a `recorded_at` UTC time; the last
 SessionStart of any host and repository wins), else from `python3` on doctor's own `PATH`.
 `python3 --version` must report 3.11 or later on the `PATH` the host gives its hooks.
-Under Python 3.10 or older the hooks are inactive, including the `guard_bash` R1 deny and
+Under Python 3.10 or older the four hooks that import `foundry` are inactive, including the `guard_bash` R1 deny and
 the PAT-215 `campaign-approval approve` deny; each hook call (every Bash and Agent call, in
 every repository, registered or not) then prints the `systemMessage` instead. Whether the
 hooks worked under 3.10 before this change is unknown. How Codex displays that

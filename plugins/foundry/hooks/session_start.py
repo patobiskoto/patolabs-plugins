@@ -4,8 +4,9 @@ REGISTERED repo, so the process is active without anyone invoking a skill.
 
 This is the mechanism behind ADR-0001's "contracts declared per consumer
 project": instead of hand-editing an AGENTS.md in each repo, the plugin
-injects the contract itself. Registry read only — NO network call at session
-start, and any failure exits 0 with one visible systemMessage (a hook must never break a session).
+injects the contract itself. Registry read only, plus one write of the
+interpreter record `hook-python.json` (`python_floor.record_interpreter`) — NO
+network call at session start, and any failure exits 0 with one visible systemMessage (a hook must never break a session).
 
 The launcher path is INLINED (not "$CLAUDE_PLUGIN_ROOT"): that variable is
 substituted in hook/skill command strings but is not exported to the agent's
