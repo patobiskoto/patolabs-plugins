@@ -227,6 +227,7 @@ remains separate planned work.
 | [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 1.5.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
+| [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking. |
 
 They **compose by data, not code**: Foundry emits a locale-neutral changelog
 (`query changelog <milestone>`); ship-ios turns it into per-locale release notes and

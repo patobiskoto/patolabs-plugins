@@ -1,0 +1,18 @@
+{
+  "name": "relay",
+  "description": "Session hand-over: writes a verified, secret-free resume state (summary, decisions, blockers, pitfalls, file pointers, next step) at the end of a session, as a local owner-only file outside git tracking.",
+  "version": "0.1.0",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "handoff",
+    "resume",
+    "session",
+    "secrets",
+    "codex",
+    "claude"
+  ]
+}
