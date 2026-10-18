@@ -42,6 +42,8 @@ means a well-formed registry with no entry for the checkout. The pure
 `deny_reason()` is what the tests pin. This is a discipline tool, not a sandbox:
 `bash -c '…'` indirection is out of scope by design.
 """
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -50,6 +52,13 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tooling"))
+
+import python_floor  # noqa: E402
+
+_UNSUPPORTED = python_floor.hook_unsupported_output("guard_bash")
+if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
+    print(_UNSUPPORTED)
+    raise SystemExit(0)
 
 _CONTROL = {";", "&&", "||", "|", "&", "(", ")", "{", "}", "<", ">", ">>", "<<"}
 _WRAPPERS = {"env", "command", "nohup", "time", "sudo", "xargs", "stdbuf", "timeout"}
@@ -326,8 +335,10 @@ def main():
         reason = deny_reason(command, defaults, current)
         if reason:
             _emit_deny(reason)
-    except Exception:
-        return  # fail open: a broken guard must not block normal work
+    except Exception as exc:
+        # fail open: a broken guard must not block normal work, but visibly (PAT-265,
+        # exception type name only). The PAT-42 fail-closed branch above is untouched.
+        print(python_floor.hook_failure_output("guard_bash", exc))
 
 
 if __name__ == "__main__":

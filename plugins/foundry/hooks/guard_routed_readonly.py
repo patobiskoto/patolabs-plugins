@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PLUGIN_ROOT / "tooling"))
+
+import python_floor  # noqa: E402
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _SHELL_SYNTAX = re.compile(r"[\x00-\x1f\x7f;&|`$<>()[\]{}*?!#~]")
@@ -91,8 +94,10 @@ def main() -> None:
                 "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
             }}, ensure_ascii=False))
-    except Exception:
-        return  # ADR-0005: hooks are portable discipline, never a security boundary
+    except Exception as exc:
+        # ADR-0005: hooks are portable discipline, never a security boundary; fail open,
+        # but visibly (PAT-265, type name only).
+        print(python_floor.hook_failure_output("guard_routed_readonly", exc))
 
 
 if __name__ == "__main__":

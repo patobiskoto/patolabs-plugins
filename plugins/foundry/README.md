@@ -213,6 +213,17 @@ settled unless explicitly superseded.
 
 ## Install or upgrade
 
+**Python.** The minimum is Python 3.11, declared once as `MINIMUM_PYTHON` in
+`tooling/python_floor.py` (PAT-265). Hooks run `python3` as resolved by the host
+(`hooks/hooks.json`), not a Foundry-chosen interpreter. The launcher
+`tooling/foundry_cli.py` checks the minimum before importing any `foundry` module and
+exits non-zero with a message naming the interpreter, its version and the minimum. Each hook
+that imports `foundry` does the same check but stays fail-open: it prints one
+`systemMessage` and does not deny the call. `/foundry:doctor` prints a `Hook Python` line
+(path, version, source) read from the record `hooks/session_start.py` writes to
+`hook-python.json` in the data directory, else from `python3` on doctor's own `PATH`.
+`python3 --version` must report 3.11 or later on the `PATH` the host gives its hooks.
+
 Fresh Claude Code install:
 
 ```
@@ -709,10 +720,10 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
 `scripts/test_ci_plan.py`), not by workflow expressions:
 
 - `ship-ios`, `gauge`, `relay`, `blueprint`, `witness` and `catalogue` run on every push to `main` and every internal pull
-  request. On a fork pull request none of the eight jobs (`plan`, `foundry`, `ship-ios`,
-  `gauge`, `relay`, `blueprint`, `witness`, `catalogue`) runs, because all eight carry the fork guard
+  request. On a fork pull request none of the nine jobs (`plan`, `foundry`, `foundry-python-min`, `ship-ios`,
+  `gauge`, `relay`, `blueprint`, `witness`, `catalogue`) runs, because all nine carry the fork guard
   (`test_required_checks_keep_their_names_and_fork_guard` in `scripts/test_ci_plan.py`
-  asserts it for `plan`, `foundry`, `ship-ios`, `gauge` and `catalogue`; `relay`, `blueprint` and `witness` carry it in
+  asserts it for `plan`, `foundry`, `ship-ios`, `gauge` and `catalogue`; `foundry-python-min`, `relay`, `blueprint` and `witness` carry it in
   `.github/workflows/ci.yml`, not asserted by that test; FOUNDRY-ADR-0025).
 - `foundry` is skipped only when the `plan` job outputs `run_foundry=false`, which
   `scripts/ci_plan.py` does only when every changed file is under `plugins/ship-ios/` on a

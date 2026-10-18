@@ -5,7 +5,7 @@ REGISTERED repo, so the process is active without anyone invoking a skill.
 This is the mechanism behind ADR-0001's "contracts declared per consumer
 project": instead of hand-editing an AGENTS.md in each repo, the plugin
 injects the contract itself. Registry read only — NO network call at session
-start, and any failure exits silently (a hook must never break a session).
+start, and any failure exits 0 with one visible systemMessage (a hook must never break a session).
 
 The launcher path is INLINED (not "$CLAUDE_PLUGIN_ROOT"): that variable is
 substituted in hook/skill command strings but is not exported to the agent's
@@ -17,6 +17,16 @@ import sys
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "tooling"))
+
+import python_floor  # noqa: E402
+
+# PAT-265: record the interpreter that runs the hooks (read by `doctor`), then, if it is
+# below the minimum, fail open with a visible message before any foundry import.
+python_floor.record_interpreter()
+_UNSUPPORTED = python_floor.hook_unsupported_output("session_start")
+if _UNSUPPORTED:
+    print(_UNSUPPORTED)
+    raise SystemExit(0)
 
 _CONTRACT = """\
 Ce repo est piloté par le plugin Foundry (projet tracker : {key}, provider : {tracker}).
@@ -58,8 +68,9 @@ def main():
             "hookEventName": "SessionStart",
             "additionalContext": f"Foundry : binding tracker invalide — {exc}",
         }}, ensure_ascii=False))
-    except Exception:
-        return  # never break a session start
+    except Exception as exc:
+        # never break a session start, but say so (PAT-265, exception type name only)
+        print(python_floor.hook_failure_output("session_start", exc))
 
 
 if __name__ == "__main__":

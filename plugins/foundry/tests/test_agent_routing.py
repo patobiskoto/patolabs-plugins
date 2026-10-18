@@ -1080,11 +1080,17 @@ def test_shared_hooks_fail_open_only_on_internal_errors(monkeypatch, capsys, tmp
         ),
     )
     route_agent.main()
-    assert capsys.readouterr().out == ""
+    # PAT-265: still fail-open (no decision, nothing denied), but visible, and the
+    # message names the exception type only, never its text.
+    output = json.loads(capsys.readouterr().out)
+    assert set(output) == {"systemMessage"}
+    assert "RuntimeError" in output["systemMessage"]
+    assert "internal probe" not in output["systemMessage"]
 
-    monkeypatch.setattr(readonly_guard.sys, "stdin", io.StringIO('{"tool_input": []}'))
+    monkeypatch.setattr(readonly_guard.sys, "stdin", io.StringIO('[]'))
     readonly_guard.main()
-    assert capsys.readouterr().out == ""
+    output = json.loads(capsys.readouterr().out)
+    assert set(output) == {"systemMessage"} and "AttributeError" in output["systemMessage"]
 
 
 def test_claude_facade_parses_availability_and_strict_user_envelope():

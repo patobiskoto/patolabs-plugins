@@ -95,9 +95,18 @@ def _guard_stat(real_call):
     return guarded
 
 
+# Membership of each original in the ``os.supports_*`` sets, captured before the wrappers replace it: it depends on
+# the platform and the Python version, so the tests compare against this record, never a hardcoded expectation.
+_ORIGINAL_SUPPORT_MEMBERSHIP = {}
+
+
 def _install_stat_guard(name):
     original = getattr(os, name)
     wrapper = _guard_stat(original)
+    _ORIGINAL_SUPPORT_MEMBERSHIP[name] = {
+        support: original in getattr(os, support)
+        for support in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids")
+    }
     # shutil picks ``os.stat``-family functions through the ``os.supports_*`` sets: keep the wrapper in each set
     # that held the original (a set of ``os`` is a plain ``set`` of functions)
     for support in ("supports_dir_fd", "supports_fd", "supports_follow_symlinks", "supports_effective_ids"):

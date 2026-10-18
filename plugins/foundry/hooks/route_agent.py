@@ -18,6 +18,13 @@ from typing import Mapping
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "tooling"))
 
+import python_floor  # noqa: E402
+
+_UNSUPPORTED = python_floor.hook_unsupported_output("route_agent")
+if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
+    print(_UNSUPPORTED)
+    raise SystemExit(0)
+
 from foundry.routing import (  # noqa: E402
     RoutingConfigError,
     RoutingUnavailableError,
@@ -319,10 +326,11 @@ def main() -> None:
         output = _allow(*routed)
     except (RoutingConfigError, RoutingUnavailableError) as exc:
         output = _deny(str(exc))
-    except Exception:
-        # Shared hooks remain fail-open per ADR-0005. Logical agents have a minimal
+    except Exception as exc:
+        # Shared hooks remain fail-open per ADR-0005, but visibly (PAT-265): the
+        # diagnostic names the exception type only. Logical agents have a minimal
         # Read-only entrypoint and self-stop when the routed marker is absent.
-        return
+        output = json.loads(python_floor.hook_failure_output("route_agent", exc))
     print(json.dumps(output, ensure_ascii=False))
 
 

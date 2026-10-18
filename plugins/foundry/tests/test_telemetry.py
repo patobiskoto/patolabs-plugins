@@ -1163,7 +1163,9 @@ def test_real_claude_post_hook_main_is_silent_and_records_only_controlled_comple
     })))
     observe_agent.main()
     captured = capsys.readouterr()
-    assert captured.out == "" and captured.err == ""
+    # PAT-265: an internal failure is fail-open but visible: type name only, no text.
+    assert json.loads(captured.out)["systemMessage"].count("RuntimeError") == 1
+    assert "SENSITIVE_INTERNAL_HOOK_SENTINEL" not in captured.out and captured.err == ""
     assert (data_dir / "telemetry" / "journal.ndjson").read_text() == before
 
 

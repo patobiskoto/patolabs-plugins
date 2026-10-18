@@ -455,7 +455,11 @@ def test_registry_oserror_still_fails_open(monkeypatch, tmp_path):
     # (a ``chmod 0`` file is still readable by root and would prove nothing there).
     target.unlink()
     target.mkdir()
-    assert _decision(_run_guard(repo, "gh pr create --title x", tmp_path)) is None
+    # PAT-265: still fail open (no decision), but no longer silent: one systemMessage
+    # naming the exception type.
+    output = json.loads(_run_guard(repo, "gh pr create --title x", tmp_path))
+    assert set(output) == {"systemMessage"}
+    assert "IsADirectoryError" in output["systemMessage"]
 
 
 def test_registry_error_reason_pure_decision():

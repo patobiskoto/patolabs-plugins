@@ -22,6 +22,11 @@ _MODULES = ("query", "edit", "issue", "frame", "adr", "doctor", "registry",
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# PAT-265: explicit message on an unsupported interpreter, before any foundry import.
+import python_floor  # noqa: E402
+
+python_floor.require_for_cli()
+
 if len(sys.argv) < 2 or sys.argv[1] not in _MODULES:
     raise SystemExit(f"usage: foundry_cli.py <{'|'.join(_MODULES)}> [args…]")
 
