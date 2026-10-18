@@ -761,37 +761,64 @@ def test_masking_keeps_ordinary_words_and_masks_short_openai_identifiers_and_nam
     assert rt.mask(kept, home="/") == kept
 
 
-@pytest.mark.parametrize("name", [
+SECRET_NAMES = [
     "db_password", "client_secret", "refresh_token", "private_key", "DB_Password", "x-api-key", "secret_key",
     "aws_secret_access_key", "session_key", "signing_key", "clientSecret", "refreshToken", "dbPassword",
     "password_hash", "token_value", "authorization", "Authorization", "api_key", "apikey", "passwd", "auth",
     "AWS_SECRET_ACCESS_KEY", "API_TOKEN", "MY_AUTH_HEADER", "tokens", "secrets", "api_keys", "access_tokens",
     "accesstoken", "authtoken", "secretkey", "privatekey", "apitoken", "oauth", "OAuth", "token2", "secret1",
-    "passwords", "keys"])
+    "passwords", "keys", "--token", "--api-key", "--password", "--client-secret", "_authToken", "_password",
+    "_AUTH_TOKEN", "2fa_secret", "sessionkey", "authkey", "privkey", "encryptionkey", "masterkey", "signingkey",
+    "authcode", "MONKEY", "AUTHENTICATION", "monkey_token", "monkeysecret"]
+
+
+@pytest.mark.parametrize("name", SECRET_NAMES)
 @pytest.mark.parametrize("separator", ["=", ": "])
-def test_a_name_with_a_secret_segment_is_masked_whatever_its_case_or_shape(name, separator):
+def test_a_secret_name_is_masked_whatever_its_case_or_shape(name, separator):
     assert rt.mask(f"{name}{separator}v4lue9", home="/") == f"{name}=<masked>"
 
 
-@pytest.mark.parametrize("name", ["monkey", "Authentication", "keyboard", "author", "tokenizer", "model", "turkey",
-                                  "secretary", "tokenizers", "secretaries"])
-def test_a_name_without_a_secret_segment_is_kept(name):
+@pytest.mark.parametrize("name", [*rt._KEPT_WORDS, "Monkey", "Authentication", "model", "x-monkey"])
+def test_a_kept_word_not_in_upper_case_is_never_masked(name):
     text = f"{name}: failed {name}=v4lue9"
     assert rt.mask(text, home="/") == text
 
 
-@pytest.mark.parametrize("line", [
-    "Error: password: v4lue9", "failed: db_password=v4lue9", "Error: DB_Password=v4lue9", "config: clientSecret=v4lue9",
-    "https://h/p?api_key=v4lue9&token=v4lue9&x=1", "monkey: ok author=me token: v4lue9",
-    "Authentication: failed model=x; secret=v4lue9, other", "a: b: c: access_token=v4lue9"])
-def test_a_secret_pair_is_masked_even_inside_the_value_of_a_kept_pair(line):
-    out = rt.mask(line, home="/")
+COMPOSITE_LINES = [
+    "Error: password: {}", "failed: db_password={}", "Error: DB_Password={}", "config: clientSecret={}",
+    "https://h/p?api_key={}&token={}&x={}", "monkey: ok author=me token: {}", "monkey: token={}", "monkey:token={}", "monkey-token={}",
+    "Authentication: failed model=x; secret={}, other", "a: b: c: access_token={}", "password={}&{}",
+    "keyboard: ok password={}", "--api-key={} --token={}"]
+
+
+@pytest.mark.parametrize("line", COMPOSITE_LINES)
+def test_a_secret_pair_after_a_kept_word_or_another_pair_is_masked(line):
+    out = rt.mask(line.format(*["v4lue9"] * line.count("{}")), home="/")
     assert "v4lue9" not in out and "<masked>" in out
 
 
-def test_a_url_value_stops_at_the_ampersand_and_a_kept_pair_stays_whole():
-    assert rt.mask("https://h/p?token=v4lue9&x=1&api_key=w5", home="/") == "https://h/p?token=<masked>&x=1&api_key=<masked>"
+def test_a_value_is_masked_whole_up_to_the_next_whitespace():
+    assert rt.mask("https://h/p?token=v4lue9&x=1&api_key=w5 next", home="/") == "https://h/p?token=<masked> next"
+    assert rt.mask("password=ab&cd", home="/") == "password=<masked>"
     assert rt.mask("Error: monkey: failed", home="/") == "Error: monkey: failed"
+
+
+# The named-secret entry of _MASKS before PAT-244, copied verbatim.
+_PREVIOUS_SECRET_PAIR = re.compile(r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+")
+
+
+def test_every_value_the_previous_rule_masked_is_still_masked():
+    lines = [f"{name}{separator}{{}}" for name in SECRET_NAMES for separator in ("=", ": ")] + COMPOSITE_LINES
+    checked = 0
+    for number, line in enumerate(lines):
+        markers = [f"zq{number}x{index}" for index in range(line.count("{}"))]
+        text = line.format(*markers)
+        previous, current = _PREVIOUS_SECRET_PAIR.sub(r"\1=<masked>", text), rt.mask(text, home="/")
+        for marker in markers:
+            if marker not in previous:
+                checked += 1
+                assert marker not in current, (text, current)
+    assert checked == sum(line.count("{}") for line in lines) - 2  # only "passwd=" and "passwd: " were not masked before
 
 
 def test_the_committed_matrix_holds_no_short_openai_identifier():

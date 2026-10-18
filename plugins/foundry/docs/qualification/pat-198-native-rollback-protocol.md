@@ -374,20 +374,23 @@ of section 9, section 11 or the matrix is rewritten: the eight rows and their `r
 has a test in `tests/test_rollback_native_trial.py`).
 
 - `--max-budget-usd` must be finite and above 0 (`math.isfinite` in `_run_claude`): `inf` and `nan` are refused before the fixture, the ledger reservation and the matrix claim.
-- Masking (`_MASKS`, `_mask_named_secrets`, `_secret_name`, section 7 list). A `name=value` or `name: value` pair becomes
-  `name=<masked>` when the name is secret: written in upper case and containing `TOKEN`, `SECRET`, `KEY`, `PASSWORD` or `AUTH`;
-  or one of its segments (split on `_`, `-` and camelCase boundaries, compared in lower case) is `token`, `secret`,
-  `password`, `passwd`, `key`, `apikey`, `auth`, `authorization` or `oauth`, optionally in the plural and/or followed by
-  digits (`tokens`, `api_keys`, `token2`, `passwords`); or a segment contains `token`, `secret`, `password`, `passwd`,
-  `apikey`, `accesskey`, `privatekey` or `oauth` (`accesstoken`, `authtoken`, `secretkey`, `privatekey`, `apitoken`),
-  except `tokenizer`, `tokenizers`, `tokeniz*` and `secretary`/`secretaries`. `key` and `auth` count only as a whole
-  segment, so `monkey:`, `keyboard`, `turkey`, `author` and `Authentication: failed` are kept. A kept pair is never
-  consumed past its separator: `Error: password: v` and `failed: db_password=v` mask the secret pair inside. `?`, `&`,
-  `;`, `,` and any other non-name character start a name, and a value stops at whitespace or `&` (decision of PAT-244:
-  `https://h/p?token=v&api_key=w` masks both; a value holding a `&` is masked only up to it). Tests:
-  `test_a_name_with_a_secret_segment_is_masked_whatever_its_case_or_shape`, `test_a_name_without_a_secret_segment_is_kept`,
-  `test_a_secret_pair_is_masked_even_inside_the_value_of_a_kept_pair`,
-  `test_a_url_value_stops_at_the_ampersand_and_a_kept_pair_stays_whole`. OpenAI-style identifiers `org-...`,
+- Masking (`_MASKS`, `_SECRET_PAIR`, `_KEPT_WORDS`, section 7 list). The named-secret rule is the one before PAT-244
+  (`\b` then a name of letters, digits and `_` containing `TOKEN`, `SECRET`, `KEY`, `PASSWORD` or `AUTH`, any case, then
+  `=` or `:`, then the value) with `PASSWD` added and one exception: a name that is one of the `_KEPT_WORDS` (`monkey`,
+  `monkeys`, `donkey`, `turkey`, `hockey`, `jockey`, `whiskey`, `keyboard`, `keyboards`, `authentication`, `author`,
+  `authors`, `tokenizer`, `tokenizers`, `tokenize`, `secretary`, `secretaries`) whose first or second letter is lower case is kept,
+  so `monkey:` and `Authentication: failed` are kept and `MONKEY=x` is masked. The pair becomes `name=<masked>`. Only a
+  name is matched before the separator, so a secret pair after a kept word is still found (`monkey: token=v`,
+  `Error: password: v`), and so is a name after `-` or starting with `_` or a digit (`--api-key=v`, `x-api-key: v`,
+  `_authToken=v`, `2fa_secret=v`).
+  The whole value up to the next whitespace is masked, `&` included: in a URL the rest of the query after a secret
+  parameter is masked too (`https://h/p?token=v&x=1` gives `https://h/p?token=<masked>`), an over-masking accepted by
+  PAT-244. Apart from the value of a kept word, every value masked by the rule before PAT-244 is still masked: checked
+  on the names and lines of the tests below (`test_every_value_the_previous_rule_masked_is_still_masked`), not proved
+  for every text. Tests:
+  `test_a_secret_name_is_masked_whatever_its_case_or_shape`, `test_a_kept_word_not_in_upper_case_is_never_masked`,
+  `test_a_secret_pair_after_a_kept_word_or_another_pair_is_masked`,
+  `test_a_value_is_masked_whole_up_to_the_next_whitespace`. OpenAI-style identifiers `org-...`,
   `proj_...`, `user-...` of 10 characters or more after the prefix, with at least one digit, are masked even under 32
   characters. The committed matrix holds none (`test_the_committed_matrix_holds_no_short_openai_identifier`); check again before each commit
   of a matrix, as the pattern cannot recognise every identifier shape.

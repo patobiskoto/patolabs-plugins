@@ -63,48 +63,20 @@ LINES = {f"{host}-{role}": (host, role) for host, role in ROLLBACK}
 _UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|supported)|unavailable|invalid)"
                           r"|(not (found|available)|unavailable|invalid).{0,60}model|unknown model"
                           r"|model.{0,60}(does not exist|no access)|(does not exist|no access).{0,60}model)")
-_SECRET_WORDS = frozenset({"token", "secret", "password", "passwd", "key", "apikey", "auth", "authorization", "oauth"})
-_SECRET_SUBSTRINGS = ("token", "secret", "password", "passwd", "apikey", "accesskey", "privatekey", "oauth")
-_NOT_SECRET = re.compile(r"(?:tokeniz\w*|tokenizers?|secretar(?:y|ies))\d*")
-_NAME_SEPARATOR = re.compile(r"(?<![A-Za-z0-9_\-])([A-Za-z][A-Za-z0-9_\-]*)(\s*[=:]\s*)")
-_VALUE = re.compile(r"[^\s&]+")
-
-
-def _secret_name(name: str) -> bool:
-    """An UPPER_CASE name containing TOKEN, SECRET, KEY, PASSWORD or AUTH; else a name one of whose segments (split on
-    ``_``, ``-`` and camelCase boundaries, lower-cased) is a secret word, optionally plural and/or followed by digits, or
-    a longer lower-case segment containing a secret substring (``accesstoken``, ``secretkey``); ``key`` and ``auth``
-    count only as a whole segment, and ``tokenizer`` / ``secretary`` are kept."""
-    if name == name.upper() and any(word in name for word in ("TOKEN", "SECRET", "KEY", "PASSWORD", "AUTH")):
-        return True
-    for segment in re.split(r"[_\-]", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()):
-        core = re.sub(r"\d+$", "", segment)
-        if core in _SECRET_WORDS or core.endswith("s") and core[:-1] in _SECRET_WORDS:
-            return True
-        if not _NOT_SECRET.fullmatch(segment) and any(word in core for word in _SECRET_SUBSTRINGS):
-            return True
-    return False
-
-
-def _mask_named_secrets(text: str) -> str:
-    """``name=value`` / ``name: value`` becomes ``name=<masked>`` when the name is secret (``_secret_name``); the value
-    stops at whitespace or ``&``. A pair whose name is not secret is never consumed beyond its separator, so a secret
-    pair inside its value is still found; ``?``, ``&``, ``;``, ``,`` and any other non-name character start a name."""
-    pieces: list[str] = []
-    position = 0
-    while (found := _NAME_SEPARATOR.search(text, position)) is not None:
-        pieces.append(text[position:found.start()])
-        value = _VALUE.match(text, found.end()) if _secret_name(found.group(1)) else None
-        pieces.append(f"{found.group(1)}=<masked>" if value else found.group(0))
-        position = value.end() if value else found.end()
-    pieces.append(text[position:])
-    return "".join(pieces)
+# Ordinary words that the named-secret rule before PAT-244 masked (``monkey:``, ``Authentication: failed``); kept only
+# when the first or second letter is lower case (``MONKEY=x`` is still masked).
+_KEPT_WORDS = ("monkey", "monkeys", "donkey", "turkey", "hockey", "jockey", "whiskey", "keyboard", "keyboards",
+               "authentication", "author", "authors", "tokenizer", "tokenizers", "tokenize", "secretary", "secretaries")
+# The rule before PAT-244 plus PASSWD and the _KEPT_WORDS lookahead: only a name is matched before the separator, so
+# every name it masked is still masked, a _KEPT_WORDS name excepted; the whole value up to whitespace is masked (``&``
+# and the rest of a URL query included).
+_SECRET_PAIR = re.compile(r"(?i)\b(?!(?=(?-i:[A-Z]?[a-z]))(?:" + "|".join(_KEPT_WORDS) + r")\b)"
+                          r"([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+")
 
 
 _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           (re.compile(r"(?i)(bearer|basic)\s+[A-Za-z0-9._\-=+/]{8,}"), r"\1 <masked>"),
-          # secret-named pairs (``_mask_named_secrets``): never "monkey:" or "Authentication: failed"
-          (_mask_named_secrets, None),
+          (_SECRET_PAIR, r"\1=<masked>"),
           # OpenAI identifiers shorter than 32 characters (org-..., proj_..., user-...): a digit is required so that a
           # plain word such as "user-configuration" is kept
           (re.compile(r"\b(?:org|proj|user)[-_](?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{10,}"), "<masked-id>"),
@@ -124,7 +96,7 @@ def mask(text: str, home: str | None = None) -> str:
     if home and home != "/":
         text = text.replace(home, "~")
     for pattern, replacement in _MASKS:
-        text = pattern(text) if replacement is None else pattern.sub(replacement, text)
+        text = pattern.sub(replacement, text)
     return text[:_ERROR_LIMIT]
 
 

@@ -187,6 +187,13 @@ def test_a_run_error_with_a_bare_max_turns_text_and_no_grader_result_is_unknown(
     assert se.interpret(_result(run), NAMES)["overall"] == se.UNKNOWN
 
 
+def test_a_passed_run_never_covers_another_run_without_a_grader_result():
+    run = _with_run()
+    run["arms"]["with"].append({"error": MAX_TURNS, "graders": []})
+    summary = se.interpret(_result(run), NAMES)
+    assert summary["overall"] == se.UNKNOWN and se.PASS not in {v[0] for v in summary["cases"].values()}
+
+
 def test_a_case_without_a_score_is_unknown():
     case = {"aggregates": {}}
     summary = se.interpret(_result(case), NAMES)

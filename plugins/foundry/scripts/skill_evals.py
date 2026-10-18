@@ -142,8 +142,8 @@ def _case_verdict(case: dict, threshold: float, partial: bool) -> tuple[str, str
     if not runs:
         return UNKNOWN, "no run recorded"
     errors = [r["error"] for r in runs if r.get("error")]
-    graders = [g for r in runs for g in r.get("graders", [])]
-    all_passed = bool(graders) and all(g.get("passed") is True for g in graders)
+    # Run by run: one run whose graders all passed never covers another run with no or a failed grader.
+    all_passed = all(r.get("graders") and all(g.get("passed") is True for g in r["graders"]) for r in runs)
     # The max-turns error ends a max_turns: 1 run after the Skill call the grader checks: expected, but only when
     # every grader passed; any other error stays unknown.
     expected_end = bool(errors) and all(isinstance(e, str) and MAX_TURNS_ERROR.fullmatch(e) for e in errors)

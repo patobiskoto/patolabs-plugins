@@ -78,7 +78,8 @@ here, not produced by the tool. Per case:
   unreadable result, unexpected `schemaVersion` or unexpected shape. Never counted as pass.
 
 The one run error that does not make a case `unknown`: `Reached maximum number of turns (N)`
-(`MAX_TURNS_ERROR`), when every grader of the case passed. Observed 2026-10-17 (see "Observed run"):
+(`MAX_TURNS_ERROR`), when every run of the case has graders and all of them passed (`_case_verdict`, run by
+run). Observed 2026-10-17 (see "Observed run"):
 every run of a `max_turns: 1` case ended on `exit 1: Reached maximum number of turns (1)` after its
 grader passed. Cause: deduced, the single turn is spent on the `Skill` call. Any other error text,
 and this one with a failed or missing grader, stays `unknown`.
