@@ -437,7 +437,8 @@ def _parse_session(stdout: object, session_id: str) -> dict:
 _REDACTED = "[REDACTED]"
 _CREDENTIAL_PATTERNS = (
     re.compile(r"(?i)(\b[a-z][a-z0-9+.-]*://)[^\s/@:]*:?[^\s/@]*@"),
-    re.compile(r"(?i)\b(authorization|proxy-authorization)(\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\"]+"),
+    re.compile(r"""(?i)\b(authorization|proxy-authorization)(["']?\s*[:=]\s*["']?)"""
+               r"""(?:(?:bearer|basic|token)\s+)?[^\s'"]+"""),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}"
                r"|lin_api_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,})\b"),
 )

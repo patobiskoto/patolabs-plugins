@@ -26,7 +26,9 @@ FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py campaign-cadence run PAT-1
 `wait-ci` or `waiting` it sleeps `--poll-seconds` and observes again: re-reading is not an effect, and each
 such pass counts as a step. The output is one JSON object (`EFFECTS_CONTRACT`) with the
 outcome of each pass. The exit code is 2 for a missing capability, 1 when an effect failed,
-0 otherwise. An approval must exist (`campaign-approval.md`); without a valid one the pass
+0 when none did; an error that `cli` does not catch (network, code host, the `SystemExit` of a
+tracker binding) ends the command with that error instead. An approval must exist
+(`campaign-approval.md`); without a valid one the pass
 returns `refuse` and launches nothing.
 
 ## Effects
@@ -281,16 +283,18 @@ home, the network, other hosts and versions.
   runs, and the network of the shell commands, which the sandbox policy governs and these
   settings do not open (deduced from the settings, which set no network key; not observed).
   A credential kept outside the home or in the keychain is not covered by the read rules.
-- Residual, observed from the settings (reads are re-allowed on `<common>/config`, `~/.gitconfig`
+- Residual, deduced from the settings, not observed in a native run (reads are re-allowed
+  on `<common>/config`, `~/.gitconfig`
   and `~/.config/git` so commits have an identity): the session can read a credential those
   files hold (token in a remote URL, `http.extraHeader`, `url.*.insteadOf`), and its final summary
   becomes the body of the pull request. Measure: `campaign_effects.mask_credentials` runs in
   `_save_summary`, before the summary is stored, so before `issue openpr --summary-stdin`
   and before the review sees it; it masks URL userinfo (`https://user:token@host`), the value of
-  an `Authorization` / `Proxy-Authorization` header and a few token shapes (GitHub, GitLab,
-  Linear, Slack, `sk-`) with `[REDACTED]` (unit test, observed). Unknown: a credential of
-  another shape (a bare password, a token without a known prefix outside a URL or header) is
-  not masked; the session's own files and commit contents are not filtered.
+  an `Authorization` / `Proxy-Authorization` header, also JSON-quoted, and a few token shapes
+  (GitHub, GitLab, Linear, Slack, `sk-`) with `[REDACTED]` (unit test, observed). Deduced from
+  `_CREDENTIAL_PATTERNS`: a credential of another shape (a bare password, a token without a
+  known prefix outside a URL or header) is not masked; the session's own files and commit
+  contents are not filtered.
 
 The remaining limits, stated: `DISALLOWED_TOOLS` denies, with the prefix rules and the rules
 with an inner `*` described above, `git push`, `gh`, and the Foundry verbs `issue`, `edit`,
@@ -777,10 +781,12 @@ three rounds returns `suspend` `review_rounds_exhausted`; a `correct` decision a
 returns `suspend` `corrections_exhausted` (also for remarks to fix: they are never merged over).
 `decide` stays pure: the counts are facts of the observation (`TicketFacts`). These two are not the
 only suspensions: the others are `human_required`, `technical_blocked` and any other `action`
-outside `CONTINUE_ACTIONS` (correction effect), `deferral_retries_exhausted`,
-`description_correction_not_settled`, `description_worktree_head_moved`, `attempt_already_made`,
-`attempts_journal_invalid`, `ci_failing_not_executed`, `worktree_branch_mismatch`, and those of
-`campaign_cadence.decide` (`node_unreadable`, `structure_changed`, `dependency_state_behind`,
+outside `CONTINUE_ACTIONS` (correction effect),
+`description_correction_not_settled`, `description_worktree_head_moved`, `attempt_already_made`
+(`claim`, and `plan_correct` through `refusal`), `attempts_journal_invalid`,
+`ci_failing_not_executed`, `worktree_branch_mismatch`, and those of
+`campaign_cadence.decide` (`deferral_retries_exhausted`, `node_unreadable`, `structure_changed`,
+`dependency_state_behind`,
 `several_in_progress`, `merged_pr_state_behind`, `pr_closed_unmerged`, `pr_head_not_in_branch`,
 `pr_ambiguous`, `pr_head_unreadable`, `no_eligible_ticket`). The approval ceilings (`refuse`) also
 apply.

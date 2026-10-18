@@ -19,12 +19,13 @@ FOUNDRY_TRACKER=linear python3 tooling/foundry_cli.py campaign-cadence next PAT-
 It prints one JSON object (`CADENCE_CONTRACT`): the observation (capabilities, structure
 digest observed and approved, approval status, the ticket in focus, the tickets) and the
 `decision`. The same observation gives byte-identical output (`report`: sorted keys). The
-exit code is 2 when a capability is missing, and 0 once a decision is printed (an invalid
-attempt journal prints `suspend` `attempts_journal_invalid`, as `step` does). An error that
-`observe` does not convert into `node_unreadable` (a network error, an error of the code
-host, the `SystemExit` of a tracker binding) is not caught by `main`: the command ends with
-that error and a non-zero exit code other than 2 (traceback, or the message of the
-`SystemExit`).
+exit code is 2 when a capability is missing (an argparse usage error also exits 2), and 0 once a
+decision is printed (an invalid attempt journal prints `suspend` `attempts_journal_invalid`, as
+`step` does). An error that `observe` does not convert into `node_unreadable` (a network error,
+an error of the code host) and the `SystemExit` of a tracker binding, raised by `_context`
+(`foundry.tracker()`) before `observe`, are not caught by `main`: the command ends with that
+error and exit code 1 (traceback, or the message of the `SystemExit`; observed once for the
+binding, on a checkout with none).
 
 ## Decision table
 

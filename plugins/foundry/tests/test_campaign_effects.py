@@ -846,6 +846,42 @@ def test_saved_summary_masks_credential_shaped_values(tmp_path):
     assert "https://example.com/docs" in saved and "a@b" in saved
 
 
+_PREVIOUS_AUTHORIZATION_PATTERN = re.compile(
+    r"(?i)\b(authorization|proxy-authorization)(\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?[^\s'\"]+")
+
+
+def test_credential_masking_covers_json_headers_and_more_token_shapes():
+    headers = {
+        '{"Authorization": "Bearer jsonsecret1"}': "jsonsecret1",
+        "{'proxy-authorization':'Basic cHJveHk='}": "cHJveHk=",
+        "Proxy-Authorization: Basic cHJveHk=": "cHJveHk=",
+    }
+    shapes = ("glpat-" + "a1B2c3D4e5F6g7H8i9", "lin_api_" + "A1b2C3d4E5f6G7h8I9j0K1",
+              "xoxb-" + "1234567890-abcdef", "sk-" + "A1b2C3d4E5f6G7h8I9j0K1")
+    for text, leaked in headers.items():
+        assert leaked not in ce.mask_credentials(text)
+    for shape in shapes:
+        assert ce.mask_credentials(f"key {shape} end") == "key [REDACTED] end"
+    assert ce.mask_credentials('"Authorization": "Bearer x"') == '"Authorization": "[REDACTED]"'
+
+
+def test_header_masking_still_masks_everything_the_previous_pattern_masked():
+    samples = [
+        "Authorization: Bearer abc.def-123", "authorization=Basic dXNlcjpwYXNz",
+        "Proxy-Authorization : token t0k3n", "http.extraHeader = Authorization: Bearer abc",
+        "Authorization:\nBearer nextline", "AUTHORIZATION:   plainvalue",
+        "Authorization: x\nAuthorization: y",
+    ]
+    for sample in samples:
+        old = _PREVIOUS_AUTHORIZATION_PATTERN.sub(r"\1\2[REDACTED]", sample)
+        assert old != sample
+        new = ce.mask_credentials(sample)
+        for match in _PREVIOUS_AUTHORIZATION_PATTERN.finditer(sample):
+            value = match.group(0)[len(match.group(1)) + len(match.group(2)):]
+            value = value.split()[-1]
+            assert value not in new, (sample, value)
+
+
 def test_saved_summary_is_cut_on_a_character_boundary(tmp_path):
     """PAT-236: a cut in the middle of a multi-byte character left a file that does not decode."""
     text = "€" * (ce.MAX_SUMMARY_BYTES // 3 + 5)  # three bytes each: the limit falls inside one
