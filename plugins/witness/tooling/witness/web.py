@@ -98,12 +98,12 @@ def capture(browser: Path, url: str, viewport: tuple[int, int], shot: Path) -> N
 def prove_web(*, project: Path, url: str, viewport: str, label: str, out: Path | None,
               ) -> tuple[dict, Path, Path, int]:
     """Same return shape as prove.prove. Raises checkout.Refused or WebRefused before anything is run."""
+    path = check_url(url)  # URL and viewport first: a refusal runs nothing, not even git
+    size = check_viewport(viewport)
     project = project.resolve()
     if not project.exists():
         raise checkout.Refused(f"project path {project} does not exist")
     kind = checkout.guard(project)
-    path = check_url(url)
-    size = check_viewport(viewport)
     browser = locate_browser()
     out = (out or Path(tempfile.mkdtemp(prefix="witness-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)

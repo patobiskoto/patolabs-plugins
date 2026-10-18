@@ -60,7 +60,9 @@ command):
   then extracts the image with `xcrun xcresulttool export attachments` (`xcode.export_screenshot`). The test must
   attach a screenshot (`XCTAttachment(screenshot:)`, kept with `lifetime = .keepAlways`); a test that only writes a
   file elsewhere (for example a Fastlane `snapshot()` helper) attaches nothing and fails the step. With several
-  image attachments, `attachment` (a substring of the attachment name) is required: witness never guesses. The
+  image attachments (an attachment counts as an image when its file name ends with one of
+  `IMAGE_SUFFIXES` in `xcode.py`: `.png`, `.jpg`, `.jpeg`, `.heic`), `attachment` (a substring of the attachment
+  name) is required: witness never guesses. The
   steps are `reset`, `boot`, `uitest`, `extract-screenshot`; there is no separate build, install or launch (the
   test run does them); `--skip-tests`, `--test-plan` and `--only-testing` are refused (exit 2) and the tests
   selection is recorded as `navigation-uitest`. Tests failed or unknown still exits 6 with the screenshot.

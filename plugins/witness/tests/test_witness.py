@@ -401,7 +401,8 @@ class WebTests(Base):
         for url in ("http://example.com/", "https://localhost/", "http://localhost.evil.com/",
                     "http://user@localhost/", "file:///etc/passwd", "http://[::1]:80/"):
             fake = self.fake()
-            code, _, _ = self.prove_web(fake, url=url)
+            with mock.patch("witness.checkout.guard", side_effect=AssertionError("git ran")):
+                code, _, _ = self.prove_web(fake, url=url)
             self.assertEqual(code, 3, url)
             self.assertEqual(fake.inner.calls, [])
         self.assertEqual(self.prove_web(self.fake(), extra=("--viewport", "wide"))[0], 3)
