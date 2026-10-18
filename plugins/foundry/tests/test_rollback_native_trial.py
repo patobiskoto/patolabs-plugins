@@ -819,6 +819,12 @@ def test_every_value_the_previous_rule_masked_is_still_masked():
                 checked += 1
                 assert marker not in current, (text, current)
     assert checked == sum(line.count("{}") for line in lines) - 2  # only "passwd=" and "passwd: " were not masked before
+    # Known exceptions (protocol section 12): a new match (PASSWD, or a name in a kept word's value) takes, as its own
+    # value, the name of a pair the previous rule masked, whose value then stays in clear.
+    for line in ("passwd = token = {}", "monkey:xtoken = token = {}"):
+        text = line.format("zqexception")
+        assert "zqexception" not in _PREVIOUS_SECRET_PAIR.sub(r"\1=<masked>", text)
+        assert "zqexception" in rt.mask(text, home="/"), "a known exception is closed: update protocol section 12"
 
 
 def test_the_committed_matrix_holds_no_short_openai_identifier():
@@ -836,25 +842,30 @@ def test_a_generic_unknown_error_text_near_the_word_model_is_not_unavailable(tmp
     assert body["account_availability"] == "unknown" and body["verdict"] != "unavailable"
 
 
-def test_an_unknown_model_text_is_still_unavailable(tmp_path):
+@pytest.mark.parametrize(("text", "unavailable"), [("unknown model claude-opus-5", True), ("unknown model_x", False)])
+def test_claude_reads_unknown_model_as_unavailable_only_when_model_is_a_whole_word(tmp_path, text, unavailable):
     rt.run(_args(tmp_path, "claude-reviewer"),
-           launch=_host(tmp_path, "claude-reviewer", children=False, result="unknown model claude-opus-5",
-                        is_error=True, exit_code=1))
-    assert json.loads((tmp_path / "result.json").read_text())["verdict"] == "unavailable"
+           launch=_host(tmp_path, "claude-reviewer", children=False, result=text, is_error=True, exit_code=1))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert (body["verdict"] == "unavailable") is unavailable
+    assert body["account_availability"] == ("unavailable_declared" if unavailable else "unknown")
 
 
-def test_a_codex_generic_unknown_error_naming_the_model_is_not_unavailable_and_unknown_model_is(tmp_path):
+def test_a_codex_generic_unknown_error_naming_the_model_is_not_unavailable(tmp_path):
     host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=["gpt-5.6-luna: unknown error"], session=False)
     rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
     assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
-    other = tmp_path / "other"
-    other.mkdir()
-    _fresh_matrix(other / "matrix.json")
-    host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=["unknown model gpt-5.6-terra"], session=False)
-    rt.run(_args(tmp_path, "codex-implementer", matrix=str(other / "matrix.json"), work_dir=str(other / "w"),
-                 out=str(other / "o.json")), codex_launch=host)
-    row = next(r for r in json.loads((other / "matrix.json").read_text())["rows"] if r["line"] == "codex-implementer")
-    assert row["account_availability"] == "unavailable_declared"
+
+
+@pytest.mark.parametrize(("text", "availability"), [
+    ("unknown model gpt-5.6-terra", "unavailable_declared"),
+    ("unknown model", "unknown"),  # the requested identifier is not named
+    ("unknown model_reasoning_effort", "unknown"),
+    ("unknown model_reasoning_effort `max` for gpt-5.6-terra", "unknown")])
+def test_codex_reads_unknown_model_as_unavailable_only_before_the_requested_identifier(tmp_path, text, availability):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=[text], session=False)
+    rt.run(_args(tmp_path, "codex-implementer"), codex_launch=host)
+    assert _codex_row(tmp_path, "codex-implementer")["account_availability"] == availability
 
 
 def test_an_unwritable_ledger_refuses_before_any_launch_or_matrix_claim(tmp_path, monkeypatch):

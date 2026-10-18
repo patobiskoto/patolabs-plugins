@@ -387,7 +387,9 @@ has a test in `tests/test_rollback_native_trial.py`).
   parameter is masked too (`https://h/p?token=v&x=1` gives `https://h/p?token=<masked>`), an over-masking accepted by
   PAT-244. Apart from the value of a kept word, every value masked by the rule before PAT-244 is still masked: checked
   on the names and lines of the tests below (`test_every_value_the_previous_rule_masked_is_still_masked`), not proved
-  for every text. Tests:
+  for every text. Two known exceptions, asserted by the same test, leave in clear a value that rule masked:
+  `passwd = token = v` and `monkey:xtoken = token = v`; a new match (`passwd`, or `xtoken` in the value of the kept
+  word `monkey`) takes the next name, `token`, as its own value (`\s*[=:]\s*\S+`). Tests:
   `test_a_secret_name_is_masked_whatever_its_case_or_shape`, `test_a_kept_word_not_in_upper_case_is_never_masked`,
   `test_a_secret_pair_after_a_kept_word_or_another_pair_is_masked`,
   `test_a_value_is_masked_whole_up_to_the_next_whitespace`. OpenAI-style identifiers `org-...`,
@@ -395,7 +397,11 @@ has a test in `tests/test_rollback_native_trial.py`).
   characters. The committed matrix holds none (`test_the_committed_matrix_holds_no_short_openai_identifier`); check again before each commit
   of a matrix, as the pattern cannot recognise every identifier shape.
 - `_UNAVAILABLE` and its Codex counterpart no longer match a bare `unknown` after the word `model` or after the model
-  identifier ("model X: unknown error"); `unknown model` still does. The other branches (`does not exist`, `no access`) stay
+  identifier ("model X: unknown error"). They gain a branch that the rule before PAT-244 did not have: `unknown model`
+  followed by a word boundary (`unknown model\b`) and, for Codex, then by the requested identifier within 60
+  characters, so `unknown model_reasoning_effort` matches neither
+  (`test_claude_reads_unknown_model_as_unavailable_only_when_model_is_a_whole_word`,
+  `test_codex_reads_unknown_model_as_unavailable_only_before_the_requested_identifier`). The other branches (`does not exist`, `no access`) stay
   tied to the word `model` or to the identifier within 60 characters, as section 7 says; a hook or authentication refusal
   that names the model close to those words can still be read as unavailable, the texts being kept so that a reader
   can overrule it (residual risk, unchanged).
@@ -404,7 +410,11 @@ has a test in `tests/test_rollback_native_trial.py`).
 - A `<synthetic>` or `isApiErrorMessage` record without text adds `<API-error record without text>` to `errors`, no longer an empty string.
 - Each result records `ledger.data_dir_fingerprint`, the first 12 hexadecimal characters of the sha256 of the resolved
   data directory path (`data_dir_fingerprint()`); two results with different fingerprints used two ledgers, so section 4's
-  ledger guarantee does not hold between them. The path is not written. The eight recorded results predate it and
+  ledger guarantee does not hold between them. The path is not written, but the fingerprint does not hide it from
+  someone who can guess it (the default, `~/.config/foundry` in `registry.data_dir()`, holds the home directory and
+  so the user name); the field is only in the
+  `--out` result, not in a matrix row (`row.update` in `_run_claude`, `_run_codex`); the tool runs no git command
+  and does not decide where `--out` is kept (paragraph on the costs above). The eight recorded results predate it and
   carry only `data_dir_from`.
 
 **Documentation status (R5, PAT-244).** Updated: this section; `docs/skill-evals.md` and `scripts/skill_evals.py` (PAT-184

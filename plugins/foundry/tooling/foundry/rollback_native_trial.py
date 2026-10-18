@@ -61,7 +61,7 @@ ROLLBACK = {
 }
 LINES = {f"{host}-{role}": (host, role) for host, role in ROLLBACK}
 _UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|supported)|unavailable|invalid)"
-                          r"|(not (found|available)|unavailable|invalid).{0,60}model|unknown model"
+                          r"|(not (found|available)|unavailable|invalid).{0,60}model|unknown model\b"
                           r"|model.{0,60}(does not exist|no access)|(does not exist|no access).{0,60}model)")
 # Ordinary words that the named-secret rule before PAT-244 masked (``monkey:``, ``Authentication: failed``); kept only
 # when the first or second letter is lower case (``MONKEY=x`` is still masked).
@@ -256,8 +256,8 @@ def declares_unavailable(facts: dict[str, Any], model: str | None = None) -> boo
             return False
         named = re.escape(model)
         pattern = re.compile(rf"(?i)({named}.{{0,60}}(not (found|available|exist|supported)|unavailable|invalid"
-                             rf"|does not exist|no access)|unknown model|(not (found|available)|unavailable|invalid|does not exist"
-                             rf"|no access).{{0,60}}{named})")
+                             rf"|does not exist|no access)|unknown model\b.{{0,60}}{named}"
+                             rf"|(not (found|available)|unavailable|invalid|does not exist|no access).{{0,60}}{named})")
     return not facts["observed"]["models"] and any(pattern.search(t) for t in texts)
 
 
