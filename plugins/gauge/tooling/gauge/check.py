@@ -25,12 +25,13 @@ DEFAULT_THRESHOLDS: dict[str, float | None] = {
 }
 # Windows a monitored counter is expected to return; one missing is reported inconnu.
 EXPECTED_LABELS = {
-    "codex": ("primary", "secondary"),
+    "codex": ("primary",),
     "claude": ("five_hour", "seven_day"),
     "linear": ("requests", "complexity"),
 }
 UNITS = {"codex": "%", "claude": "%", "linear": "%", "github-actions": " min"}
 CONFIG_ENV = "GAUGE_CONFIG"
+CONFIG_KEYS = ("thresholds", "claude_stream", "claude_statusline_json")
 HOOK_DEADLINE_S = 6.0
 HOOK_CODEX_TIMEOUT_S = 4.0
 
@@ -55,7 +56,7 @@ def load_config(path: Path) -> tuple[dict[str, Any], list[str]]:
             raise TypeError("root is not an object")
     except (OSError, ValueError, TypeError):
         return cfg, ["configuration file unreadable or invalid: defaults used"]
-    problems = []
+    problems = [f"unknown configuration key ignored: {key}" for key in doc if key not in CONFIG_KEYS]
     given = doc.get("thresholds", {})
     if isinstance(given, dict):
         for key, value in given.items():
@@ -72,8 +73,13 @@ def load_config(path: Path) -> tuple[dict[str, Any], list[str]]:
     streams = doc.get("claude_stream")
     if isinstance(streams, list) and all(isinstance(v, str) for v in streams):
         cfg["claude_stream"] = streams
-    if isinstance(doc.get("claude_statusline_json"), str):
-        cfg["claude_statusline_json"] = doc["claude_statusline_json"]
+    elif streams is not None:
+        problems.append("claude_stream is not a list of paths: ignored")
+    statusline = doc.get("claude_statusline_json")
+    if isinstance(statusline, str):
+        cfg["claude_statusline_json"] = statusline
+    elif statusline is not None:
+        problems.append("claude_statusline_json is not a path: ignored")
     return cfg, problems
 
 

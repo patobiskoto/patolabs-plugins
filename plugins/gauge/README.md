@@ -20,7 +20,8 @@ python3 plugins/gauge/tooling/gauge_cli.py check [--config PATH]
 Skill: `/gauge:check`, `$gauge:check`. `check` prints one `gauge: ...` line per counter at
 or above its threshold, and one line saying `inconnu` per value it could not read (reason
 included) or per expected window missing from a response (`EXPECTED_LABELS` in
-`tooling/gauge/check.py`: Codex `primary`/`secondary`, Claude `five_hour`/`seven_day`,
+`tooling/gauge/check.py`: Codex `primary` (an account may have no `secondary` window: observed on 2026-10-18,
+the response carried only the weekly `primary`), Claude `five_hour`/`seven_day`,
 Linear `requests`/`complexity`). A value that cannot be read is never reported as below the threshold. It
 prints a single "all read and below" line only when every monitored value was read.
 It always exits 0 and never blocks.
@@ -31,7 +32,8 @@ One threshold per counter, in a JSON file. Location, first match
 (`config_path` in `tooling/gauge/check.py`): the `GAUGE_CONFIG` environment variable, else
 `$XDG_CONFIG_HOME/gauge/config.json`, else `~/.config/gauge/config.json`; `--config PATH`
 overrides all three for `check`. The hook reads the same location. A missing file means
-the defaults; an invalid file means the defaults plus a `gauge config:` line.
+the defaults; an invalid file means the defaults plus a `gauge config:` line, and an unknown or
+mistyped key (`CONFIG_KEYS` in `tooling/gauge/check.py`) is ignored with such a line.
 
 | Counter key | Default threshold |
 |---|---|

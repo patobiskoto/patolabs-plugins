@@ -7,6 +7,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -405,10 +406,26 @@ class CheckTests(unittest.TestCase):
     def test_missing_expected_window_is_inconnu(self):
         from gauge import check
         cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
-        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 10}])}
+        rmap = {"codex": self._ok("codex", [{"label": "secondary", "used_percent": 10}])}
         warnings = check.check(cfg, reader_map=rmap)[0]
         self.assertEqual(len(warnings), 1)
-        self.assertIn("codex secondary: inconnu", warnings[0])
+        self.assertIn("codex primary: inconnu", warnings[0])
+
+    def test_unknown_or_mistyped_config_keys_are_reported(self):
+        from gauge import check
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "c.json"
+            path.write_text('{"claude": null, "claude_stream": "one.ndjson"}', encoding="utf-8")
+            cfg, problems = check.load_config(path)
+        self.assertEqual(cfg["thresholds"], check.DEFAULT_THRESHOLDS)
+        self.assertIn("unknown configuration key ignored: claude", problems)
+        self.assertIn("claude_stream is not a list of paths: ignored", problems)
+
+    def test_codex_without_secondary_window_is_not_inconnu(self):
+        from gauge import check
+        cfg = self._cfg(claude=None, linear=None, **{"github-actions": None})
+        rmap = {"codex": self._ok("codex", [{"label": "primary", "used_percent": 10}])}
+        self.assertEqual(check.check(cfg, reader_map=rmap)[0], [])
 
     def test_claude_without_source_names_the_config_keys(self):
         from gauge import check
