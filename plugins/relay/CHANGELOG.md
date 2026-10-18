@@ -8,14 +8,14 @@ Closes the remarks deferred from the reviews of PAT-248 and PAT-249 (PAT-257). B
 changes, each with a test:
 
 - `load`: an unreadable state directory (`EACCES`) or a very deeply nested stored state is
-  said as unreadable, exit 0 (`show`: exit 1), instead of a traceback. An unreadable git
-  common directory is no longer reported as "no resume state" or "not inside a git
+  said as unreadable, exit 0 (`show`: exit 1), instead of a traceback. A git common directory
+  that git does not give is no longer reported as "no resume state" or "not inside a git
   repository" (`NO_LOCATION`; `show`: exit 2).
 - `load`: a check that was non-ok at writing and is `ok` now is printed `[recovered]` and
   counted in a new `R recovered` field of the summary line; the line format gains that field.
 - `load --budget`: `nan`, `inf` and negative values are refused (exit 2).
-- `write`: a failing store (`OSError`, lone surrogate), a deeply nested draft: exit 2 with
-  the exception type only, never a traceback.
+- `write`: a failing store (`OSError`, lone surrogate): exit 2 with the exception type only;
+  a deeply nested draft: exit 2 saying it is nested too deeply; never a traceback.
 - Verification (`write` and `load`): a command killed by the budget now reports
   "verification time budget exhausted" (`run`, `verify.py`); ticket identifiers are matched
   with `fullmatch` (a trailing newline is refused).

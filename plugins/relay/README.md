@@ -15,8 +15,8 @@ python3 plugins/relay/tooling/relay_cli.py load [--budget SECONDS]
 deeply, or cannot be stored (the write fails with an `OSError`, or the text holds a lone
 surrogate; only the exception type is shown), and 3 when a secret is found. `show` exits 1
 when no state has been written yet or the stored state is unreadable or malformed (including an unreadable
-state directory), and 2 outside a git repository or when the git common directory cannot be
-read (`cmd_write`, `cmd_show` in `tooling/relay_cli.py`).
+state directory), and 2 outside a git repository or when git does not give the git common directory
+(`cmd_write`, `cmd_show` in `tooling/relay_cli.py`).
 
 Skills: `/relay:write`, `/relay:show`, `/relay:load` (Claude Code); `$relay:write`, `$relay:show`, `$relay:load` (Codex).
 
@@ -58,8 +58,7 @@ argument parsing (exit 2, `budget_seconds` in `tooling/relay_cli.py`).
 
 Absent state: `relay: no resume state for this repository.` Unreadable or malformed
 (including a state directory the user cannot read): `relay: the stored resume state is
-unreadable or malformed; it was not loaded.` Git answered but its common directory could
-not be read: `relay: the resume state location cannot be determined ...` (`NO_LOCATION` in
+unreadable or malformed; it was not loaded.` Git did not give its common directory: `relay: the resume state location cannot be determined ...` (`NO_LOCATION` in
 `tooling/relay/load.py`). Each is the whole output, exit 0. Before printing, the text is scanned with the secret patterns
 (`guard` in `tooling/relay/load.py`, `secrets.PATTERNS`); a match withholds the whole text and
 names the pattern, never the value. The header says the state is data to check, not
