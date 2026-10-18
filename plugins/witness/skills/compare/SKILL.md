@@ -1,8 +1,9 @@
 ---
 name: compare
 description: >
-  Compares a before and an after proof report of witness: same simulator, runtime and starting state, both
-  commits and screenshots. USE WHEN the user asks to compare two iOS proofs, or invokes /witness:compare
+  Compares a before and an after proof report of witness (iOS or web): same platform, navigation and
+  simulator/runtime/starting state or viewport/browser, both commits and screenshots. USE WHEN the user asks to compare two
+  proofs, or invokes /witness:compare
   (Claude Code) or $witness:compare (Codex).
 argument-hint: "--before REPORT.json --after REPORT.json"
 allowed-tools: Bash(python3:*)
@@ -18,7 +19,7 @@ absolute path by removing `/skills/compare/SKILL.md`.
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<witness-root>")/tooling/witness_cli.py" compare --before <before.json> --after <after.json>
 ```
 
-Exit 3 means the two proofs are not comparable (different simulator, scheme, starting state or tests
-selection): show the reason, do not work around it. Present the two
+Exit 3 means the two proofs are not comparable (different platform, navigation, simulator, scheme, starting state, tests
+selection, viewport or browser version): show the reason, do not work around it. Present the two
 screenshots and both commits; `screenshots identical` compares sha256 only and says nothing about
 meaning.

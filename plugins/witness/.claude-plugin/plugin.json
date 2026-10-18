@@ -1,7 +1,7 @@
 {
   "name": "witness",
-  "description": "Proves a change of an iOS app in the simulator with xcodebuild and xcrun simctl only: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
-  "version": "0.1.0",
+  "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun simctl only, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: runs the tests, installs and launches the app, takes a screenshot and writes a dated report; compares a before and an after proof.",
+  "version": "0.2.0",
   "author": {
     "name": "pato"
   },
@@ -12,6 +12,8 @@
     "simulator",
     "xcodebuild",
     "simctl",
+    "web",
+    "chrome",
     "codex",
     "claude"
   ]

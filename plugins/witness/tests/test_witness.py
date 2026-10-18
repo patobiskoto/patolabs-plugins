@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tooling"))
 
 import witness_cli
-from witness import checkout, compare, proc, simulator, xcode
+from witness import checkout, compare, navigation, proc, simulator, web, xcode
 
 real_run = proc.run
 UDID = "AAAAAAAA-0000-0000-0000-000000000001"
@@ -38,6 +38,7 @@ class Fake:
     def __init__(self, tests=TEST_OK, devices=None, state="Shutdown", fail=None):
         self.calls: list[list[str]] = []
         self.tests, self.state, self.fail = tests, state, fail
+        self.page, self.attachments = "", ["01_Session"]
         self.devices = devices if devices is not None else {
             RT: [{"name": "Phone A", "udid": UDID, "isAvailable": True, "state": "Shutdown"}]}
 
@@ -45,6 +46,23 @@ class Fake:
         if cmd[0] == "git":
             return real_run(cmd, timeout, cwd)
         self.calls.append(cmd)
+        if cmd[0] == "xcodebuild" and "-resultBundlePath" in cmd:
+            Path(cmd[cmd.index("-resultBundlePath") + 1]).mkdir(parents=True, exist_ok=True)
+        if cmd[0] == "FAKE-BROWSER":
+            if cmd[1] == "--version":
+                return 0, "Fake Browser 1.2.3\n", ""
+            shot = next(a for a in cmd if a.startswith("--screenshot=")).split("=", 1)[1]
+            Path(shot).write_bytes(b"WEB" + cmd[-1].encode() + self.page.encode())
+            return (1, "", "browser boom") if self.fail == "browser" else (0, "", "")
+        if cmd[0] == "xcrun" and cmd[1] == "xcresulttool":
+            work = Path(cmd[cmd.index("--output-path") + 1])
+            work.mkdir(parents=True, exist_ok=True)
+            for i, n in enumerate(self.attachments):
+                (work / f"f{i}.png").write_bytes(b"IMG" + n.encode() + self.page.encode())
+            (work / "manifest.json").write_text(json.dumps([{"testIdentifier": "T", "attachments": [
+                {"exportedFileName": f"f{i}.png", "suggestedHumanReadableName": n}
+                for i, n in enumerate(self.attachments)]}]))
+            return 0, "", ""
         if cmd[0] == "xcodebuild":
             derived = Path(cmd[cmd.index("-derivedDataPath") + 1])
             if cmd[-1] == "build" and self.fail != "build":
@@ -96,6 +114,13 @@ class Base(unittest.TestCase):
         with mock.patch("witness.proc.run", fake), redirect_stdout(out), redirect_stderr(err):
             code = witness_cli.main(list(argv))
         return code, out.getvalue(), err.getvalue()
+
+    def nav_file(self, **fields):
+        nav = {"schema": navigation.SCHEMA, "screen": "Session", "mechanism": "deeplink", "url": "demo://session"}
+        nav.update(fields)
+        path = self.tmp / f"nav-{len(list(self.tmp.glob('nav-*.json')))}.json"
+        path.write_text(json.dumps(nav))
+        return path
 
     def prove(self, fake, label="before", extra=("--reset",), project=None):
         return self.run_cli(fake, "prove", "--project", str(project or self.proj), "--scheme", "Demo",
@@ -225,6 +250,204 @@ class ProveTests(Base):
     def test_reset_and_description_exclusive(self):
         code, _, _ = self.prove(Fake(), extra=("--reset", "--state-description", "d"))
         self.assertEqual(code, 2)
+
+
+class NavigationTests(Base):
+    def test_load_validates(self):
+        nav = navigation.load(self.nav_file())
+        self.assertEqual((nav["mechanism"], nav["url"]), ("deeplink", "demo://session"))
+        self.assertEqual(len(nav["sha256"]), 64)
+        for bad in ({"schema": "x"}, {"mechanism": "tap"}, {"url": "demo://a b"}, {"url": "-x"}, {"screen": ""}):
+            with self.assertRaises(navigation.NavigationError):
+                navigation.load(self.nav_file(**bad))
+        with self.assertRaises(navigation.NavigationError):
+            navigation.load(self.nav_file(mechanism="uitest", test="a b"))
+        junk = self.tmp / "junk.json"
+        junk.write_text("[")
+        with self.assertRaises(navigation.NavigationError):
+            navigation.load(junk)
+
+    def test_deeplink_proof_opens_url_between_launch_and_screenshot(self):
+        fake = Fake()
+        code, out, _ = self.prove(fake, extra=("--reset", "--skip-tests", "--navigation", str(self.nav_file())))
+        self.assertEqual(code, 0, out)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual(rep["platform"], "ios")
+        self.assertEqual(rep["navigation"]["screen"], "Session")
+        names = [s["name"] for s in rep["steps"]]
+        self.assertLess(names.index("launch"), names.index("deeplink"))
+        self.assertLess(names.index("deeplink"), names.index("screenshot"))
+        verbs = [c[2] for c in fake.calls if c[0] == "xcrun"]
+        self.assertLess(verbs.index("launch"), verbs.index("openurl"))
+        self.assertIn("demo://session", next(c for c in fake.calls if c[:3] == ["xcrun", "simctl", "openurl"]))
+        self.assertIn("deeplink `demo://session`", next((self.tmp / "out").glob("report-before-*.md")).read_text())
+
+    def uitest_nav(self, **extra):
+        return self.nav_file(mechanism="uitest", test="UITests/Flow/testSession", **extra)
+
+    def test_uitest_proof_extracts_attachment(self):
+        fake = Fake()
+        code, out, _ = self.prove(fake, extra=("--reset", "--navigation", str(self.uitest_nav())))
+        self.assertEqual(code, 0, out)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual([s["name"] for s in rep["steps"]], ["reset", "boot", "uitest", "extract-screenshot"])
+        self.assertEqual(rep["start_state"]["tests_selection"], "navigation-uitest")
+        cmd = next(c for c in fake.calls if c[0] == "xcodebuild" and c[-1] == "test")
+        self.assertIn("-only-testing:UITests/Flow/testSession", cmd)
+        self.assertIn("-resultBundlePath", cmd)
+        self.assertTrue(rep["paths"]["screenshot"].endswith(".png"))
+        self.assertEqual(len(rep["screenshot_sha256"]), 64)
+        self.assertFalse([c for c in fake.calls if c[0] == "xcodebuild" and c[-1] == "build"])
+
+    def test_uitest_failure_still_captures_and_exits_6(self):
+        code, _, _ = self.prove(Fake(tests=TEST_KO), extra=("--reset", "--navigation", str(self.uitest_nav())))
+        self.assertEqual(code, 6)
+
+    def test_uitest_attachment_selection(self):
+        fake = Fake()
+        fake.attachments = ["a_one", "b_two"]
+        code, _, _ = self.prove(fake, extra=("--reset", "--navigation", str(self.uitest_nav())))
+        self.assertEqual(code, 5)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertIn("set 'attachment'", rep["steps"][-1]["detail"])
+        fake2 = Fake()
+        fake2.attachments = ["a_one", "b_two"]
+        code, _, _ = self.prove(fake2, label="x", extra=("--reset", "--navigation", str(self.uitest_nav(attachment="b_"))))
+        self.assertEqual(code, 0)
+        fake3 = Fake()
+        fake3.attachments = []
+        self.assertEqual(self.prove(fake3, label="y", extra=("--reset", "--navigation", str(self.uitest_nav())))[0], 5)
+
+    def test_uitest_refuses_test_selection_options_and_bad_file(self):
+        fake = Fake()
+        code, _, _ = self.prove(fake, extra=("--reset", "--skip-tests", "--navigation", str(self.uitest_nav())))
+        self.assertEqual(code, 2)
+        self.assertEqual(fake.calls, [])
+        code, _, _ = self.prove(fake, extra=("--reset", "--navigation", str(self.tmp / "missing.json")))
+        self.assertEqual(code, 3)
+        self.assertEqual(fake.calls, [])
+
+    def test_compare_requires_same_navigation(self):
+        def proof(label, nav):
+            extra = ("--reset", "--skip-tests") + (("--navigation", str(nav)) if nav else ())
+            self.assertEqual(self.prove(Fake(), label=label, extra=extra)[0], 0)
+            return next((self.tmp / "out").glob(f"report-{label}-*.json"))
+        n1 = self.nav_file()
+        b, a = proof("before", n1), proof("after", n1)
+        self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(a))[0], 0)
+        md = next((self.tmp / "out").glob("compare-*.md")).read_text()
+        self.assertIn("Shared navigation: `ios:deeplink:", md)
+        other = proof("other", self.nav_file(url="demo://other"))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(other))
+        self.assertEqual((code, "navigation differs" in err), (3, True))
+        none = proof("none", None)
+        self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(none))[0], 3)
+
+    def test_report_without_platform_is_ios(self):
+        self.prove(Fake(), extra=("--reset", "--skip-tests"))
+        path = next((self.tmp / "out").glob("report-before-*.json"))
+        data = json.loads(path.read_text())
+        for key in ("platform", "navigation"):
+            data.pop(key)
+        old = self.tmp / "old.json"
+        old.write_text(json.dumps(data))
+        compare.check(compare.load(old), compare.load(path))
+
+
+class WebTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.web = self.wt / "site"
+        self.web.mkdir()
+        self.browser = self.tmp / "FAKE-BROWSER"
+        self.browser.write_text("#!/bin/sh\n")
+        self.browser.chmod(0o755)
+        env = mock.patch.dict("os.environ", {web.ENV_BROWSER: str(self.browser)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def fake(self, page=""):
+        f = Fake()
+        f.page = page
+
+        def call(cmd, timeout, cwd=None):
+            if cmd[0] == str(self.browser):
+                cmd = ["FAKE-BROWSER", *cmd[1:]]
+            return f(cmd, timeout, cwd)
+        call.inner = f
+        return call
+
+    def prove_web(self, fake, label="before", url="http://localhost:8000/page?x=1", extra=(), project=None):
+        return self.run_cli(fake, "web", "--project", str(project or self.web), "--url", url, "--label", label,
+                            "--out", str(self.tmp / "out"), *extra)
+
+    def test_web_proof_report_and_command_line(self):
+        fake = self.fake()
+        code, out, _ = self.prove_web(fake)
+        self.assertEqual(code, 0, out)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual((rep["platform"], rep["viewport"], rep["navigation"]["path"]),
+                         ("web", "1280x800", "/page?x=1"))
+        self.assertEqual(rep["browser"]["version"], "Fake Browser 1.2.3")
+        self.assertTrue(rep["token_cost"].startswith("unknown"))
+        cmd = next(c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c))
+        self.assertIn("--headless=new", cmd)
+        self.assertIn("--window-size=1280,800", cmd)
+        profile = next(a for a in cmd if a.startswith("--user-data-dir=")).split("=", 1)[1]
+        self.assertFalse(Path(profile).exists())
+        self.assertIn("Platform: web", next((self.tmp / "out").glob("report-before-*.md")).read_text())
+
+    def test_non_local_urls_and_bad_viewport_refused_before_running(self):
+        for url in ("http://example.com/", "https://localhost/", "http://localhost.evil.com/",
+                    "http://user@localhost/", "file:///etc/passwd", "http://[::1]:80/"):
+            fake = self.fake()
+            code, _, _ = self.prove_web(fake, url=url)
+            self.assertEqual(code, 3, url)
+            self.assertEqual(fake.inner.calls, [])
+        self.assertEqual(self.prove_web(self.fake(), extra=("--viewport", "wide"))[0], 3)
+        self.assertEqual(self.prove_web(self.fake(), url="http://127.0.0.1:3000/")[0], 0)
+
+    def test_main_checkout_refused(self):
+        self.assertEqual(self.prove_web(self.fake(), project=self.main)[0], 3)
+
+    def test_browser_location(self):
+        with mock.patch.dict("os.environ", {web.ENV_BROWSER: str(self.tmp / "nope")}), \
+                self.assertRaises(web.WebRefused):
+            web.locate_browser()
+        with mock.patch.dict("os.environ", {web.ENV_BROWSER: ""}), \
+                mock.patch.object(web, "KNOWN_BROWSERS", ()), mock.patch("shutil.which", return_value=None):
+            with self.assertRaises(web.WebRefused) as ctx:
+                web.locate_browser()
+            self.assertIn("Chromium-family", str(ctx.exception))
+            self.assertIn("no agent-host browser tool", str(ctx.exception))
+
+    def test_browser_failure_exits_5_with_report(self):
+        fake = self.fake()
+        fake.inner.fail = "browser"
+        code, _, _ = self.prove_web(fake)
+        self.assertEqual(code, 5)
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual(rep["outcome"], "failed at screenshot")
+
+    def test_web_compare(self):
+        self.prove_web(self.fake("a"))
+        self.prove_web(self.fake("b"), label="after")
+        b, a = (next((self.tmp / "out").glob(f"report-{n}-*.json")) for n in ("before", "after"))
+        code, out, _ = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(a))
+        self.assertEqual(code, 0, out)
+        res = json.loads(next((self.tmp / "out").glob("compare-*.json")).read_text())
+        self.assertEqual((res["platform"], res["screenshots_identical"], res["navigation"]),
+                         ("web", False, "web:/page?x=1"))
+        self.prove_web(self.fake(), label="other", url="http://localhost:8000/else")
+        self.prove_web(self.fake(), label="wide", extra=("--viewport", "800x600"))
+        for label, why in (("other", "navigation differs"), ("wide", "viewport differs")):
+            o = next((self.tmp / "out").glob(f"report-{label}-*.json"))
+            code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(o))
+            self.assertEqual((code, why in err), (3, True))
+        self.prove(Fake(), label="phone", extra=("--reset", "--skip-tests"))
+        p = next((self.tmp / "out").glob("report-phone-*.json"))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(b), "--after", str(p))
+        self.assertEqual((code, "platform differs" in err), (3, True))
 
 
 class CompareTests(Base):
