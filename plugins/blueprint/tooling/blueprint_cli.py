@@ -131,19 +131,31 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     missing = [] if args.analysis else setup.tools_ready(d)
     if missing:
         return fail("tooling not ready (missing " + ", ".join(missing) + "); run `setup` first", EXIT_NO_TOOLS)
+    if args.entry is not None and not decompile.ADDRESS.fullmatch(args.entry):
+        return fail(f"--entry must be one address like 0x0000b9fc, got {args.entry!r}")
     inv = _load_json(args.inventory)
     try:
         gdoc = groups.build(inv)
     except groups.GroupsError as exc:
         return fail(str(exc))
-    group = None
-    if args.group:
+    group = an = None
+    if args.analysis:
+        an = _load_json(args.analysis)
+        try:
+            found = rebuild.detect_groups(an)
+        except (KeyError, TypeError):
+            return fail(f"cannot read {args.analysis} as an analysis")
+        if args.group:
+            group = found.get(args.group)
+            if group is None:
+                return fail(f"no group named {args.group!r}; groups: " + ", ".join(sorted(found)))
+    elif args.group:
         group = groups.find(gdoc, args.group)
         if group is None:
             return fail(f"no group named {args.group!r}; groups: " + ", ".join(g["name"] for g in gdoc["groups"]))
     try:
-        if args.analysis:
-            doc = decompile.from_analysis(_load_json(args.analysis), inv, group=group, entry=args.entry,
+        if an is not None:
+            doc = decompile.from_analysis(an, inv, group=group, entry=args.entry,
                                           list_only=args.list, maximum=args.max)
         else:
             sl = decompile.slice_for(Path(registry.canonical(args.target)), inv, d)
@@ -153,14 +165,28 @@ def cmd_decompile(args: argparse.Namespace) -> int:
         return fail(f"decompile failed: {exc}", EXIT_FAILED)
     doc["source"] = gdoc["source"]
     name = group["name"] if group else f"entry-{args.entry}"
+    c = doc.get("candidates")
+    if args.list:
+        for e in (c or {}).get("listed", []):
+            print(f"{e['address']}  {e['method']}  {e['symbol']}")
+        print(f"blueprint: {(c or {}).get('total', 0)} candidate(s); nothing written"
+              + (f" except {args.output}" if args.output else ""), file=sys.stderr)
+        if args.output:
+            inventory.write(doc, Path(args.output))
+        for k, why in doc["unknown_parts"].items():
+            print(f"  unknown {k}: {why}", file=sys.stderr)
+        return 0
     out = Path(args.output) if args.output else paths.decompilations(d) / f"{gdoc['source']['name']}-{name}.json"
     inventory.write(doc, out)
-    c = doc.get("candidates")
-    print(f"blueprint: {len(doc['entries'])} entry point(s) decompiled"
-          + (f" of {c['total']} candidate(s)" if c else "") + f"; written to {out}")
+    ok, unknown = decompile.counts(doc)
+    print(f"blueprint: {ok} of {len(doc['entries'])} entry point(s) decompiled, {unknown} unknown"
+          + (f" ({c['total']} candidate(s))" if c else "") + f"; written to {out}")
+    for e in doc["entries"]:
+        if e["status"] != "ok":
+            print(f"  unknown {e['address']}: {e.get('reason')}")
     for k, why in doc["unknown_parts"].items():
         print(f"  unknown {k}: {why}")
-    return 0
+    return 0 if ok else EXIT_FAILED
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -296,7 +322,7 @@ def main() -> int:
     c.add_argument("target")
     c.add_argument("--inventory", required=True, help="inventory JSON of this target")
     what = c.add_mutually_exclusive_group(required=True)
-    what.add_argument("--group", help="group name from `groups`")
+    what.add_argument("--group", help="group name from `groups` (with --analysis: any group `rebuild` detects)")
     what.add_argument("--entry", help="one procedure address (0x...)")
     c.add_argument("--list", action="store_true", help="only list the entry-point candidates of the group")
     c.add_argument("--max", type=int, default=pins.MAX_DECOMPILE, help="entry points to decompile")

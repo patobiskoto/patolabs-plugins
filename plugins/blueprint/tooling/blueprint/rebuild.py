@@ -71,6 +71,9 @@ def coverage(an: dict, found: dict[str, dict], scr: dict | None, consts: dict, r
     if c["functions"]["outside_app_module"]:
         nc.append(f"{c['functions']['outside_app_module']} function(s) of the binary are outside the app module "
                   "(frameworks glue, Objective-C bridges, runtime) and are not analysed")
+    nc.append("functions defined in extensions of types that belong to another module (standard library types such as "
+              "Array or Date, frameworks) have a symbol outside the app module prefix: they are not exported or analysed, "
+              "and their number is not measurable from the analysis (they are inside the outside-app-module count)")
     if c["screens_captured"]["not_captured"]:
         nc.append("screens without a captured screenshot: " + ", ".join(c["screens_captured"]["not_captured"]))
     if consts["unknown_count"]:

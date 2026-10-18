@@ -26,6 +26,44 @@ def body(code: str) -> str:
     return code[i + 1:j] if 0 <= i < j else ""
 
 
+_DISCRIMINATOR = re.compile(r"\((\w+) in (_[0-9A-F]{32})\)")
+
+
+def readable_name(name: str) -> tuple[str, str | None]:
+    """(name without the private-scope discriminator, the discriminator or None). Swift names a private type
+    `(Type in _<32 hex>)`: the hash is not product language; the readable name is `Type` (PAT-260)."""
+    found = _DISCRIMINATOR.findall(name)
+    return _DISCRIMINATOR.sub(r"\1", name), (found[0][1] if found else None)
+
+
+def split_args(text: str) -> list[str]:
+    """Top-level comma-separated arguments of a call, parentheses and quotes respected."""
+    out, depth, cur, quote = [], 0, "", False
+    for i, ch in enumerate(text):
+        if quote:
+            quote = not (ch == '"' and text[i - 1] != "\\")
+        elif ch == '"':
+            quote = True
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+            continue
+        cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def call_arguments(args_text: str) -> list:
+    """Each argument of the constructor call in order: its integer value when it is a plain integer literal, else the
+    word "not a literal" (a variable the decompiler could not fold). A register-passed argument is such a call argument."""
+    return [_num(a) if re.fullmatch(r"-?\d+|0x[0-9a-fA-F]+", a) else "not a literal" for a in split_args(args_text)]
+
+
 def _num(s: str) -> int:
     return int(s, 16) if s.lower().startswith("0x") else int(s)
 
@@ -93,8 +131,11 @@ def extract(entries: list[dict]) -> dict:
             previews += 1  # compiler-generated SwiftUI preview records, not app constants
             continue
         path, name, typ = m.group(1), m.group(2), m.group(3)
-        item = {"name": f"{path}.{name}", "type": typ, "value": "unknown", "reason": None,
+        shown, scope = readable_name(f"{path}.{name}")
+        item = {"name": shown, "type": typ, "value": "unknown", "reason": None,
                 "evidence": [e["evidence"]]}
+        if scope:
+            item["private_scope"] = scope
         lit = _RETURN_LIT.match(body(e["pseudo_code"]).strip())
         init = by_symbol.get(_init_symbol(e["symbol"], name) or "")
         if lit:
@@ -133,7 +174,10 @@ def _from_initialiser(item: dict, init: dict, typ: str, by_c_name: dict) -> None
     ctor = by_c_name.get(call.group(1)) if call else None
     item["value"] = {"kind": "object", "string_literals": [s["value"] for s in lits],
                      "integer_literals_in_order": stores,
+                     "constructor_call_arguments": call_arguments(call.group(2)) if call else "unknown",
                      "constructor": (ctor or {}).get("demangled") or "unknown",
                      "mapping_to_parameters": "unknown"}
-    item["reason"] = ("an object built at first use: the literals are listed in code order, and which literal feeds which "
-                      "parameter is not established")
+    item["reason"] = ("an object built at first use: `integer_literals_in_order` lists only the integers stored on the stack "
+                      "(a partial list); `constructor_call_arguments` lists the arguments of the constructor call in order, "
+                      "an integer when the pseudo-code passes a literal and \"not a literal\" for a variable; which "
+                      "literal feeds which parameter is not established")

@@ -18,6 +18,11 @@
   sha256 equals the report's); Blueprint never runs the simulator.
 - Spec format 2: format 1 plus the sections `coverage`, `constants`, `data_model`, `resources`, `screens`, validated by
   `spec check`; format 1 unchanged. Skill `blueprint:rebuild`.
+- Fixes after the real trial: `decompile --analysis --group` accepts every group `rebuild` detects (SwiftUI screens
+  included); `--list` prints and writes no file; `--entry` must be one `0x` address and the summary counts decompiled and
+  unknown entries (exit 5 when none decompiled); preset-object constants gain `constructor_call_arguments` and say that
+  `integer_literals_in_order` is partial; `not_covered` states that extensions of other modules' types are not analysed;
+  constant names lose the private-scope hash (kept in `private_scope`) and `spec check` refuses it.
 - Run once on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), a second one reused
   the analysis; 4180 app functions decompiled; tests use fakes. The maintainer's judgement of the spec ("can the app be
   rebuilt from it alone") is not part of this entry.

@@ -162,11 +162,35 @@ class ConstantsTest(unittest.TestCase):
         obj = by["DemoApp.PresetPrograms.sommeil"]["value"]
         self.assertEqual((obj["string_literals"], obj["integer_literals_in_order"], obj["mapping_to_parameters"]),
                          (["Sleep"], [4], "unknown"))
+        self.assertEqual(obj["constructor_call_arguments"], ["not a literal", "not a literal", 7])
+        self.assertIn("partial list", by["DemoApp.PresetPrograms.sommeil"]["reason"])
         self.assertIn("name: Swift.String", obj["constructor"])
         self.assertNotIn("PreviewRegistry", " ".join(by))
         self.assertEqual(c["excluded_preview_records"], 1)
         self.assertEqual(c["unknown_count"], 1)
         self.assertEqual(by["DemoApp.Constants.Timer.tick"]["evidence"][0]["evidence_id"], "gh_" + SHA[:16] + "_10")
+
+    def test_register_arguments_are_read_from_the_constructor_call(self):
+        self.assertEqual(constants.split_args("a, f(b, c), \"x,y\", 5"), ["a", "f(b, c)", "\"x,y\"", "5"])
+        self.assertEqual(constants.call_arguments("p,q,4,7,0x8,-1,uVar1"),
+                         ["not a literal", "not a literal", 4, 7, 8, -1, "not a literal"])
+        e = entry("_$s7DemoApp14PresetProgramsV5calmeAA3PgmCvgZ", "static DemoApp.PresetPrograms.calme.getter : DemoApp.Pgm",
+                  body("calme();\n  return 1;"), "0x52")
+        z = entry("_$s7DemoApp14PresetProgramsV5calme_WZ", None,
+                  body('__sSS21_builtinStringLiteral17utf8CodeUnitCount7isASCIISSBp_BwBi1_tcfC("Calm",4,1);\n'
+                       '  __s7DemoApp3PgmC4name6inhalecfC(a,\n b,5,4,v);'), "0x56")
+        ctor = entry("_$s7DemoApp3PgmC4name6inhalecfC", "DemoApp.Pgm.init", body("return;"), "0x58")
+        obj = {i["name"]: i for i in constants.extract([e, z, ctor])["items"]}["DemoApp.PresetPrograms.calme"]["value"]
+        self.assertEqual(obj["constructor_call_arguments"], ["not a literal", "not a literal", 5, 4, "not a literal"])
+        self.assertEqual(obj["integer_literals_in_order"], [])
+
+    def test_private_scope_discriminator_is_moved_out_of_the_name(self):
+        h = "9BBA4E908B17CF21996F356C5D461E56" * 1
+        self.assertEqual(constants.readable_name(f"DemoApp.(Step in _{h}).prog"), ("DemoApp.Step.prog", "_" + h))
+        self.assertEqual(constants.readable_name("DemoApp.Plain.prog"), ("DemoApp.Plain.prog", None))
+        g = getter("prog", "Swift.Int", body("return 3;"), "0x10", path=f"DemoApp.(Step in _{h})")
+        item = constants.extract([g])["items"][0]
+        self.assertEqual((item["name"], item["private_scope"]), ("DemoApp.Step.prog", "_" + h))
 
     def test_string_length_mismatch_is_unknown_not_guessed(self):
         lits = constants.string_literals('__sSS21_builtinStringLiteral17utf8CodeUnitCount7isASCIISSBp_BwBi1_tcfC(s_x_0018eb30,9,0);',
@@ -187,7 +211,8 @@ class RebuildTest(unittest.TestCase):
         self.assertEqual((c["screens"]["detected"], c["screens"]["analysed"]), (2, 1))
         self.assertEqual(c["functions"]["outside_app_module"], 30 - 16)
         text = "\n".join(c["not_covered"])
-        for needle in ("Orphan", "1 app function(s) not decompiled", "outside the app module", "without a captured screenshot",
+        for needle in ("Orphan", "1 app function(s) not decompiled", "outside the app module", "extensions of types that belong to another module",
+                       "without a captured screenshot",
                        "static analysis only"):
             self.assertIn(needle, text)
 
@@ -502,6 +527,48 @@ class CliTest(unittest.TestCase):
         self.assertEqual([(e["method"], e["status"]) for e in doc["entries"]], [("start", "ok"), ("stop", "unknown")])
         self.assertEqual(doc["entries"][0]["evidence"]["evidence_id"], "gh_" + SHA[:16] + "_80")
 
+    def _auth(self):
+        from blueprint import registry
+        registry.add(paths.registry_file(self.data), str(self.target), "own product")
+        an = self.tmp / "an.json"
+        an.write_text(json.dumps(make_analysis()))
+        return an
+
+    def test_group_of_the_analysis_is_accepted_without_an_inventory_class(self):
+        an = self._auth()
+        out = self.tmp / "d.json"
+        rc, _, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
+                         "--group", "Session", "--output", str(out))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([e["method"] for e in json.loads(out.read_text())["entries"]], ["start", "stop"])
+        rc, _, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
+                         "--group", "Nope")
+        self.assertEqual(rc, blueprint_cli.EXIT_USAGE)
+        self.assertIn("Session", err)
+
+    def test_list_writes_nothing(self):
+        an = self._auth()
+        rc, out, err = cli("decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an),
+                           "--group", "Session", "--list")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("start", out)
+        self.assertFalse(paths.decompilations(self.data).exists())
+        self.assertIn("nothing written", err)
+
+    def test_bad_entry_address_is_a_usage_error_and_unknown_is_not_success(self):
+        an = self._auth()
+        base = ["decompile", str(self.target), "--inventory", str(self.inv), "--analysis", str(an), "--output",
+                str(self.tmp / "e.json")]
+        rc, _, err = cli(*base, "--entry", "0x80 junk")
+        self.assertEqual(rc, blueprint_cli.EXIT_USAGE)
+        self.assertFalse((self.tmp / "e.json").exists())
+        rc, out, _ = cli(*base, "--entry", "0xdead")
+        self.assertEqual(rc, blueprint_cli.EXIT_FAILED)
+        self.assertIn("0 of 1 entry point(s) decompiled, 1 unknown", out)
+        rc, out, _ = cli(*base, "--entry", "0x80")
+        self.assertEqual(rc, 0)
+        self.assertIn("1 of 1 entry point(s) decompiled, 0 unknown", out)
+
     def test_decompile_from_another_targets_analysis_is_refused(self):
         inv = make_inv()
         inv["target"]["sha256"] = "ee" * 32
@@ -585,6 +652,13 @@ class SpecSectionsTest(unittest.TestCase):
             s = make_spec(self.rb)
             mutate(s)
             self.assertTrue(any(needle in e for e in self.errs(s)), (needle, self.errs(s)))
+
+    def test_private_scope_hash_in_a_constant_name_is_not_product_language(self):
+        s = make_spec(self.rb)
+        s["constants"][0]["name"] = "Demo.(Step in _9BBA4E908B17CF21996F356C5D461E56).prog"
+        self.assertTrue(any("not product language" in e for e in self.errs(s)))
+        s["constants"][0]["name"] = "Demo.Step.prog"
+        self.assertEqual(self.errs(s), [])
 
     def test_epic_payload_lists_what_is_not_covered(self):
         epic, _ = spec.payloads(make_spec(self.rb), None)

@@ -10,10 +10,12 @@ import re
 import time
 from pathlib import Path
 
+from . import groups as groups_mod
 from . import inventory, paths, pins, proc
 
 FORMAT = 1
 MAX_CODE_CHARS = 30000
+ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
 
 
 # Swift Observation macro boilerplate and accessor coroutines that also end in `F`.
@@ -98,6 +100,12 @@ def decompile_one(rea: inventory.Rea, sl: Path, address: str, timeout: float) ->
             "truncated": len(code) > MAX_CODE_CHARS, "evidence": _evidence(doc, address)}
 
 
+def counts(doc: dict) -> tuple[int, int]:
+    """(entries decompiled, entries unknown or failed)."""
+    ok = sum(1 for e in doc["entries"] if e["status"] == "ok")
+    return ok, len(doc["entries"]) - ok
+
+
 def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, list_only: bool,
         maximum: int, budget: float, clock=time.monotonic) -> dict:
     start = clock()
@@ -127,10 +135,33 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
     return doc
 
 
+def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
+    """Functions (mangled name ending in `F`) and initialisers (`fC`) of every type of a group detected by
+    `rebuild.detect_groups`, structs and enums included (SwiftUI screens), from the saved analysis; the same
+    boilerplate as `entry_points` is left out."""
+    out = []
+    for e in an["entries"]:
+        owner = e.get("owner")
+        r = groups_mod.role_of(owner) if owner else None
+        if not r or r[0] != group_name:
+            continue
+        sym = e["symbol"]
+        m = re.search(re.escape(f"{len(owner)}{owner}") + r"[A-Z](\d+)", sym)
+        if not m or not sym.endswith(("F", "fC")):
+            continue
+        rest = sym[m.start():]
+        method = sym[m.end(): m.end() + int(m.group(1))]
+        if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
+            continue
+        out.append({"address": e["address"], "symbol": sym, "method": method, "class": owner})
+    return sorted(out, key=lambda c: (int(c["address"], 16), c["symbol"]))
+
+
 def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None, list_only: bool,
                   maximum: int) -> dict:
     """The same document as `run`, read from the saved analysis: no Ghidra and no REA call (PAT-260). The pseudo-code and
-    evidence are those of the one analysis (`analysis.build`); the evidence is Ghidra's (slice sha256 and address)."""
+    evidence are those of the one analysis (`analysis.build`); the evidence is Ghidra's (slice sha256 and address).
+    `group` is a group of `rebuild.detect_groups` (only its `name` is read)."""
     if (an.get("source") or {}).get("sha256") != inv["target"].get("sha256") or \
             an["source"].get("arm64_sha256") != inv["target"].get("arm64_sha256"):
         raise DecompileError("the analysis was not made from this inventory's target (sha256 differs)")
@@ -140,13 +171,7 @@ def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None,
     if entry is not None:
         chosen, candidates = [{"address": entry, "symbol": None, "method": None}], []
     else:
-        hint = group["search_hint"]
-        if "module" not in hint:
-            doc["unknown_parts"]["entry_points"] = hint.get("unknown", "no symbol search hint")
-            candidates = []
-        else:
-            rows = [{"value": e["symbol"], "address": e["address"]} for e in an["entries"]]
-            candidates = entry_points(rows, hint["module"], hint["classes"])
+        candidates = analysis_entry_points(an, group["name"])
         chosen = candidates[:maximum]
         doc["candidates"] = {"total": len(candidates), "listed": candidates[:200],
                              "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}

@@ -210,6 +210,16 @@ id), with `evidence_id = gh_<slice sha256[:16]>_<address without 0x>` (`analysis
 `decompile --analysis FILE` reads the pseudo-code from that document: same registry gate, same output shape, no Ghidra
 or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launches_nothing`), `from_analysis.ghidra_runs: 0`,
 and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs).
+With `--analysis`, `--group` accepts every group that `rebuild` detects (`rebuild.detect_groups`: the Swift types of the
+image, structs and enums included, not only the inventory's Objective-C classes), and the entry points are the functions
+(mangled name ending in `F`) and initialisers (`fC`) of that group's types, minus the same boilerplate
+(`decompile.analysis_entry_points`; `test_group_of_the_analysis_is_accepted_without_an_inventory_class`). `--list` prints the
+candidates and writes no file unless `--output` is given (`test_list_writes_nothing`). `--entry` must be one address
+`0x<hex>` (`decompile.ADDRESS`; anything else exits 2, `test_bad_entry_address_is_a_usage_error_and_unknown_is_not_success`).
+The summary line counts entries decompiled and unknown (`decompile.counts`), lists each unknown entry with its reason, and the
+exit code is 5 when none was decompiled (an address with no app function in the analysis is `unknown`). Checked once on
+2026-10-18 on the authorised target with an analysis: `--group Home` (3 of 3 decompiled), `--group Breathing --list`
+(20 candidates, no file written), `--entry` with trailing text (exit 2), `--entry 0xdeadbeef` (0 of 1, exit 5).
 
 Observed on 2026-10-18 on the authorised target (Debug simulator build, code in `.debug.dylib`; Ghidra 12.1.4):
 first `analyze`: analysis 48.9 s, export 17.6 s, demangle 27.6 s, total 94.1 s; a second `analyze` reused the analysis
@@ -232,14 +242,24 @@ the simulator or Witness.
 | Section | Content | Rule (code) |
 |---|---|---|
 | `coverage` | detected and analysed counts for `groups`, `screens`, `functions`, screens captured, timing, `not_covered` sentences | groups are role-suffix stems (`SUFFIX_ROLES`) over the Swift types of the image (not the inventory's Objective-C classes, which miss value types), a screen is a group with a `View`, `ViewModel`, `Controller` or `Screen` type, a group is analysed when one of its functions is decompiled (`detect_groups`); preview records (names starting `$s`) are ignored |
-| `constants` | one item per static property getter of the app module: decoded value, type, evidence, or `unknown` with the reason | `constants.extract`: a getter that is a plain `return <literal>;` is decoded by its demangled type (`decode_literal`); a lazily initialised value is read from the `_WZ` one-time initialiser (string literals, and for an object the string and integer literals in code order); SwiftUI preview records are excluded and counted (`excluded_preview_records`) |
+| `constants` | one item per static property getter of the app module: decoded value, type, evidence, or `unknown` with the reason | `constants.extract`: a getter that is a plain `return <literal>;` is decoded by its demangled type (`decode_literal`); a lazily initialised value is read from the `_WZ` one-time initialiser (string literals, and for an object the string literals, the stacked integer literals in code order and the constructor call arguments); SwiftUI preview records are excluded and counted (`excluded_preview_records`) |
 | `data_model` | classes carrying the field `_$backingData` (SwiftData `@Model` macro output; deduced, observed on one target), stored properties with the type of their getter signature or `unknown`; schema and migration type names | `rebuild.data_model`; constraints and relationships are always `unknown` |
 | `resources` | every bundle file of the inventory with sha256, size, kind (`resources.kind_of`) and usage | usage is known only when a binary string equals the file name or its stem (a name match, not proof of use), with the referencing functions when Ghidra finds references; otherwise `unknown`, never `unused` |
 | `screens` | detected screens with their capture `evidence_id` or `unknown`; captures not matched to a detected screen | the manifest name is compared, case-insensitively, with the group stem or one of its type names |
 
 Known limits, stated rather than hidden. The integer literals of a predefined object are listed in code order and which one
 feeds which parameter is `unknown` (the decompiler drops or reorders arguments: observed on the five predefined
-programs of the target). Screen navigation is `unknown` (nothing extracts links between screens). The contents of an asset
+programs of the target). `integer_literals_in_order` holds only the integers stored on the stack, a partial list
+(observed: the argument 5 of the cardiac-coherence preset and 4-7-8 of the relaxation preset are not in it);
+`constructor_call_arguments` lists every argument of the constructor call in order, an integer for a literal and
+`"not a literal"` for a variable the decompiler did not fold (`constants.call_arguments`; checked once on 2026-10-18 on the
+authorised target: relaxation gives `4, 7, 8` in the last positions, coherence `5`). The position of an argument is its
+position in that call, not a parameter name. Functions defined in extensions of types of another module (standard library
+`Array` or `Date`, frameworks) have a symbol outside the app module prefix (`analysis.symbol_prefix`), so the export does not
+contain them; `coverage.not_covered` says so and their number is not measurable from the analysis (deduced from the include
+pattern in `analysis.build`; not otherwise checked on the target). A private type is named by Swift `(Type in _<32 hex>)`:
+`constants.readable_name` writes `Type` in the constant name and keeps the hash in the item field `private_scope`; `spec
+check` also refuses a constant name that still carries it (`_LEAK`). Screen navigation is `unknown` (nothing extracts links between screens). The contents of an asset
 catalog are `unknown` (the inventory holds record counts). Pseudo-code is Ghidra output: a decoded constant is as sound
 as it (deduced). The `not_covered` list always ends with the statement that analysis is static only. On the
 2026-10-18 trial `rebuild` reported groups 37/38, screens 29/29 (0 captured), functions 4180/4180, 46 constants (20

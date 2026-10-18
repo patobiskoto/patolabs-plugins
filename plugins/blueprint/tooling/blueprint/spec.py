@@ -26,7 +26,7 @@ COVERAGE_COUNTS = ("groups", "screens", "functions")
 UNKNOWN = "unknown"
 EPIC_FIELDS = {"Type": "Epic", "State": "backlog"}
 # A point is product language: no mangled Swift symbol and no raw address (heuristic, not proof).
-_LEAK = re.compile(r"_\$s|\b0x[0-9a-fA-F]{4,}\b|_Tt[CV]")
+_LEAK = re.compile(r"_\$s|\b0x[0-9a-fA-F]{4,}\b|_Tt[CV]|\bin _[0-9A-F]{32}\b")
 
 
 class SpecError(Exception):
@@ -149,7 +149,7 @@ def check_sections(spec: dict, known: set[str], rebuild: dict | None) -> list[st
             errs.append(f"{w}: `value` is required (a value, or \"{UNKNOWN}\")")
         elif c["value"] != UNKNOWN and c.get("evidence") == UNKNOWN:
             errs.append(f"{w}: a known value needs evidence ids")
-        errs += evidence_errors(w, c.get("evidence"), known) + _leak(w, c.get("meaning"))
+        errs += evidence_errors(w, c.get("evidence"), known) + _leak(w, c["name"], c.get("meaning"))
     for m in _items(spec, "data_model", errs):
         w = f"data_model {m.get('name')!r}"
         if not isinstance(m.get("name"), str) or not m["name"].strip() or not isinstance(m.get("properties"), list):
