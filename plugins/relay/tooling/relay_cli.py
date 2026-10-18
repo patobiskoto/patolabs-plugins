@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from relay import schema, secrets, verify
+from relay import load, schema, secrets, verify
 
 STATE_DIR = "relay"
 STATE_FILE = "state.json"
@@ -145,22 +145,23 @@ def cmd_show(args: argparse.Namespace) -> int:
         return fail("the stored state is unreadable or malformed", 1)
     if not well_formed(state):
         return fail("the stored state is unreadable or malformed", 1)
-    s = state["state"]
     if args.json:
         print(json.dumps(state, indent=2, ensure_ascii=False))
         return 0
-    branch = state["real"].get("branch") or "unknown"
-    head = (state["real"].get("head") or "unknown")[:12]
-    print(f"written {state.get('written_at')} on {branch} @ {head}")
-    print(f"summary: {s['summary']}")
-    for title, key in (("decisions", "decisions"), ("blockers", "blockers"),
-                       ("pitfalls", "pitfalls"), ("files", "files"),
-                       ("issues", "issues"), ("prs", "prs")):
-        if s.get(key):
-            print(f"{title}:")
-            print("\n".join(f"  - {x}" for x in s[key]))
-    print(f"next step: {s['next_step']}")
+    print("\n".join(load.render_state(state)))
     print(render_verification(state.get("verification", [])))
+    return 0
+
+
+def cmd_load(args: argparse.Namespace) -> int:
+    """Present the last state re-verified now. Always exit 0 (hook path): problems are said."""
+    root = repo_root()
+    path = state_path(root) if root else None
+    if root is None or path is None:
+        print("relay: not inside a git repository, no resume state to load.")
+        return 0
+    state, message = load.read_state(path)
+    print(message if state is None else load.present(state, root, args.budget))
     return 0
 
 
@@ -173,6 +174,10 @@ def main() -> int:
     s = sub.add_parser("show", help="print the last written state")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_show)
+    ld = sub.add_parser("load", help="print the last state, re-verified now (always exit 0)")
+    ld.add_argument("--budget", type=float, default=verify.BUDGET,
+                    help="total seconds for the re-verification (default: BUDGET)")
+    ld.set_defaults(fn=cmd_load)
     args = p.parse_args()
     return args.fn(args)
 

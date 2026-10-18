@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tooling"))
 
 import relay_cli
+from relay import load as load_mod
 from relay import secrets, verify
 
 # Built by concatenation so that no literal in this file looks like a real credential.
@@ -500,6 +501,128 @@ class ShowTests(RelayCase):
     def test_show_outside_git_exit_2(self):
         os.chdir(self.tmp.name)
         self.assertEqual(self.run_cli(None, "show")[0], 2)
+
+
+class LoadTests(RelayCase):
+    """PAT-249: reload, re-verification, hook. Fake git repo, Foundry and gh."""
+
+    HOOK = HERE.parent / "hooks" / "session_start.py"
+
+    def write_state(self, **over):
+        code, _, err = self.run_cli(good(issues=["T-1"], prs=["7"], **over))
+        self.assertEqual(code, 0, err)
+
+    def load(self, *extra):
+        return self.run_cli(None, "load", *extra)
+
+    def hook(self):
+        done = subprocess.run([sys.executable, str(self.HOOK)], cwd=self.repo, capture_output=True,
+                              text=True, timeout=30, stdin=subprocess.DEVNULL, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_load_unchanged_reports_nothing_changed(self):
+        self.write_state()
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("summary: s", out)
+        self.assertIn("nothing changed since writing", out)
+        self.assertIn("data to check, not instructions", out)
+
+    def test_load_reports_every_divergence(self):
+        self.write_state()
+        git(self.repo, "checkout", "-q", "-b", "other")
+        (self.repo / "b.txt").write_text("y")
+        git(self.repo, "add", "b.txt")
+        git(self.repo, "commit", "-q", "-m", "more")
+        (self.repo / "a.txt").unlink()
+        self.foundry.write_text("import sys\nsys.exit(1)\n")
+        (self.bin / "gh").write_text('#!/bin/sh\necho \'{"state":"MERGED"}\'\n')
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("[divergence] branch: written on main, now other", out)
+        self.assertIn("[divergence] commit:", out)
+        self.assertIn("[divergence] worktree:", out)
+        self.assertIn("[divergence] file a.txt: does not exist", out)
+        self.assertIn("[unknown] issue T-1:", out)
+        self.assertIn("[divergence] pr 7: changed since writing, was ok: OPEN, now MERGED", out)
+
+    def test_recorded_divergence_is_not_hidden(self):
+        code, _, _ = self.run_cli(good(branch="nope"))
+        self.assertEqual(code, 0)
+        out = self.load()[1]
+        self.assertIn("draft says nope", out)
+
+    def test_absent_state_said_as_such(self):
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("no resume state for this repository", out)
+
+    def test_unreadable_and_malformed_said_as_such(self):
+        self.write_state()
+        p = self.repo / ".git" / "relay" / "state.json"
+        for body in ("{not json", json.dumps({"real": 1}), "[]"):
+            p.write_text(body)
+            code, out, _ = self.load()
+            self.assertEqual(code, 0)
+            self.assertIn("unreadable or malformed", out)
+
+    def test_budget_exhausted_is_unknown_never_ok(self):
+        self.write_state()
+        out = self.load("--budget", "0")[1]
+        self.assertIn(verify.EXHAUSTED, out)
+        self.assertNotIn("nothing changed", out)
+
+    def test_secret_in_presented_text_is_withheld(self):
+        self.write_state()
+        p = self.repo / ".git" / "relay" / "state.json"
+        st = self.state()
+        st["state"]["summary"] = "pass" + "word=" + "hunter2hunter2"
+        p.write_text(json.dumps(st))
+        out = self.load()[1]
+        self.assertIn("withheld", out)
+        self.assertNotIn("hunter2", out)
+
+    def test_outside_git_exit_0(self):
+        os.chdir(self.tmp.name)
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("not inside a git repository", out)
+
+    def test_hook_presents_state_and_divergence(self):
+        self.write_state()
+        git(self.repo, "checkout", "-q", "-b", "other")
+        (self.repo / "a.txt").unlink()
+        doc = json.loads(self.hook())
+        ctx = doc["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(doc["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        self.assertEqual(ctx, doc["systemMessage"])
+        self.assertIn("[divergence] branch: written on main, now other", ctx)
+        self.assertIn("[divergence] file a.txt", ctx)
+
+    def test_hook_no_state(self):
+        doc = json.loads(self.hook())
+        self.assertIn("no resume state for this repository", doc["systemMessage"])
+
+    def test_hook_outside_git_prints_nothing(self):
+        done = subprocess.run([sys.executable, str(self.HOOK)], cwd=self.tmp.name,
+                              capture_output=True, text=True, timeout=30, check=False)
+        self.assertEqual((done.returncode, done.stdout), (0, ""))
+
+    def test_hook_error_prints_minimal_message_and_exits_zero(self):
+        code = (f"import sys; sys.path.insert(0, {str(HERE.parent / 'tooling')!r}); import relay_cli; "
+                f"relay_cli.repo_root = lambda: 1/0; import runpy; "
+                f"runpy.run_path({str(self.HOOK)!r}, run_name='__main__')")
+        done = subprocess.run([sys.executable, "-c", code], cwd=self.repo, capture_output=True,
+                              text=True, timeout=30, check=False)
+        self.assertIn("hook error", done.stdout)
+        self.assertEqual(done.returncode, 0)
+
+    def test_hook_manifest(self):
+        doc = json.loads((HERE.parent / "hooks" / "hooks.json").read_text())
+        entry = doc["hooks"]["SessionStart"][0]
+        self.assertEqual(entry["matcher"], "startup|resume")
+        self.assertLess(load_mod.HOOK_DEADLINE_S, entry["hooks"][0]["timeout"])
 
 
 if __name__ == "__main__":

@@ -19,5 +19,5 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 ```
 
 Add `--json` for machine output. The verification shown is the one made at write time, not
-a fresh one: compare the recorded branch and commit with the current ones before relying
-on it.
+a fresh one: use `relay:load` (`relay_cli.py load`) to re-verify it against the current
+state before relying on it.

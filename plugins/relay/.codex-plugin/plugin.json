@@ -1,7 +1,7 @@
 {
   "name": "relay",
-  "description": "Writes a verified, secret-free session resume state as a local owner-only file outside git tracking.",
-  "version": "0.1.0",
+  "description": "Writes a verified, secret-free session resume state as a local owner-only file outside git tracking, and reloads it re-verified at session start.",
+  "version": "0.2.0",
   "author": {
     "name": "pato"
   },
