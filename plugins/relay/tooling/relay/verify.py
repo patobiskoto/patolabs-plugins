@@ -17,7 +17,7 @@ TIMEOUT = 30  # seconds, per launched command
 BUDGET = 120  # seconds, for the whole verification; a check past it is unknown
 FOUNDRY_ENV = "RELAY_FOUNDRY_CLI"
 EXHAUSTED = "verification time budget exhausted"
-_TICKET = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
+_TICKET = re.compile(r"[A-Za-z][A-Za-z0-9]*-\d+")
 _COMMIT = re.compile(r"[0-9A-Fa-f]{4,64}")
 _LINE_SUFFIX = re.compile(r"(.+?)(?::\d+){1,2}")
 
@@ -30,9 +30,12 @@ def run(cmd: list[str], cwd: Path, deadline: float | None = None) -> tuple[int |
         timeout = min(timeout, deadline - time.monotonic())
         if timeout <= 0:
             return None, EXHAUSTED
+    budget_bound = timeout < TIMEOUT  # the budget, not TIMEOUT, is what can stop this command
     try:
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL, check=False)
+    except subprocess.TimeoutExpired:
+        return None, EXHAUSTED if budget_bound else "TimeoutExpired"
     except (OSError, subprocess.SubprocessError) as exc:
         return None, type(exc).__name__
     return p.returncode, p.stdout
@@ -158,7 +161,7 @@ def check_issues(issues: list[str], root: Path,
     cli, why = locate_foundry() if issues else (None, "")
     for iid in issues:
         label = f"issue {iid}"
-        if not _TICKET.match(iid):
+        if not _TICKET.fullmatch(iid):
             out.append({"check": label, "status": "divergence", "detail": "not a ticket identifier"})
             continue
         if cli is None:

@@ -49,12 +49,15 @@ def main() -> None:
             text = "relay: resume state unknown (read did not finish in time)."
     except BaseException:  # noqa: BLE001 - never block a session, never print a traceback
         text = "relay: resume state unknown (hook error)."
-    if text:
-        print(json.dumps({
-            "systemMessage": text,
-            "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text},
-        }))
-    sys.stdout.flush()
+    try:
+        if text:
+            print(json.dumps({
+                "systemMessage": text,
+                "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text},
+            }))
+        sys.stdout.flush()
+    except (OSError, ValueError):  # closed or broken output: nothing to tell, never a traceback
+        pass
     os._exit(0)  # do not wait for a thread still running
 
 

@@ -1,7 +1,7 @@
 {
   "name": "relay",
   "description": "Writes a verified, secret-free session resume state as a local owner-only file outside git tracking, and reloads it re-verified at session start.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },
@@ -18,8 +18,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "relay",
-    "shortDescription": "Write a verified, secret-free resume state at the end of a session.",
-    "longDescription": "Checks the draft state against branch, commit, pointed files, pull requests and tickets, refuses secrets, and writes an owner-only file outside git tracking. Unreadable facts are reported as unknown.",
+    "shortDescription": "Write a verified resume state at session end, reload it re-verified at start.",
+    "longDescription": "Checks the draft state against branch, commit, pointed files, pull requests and tickets, refuses secrets, and writes an owner-only file outside git tracking. Reloads the state at the start of the next session and re-verifies it, listing every change since writing. Unreadable facts are reported as unknown.",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [
@@ -28,7 +28,8 @@
     ],
     "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/relay",
     "defaultPrompt": [
-      "Write the resume state for this session."
+      "Write the resume state for this session.",
+      "Reload the last resume state and re-verify it."
     ]
   }
 }

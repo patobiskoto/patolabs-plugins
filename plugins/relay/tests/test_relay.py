@@ -1,6 +1,7 @@
 """Offline tests: a scratch git repo, a fake Foundry CLI and a fake gh on PATH. No network, no model call."""
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -271,6 +273,7 @@ class VerifyTests(RelayCase):
             c, _ = self.checks(issues=["T-1", "T-2"], prs=["7"])
         self.assertEqual(c["file a.txt"]["status"], "ok")
         self.assertEqual(c["issue T-1"]["status"], "unknown")
+        self.assertEqual(c["issue T-1"]["detail"], verify.EXHAUSTED)  # killed at the budget (N-c)
         for later in ("issue T-2", "pr 7"):
             self.assertEqual(c[later]["status"], "unknown", later)
             self.assertEqual(c[later]["detail"], verify.EXHAUSTED, later)
@@ -395,6 +398,45 @@ class LocateFoundryTests(unittest.TestCase):
         self.assertIn("RELAY_FOUNDRY_CLI", why)
 
 
+class RobustnessTests(RelayCase):
+    def test_trailing_newline_is_not_a_ticket_identifier(self):
+        [c] = verify.check_issues(["T-1\n"], self.repo)
+        self.assertEqual(c["status"], "divergence")
+        self.assertEqual(verify.check_issues(["T-1"], self.repo)[0]["status"], "ok")
+
+    def test_unwritable_state_is_refused_without_traceback(self):
+        with mock.patch.object(relay_cli.os, "chmod", side_effect=PermissionError(1, "denied")):
+            code, _, err = self.run_cli(good())
+        self.assertEqual(code, 2)
+        self.assertIn("PermissionError", err)
+        self.assertNotIn("denied", err)
+        self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
+
+    def test_lone_surrogate_is_refused_without_traceback(self):
+        code, _, err = self.run_cli(good(summary="a\ud800b"))
+        self.assertEqual(code, 2)
+        self.assertIn("UnicodeEncodeError", err)
+        self.assertFalse((self.repo / ".git" / "relay" / "state.json").exists())
+
+    def test_deeply_nested_draft_is_refused_without_traceback(self):
+        code, _, err = self.run_cli("[" * 100000 + "]" * 100000)  # json.loads itself gives up
+        self.assertEqual(code, 2)
+        self.assertIn("nested too deeply", err)
+        # the secret scan gives up (json.loads accepted the text): same refusal
+        with mock.patch.object(secrets, "find", side_effect=RecursionError):
+            code, _, err = self.run_cli(good())
+        self.assertEqual(code, 2)
+        self.assertIn("nested too deeply", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_timeout_of_one_command_is_not_reported_as_budget(self):
+        self.foundry.write_text("import time\ntime.sleep(20)\n")
+        with mock.patch.object(verify, "TIMEOUT", 1):
+            [c] = verify.check_issues(["T-1"], self.repo, time.monotonic() + 100)
+        self.assertEqual(c["status"], "unknown")
+        self.assertNotIn(verify.EXHAUSTED, c["detail"])
+
+
 class SecretTests(RelayCase):
     def test_one_test_per_pattern(self):
         for name, samples in SECRET_SAMPLES.items():
@@ -444,6 +486,30 @@ class SecretTests(RelayCase):
         for text in ("pwd: /some/path/here", "PWD=/Users/x/work/dir", "pwd: ~/work/dir"):
             code, _, err = self.run_cli(good(pitfalls=[text]))
             self.assertEqual(code, 0, f"{text}: {err}")
+
+    def test_known_false_negatives_are_documented_limits(self):
+        # README "Not covered": these pass today. If a pattern is extended, update README and this list.
+        limits = (
+            "DB_PA" + "SS=hunter2hunter2", "SMTP_PA" + "SS=hunter2hunter2",
+            "pass" + "phrase=hunter2hunter2", "creden" + "tials=hunter2hunter2",
+            "Authorization: Ba" + "sic dXNlcjpwYXNzd29yZA==",
+            "pass" + "word => hunter2hunter2", "--pass" + "word hunter2hunter2",
+            "pass" + 'word="abc\\"defghijkl"', "pass" + "word=ab,cdefghijk",
+            "pass" + "word=ab;cdefghijk",
+            "sk_" + "live_A1b2C3d4E5f6G7h8I9j0K1", "AI" + "zaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6",
+            "glp" + "at-A1b2C3d4E5f6G7h8I9j0", "np" + "m_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6q7r8",
+            "h" + "f_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6q7",
+        )
+        for text in limits:
+            with self.subTest(text=text[:6]):
+                self.assertEqual(secrets.find(text), [])
+
+    def test_known_false_positives_are_documented_limits(self):
+        # README "Refused although not a credential": refused today, by design of a pattern filter.
+        for text in ("to" + "ken.py: rewritten", "pass" + "word: required",
+                     "pw" + "d: plugins/relay", "TO" + "KEN_FILE=~/.config/x"):
+            with self.subTest(text=text[:6]):
+                self.assertTrue(secrets.find(text))
 
     def test_final_state_is_rescanned(self):
         # A value read from Foundry (here the PR link) is not in the draft: the second scan catches it.
@@ -553,7 +619,9 @@ class LoadTests(RelayCase):
         code, _, _ = self.run_cli(good(branch="nope"))
         self.assertEqual(code, 0)
         out = self.load()[1]
-        self.assertIn("draft says nope", out)
+        self.assertIn("[divergence] branch: draft says nope, real is main (recorded at writing)", out)
+        self.assertNotIn("[recovered]", out)
+        self.assertIn("0 recovered", out)
 
     def test_absent_state_said_as_such(self):
         code, out, _ = self.load()
@@ -624,7 +692,114 @@ class LoadTests(RelayCase):
         doc = json.loads((HERE.parent / "hooks" / "hooks.json").read_text())
         entry = doc["hooks"]["SessionStart"][0]
         self.assertEqual(entry["matcher"], "startup|resume")
-        self.assertLess(load_mod.HOOK_DEADLINE_S, entry["hooks"][0]["timeout"])
+        spec = importlib.util.spec_from_file_location("relay_session_start", self.HOOK)
+        hook_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook_mod)
+        self.assertLess(load_mod.HOOK_DEADLINE_S + hook_mod.JOIN_MARGIN_S,
+                        entry["hooks"][0]["timeout"])
+
+    def hook_with(self, setup):
+        """Run the hook in a subprocess after `setup` (Python source) has patched the modules."""
+        code = (f"import sys; sys.path.insert(0, {str(HERE.parent / 'tooling')!r}); "
+                f"import relay_cli; from relay import load, verify\n{setup}\n"
+                f"import runpy; runpy.run_path({str(self.HOOK)!r}, run_name='__main__')")
+        return subprocess.run([sys.executable, "-c", code], cwd=self.repo, capture_output=True,
+                              text=True, timeout=60, stdin=subprocess.DEVNULL, check=False)
+
+    def test_hook_hanging_command_is_unknown_within_the_deadline(self):
+        self.write_state()
+        self.foundry.write_text("import time\ntime.sleep(60)\n")
+        started = time.monotonic()
+        done = self.hook_with("load.HOOK_DEADLINE_S = 1.0")
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        ctx = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn(f"[unknown] issue T-1: {verify.EXHAUSTED}", ctx)
+        self.assertNotIn("nothing changed", ctx)
+
+    def test_hook_thread_that_does_not_finish_shows_the_state_body(self):
+        self.write_state()
+        done = self.hook_with("import time; load.HOOK_DEADLINE_S = 0.5; "
+                              "load.present = lambda *a: time.sleep(60)")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        ctx = json.loads(done.stdout)["systemMessage"]
+        self.assertIn("summary: s", ctx)
+        self.assertIn("re-verification did not finish in time", ctx)
+
+    def test_hook_closed_output_exits_zero_without_traceback(self):
+        self.write_state()
+        done = self.hook_with(
+            "class Broken:\n    def write(self, s): raise BrokenPipeError()\n"
+            "    def flush(self): raise BrokenPipeError()\nsys.stdout = Broken()")
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("Traceback", done.stderr)
+
+    def test_hook_location_unreadable_is_not_reported_as_no_state(self):
+        done = self.hook_with("relay_cli.state_path = lambda root: None")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        msg = json.loads(done.stdout)["systemMessage"]
+        self.assertIn("location cannot be determined", msg)
+        self.assertNotIn("no resume state", msg)
+
+    def test_load_location_unreadable_is_not_reported_as_outside_git(self):
+        with mock.patch.object(relay_cli, "state_path", return_value=None):
+            code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("location cannot be determined", out)
+        self.assertNotIn("not inside a git repository", out)
+        with mock.patch.object(relay_cli, "state_path", return_value=None):
+            code, _, err = self.run_cli(None, "show")
+        self.assertEqual(code, 2)
+        self.assertIn("git common directory", err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores directory permissions")
+    def test_unreadable_state_directory_is_said_not_a_traceback(self):
+        self.write_state()
+        d = self.repo / ".git" / "relay"
+        d.chmod(0)
+        self.addCleanup(d.chmod, 0o700)
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("unreadable or malformed", out)
+        code, _, err = self.run_cli(None, "show")
+        self.assertEqual(code, 1)
+        self.assertIn("unreadable or malformed", err)
+
+    def test_deeply_nested_stored_state_is_unreadable(self):
+        self.write_state()
+        (self.repo / ".git" / "relay" / "state.json").write_text("[" * 100000)
+        code, out, _ = self.load()
+        self.assertEqual(code, 0)
+        self.assertIn("unreadable or malformed", out)
+        self.assertEqual(self.run_cli(None, "show")[0], 1)
+
+    def test_recovered_check_is_counted_apart_from_divergences(self):
+        # a pointed file that was missing at writing and exists now
+        self.assertEqual(self.run_cli(good(files=["c.txt"]))[0], 0)
+        (self.repo / "c.txt").write_text("z")
+        git(self.repo, "add", "c.txt")
+        git(self.repo, "commit", "-q", "-m", "c")
+        out = self.load()[1]
+        self.assertIn("[recovered] file c.txt: now exists; at writing divergence: does not exist", out)
+        self.assertIn("1 recovered", out)
+        self.assertNotIn("nothing changed", out)
+
+    def test_recorded_non_ok_absent_now_is_repeated(self):
+        (self.repo / "dirty.txt").write_text("y")  # untracked: worktree divergence at writing
+        self.assertEqual(self.run_cli(good())[0], 0)
+        (self.repo / "dirty.txt").unlink()
+        out = self.load()[1]
+        self.assertIn("[divergence] worktree: uncommitted changes in the working tree "
+                      "(recorded at writing)", out)
+
+    def test_budget_must_be_finite_and_not_negative(self):
+        self.write_state()
+        for bad in ("nan", "inf", "-inf", "-1", "x"):
+            with self.subTest(budget=bad):
+                with self.assertRaises(SystemExit) as cm:
+                    self.load("--budget", bad)
+                self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(self.load("--budget", "0")[0], 0)
 
 
 if __name__ == "__main__":

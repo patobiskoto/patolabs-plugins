@@ -21,7 +21,7 @@
     {
       "name": "relay",
       "source": "./plugins/relay",
-      "description": "Session hand-over: writes a verified, secret-free resume state at the end of a session, as a local owner-only file outside git tracking."
+      "description": "Session hand-over: writes a verified, secret-free resume state at the end of a session, as a local owner-only file outside git tracking, and reloads it re-verified at session start."
     },
     {
       "name": "blueprint",
