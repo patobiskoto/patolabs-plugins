@@ -19,7 +19,7 @@
 - Spec format 2: format 1 plus the sections `coverage`, `constants`, `data_model`, `resources`, `screens`, validated by
   `spec check`; format 1 unchanged. Skill `blueprint:rebuild`.
 - Fixes after the real trial: `decompile --analysis --group` accepts every group `rebuild` detects (SwiftUI screens
-  included), and its candidates include computed getters (a SwiftUI view's `body`) without property-wrapper storage;
+  included), and its candidates include getters (a SwiftUI view's `body` included) without property-wrapper storage;
   `--list` prints and writes no file; `--entry` must be one `0x` address and the summary counts decompiled and
   unknown entries (exit 5 when none decompiled); preset-object constants gain `constructor_call_arguments` and say that
   `integer_literals_in_order` is partial; `not_covered` states that extensions of other modules' types are not analysed;
@@ -36,8 +36,8 @@
   keeps `x7` and `constructor_parameters` reads stack-passed parameters from constant stores before the call
   (`call_sites.stack_arguments`); the export records floating-point constants in `d0`..`d7` and Double bit patterns in
   integer registers per call (`float_calls`, keyed by callee, also in `decompile --analysis` output).
-- Run once on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), a second one reused
-  the analysis; 4180 app functions decompiled; tests use fakes. The maintainer's judgement of the spec ("can the app be
+- Run on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), later runs reused the
+  analysis; 4180 app functions decompiled by the first export, 4236 by the last one; tests use fakes. The maintainer's judgement of the spec ("can the app be
   rebuilt from it alone") is not part of this entry.
 
 ## 0.2.0 — 2026-10-18

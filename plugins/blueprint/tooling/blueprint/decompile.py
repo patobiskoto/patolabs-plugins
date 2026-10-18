@@ -135,7 +135,7 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
     return doc
 
 
-# Computed getters (a SwiftUI view's `body` and its sections) and the closures of a `body`, where the interface of a
+# Getters (a SwiftUI view's `body` and its sections) and the closures of a `body`, where the interface of a
 # SwiftUI screen is built; property-wrapper storage (State, Binding, Environment, Query) and key paths are left out.
 _WRAPPERS = ("SwiftUI.State<", "SwiftUI.Binding<", "SwiftUI.Environment<", "SwiftUI.LazyState<",
              "_SwiftData_SwiftUI.Query<", "key path ")
@@ -150,7 +150,7 @@ def _view_code(sym: str, demangled: str) -> bool:
 
 
 def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
-    """Functions (mangled name ending in `F`, static `FZ`), initialisers (`fC`), computed getters and `body` closures (`_view_code`)
+    """Functions (mangled name ending in `F`, static `FZ`), initialisers (`fC`), getters and `body` closures (`_view_code`)
     of every type of a group detected by
     `rebuild.detect_groups`, structs and enums included (SwiftUI screens), from the saved analysis; the same
     boilerplate as `entry_points` is left out."""
