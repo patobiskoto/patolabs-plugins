@@ -321,7 +321,7 @@ class SpecTest(Base):
         errs = spec.check(s, self.known)
         self.assertEqual(len(errs), 3, errs)
         self.assertIn("ev_missing", errs[0])
-        self.assertIn("non-empty list of REA evidence ids, or \"unknown\"", errs[1])
+        self.assertIn("non-empty list of evidence ids, or \"unknown\"", errs[1])
 
     def test_refuses_symbols_and_addresses_in_the_text(self):
         for leak in ("calls _$s7DemoApp5startyyF", "see 0x3df0c", "class _TtC7DemoApp3Foo"):

@@ -10,10 +10,12 @@ import re
 import time
 from pathlib import Path
 
-from . import inventory, paths, pins, proc
+from . import groups as groups_mod
+from . import inventory, paths, pins, proc, rebuild
 
 FORMAT = 1
 MAX_CODE_CHARS = 30000
+ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
 
 
 # Swift Observation macro boilerplate and accessor coroutines that also end in `F`.
@@ -98,6 +100,12 @@ def decompile_one(rea: inventory.Rea, sl: Path, address: str, timeout: float) ->
             "truncated": len(code) > MAX_CODE_CHARS, "evidence": _evidence(doc, address)}
 
 
+def counts(doc: dict) -> tuple[int, int]:
+    """(entries decompiled, entries unknown or failed)."""
+    ok = sum(1 for e in doc["entries"] if e["status"] == "ok")
+    return ok, len(doc["entries"]) - ok
+
+
 def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, list_only: bool,
         maximum: int, budget: float, clock=time.monotonic) -> dict:
     start = clock()
@@ -124,4 +132,91 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
         e = decompile_one(rea, sl, c["address"], min(pins.TIMEOUT_DECOMPILE, left))
         e.update({"symbol": c["symbol"], "method": c["method"]})
         doc["entries"].append(e)
+    return doc
+
+
+# Getters (a SwiftUI view's `body` and its sections) and the closures of a `body`, where the interface of a
+# SwiftUI screen is built; property-wrapper storage (State, Binding, Environment, Query) and key paths are left out.
+_WRAPPERS = ("SwiftUI.State<", "SwiftUI.Binding<", "SwiftUI.Environment<", "SwiftUI.LazyState<",
+             "_SwiftData_SwiftUI.Query<", "key path ")
+
+
+def _view_code(sym: str, demangled: str) -> bool:
+    if any(w in demangled for w in _WRAPPERS):
+        return False
+    if sym.endswith("vg"):
+        return True
+    return demangled.startswith("closure #") and ".body.getter" in demangled
+
+
+def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
+    """Functions (mangled name ending in `F`, static `FZ`), initialisers (`fC`), getters and `body` closures (`_view_code`)
+    of every type of a group detected by
+    `rebuild.detect_groups`, structs and enums included (SwiftUI screens), from the saved analysis; the same
+    boilerplate as `entry_points` is left out."""
+    out = []
+    stems = None
+    for e in an["entries"]:
+        owner = e.get("owner")
+        if not owner and e.get("extension"):
+            # A member of the app's extension of another module's type: attributed to a group by `rebuild.extension_group`.
+            sym = e["symbol"]
+            if stems is None:
+                stems = sorted(n for n, g in rebuild.detect_groups(an).items() if not g.get("extension_only"))
+            if rebuild.extension_group(e, stems) == group_name and e["extension"].get("member") and (
+                    sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
+                out.append({"address": e["address"], "symbol": sym, "method": e["extension"]["member"],
+                            "class": e["extension"].get("extended_type")})
+            continue
+        r = groups_mod.role_of(owner) if owner else None
+        if not r or r[0] != group_name:
+            continue
+        sym = e["symbol"]
+        # A private type carries its scope discriminator (`33_<hash>LL`) between its name and its kind letter.
+        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?[A-Z](\d+)", sym)
+        if not m or not (sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
+            continue
+        rest = sym[m.start():]
+        method = sym[m.end(): m.end() + int(m.group(1))]
+        if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
+            continue
+        out.append({"address": e["address"], "symbol": sym, "method": method, "class": owner})
+    return sorted(out, key=lambda c: (int(c["address"], 16), c["symbol"]))
+
+
+def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None, list_only: bool,
+                  maximum: int) -> dict:
+    """The same document as `run`, read from the saved analysis: no Ghidra and no REA call (PAT-260). The pseudo-code and
+    evidence are those of the one analysis (`analysis.build`); the evidence is Ghidra's (slice sha256 and address).
+    `group` is a group of `rebuild.detect_groups` (only its `name` is read)."""
+    if (an.get("source") or {}).get("sha256") != inv["target"].get("sha256") or \
+            an["source"].get("arm64_sha256") != inv["target"].get("arm64_sha256"):
+        raise DecompileError("the analysis was not made from this inventory's target (sha256 differs)")
+    by_addr = {int(e["address"], 16): e for e in an["entries"]}
+    doc: dict = {"format": FORMAT, "group": group["name"] if group else None, "entries": [], "unknown_parts": {},
+                 "from_analysis": {"ghidra_program_id": an["ghidra"]["program_id"], "ghidra_runs": 0}}
+    if entry is not None:
+        chosen, candidates = [{"address": entry, "symbol": None, "method": None}], []
+    else:
+        candidates = analysis_entry_points(an, group["name"])
+        chosen = candidates[:maximum]
+        doc["candidates"] = {"total": len(candidates), "listed": candidates[:200],
+                             "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}
+    if list_only:
+        return doc
+    for c in chosen:
+        try:
+            e = by_addr.get(int(c["address"], 16))
+        except ValueError:
+            e = None
+        if e is None:
+            doc["entries"].append({"address": c["address"], "status": "unknown", "pseudo_code": None, "evidence": None,
+                                   "reason": "no app function at this address in the analysis", "symbol": c["symbol"],
+                                   "method": c["method"]})
+            continue
+        doc["entries"].append({"address": c["address"], "status": e["status"], "reason": e["reason"],
+                               "pseudo_code": e["pseudo_code"], "truncated": e["truncated"],
+                               "float_calls": e.get("float_calls") or [],
+                               "evidence": e["evidence"], "symbol": c["symbol"] or e["symbol"],
+                               "method": c["method"]})
     return doc

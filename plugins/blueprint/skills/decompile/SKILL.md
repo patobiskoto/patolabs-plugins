@@ -33,6 +33,9 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<blueprint-root>")/tooling/blueprint_cli.py" decompile <target> --inventory <inventory.json> --entry <0xADDRESS>
 ```
 
+Once `blueprint:rebuild` has produced an analysis (`analyze`), add `--analysis <analysis.json>` to either command:
+the pseudo-code is read from it, no Ghidra or REA process runs, and the evidence is Ghidra's (slice sha256 and address).
+
 The command refuses (exit 3) a target absent from the registry: report the refusal and stop; do
 not add the target yourself. Exit 4: run `blueprint:setup`. Exit 5: the target is not the one the
 inventory describes, or REA failed. A `status: unknown` entry or an `unknown_parts` key says why
