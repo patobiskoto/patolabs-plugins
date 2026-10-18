@@ -89,10 +89,11 @@ def reverify(state: dict[str, Any], root: Path, budget: float) -> list[str]:
     names = {c["check"] for c in fresh}
     lines += [f"[{c['status']}] {c['check']}: {_norm(c['detail'])} (recorded at writing)"
               for c in recorded if c["status"] != "ok" and c["check"] not in names]
-    bad = [c for c in fresh if c["status"] != "ok"]
-    div = sum(c["status"] == "divergence" for c in bad)
+    # Counted on the reported lines, so a check that is ok now but changed since writing counts as a divergence.
+    div = sum(x.startswith("[divergence]") for x in lines)
+    unk = sum(x.startswith("[unknown]") for x in lines)
     head = (f"re-verified now ({len(fresh)} checks, {div} divergence(s), "
-            f"{len(bad) - div} unknown, budget {budget:g}s)")
+            f"{unk} unknown, budget {budget:g}s)")
     if not lines:
         return [head + ": nothing changed since writing"]
     return [head + ":"] + [f"  {x}" for x in lines]

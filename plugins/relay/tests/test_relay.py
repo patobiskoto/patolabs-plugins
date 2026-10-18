@@ -546,6 +546,8 @@ class LoadTests(RelayCase):
         self.assertIn("[divergence] file a.txt: does not exist", out)
         self.assertIn("[unknown] issue T-1:", out)
         self.assertIn("[divergence] pr 7: changed since writing, was ok: OPEN, now MERGED", out)
+        # The summary counts the reported lines: five divergences (one of them ok now but changed), one unknown.
+        self.assertIn("5 divergence(s), 1 unknown", out)
 
     def test_recorded_divergence_is_not_hidden(self):
         code, _, _ = self.run_cli(good(branch="nope"))
