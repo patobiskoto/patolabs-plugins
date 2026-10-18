@@ -17,6 +17,11 @@
       "name": "gauge",
       "source": "./plugins/gauge",
       "description": "Read-only quota gauge: Codex, Claude, Linear and GitHub Actions counters with source and read time; unreadable data is unknown, never zero."
+    },
+    {
+      "name": "relay",
+      "source": "./plugins/relay",
+      "description": "Session hand-over: writes a verified, secret-free resume state at the end of a session, as a local owner-only file outside git tracking."
     }
   ]
 }
