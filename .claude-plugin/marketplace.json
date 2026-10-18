@@ -27,6 +27,11 @@
       "name": "blueprint",
       "source": "./plugins/blueprint",
       "description": "Pinned REA/Ghidra tooling, registry of authorised targets and a reproducible evidence-backed inventory of an authorised target."
+    },
+    {
+      "name": "witness",
+      "source": "./plugins/witness",
+      "description": "Proves a change of an iOS app in the simulator with xcodebuild and xcrun simctl only: tests, install, launch, screenshot and a dated report; before/after comparison."
     }
   ]
 }
