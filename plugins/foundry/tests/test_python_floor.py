@@ -5,6 +5,7 @@ simulated by replacing ``sys.version_info`` in a child process that then runs th
 hook or launcher file. The routing test runs under whichever interpreter runs the suite,
 and the dedicated CI job runs it under the declared minimum.
 """
+import ast
 import importlib.util
 import json
 import os
@@ -73,6 +74,7 @@ def test_hook_under_unsupported_python_is_visible_and_never_denies(hook, tmp_pat
 def test_session_start_records_the_interpreter_even_when_unsupported(tmp_path):
     _run_old(HOOKS / "session_start.py", home=tmp_path)
     recorded = json.loads((tmp_path / "data" / python_floor.OBSERVED_FILE).read_text())
+    assert recorded.pop("recorded_at").endswith("Z")
     assert recorded == {"executable": sys.executable, "version": [3, 9, 6]}
 
 
@@ -120,7 +122,8 @@ def _record(version, executable="/opt/hook/python3"):
     directory = Path(python_floor.data_dir())
     directory.mkdir(parents=True, exist_ok=True)
     (directory / python_floor.OBSERVED_FILE).write_text(
-        json.dumps({"executable": executable, "version": list(version)}), encoding="utf-8")
+        json.dumps({"executable": executable, "version": list(version),
+                    "recorded_at": "2026-10-18T10:00:00Z"}), encoding="utf-8")
 
 
 def test_doctor_reads_the_interpreter_observed_by_the_hook():
@@ -128,7 +131,7 @@ def test_doctor_reads_the_interpreter_observed_by_the_hook():
     result = doctor.hook_python_diagnostic()
     assert result["ok"] is True
     assert "/opt/hook/python3" in result["detail"] and "3.12.1" in result["detail"]
-    assert "observed by hook" in result["detail"] and "3.11" in result["detail"]
+    assert "observed by hook at 2026-10-18T10:00:00Z" in result["detail"] and "3.11" in result["detail"]
 
 
 def test_doctor_fails_below_the_minimum():
@@ -148,3 +151,50 @@ def test_doctor_falls_back_to_python3_on_its_own_path():
 def test_doctor_reports_a_missing_python3():
     result = doctor.hook_python_diagnostic(which=lambda name: None)
     assert result["ok"] is False and "not found" in result["detail"]
+
+
+def test_doctor_prints_hook_python_before_the_config_preflight(monkeypatch, capsys):
+    def refuse():
+        raise SystemExit("config broken")
+    monkeypatch.setattr(doctor, "_provider_transport_preflight", refuse)
+    doctor.main([])
+    out = capsys.readouterr().out
+    assert out.index("Hook Python") < out.index("Config")
+
+
+@pytest.mark.parametrize("stdin", ["", "not json", "null", "[]", '"text"'])
+def test_route_agent_unreadable_or_non_object_payload_is_visible_and_fail_open(
+        stdin, monkeypatch, capsys):
+    import io
+    route_agent = _load_route_agent()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+    route_agent.main()
+    output = json.loads(capsys.readouterr().out)
+    assert set(output) == {"systemMessage"} and "route_agent" in output["systemMessage"]
+
+
+def test_route_agent_out_of_scope_call_stays_silent(monkeypatch, capsys):
+    import io
+    route_agent = _load_route_agent()
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_input": {"subagent_type": "other"}}'))
+    route_agent.main()
+    assert capsys.readouterr().out == ""
+
+
+def test_startup_files_parse_as_python_39():
+    """`feature_version=(3, 9)` rejects e.g. `match` and `except*` (checked by the first
+    two assertions) but NOT parenthesized context managers nor runtime `X | Y`
+    annotations; for the latter the hooks must keep `from __future__ import annotations`
+    (asserted below). The real 3.9.6 run is a manual step of the PR."""
+    for source in ("match x:\n case 1: pass\n", "try:\n pass\nexcept* E:\n pass\n"):
+        with pytest.raises(SyntaxError):
+            ast.parse(source, feature_version=(3, 9))
+    files = [PLUGIN_ROOT / "tooling" / "python_floor.py"] + [
+        HOOKS / f"{name}.py" for name in (
+            "route_agent", "guard_bash", "observe_agent", "session_start",
+            "guard_routed_readonly")]
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        ast.parse(text, feature_version=(3, 9))
+        if path.name != "session_start.py":
+            assert "from __future__ import annotations" in text, path.name

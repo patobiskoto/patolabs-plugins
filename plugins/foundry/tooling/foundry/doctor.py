@@ -46,6 +46,8 @@ def hook_python_diagnostic(*, runner=subprocess.run, which=shutil.which):
     observed = python_floor.read_observed()
     if observed is not None:
         path, version, source = observed["executable"], observed["version"], "observed by hook"
+        if observed["recorded_at"]:
+            source += f" at {observed['recorded_at']}"
     else:
         path, version, source = which("python3"), None, "resolved on doctor PATH"
         if path:
@@ -477,6 +479,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     print("🩺 Foundry doctor\n")
 
+    # PAT-265: local read, printed before the Config preflight so it shows even when Config fails.
+    diagnostic = hook_python_diagnostic()
+    check("Hook Python", diagnostic["ok"], diagnostic["detail"])
+
     # Public provider discovery and DevHub transport validation are the first
     # configuration reads. In particular this precedes local-scout's compatible
     # bulk config fallback and every provider credential accessor.
@@ -485,9 +491,6 @@ def main(argv=None):
     except (SystemExit, ValueError) as e:
         check("Config", False, str(e))
         return
-
-    diagnostic = hook_python_diagnostic()
-    check("Hook Python", diagnostic["ok"], diagnostic["detail"])
 
     # This local read comes before routing and network integrations.
     _print_local_hook(local_hook_diagnostic())

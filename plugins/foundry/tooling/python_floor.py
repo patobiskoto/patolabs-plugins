@@ -7,6 +7,7 @@ such as ``zip(strict=True)``, and launches ``python -P``, 3.11+). Nothing here i
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import sys
@@ -79,14 +80,16 @@ def record_interpreter() -> None:
         temp = f"{target}.{os.getpid()}.tmp"
         with open(temp, "w", encoding="utf-8") as handle:
             json.dump({"executable": sys.executable,
-                       "version": list(tuple(sys.version_info)[:3])}, handle)
+                       "version": list(tuple(sys.version_info)[:3]),
+                       "recorded_at": datetime.datetime.now(datetime.timezone.utc)
+                       .strftime("%Y-%m-%dT%H:%M:%SZ")}, handle)
         os.replace(temp, target)
     except Exception:
         return
 
 
 def read_observed():
-    """Return ``{"executable": str, "version": (int, int, int)}`` or None if absent/invalid."""
+    """Return ``{"executable", "version" (3 ints), "recorded_at" (str or None)}`` or None."""
     try:
         with open(os.path.join(data_dir(), OBSERVED_FILE), encoding="utf-8") as handle:
             data = json.load(handle)
@@ -94,6 +97,8 @@ def read_observed():
         if (len(version) != 3 or not all(type(part) is int for part in version)
                 or not isinstance(data["executable"], str)):
             return None
-        return {"executable": data["executable"], "version": version}
+        recorded = data.get("recorded_at")
+        return {"executable": data["executable"], "version": version,
+                "recorded_at": recorded if isinstance(recorded, str) else None}
     except Exception:
         return None

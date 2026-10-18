@@ -220,9 +220,15 @@ settled unless explicitly superseded.
 exits non-zero with a message naming the interpreter, its version and the minimum. Each hook
 that imports `foundry` does the same check but stays fail-open: it prints one
 `systemMessage` and does not deny the call. `/foundry:doctor` prints a `Hook Python` line
-(path, version, source) read from the record `hooks/session_start.py` writes to
-`hook-python.json` in the data directory, else from `python3` on doctor's own `PATH`.
+(path, version, source, minimum) read from the record `hooks/session_start.py` writes to
+`hook-python.json` in the data directory (with a `recorded_at` UTC time; the last
+SessionStart of any host and repository wins), else from `python3` on doctor's own `PATH`.
 `python3 --version` must report 3.11 or later on the `PATH` the host gives its hooks.
+Under Python 3.10 or older the hooks are inactive, including the `guard_bash` R1 deny and
+the PAT-215 `campaign-approval approve` deny; each hook call (every Bash and Agent call, in
+every repository, registered or not) then prints the `systemMessage` instead. Whether the
+hooks worked under 3.10 before this change is unknown. How Codex displays that
+`systemMessage` has not been observed.
 
 Fresh Claude Code install:
 

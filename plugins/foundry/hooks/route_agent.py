@@ -309,10 +309,14 @@ def _deny(reason: str) -> dict:
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, OSError):
-        return
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict) or _logical_role(tool_input.get("subagent_type")) is None:
+        if not isinstance(payload, dict):
+            raise TypeError("payload is not an object")
+        tool_input = payload.get("tool_input")
+        if not isinstance(tool_input, dict) or _logical_role(tool_input.get("subagent_type")) is None:
+            return  # not a Foundry logical agent: stay silent
+    except Exception as exc:
+        # Fail-open but visible (PAT-265): unreadable or malformed payload.
+        print(python_floor.hook_failure_output("route_agent", exc))
         return
     try:
         routed = route_tool_input(

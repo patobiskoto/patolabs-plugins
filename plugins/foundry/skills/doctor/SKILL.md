@@ -25,6 +25,8 @@ Reports each point green/red: model-routing JSON validity; the effective Claude 
 Codex role matrix (including reviewer/architect floors), known override names only,
 availability/fallback failures, config (tracker/codehost/URL), tracker auth + registered
 project identity/readability, code-host repo resolution, and current-repo → project.
+It also prints a `Hook Python` line first (path, version, source, recorded time, minimum),
+red below the minimum Python (`MINIMUM_PYTHON`, `tooling/python_floor.py`).
 For GitHub Projects bound to another checkout, doctor verifies the native Project
 identity but reports the issue count as unavailable: the issue search remains bound
 to the current checkout.
@@ -48,6 +50,8 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 - Red on config → run `foundry:configure`, set Claude install options, or provide
   environment variables.
+- Red on `Hook Python` → make the `python3` that the host resolves for hooks point to
+  Python 3.11 or later first on `PATH`, then start a new session so the record is refreshed.
 - Red after a canonical remote rename → suspend and reconcile the approved binding and
   marker through the recovery procedure. `registry alias` copies the old canonical
   identity and cannot authorize a different remote. For a legacy basename-only binding,

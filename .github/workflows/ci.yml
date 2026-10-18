@@ -133,10 +133,15 @@ jobs:
           pip install pytest pytest-xdist
       - name: Compile tooling and hooks
         run: python -m compileall tooling hooks
+      - name: Validate model-routing invocation contract
+        run: pytest -q tests/test_routing_contract.py
       - name: Run public pure-logic tests under the minimum Python
         run: >-
           pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests
           --ignore=tests/test_routing_contract.py
+      - name: Run timing-sensitive tests under the minimum Python (serial)
+        run: >-
+          pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
 
   gauge:
     # PAT-246: stdlib-only, offline tests on recorded responses (no network, no paid call).
