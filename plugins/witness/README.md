@@ -64,6 +64,9 @@ command):
   steps are `reset`, `boot`, `uitest`, `extract-screenshot`; there is no separate build, install or launch (the
   test run does them); `--skip-tests`, `--test-plan` and `--only-testing` are refused (exit 2) and the tests
   selection is recorded as `navigation-uitest`. Tests failed or unknown still exits 6 with the screenshot.
+  `--scheme` must be a scheme whose tests include the UI test target: with a scheme whose test plan leaves it out,
+  `xcodebuild` refuses ("isn't a member of the specified test plan or scheme") and the step fails (observed
+  2026-10-18; an app may keep a separate scheme for its UI tests).
 - `screen` is recorded in the report and never verified: witness cannot read the screen. The sha256 of the file
   bytes identifies the navigation (`navigation.identity`).
 
