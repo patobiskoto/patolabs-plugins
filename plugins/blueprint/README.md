@@ -262,7 +262,8 @@ pattern in `analysis.build`; not otherwise checked on the target). A private typ
 `constants.readable_name` writes `Type` in the constant name and keeps the hash in the item field `private_scope`; `spec
 check` also refuses a constant name that still carries it (`_LEAK`). Screen navigation is `unknown` (nothing extracts links between screens). The contents of an asset
 catalog are `unknown` (the inventory holds record counts). Pseudo-code is Ghidra output: a decoded constant is as sound
-as it (deduced). The `not_covered` list always ends with the statement that analysis is static only. On the
+as it (deduced). The `not_covered` list states that analysis is static only, followed by the analysis's `unknown_parts` when there are
+any (`rebuild.coverage`). On the
 2026-10-18 trial `rebuild` reported groups 37/38, screens 29/29 (0 captured), functions 4180/4180, 46 constants (20
 `unknown`, 75 preview records excluded), 3 data models, 33 resources (14 with unknown usage).
 
