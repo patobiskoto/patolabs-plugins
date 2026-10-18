@@ -38,14 +38,16 @@ Steps, in order, each timed with `time.monotonic` (`prove` in `tooling/witness/p
   (`find_app`).
 - `--reset` runs `simctl erase` only if the simulator state is `Shutdown`; witness never shuts one down, and
   `ensure_booted` leaves it booted. For a before/after pair with `--reset`, run
-  `xcrun simctl shutdown <UDID>` yourself before each proof whose simulator is not already shut down (a simulator
-  that a previous proof left booted always is).
+  `xcrun simctl shutdown <UDID>` yourself before each proof whose simulator is not already shut down (witness leaves
+  it booted, so before the second proof).
 - The test summary is read from the xcodebuild output: `** TEST SUCCEEDED **` / `** TEST FAILED **` and the last
   `Executed N tests, with F failures` line (`summarize`); a field it cannot read is `unknown`.
 - Every external process has a timeout (`TIMEOUT_*` constants in `xcode.py`, `simulator.py`, `checkout.py`, `web.py`);
   `SETTLE_SECONDS` is a fixed wait, not an observed readiness. `proc.run` starts each process in its own session
-  and, on a timeout or an interruption, kills the whole process group, not only the direct child (a test with a
-  grandchild process shows it). A process that leaves the group is out of reach; the effect on the real
+  and, on a timeout, SIGINT, SIGTERM or SIGHUP received by witness (`terminating_on_signals` in `witness_cli.py`
+  turns the last two into an exit), kills the whole process group, not only the direct child (tests with a
+  grandchild process show the timeout and SIGTERM paths). SIGKILL of witness itself cannot be handled and leaves the
+  children running (deduced). A process that leaves the group is out of reach; the effect on the real
   `xcodebuild` and simulator processes is not observed (unknown).
 
 ### Scripted navigation (`--navigation`, PAT-255)
@@ -85,7 +87,7 @@ command):
 
 `web` (`tooling/witness/web.py`) opens a local page in a headless browser started with a fresh temporary
 `--user-data-dir` (removed afterwards, so no user profile, cookie or extension is involved; if the directory is still there after
-the removal, the report says `NOT removed, still at <path>` in `browser.profile`, cause unknown) and takes the
+the removal, the report says `NOT removed, still at <path>` in `browser.profile`, also when the browser failed; cause unknown) and takes the
 screenshot at a fixed viewport (default `DEFAULT_VIEWPORT`, scale factor 1):
 
 - Only `http://localhost[:port]/...` and `http://127.0.0.1[:port]/...` without credentials are accepted
@@ -97,6 +99,10 @@ screenshot at a fixed viewport (default `DEFAULT_VIEWPORT`, scale factor 1):
   it (deduced, not observed). A status below 400, a redirect included, is accepted. The network is not isolated:
   the browser follows redirects and loads the page's remote resources if the page asks for any (deduced from the
   command line, which sets no proxy or offline flag); the proof then depends on a host witness does not control.
+  The page is requested twice, by the probe and then by the browser (deduced from the two requests): a side effect
+  of the GET happens twice and the capture shows the state after the probe. The probe sends no cookie and no
+  browser header (its `User-Agent` is `witness-probe`), so a server that varies its answer on them may answer the
+  probe differently from the browser (deduced). The probe percent-encodes the path and query (`urllib.parse.quote`).
 - A Chromium-family browser is required: Google Chrome, Chromium, Brave or Edge. `locate_browser` uses
   `WITNESS_BROWSER` if set (and refuses if it is not an executable, no fallback), else `KNOWN_BROWSERS` (macOS
   install paths), else `PATH_NAMES` on `PATH`; otherwise it refuses with a message. The command line is
@@ -109,7 +115,7 @@ screenshot at a fixed viewport (default `DEFAULT_VIEWPORT`, scale factor 1):
   the other host; a page that needs a login, a non-local host, or interaction is out of scope.
 - Steps: a single `screenshot`. The report has `platform: "web"`, `url`, `viewport`, `browser` (path, version
   read with `--version` or `unknown`, profile `fresh temporary` or the not-removed text above), `navigation.path`
-  (URL path and query) and `navigation.probe_status`.
+  (URL path and query) and `navigation.probe_status` (also in the Markdown report).
 
 ### Where it may run (AC 4)
 
@@ -117,7 +123,7 @@ screenshot at a fixed viewport (default `DEFAULT_VIEWPORT`, scale factor 1):
 worktree (`git worktree add`) or a directory outside any git repository. Output (default: a new directory in the
 system temp dir, `--out`) holds the derived data, logs, screenshot and reports. The simulator used is named in the
 report and on the first output line. Erasing and installing do change the named simulator: that is why
-`--reset` is explicit. An explicit `--out` is held to the same rule as the project (`checkout.guard_out`, on its
+`--reset` is explicit. An explicit `--out` of `prove`, `web` and `compare` is held to the same rule as the project (`checkout.guard_out`, on its
 nearest existing ancestor): in a main checkout it is refused (exit 3) before anything runs. Every `git` call runs
 without the inherited `GIT_*` variables and with `LC_ALL=C` (`checkout.git_env`), so the checkout kind does not
 depend on the caller's environment or language (a test sets `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`).

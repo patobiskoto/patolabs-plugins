@@ -31,6 +31,8 @@ def markdown(r: dict) -> str:
         b = r["browser"]
         lines += [f"- URL: `{r['url']}`", f"- Browser: `{b['path']}` {b['version']} (profile: {b['profile']})",
                   f"- Viewport: {r['viewport']}"]
+        if nav and nav.get("probe_status") is not None:
+            lines.append(f"- Probe HTTP status before the capture: {nav['probe_status']}")
     else:
         sim = r["simulator"]
         lines.append(f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}")

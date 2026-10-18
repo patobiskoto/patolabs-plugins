@@ -10,10 +10,11 @@ REAP_SECONDS = 5.0
 
 
 def _kill_group(p: subprocess.Popen) -> None:
-    try:
-        os.killpg(p.pid, signal.SIGKILL)  # the child leads its own session (start_new_session)
-    except OSError:
-        p.kill()
+    if p.returncode is None:  # never signal a group whose leader was already reaped (its id could be reused)
+        try:
+            os.killpg(p.pid, signal.SIGKILL)  # the child leads its own session (start_new_session)
+        except OSError:
+            p.kill()
     try:
         p.communicate(timeout=REAP_SECONDS)  # a survivor outside the group may still hold the pipes
     except subprocess.TimeoutExpired:
@@ -24,7 +25,8 @@ def run(cmd: list[str], timeout: float, cwd: Path | None = None,
         env: dict[str, str] | None = None) -> tuple[int | None, str, str]:
     """(returncode, stdout, stderr); (None, "", reason) when it cannot be launched or times out.
 
-    The child runs in its own process group; on timeout or interruption the whole group is killed, not only the
+    The child runs in its own process group; on timeout or on an exception (SIGINT as `KeyboardInterrupt`, or the
+    `SystemExit` that `witness_cli.terminating_on_signals` raises on SIGTERM and SIGHUP) the whole group is killed, not only the
     direct child, so its own children do not outlive the wait. A child that leaves the group (a daemon it asks
     to start) is out of reach: unknown for xcodebuild and the simulator tools.
     """

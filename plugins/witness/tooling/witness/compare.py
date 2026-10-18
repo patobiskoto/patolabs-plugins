@@ -52,6 +52,8 @@ def load(path: Path) -> dict:
                   ("navigation", "path"))
         elif platform(r) == "ios":
             _need(r, ("simulator", "udid"), ("simulator", "runtime"), ("simulator", "name"), ("scheme",))
+            if r.get("navigation") is not None:  # `navigation.identity` reads these two
+                _need(r, ("navigation", "mechanism"), ("navigation", "sha256"))
         else:
             raise ValueError("platform")
     except (OSError, ValueError, KeyError, TypeError):

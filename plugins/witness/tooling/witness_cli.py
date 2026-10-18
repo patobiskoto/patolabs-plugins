@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import signal
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +24,21 @@ def label_type(value: str) -> str:
     if not LABEL.fullmatch(value):
         raise argparse.ArgumentTypeError("must match [A-Za-z0-9._-]+ (it is part of file names)")
     return value
+
+
+@contextmanager
+def terminating_on_signals():
+    """SIGTERM and SIGHUP raise SystemExit(128 + signal) so that `proc.run` kills the child's process group (the
+    children run in their own session and would not receive the signal). SIGKILL cannot be handled."""
+    def handler(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    old = {s: signal.signal(s, handler) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
 
 
 def fail(msg: str, code: int) -> int:
@@ -66,6 +83,11 @@ def cmd_web(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
+    try:
+        if args.out:
+            checkout.guard_out(Path(args.out))
+    except checkout.Refused as exc:
+        return fail(f"refused: {exc}", EXIT_REFUSED)
     try:
         before, after = compare.load(Path(args.before)), compare.load(Path(args.after))
         compare.check(before, after)
@@ -112,7 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--out", help="output directory (default: the directory of the after report)")
     cp.set_defaults(fn=cmd_compare)
     args = p.parse_args(argv)
-    return args.fn(args)
+    with terminating_on_signals():
+        return args.fn(args)
 
 
 if __name__ == "__main__":

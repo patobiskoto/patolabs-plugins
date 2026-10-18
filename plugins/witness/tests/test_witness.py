@@ -5,6 +5,7 @@ import io
 import json
 import os
 import plistlib
+import signal
 import subprocess
 import sys
 import tempfile
@@ -257,14 +258,13 @@ class ProveTests(Base):
 
     def test_out_inside_main_checkout_refused_before_anything_runs(self):
         for out in (self.main / "out", self.main / "deep" / "new"):
-            for fake_and_run in (lambda f, o: self.run_cli(f, "prove", "--project", str(self.proj), "--scheme", "Demo",
-                                                           "--simulator", "Phone A", "--out", str(o)),):
-                fake = Fake()
-                code, _, err = fake_and_run(fake, out)
-                self.assertEqual(code, 3, err)
-                self.assertIn("--out", err)
-                self.assertIn("main checkout", err)
-                self.assertEqual(fake.calls, [])
+            fake = Fake()
+            code, _, err = self.run_cli(fake, "prove", "--project", str(self.proj), "--scheme", "Demo",
+                                        "--simulator", "Phone A", "--out", str(out))
+            self.assertEqual(code, 3, err)
+            self.assertIn("--out", err)
+            self.assertIn("main checkout", err)
+            self.assertEqual(fake.calls, [])
             self.assertFalse(out.exists())
         # a linked worktree or a directory outside git stays accepted
         self.assertEqual(checkout.guard_out(self.wt / "newout"), "linked-worktree")
@@ -539,7 +539,8 @@ class WebTests(Base):
     def test_browser_failure_removes_the_profile_and_exits_5(self):
         fake = self.fake()
         fake.inner.fail = "browser"
-        self.prove_web(fake)
+        code, _, _ = self.prove_web(fake)
+        self.assertEqual(code, 5)
         cmd = next(c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c))
         profile = next(a for a in cmd if a.startswith("--user-data-dir=")).split("=", 1)[1]
         self.assertFalse(Path(profile).exists())
@@ -556,6 +557,35 @@ class WebTests(Base):
         self.assertIn("NOT removed", rep["browser"]["profile"])
         self.assertIn(profile, rep["browser"]["profile"])
         self.assertIn("NOT removed", next((self.tmp / "out").glob("report-before-*.md")).read_text())
+
+    def test_profile_left_in_place_is_reported_on_browser_failure_too(self):
+        fake = self.fake()
+        fake.inner.fail = "browser"
+        with mock.patch("witness.web.shutil.rmtree"):
+            code, _, _ = self.prove_web(fake)
+        self.assertEqual(code, 5)
+        cmd = next(c for c in fake.inner.calls if any(a.startswith("--screenshot=") for a in c))
+        profile = next(a for a in cmd if a.startswith("--user-data-dir=")).split("=", 1)[1]
+        self.addCleanup(lambda: __import__("shutil").rmtree(profile, ignore_errors=True))
+        rep = json.loads(next((self.tmp / "out").glob("report-before-*.json")).read_text())
+        self.assertEqual(rep["outcome"], "failed at screenshot")
+        self.assertIn("NOT removed", rep["browser"]["profile"])
+        self.assertIn(profile, rep["browser"]["profile"])
+
+    def test_markdown_shows_probe_status(self):
+        self.probe_mock.return_value = 302
+        self.prove_web(self.fake())
+        md = next((self.tmp / "out").glob("report-before-*.md")).read_text()
+        self.assertIn("- Probe HTTP status before the capture: 302", md)
+
+    def test_compare_out_inside_main_checkout_refused(self):
+        self.prove_web(self.fake(), label="a")
+        self.prove_web(self.fake(), label="b")
+        a, b = (next((self.tmp / "out").glob(f"report-{n}-*.json")) for n in ("a", "b"))
+        code, _, err = self.run_cli(Fake(), "compare", "--before", str(a), "--after", str(b),
+                                    "--out", str(self.main / "cmp"))
+        self.assertEqual((code, "--out" in err), (3, True))
+        self.assertFalse((self.main / "cmp").exists())
 
     def test_out_inside_main_checkout_refused(self):
         fake = self.fake()
@@ -591,7 +621,6 @@ class WebTests(Base):
         code, _, err = self.run_cli(Fake(), "compare", "--before", str(known), "--after", str(elsewhere))
         self.assertEqual((code, "browser path differs" in err), (3, True))
         self.assertEqual(self.run_cli(Fake(), "compare", "--before", str(known), "--after", str(proof("again")))[0], 0)
-
 
     def test_browser_location(self):
         with mock.patch.dict("os.environ", {web.ENV_BROWSER: str(self.tmp / "nope")}), \
@@ -678,6 +707,39 @@ class GitEnvironmentAndProcessTests(Base):
             os.kill(pid, 9)
             self.fail("the grandchild survived the timeout")
 
+    def test_sigterm_during_a_run_kills_the_group_and_exits_143(self):
+        pidfile = self.tmp / "gc.pid"
+        timer = threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGTERM))
+        self.addCleanup(timer.cancel)
+        with witness_cli.terminating_on_signals():
+            timer.start()
+            with self.assertRaises(SystemExit) as ctx:
+                proc.run(["sh", "-c", f"sleep 60 & echo $! > {pidfile}; wait"], 30)
+        self.assertEqual(ctx.exception.code, 128 + signal.SIGTERM)
+        pid = int(pidfile.read_text())
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(pid, 9)
+            self.fail("the grandchild survived SIGTERM")
+
+    def test_handlers_are_restored_after_main(self):
+        before = signal.getsignal(signal.SIGTERM)
+        with witness_cli.terminating_on_signals():
+            self.assertIsNot(signal.getsignal(signal.SIGTERM), before)
+        self.assertIs(signal.getsignal(signal.SIGTERM), before)
+
+    def test_kill_group_skips_a_reaped_child(self):
+        p = subprocess.Popen(["true"], start_new_session=True)
+        p.wait()
+        with mock.patch("witness.proc.os.killpg") as killpg:
+            proc._kill_group(p)
+        killpg.assert_not_called()
+
     def test_run_still_returns_output_and_launch_errors(self):
         self.assertEqual(proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"], 10), (3, "out\n", "err\n"))
         rc, _, err = proc.run(["/nonexistent-witness-binary"], 10)
@@ -689,7 +751,6 @@ class ProbeTests(unittest.TestCase):
 
     def serve(self, status):
         import http.server
-        import threading
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -712,6 +773,29 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaises(web.WebRefused) as ctx:
             web.probe(self.serve(404))
         self.assertIn("404", str(ctx.exception))
+
+    def test_non_ascii_and_space_paths_do_not_crash(self):
+        seen = []
+        import http.server
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        for path, want in (("/café", "/caf%C3%A9"), ("/a b?x=é y", "/a%20b?x=%C3%A9%20y"), ("/p?q=1&r=%41", "/p?q=1&r=%41")):
+            self.assertEqual(web.probe(base + path), 200)
+            self.assertEqual(seen[-1], want)
 
     def test_nothing_listening_is_refused(self):
         import socket
@@ -778,7 +862,11 @@ class CompareTests(Base):
                  lambda d: d["tests"].pop("result"), lambda d: d["tests"].__setitem__("result", None),
                  lambda d: d["checkout"].pop("dirty"), lambda d: d.pop("paths"),
                  lambda d: d.__setitem__("project", None), lambda d: d["simulator"].pop("name"),
-                 lambda d: d.__setitem__("platform", "android"), lambda d: d.__setitem__("schema", "x"))
+                 lambda d: d.__setitem__("platform", "android"), lambda d: d.__setitem__("schema", "x"),
+                 lambda d: d.__setitem__("navigation", {"mechanism": "deeplink"}),
+                 lambda d: d.__setitem__("navigation", "x"),
+                 lambda d: d.__setitem__("navigation", {"mechanism": 3, "sha256": "ab"}),
+                 lambda d: d.__setitem__("navigation", {"mechanism": "deeplink", "sha256": None}))
         for i, edit in enumerate(edits):
             data = json.loads(json.dumps(good))
             edit(data)
