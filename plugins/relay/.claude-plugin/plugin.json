@@ -1,7 +1,7 @@
 {
   "name": "relay",
-  "description": "Session hand-over: writes a verified, secret-free resume state (summary, decisions, blockers, pitfalls, file pointers, next step) at the end of a session, as a local owner-only file outside git tracking.",
-  "version": "0.2.0",
+  "description": "Session hand-over: writes a verified, secret-free resume state (summary, decisions, blockers, pitfalls, file pointers, next step) at the end of a session, as a local owner-only file outside git tracking, and reloads it re-verified at session start.",
+  "version": "0.2.1",
   "author": {
     "name": "pato"
   },

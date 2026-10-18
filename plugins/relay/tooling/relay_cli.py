@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import math
 import os
 import sys
 import tempfile
@@ -72,10 +73,13 @@ def cmd_write(args: argparse.Namespace) -> int:
         return fail(f"the draft cannot be read as UTF-8 text ({type(exc).__name__})")
     try:
         data = json.loads(raw)
-    except ValueError:
-        return fail("the draft is not valid JSON")
+    except (ValueError, RecursionError):
+        return fail("the draft is not valid JSON or is nested too deeply")
     # Secrets first: a refusal message must never echo a draft value or key.
-    hits = secrets.find(data)
+    try:
+        hits = secrets.find(data)
+    except RecursionError:
+        return fail("the draft is nested too deeply")
     if hits:
         print("relay: draft refused, nothing written: possible secret(s) found "
               "(values not shown); remove them and retry:", file=sys.stderr)
@@ -103,7 +107,10 @@ def cmd_write(args: argparse.Namespace) -> int:
         for loc, name in hits:
             print(f"  - {loc}: {name}", file=sys.stderr)
         return 3
-    write_atomic(path, json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+    try:
+        write_atomic(path, json.dumps(state, indent=2, ensure_ascii=False) + "\n")
+    except (OSError, UnicodeEncodeError) as exc:  # e.g. a relay/ owned by another user, a lone surrogate
+        return fail(f"nothing written: the state cannot be stored ({type(exc).__name__})")
     print(f"relay: state written to {path} (mode 600)")
     print(render_verification(checks))
     return 0
@@ -134,14 +141,16 @@ def well_formed(state: object) -> bool:
 
 def cmd_show(args: argparse.Namespace) -> int:
     root = repo_root()
-    path = state_path(root) if root else None
-    if path is None:
+    if root is None:
         return fail("not inside a git repository")
-    if not path.is_file():
-        return fail(f"no state written yet ({path})", 1)
+    path = state_path(root)
+    if path is None:
+        return fail("cannot locate the git common directory")
     try:
+        if not path.is_file():
+            return fail(f"no state written yet ({path})", 1)
         state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return fail("the stored state is unreadable or malformed", 1)
     if not well_formed(state):
         return fail("the stored state is unreadable or malformed", 1)
@@ -156,13 +165,19 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_load(args: argparse.Namespace) -> int:
     """Present the last state re-verified now. Always exit 0 (hook path): problems are said."""
     root = repo_root()
-    path = state_path(root) if root else None
-    if root is None or path is None:
+    if root is None:
         print("relay: not inside a git repository, no resume state to load.")
         return 0
-    state, message = load.read_state(path)
+    state, message = load.read_state(state_path(root))
     print(message if state is None else load.present(state, root, args.budget))
     return 0
+
+
+def budget_seconds(text: str) -> float:
+    value = float(text)  # ValueError becomes an argparse error
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(text)
+    return value
 
 
 def main() -> int:
@@ -175,8 +190,8 @@ def main() -> int:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_show)
     ld = sub.add_parser("load", help="print the last state, re-verified now (always exit 0)")
-    ld.add_argument("--budget", type=float, default=verify.BUDGET,
-                    help="total seconds for the re-verification (default: BUDGET)")
+    ld.add_argument("--budget", type=budget_seconds, default=verify.BUDGET,
+                    help="total seconds, finite and >= 0, for the re-verification (default: BUDGET)")
     ld.set_defaults(fn=cmd_load)
     args = p.parse_args()
     return args.fn(args)

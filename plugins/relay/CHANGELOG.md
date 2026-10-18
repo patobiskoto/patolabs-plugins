@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.2.1 — 2026-10-18
+
+Closes the remarks deferred from the reviews of PAT-248 and PAT-249 (PAT-257). Behaviour
+changes, each with a test:
+
+- `load`: an unreadable state directory (`EACCES`) or a very deeply nested stored state is
+  said as unreadable, exit 0 (`show`: exit 1), instead of a traceback. An unreadable git
+  common directory is no longer reported as "no resume state" or "not inside a git
+  repository" (`NO_LOCATION`; `show`: exit 2).
+- `load`: a check that was non-ok at writing and is `ok` now is printed `[recovered]` and
+  counted in a new `R recovered` field of the summary line; the line format gains that field.
+- `load --budget`: `nan`, `inf` and negative values are refused (exit 2).
+- `write`: a failing store (`OSError`, lone surrogate), a deeply nested draft: exit 2 with
+  the exception type only, never a traceback. Ticket identifiers are matched with
+  `fullmatch` (a trailing newline is refused).
+- Session-start hook: a closed or broken output ends silently, exit 0. A command killed by
+  the budget now reports "verification time budget exhausted".
+- Tests: the hook manifest asserts `HOOK_DEADLINE_S + JOIN_MARGIN_S < timeout`; the
+  hanging-command, unfinished-thread and recorded-non-ok-absent-now paths are tested; the
+  known false negatives and false positives of the secret filter are fixed by tests.
+- Documentation: README wording of the summary line, of the budget (the two `git` calls
+  that locate the state are bounded by `TIMEOUT` only), of the budget details, and the
+  "Not covered" list of the secret filter; manifest and catalogue descriptions mention the
+  reload.
+
 ## 0.2.0 — 2026-10-18
 
 - Reload at session start (PAT-249): `relay_cli.py load [--budget SECONDS]` presents the
