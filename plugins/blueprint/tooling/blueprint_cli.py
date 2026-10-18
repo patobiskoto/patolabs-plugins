@@ -133,6 +133,10 @@ def cmd_decompile(args: argparse.Namespace) -> int:
         return fail("tooling not ready (missing " + ", ".join(missing) + "); run `setup` first", EXIT_NO_TOOLS)
     if args.entry is not None and not decompile.ADDRESS.fullmatch(args.entry):
         return fail(f"--entry must be one address like 0x0000b9fc, got {args.entry!r}")
+    if args.max < 1:
+        return fail(f"--max must be at least 1, got {args.max}")
+    if not (args.budget > 0 and args.budget != float("inf")):
+        return fail(f"--budget must be a positive number of seconds, got {args.budget}")
     inv = _load_json(args.inventory)
     try:
         gdoc = groups.build(inv)
@@ -143,8 +147,12 @@ def cmd_decompile(args: argparse.Namespace) -> int:
         an = _load_json(args.analysis)
         try:
             found = rebuild.detect_groups(an)
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, AttributeError):
             return fail(f"cannot read {args.analysis} as an analysis")
+        try:
+            decompile.check_target(Path(registry.canonical(args.target)), inv)
+        except (decompile.DecompileError, inventory.InventoryError) as exc:
+            return fail(f"decompile failed: {exc}", EXIT_FAILED)
         if args.group:
             group = found.get(args.group)
             if group is None:
@@ -163,12 +171,16 @@ def cmd_decompile(args: argparse.Namespace) -> int:
                                 maximum=args.max, budget=args.budget)
     except (decompile.DecompileError, inventory.InventoryError) as exc:
         return fail(f"decompile failed: {exc}", EXIT_FAILED)
+    except (KeyError, TypeError, AttributeError, ValueError):
+        if an is None:
+            raise
+        return fail(f"cannot read {args.analysis} as an analysis")
     doc["source"] = gdoc["source"]
     name = group["name"] if group else f"entry-{args.entry}"
     c = doc.get("candidates")
     if args.list:
         for e in (c or {}).get("listed", []):
-            print(f"{e['address']}  {e['method']}  {e['symbol']}")
+            print(f"{e['address']}  {e['method']}  {e['symbol']}" + (f"  [{e['caveat']}]" if e.get("caveat") else ""))
         print(f"blueprint: {(c or {}).get('total', 0)} candidate(s); nothing written"
               + (f" except {args.output}" if args.output else ""), file=sys.stderr)
         if args.output:
@@ -248,8 +260,8 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             return EXIT_USAGE
     try:
         doc = rebuild.build(_load_json(args.analysis), _load_json(args.inventory), scr)
-    except (ValueError, KeyError) as exc:
-        return fail(f"rebuild failed: {exc}")
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        return fail(f"rebuild failed: malformed analysis or inventory ({type(exc).__name__}: {exc})")
     text = inventory.render(doc)
     out = Path(args.output) if args.output else None
     if out:
@@ -271,6 +283,11 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
 def cmd_spec(args: argparse.Namespace) -> int:
     sp = _load_json(args.spec)
     docs = [_load_json(p) for p in args.evidence]
+    slices = spec.evidence_targets(*docs)
+    if len(slices) > 1:
+        print("blueprint: spec: the evidence files describe different targets (arm64 slice sha256: "
+              + ", ".join(x[:16] for x in sorted(slices)) + ")", file=sys.stderr)
+        return EXIT_USAGE
     known = spec.evidence_ids(*docs)
     errs = spec.check(sp, known, next((x for x in docs if isinstance(x, dict) and "coverage" in x and "resources" in x
                                        and "data_model" in x), None))

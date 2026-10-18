@@ -5,7 +5,7 @@ description: >
   one group of an authorised target with REA evidence. USE WHEN the user asks to group an
   inventory or decompile a screen or feature, or invokes /blueprint:decompile (Claude Code) or
   $blueprint:decompile (Codex).
-argument-hint: "<target> --inventory FILE (--group NAME | --entry ADDR) [--list] [--max N]"
+argument-hint: "<target> --inventory FILE (--group NAME | --entry ADDR) [--analysis FILE] [--list] [--max N] [--budget SECONDS]"
 allowed-tools: Bash(python3:*)
 ---
 
@@ -35,10 +35,14 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 
 Once `blueprint:rebuild` has produced an analysis (`analyze`), add `--analysis <analysis.json>` to either command:
 the pseudo-code is read from it, no Ghidra or REA process runs, and the evidence is Ghidra's (slice sha256 and address).
+The target's bytes are still compared with the inventory (exit 5 on a difference). `--max` is at least 1 and `--budget` a
+positive number of seconds (exit 2 otherwise).
 
 The command refuses (exit 3) a target absent from the registry: report the refusal and stop; do
 not add the target yourself. Exit 4: run `blueprint:setup`. Exit 5: the target is not the one the
-inventory describes, or REA failed. A `status: unknown` entry or an `unknown_parts` key says why
+inventory describes, REA or Ghidra failed, or nothing was decompiled (every entry is `unknown`; read the reasons printed).
+A candidate with a `caveat` (the allocating initialiser of a class or a non-generic async function) decompiles to an intermediate only: say so
+when you cite it, and prefer the function that holds the body. A `status: unknown` entry or an `unknown_parts` key says why
 something was not read: report it as unknown, never as empty. The pseudo-code is Ghidra output with
 mangled Swift names, not source. REA evidence stays on the machine except what you send to the
 model of this session under the maintainer's account.

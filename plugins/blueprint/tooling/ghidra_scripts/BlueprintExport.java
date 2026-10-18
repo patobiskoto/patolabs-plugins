@@ -70,7 +70,8 @@ public class BlueprintExport extends GhidraScript {
     }
 
     // Readable form of a Swift mangled type name: a direct symbolic reference (0x01) to a type descriptor becomes the
-    // descriptor's name; any other symbolic reference stays visible as <ref:0xNN>.
+    // descriptor's name; any other symbolic reference stays visible as <ref:0xNN>. Marker bytes 0x01..0x17 are followed by a
+    // 4-byte relative offset, 0x18..0x1f by an 8-byte absolute pointer (Swift ABI, deduced; not observed on a target).
     private String mangled(Address a) throws MemoryAccessException {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < 512; ) {
@@ -81,9 +82,12 @@ public class BlueprintExport extends GhidraScript {
                 String n = d == null ? null : cstrOrNull(rel(d.add(8)));
                 b.append(n == null ? "<ref:0x01>" : "[" + n + "]");
                 i += 5;
-            } else if (c >= 0x02 && c <= 0x1f) {
+            } else if (c >= 0x02 && c <= 0x17) {
                 b.append("<ref:0x").append(String.format("%02x", c)).append(">");
                 i += 5;
+            } else if (c >= 0x18 && c <= 0x1f) {
+                b.append("<ref:0x").append(String.format("%02x", c)).append(">");
+                i += 9;
             } else {
                 b.append((char) c);
                 i++;
@@ -97,11 +101,13 @@ public class BlueprintExport extends GhidraScript {
     }
 
     // One __swift5_types slot: a relative pointer to a type context descriptor
-    // (flags, parent, name, access function, fields). Kinds: 16 class, 17 struct, 18 enum.
+    // (flags, parent, name, access function, fields). Kinds: 16 class, 17 struct, 18 enum. The two low bits of the slot
+    // are the record kind (0 direct type descriptor; 1 indirect descriptor, 2 Objective-C class name, 3 indirect
+    // Objective-C class, Swift ABI, deduced): only kind 0 is read, the others are skipped.
     private String swiftType(Address slot) {
         try {
             int raw = currentProgram.getMemory().getInt(slot);
-            if (raw == 0 || (raw & 1) != 0) return null;
+            if (raw == 0 || (raw & 3) != 0) return null;
             Address d = slot.add(raw);
             int flags = currentProgram.getMemory().getInt(d);
             int kind = flags & 0x1f;
@@ -139,10 +145,12 @@ public class BlueprintExport extends GhidraScript {
 
     private static final Pattern STRING_CALL =
         Pattern.compile("builtinStringLiteral\\w*\\s*\\(\\s*(\\w+)\\s*,\\s*(0x[0-9a-fA-F]+|\\d+)");
-    private static final Pattern LABEL_ADDRESS = Pattern.compile("_([0-9a-fA-F]{8})$");
+    private static final Pattern LABEL_ADDRESS = Pattern.compile("_([0-9a-fA-F]{8,16})$");
 
     // The decompiler prints a non-ASCII string literal as a label (`s_<text>_<address>`), not as text. For each such
-    // argument of Swift's string-literal builder, read the UTF-8 bytes at that address (length from the call).
+    // argument of Swift's string-literal builder, read the UTF-8 bytes at that address (length from the call). The
+    // address is 8 hex digits in the observed Debug build (loaded at 0); 8 to 16 digits are accepted so that an image
+    // loaded at 0x100000000 (a Release executable) is not skipped (deduced from the Ghidra label format, untried).
     private String literals(String code) {
         StringBuilder b = new StringBuilder();
         Matcher m = STRING_CALL.matcher(code);
@@ -302,6 +310,20 @@ public class BlueprintExport extends GhidraScript {
         return w ? (val[r] & 0xffffffffL) : val[r];
     }
 
+    // Forget every register the instruction writes (all of its result objects: a second loaded register, the status register
+    // of an exclusive store, a written-back base register), except the floating-point register `keepFp` (-1: none).
+    private void forgetResults(Instruction in, int keepFp) {
+        for (Object o : in.getResultObjects()) {
+            int fr = fpNumber(o);
+            if (fr >= 0) {
+                if (fr != keepFp) fknown[fr] = false;
+                continue;
+            }
+            int rn = regNumber(o);
+            if (rn >= 0) { known[rn] = false; spOff[rn] = null; }
+        }
+    }
+
     // Floating-point instruction effect on d/s registers (fmov from immediate, general register, register or zero;
     // movi zero; ldr from a read-only constant pool at a known address). Returns true when the instruction was one of them.
     private boolean floatMove(Instruction in) {
@@ -343,6 +365,7 @@ public class BlueprintExport extends GhidraScript {
                 }
             }
         }
+        forgetResults(in, d);  // `ldp d0, d1, ...` writes d1 too; a pre/post-indexed load writes its base register
         fknown[d] = v != null;
         if (v != null) { fval[d] = v; fbits[d] = bits; }
         return true;
@@ -376,7 +399,8 @@ public class BlueprintExport extends GhidraScript {
     // from frame-pointer slots (`[x29, #imm]`) and stores of constants to the outgoing stack-argument area (after a
     // `sub sp, sp, #imm`). Everything known is dropped at an instruction another instruction jumps or branches to and
     // after an unconditional jump or a return; the registers x0..x18, x30, d0..d7 and d16..d31 are dropped after a call.
-    // Frame slots are dropped for good once an `add`/`sub` forms the address of the frame or stack pointer.
+    // Frame slots are dropped for good once an `add`/`sub` forms the address of the frame or stack pointer, or a `mov` copies
+    // x29 into another register. Every register an instruction writes is forgotten when the walk does not model it.
     // Result: [constructor call sites (only when `ctor`), calls with floating-point constants (up to MAX_FLOAT_CALLS)].
     private String[] walk(Function f, boolean ctor) {
         StringBuilder sites = new StringBuilder(), floats = new StringBuilder();
@@ -467,6 +491,7 @@ public class BlueprintExport extends GhidraScript {
                 outArgs.clear();
                 Scalar sc = in.getNumOperands() == 3 ? in.getScalar(2) : null;
                 outArgsSize = m.equals("sub") && sc != null ? sc.getUnsignedValue() : -1;
+                forgetResults(in, -1);  // `ldp x19, x20, [sp], #32` also writes x19 and x20
                 continue;
             }
             // Stores and loads through the frame pointer or the stack area.
@@ -480,7 +505,9 @@ public class BlueprintExport extends GhidraScript {
                     boolean plain = m.equals("str") || m.equals("stur") || m.equals("stp") || m.equals("strb") || m.equals("strh");
                     int count = m.equals("stp") ? 2 : 1;
                     if (fp && !plain) slot.clear();
-                    for (int i = 0; i < count && (fp || stk); i++) {
+                    if (stk && !plain) outArgs.clear();
+                    // Only the plain stores record a value: operand 0 of `stxr` is its status register, not a stored value.
+                    for (int i = 0; plain && i < count && (fp || stk); i++) {
                         Object[] so = in.getOpObjects(i);
                         boolean isReg = so.length == 1 && so[0] instanceof Register;
                         int w = !isReg ? 64 : m.equals("strb") ? 8 : m.equals("strh") ? 16 : ((Register) so[0]).getBitLength() <= 32 ? 32 : 64;
@@ -499,6 +526,7 @@ public class BlueprintExport extends GhidraScript {
                             if (v != null) outArgs.put(o2, new long[] {v, w});
                         }
                     }
+                    forgetResults(in, -1);  // `stxr` writes its status register; `str x0, [x1], #8` writes back x1
                     continue;
                 }
                 if (m.startsWith("ld") && mo != null && mo[0] == 29 && !escaped
@@ -522,9 +550,18 @@ public class BlueprintExport extends GhidraScript {
             }
             if (floatMove(in)) continue;
             Long v = moved(in, addr);
-            // `mov xN, sp` / `add xN, sp, #k`: xN designates the stack-argument area.
+            // `mov xN, sp`: xN designates the stack-argument area (its stores are recorded as outgoing arguments); `add xN, sp, #k`
+            // is not tracked (xN is forgotten). `mov xN, x29` (the alias of `add xN, x29, #0`) leaks the address of the frame
+            // slots, like the `add`/`sub` rule below. `mov xN, sp` is not treated as a leak although a pointer derived from sp
+            // could reach a frame slot (deduced, not observed): doing so dropped a correct constant (`x6` = 0, stored then
+            // reloaded) in six one-time initialisers of the 2026-10-18 target, whose function copies sp for a dynamic allocation.
             Long newSp = null;
-            if (m.equals("mov") && in.getNumOperands() == 2 && in.getOpObjects(1).length == 1 && isSp(in.getOpObjects(1)[0])) newSp = 0L;
+            boolean copiesFrame = false;
+            if (m.equals("mov") && in.getNumOperands() == 2 && in.getOpObjects(1).length == 1) {
+                Object src = in.getOpObjects(1)[0];
+                if (isSp(src)) newSp = 0L;
+                else if (regNumber(src) == 29) copiesFrame = true;
+            }
             boolean writesOther = false;
             for (Object o : in.getResultObjects()) {
                 int fr = fpNumber(o);
@@ -532,6 +569,7 @@ public class BlueprintExport extends GhidraScript {
                 int rn = regNumber(o);
                 if (rn < 0) continue;
                 if (rn != 29) writesOther = true;
+                if (copiesFrame && rn != 29) { escaped = true; slot.clear(); }
                 boolean w = ((Register) o).getBitLength() <= 32;
                 spOff[rn] = newSp;
                 if (v != null) {

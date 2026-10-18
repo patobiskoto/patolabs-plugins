@@ -1,8 +1,10 @@
 """Rebuild-grade analysis: measured coverage, constants, persistent data model, resources, screens (PAT-260).
 
 Offline: reads the analysis document (`analysis.build`), the inventory and, optionally, the normalised screens document
-(`screens.build`). Nothing is launched. Every number is a count over what those files hold; what they do not hold is
-listed in `coverage.not_covered`, never silently dropped.
+(`screens.build`). Nothing is launched. Every number is a count over what those files hold. What they do not hold is
+stated where it matters: `coverage.not_covered` for the measured gaps, `unknown` on the item or section concerned
+(asset catalogue contents, model constraints and relationships, navigation, a constant's value, a resource's usage) and
+`unknown_parts` of the sections; a list that `rebuild` cuts says so (`usage_truncated`).
 """
 from __future__ import annotations
 
@@ -111,6 +113,9 @@ def coverage(an: dict, found: dict[str, dict], scr: dict | None, consts: dict, r
     unk_res = sum(1 for r in res["items"] if r["usage"] == "unknown")
     if unk_res:
         nc.append(f"{unk_res} bundle file(s) with an unknown usage")
+    cut_res = sum(1 for r in res["items"] if r.get("usage_truncated"))
+    if cut_res:
+        nc.append(f"{cut_res} bundle file(s) with more matching strings than the {resources.MAX_USAGE} listed under `usage`")
     nc.append("static analysis only: behaviour, timings at run time and navigation are not observed unless a screen "
               "capture says so")
     for k, why in an["unknown_parts"].items():
@@ -169,13 +174,14 @@ def data_model(an: dict) -> dict:
 
 def resource_section(an: dict, inv: dict) -> dict:
     files = resources.files(inv)
-    matches = resources.string_matches(inv)
+    matches = resources.string_matches(inv, None)
     xr = {x["address"]: x["functions"] for x in an["xrefs"]}
     sha = an["source"]["arm64_sha256"]
     items = []
     for f in files:
         usage = []
-        for s in matches.get(f["path"], []):
+        hits = matches.get(f["path"], [])
+        for s in hits[:resources.MAX_USAGE]:
             addr = s["evidence"].get("address")
             refs = xr.get(addr) or []
             usage.append({"string": s["value"], "string_address": addr,
@@ -184,6 +190,7 @@ def resource_section(an: dict, inv: dict) -> dict:
                                               for r in refs],
                           "evidence": s["evidence"]})
         items.append({**f, "kind": resources.kind_of(f["path"]), "usage": usage or "unknown",
+                      "usage_strings_total": len(hits), "usage_truncated": len(hits) > resources.MAX_USAGE,
                       "usage_basis": "a binary string equals the file name or stem (name match, not proof of use)",
                       "evidence_id": resources.evidence_id(f["sha256"])})
     unknown_parts = {}

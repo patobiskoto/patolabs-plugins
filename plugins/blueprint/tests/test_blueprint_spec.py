@@ -375,7 +375,7 @@ class SpecTest(Base):
     def test_cli_to_foundry_writes_payloads_prints_commands_and_never_calls_anything(self):
         sp, inv = self._files()
         out = self.tmp / "pl"
-        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.run") as sub:
+        with mock.patch.object(inventory.proc, "run") as run, mock.patch("subprocess.Popen") as sub:
             rc, stdout, _ = cli("spec", "to-foundry", str(sp), str(inv), "--output", str(out))
             self.assertEqual(rc, 0)
             self.assertEqual(sorted(p.name for p in out.iterdir()), ["epic.json"])

@@ -16,6 +16,7 @@ from . import inventory, paths, pins, proc, rebuild
 FORMAT = 1
 MAX_CODE_CHARS = 30000
 ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
+MAX_LISTED = 200  # candidates written under `candidates.listed`; `candidates.total` counts all of them
 
 
 # Swift Observation macro boilerplate and accessor coroutines that also end in `F`.
@@ -25,6 +26,38 @@ BOILERPLATE_MARKERS = ("$defer", ".resume.")
 
 class DecompileError(Exception):
     pass
+
+
+def caveat(symbol: str, kind: str | None) -> str | None:
+    """A candidate whose decompilation is an intermediate (observed in the PAT-253 trial): the allocating initialiser
+    of a class (`fC` after the kind letter `C`) only allocates and calls the initialiser `fc`, an async function (`YaF`,
+    static `YaFZ`; `async throws`: `YaKF`, `YaKFZ`, deduced from the Swift mangling) only switches to its partial functions (`TY0_`...). Neither `fc` nor the partial functions are listed
+    as candidates. A struct or enum initialiser (kind `V`, `O`) is a value-type `fC` with no `fc`: its body is in itself,
+    and `kind` None (a member of an extension of another module's type) gives no initialiser caveat either."""
+    if symbol.endswith("fC") and kind == "C":
+        return "allocating initialiser: the body is in the `fc` initialiser, which is not a candidate"
+    if symbol.endswith(("YaF", "YaFZ", "YaKF", "YaKFZ")):
+        return "async function: the body is in partial functions (`TY0_`), which are not candidates"
+    return None
+
+
+def _candidate(address: str, symbol: str, method: str, cls: str | None, kind: str | None = None) -> dict:
+    c = {"address": address, "symbol": symbol, "method": method, "class": cls}
+    note = caveat(symbol, kind)
+    return {**c, "caveat": note} if note else c
+
+
+def candidates_summary(candidates: list[dict], chosen: list[dict]) -> dict:
+    return {"total": len(candidates), "listed": candidates[:MAX_LISTED], "listed_truncated": len(candidates) > MAX_LISTED,
+            "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}
+
+
+def check_target(target: Path, inv: dict) -> None:
+    """The target's own bytes are those the inventory was made from (sha256 of the analysed binary), without launching a
+    tool: the check `decompile --analysis` does instead of `slice_for`, which also thins the binary."""
+    binary, _, _, _ = inventory.locate_binary(target)
+    if inventory.sha256_file(binary) != inv["target"].get("sha256"):
+        raise DecompileError("the target is not the one this inventory was made from (sha256 differs)")
 
 
 def slice_for(target: Path, inv: dict, data: Path, runner=proc.run) -> Path:
@@ -51,7 +84,8 @@ def entry_points(rows: list, module: str, classes: list[str]) -> list[dict]:
     prefixes = {f"_$s{len(module)}{module}{len(c)}{c}C": c for c in classes}
     out, seen = [], set()
     for r in rows:
-        if not isinstance(r, dict) or not isinstance(r.get("value"), str) or not isinstance(r.get("address"), str):
+        if not isinstance(r, dict) or not isinstance(r.get("value"), str) or not isinstance(r.get("address"), str) \
+                or not ADDRESS.fullmatch(r["address"]):
             continue
         v = r["value"]
         pre = next((p for p in prefixes if v.startswith(p)), None)
@@ -66,14 +100,13 @@ def entry_points(rows: list, module: str, classes: list[str]) -> list[dict]:
         if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
             continue
         seen.add(r["address"])
-        out.append({"address": r["address"], "symbol": v, "method": method,
-                    "class": prefixes[pre]})
+        out.append(_candidate(r["address"], v, method, prefixes[pre], "C"))  # the search prefix ends with the class letter `C`
     return sorted(out, key=lambda e: (int(e["address"], 16), e["symbol"]))
 
 
 def _evidence(doc: dict, address: str | None) -> dict:
-    return {"rea_evidence_id": doc.get("evidence_id"),
-            "target_sha256": (doc.get("subject") or {}).get("digest", {}).get("sha256"), "address": address}
+    return {"rea_evidence_id": doc.get("evidence_id"), "target_sha256": inventory.subject_sha256(doc),
+            "address": address}
 
 
 def search_group(rea: inventory.Rea, sl: Path, group: dict,
@@ -120,8 +153,7 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
         if why:
             doc["unknown_parts"]["entry_points"] = why
         chosen = candidates[:maximum]
-        doc["candidates"] = {"total": len(candidates), "listed": candidates[:200],
-                             "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}
+        doc["candidates"] = candidates_summary(candidates, chosen)
     if list_only:
         return doc
     for c in chosen:
@@ -135,8 +167,9 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
     return doc
 
 
-# Getters (a SwiftUI view's `body` and its sections) and the closures of a `body`, where the interface of a
-# SwiftUI screen is built; property-wrapper storage (State, Binding, Environment, Query) and key paths are left out.
+# Every getter (`vg`: a SwiftUI view's `body`, its sections, computed and private stored getters) and the closures of a
+# `body`, where the interface of a SwiftUI screen is built; a getter whose demangled text mentions a property wrapper
+# (State, Binding, Environment, Query) or a key path is left out (`_view_code`).
 _WRAPPERS = ("SwiftUI.State<", "SwiftUI.Binding<", "SwiftUI.Environment<", "SwiftUI.LazyState<",
              "_SwiftData_SwiftUI.Query<", "key path ")
 
@@ -165,22 +198,21 @@ def analysis_entry_points(an: dict, group_name: str) -> list[dict]:
                 stems = sorted(n for n, g in rebuild.detect_groups(an).items() if not g.get("extension_only"))
             if rebuild.extension_group(e, stems) == group_name and e["extension"].get("member") and (
                     sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
-                out.append({"address": e["address"], "symbol": sym, "method": e["extension"]["member"],
-                            "class": e["extension"].get("extended_type")})
+                out.append(_candidate(e["address"], sym, e["extension"]["member"], e["extension"].get("extended_type")))
             continue
         r = groups_mod.role_of(owner) if owner else None
         if not r or r[0] != group_name:
             continue
         sym = e["symbol"]
         # A private type carries its scope discriminator (`33_<hash>LL`) between its name and its kind letter.
-        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?[A-Z](\d+)", sym)
+        m = re.search(re.escape(f"{len(owner)}{owner}") + r"(?:33_[0-9A-F]{32}LL)?([A-Z])(\d+)", sym)
         if not m or not (sym.endswith(("F", "FZ", "fC")) or _view_code(sym, e.get("demangled") or "")):
             continue
         rest = sym[m.start():]
-        method = sym[m.end(): m.end() + int(m.group(1))]
+        method = sym[m.end(): m.end() + int(m.group(2))]
         if method in BOILERPLATE_METHODS or any(x in rest for x in BOILERPLATE_MARKERS):
             continue
-        out.append({"address": e["address"], "symbol": sym, "method": method, "class": owner})
+        out.append(_candidate(e["address"], sym, method, owner, m.group(1)))
     return sorted(out, key=lambda c: (int(c["address"], 16), c["symbol"]))
 
 
@@ -200,8 +232,7 @@ def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None,
     else:
         candidates = analysis_entry_points(an, group["name"])
         chosen = candidates[:maximum]
-        doc["candidates"] = {"total": len(candidates), "listed": candidates[:200],
-                             "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}
+        doc["candidates"] = candidates_summary(candidates, chosen)
     if list_only:
         return doc
     for c in chosen:
