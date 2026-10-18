@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import report
+from . import navigation, report
 
 SCHEMA = "witness-compare.v1"
 
@@ -13,33 +13,62 @@ class Incomparable(Exception):
     pass
 
 
+def platform(r: dict) -> str:
+    return r.get("platform", "ios")  # a 0.1.0 report has no platform field and is an iOS proof
+
+
+def nav_identity(r: dict) -> str:
+    """iOS: mechanism and navigation file sha256 (or none); web: the URL path and query."""
+    nav = r.get("navigation")
+    if platform(r) == "web":
+        return f"web:{nav['path']}"
+    return navigation.identity(nav)
+
+
 def load(path: Path) -> dict:
     try:
         r = json.loads(path.read_text(encoding="utf-8"))
         assert r["schema"] == report.SCHEMA
-        r["simulator"]["udid"], r["simulator"]["runtime"], r["start_state"]["mode"], r["start_state"]["tests_selection"]
-        r["checkout"]["commit"], r["scheme"], r["outcome"]
+        r["start_state"]["mode"], r["start_state"]["tests_selection"], r["checkout"]["commit"], r["outcome"]
+        if platform(r) == "web":
+            r["browser"]["version"], r["viewport"], r["navigation"]["path"]
+        else:
+            assert platform(r) == "ios"
+            r["simulator"]["udid"], r["simulator"]["runtime"], r["scheme"]
     except (OSError, ValueError, KeyError, TypeError, AssertionError):
         raise Incomparable(f"{path} is not a readable {report.SCHEMA} report") from None
     return r
 
 
 def check(before: dict, after: dict) -> None:
-    """Compared sets: simulator udid, runtime, scheme and starting state (mode, description, tests selection)."""
+    """Compared sets: platform; navigation identity; then iOS: simulator udid, runtime, scheme and starting
+    state (mode, description, tests selection); web: viewport and browser version."""
+    if platform(before) != platform(after):
+        raise Incomparable(f"platform differs: {platform(before)!r} vs {platform(after)!r}")
     problems = []
-    for key in ("udid", "runtime"):
-        if before["simulator"][key] != after["simulator"][key]:
-            problems.append(f"simulator {key} differs: {before['simulator'][key]!r} vs {after['simulator'][key]!r}")
-    if before["scheme"] != after["scheme"]:
-        problems.append("scheme differs")
+    if nav_identity(before) != nav_identity(after):
+        problems.append(f"navigation differs: {nav_identity(before)!r} vs {nav_identity(after)!r}")
     bs, a_s = before["start_state"], after["start_state"]
-    if "unspecified" in (bs["mode"], a_s["mode"]):
-        problems.append("a proof has no declared starting state (use --reset or --state-description)")
-    elif (bs["mode"], bs.get("description")) != (a_s["mode"], a_s.get("description")):
-        problems.append(f"starting state differs: {bs} vs {a_s}")
-    if bs["tests_selection"] != a_s["tests_selection"]:
-        problems.append(f"tests selection differs: {bs['tests_selection']!r} vs {a_s['tests_selection']!r}"
-                        " (a test run can install and launch the app after the reset)")
+    if platform(before) == "web":
+        for key in ("viewport",):
+            if before[key] != after[key]:
+                problems.append(f"{key} differs: {before[key]!r} vs {after[key]!r}")
+        bv, av = before["browser"]["version"], after["browser"]["version"]
+        if bv != av:
+            problems.append(f"browser version differs: {bv!r} vs {av!r}")
+    else:
+        for key in ("udid", "runtime"):
+            if before["simulator"][key] != after["simulator"][key]:
+                problems.append(f"simulator {key} differs: {before['simulator'][key]!r} vs {after['simulator'][key]!r}")
+        if before["scheme"] != after["scheme"]:
+            problems.append("scheme differs")
+        if "unspecified" in (bs["mode"], a_s["mode"]):
+            problems.append("a proof has no declared starting state (use --reset or --state-description)")
+        elif (bs["mode"], bs.get("description")) != (a_s["mode"], a_s.get("description")):
+            problems.append(f"starting state differs: {bs} vs {a_s}")
+        if bs["tests_selection"] != a_s["tests_selection"]:
+            problems.append(f"tests selection differs: {bs['tests_selection']!r} vs {a_s['tests_selection']!r}"
+                            " (a test run can install and launch the app after the reset)")
     for name, r in (("before", before), ("after", after)):
         if not r.get("paths", {}).get("screenshot"):
             problems.append(f"the {name} proof has no screenshot (outcome: {r['outcome']})")
@@ -56,8 +85,11 @@ def build(before: dict, after: dict) -> dict:
     for name, r in (("before", before), ("after", after)):
         if r["checkout"]["dirty"] is not False:
             notes.append(f"the {name} checkout was dirty or its state is unknown: the commit alone does not identify the build")
+    target = ({"browser": after["browser"], "viewport": after["viewport"], "url_path": after["navigation"]["path"]}
+              if platform(after) == "web" else {"simulator": after["simulator"]})
     return {
-        "schema": SCHEMA, "simulator": after["simulator"], "start_state": after["start_state"],
+        "schema": SCHEMA, "platform": platform(after), **target, "navigation": nav_identity(after),
+        "start_state": after["start_state"],
         "before": _side(before), "after": _side(after),
         "screenshots_identical": same, "notes": notes,
         "token_cost": report.TOKEN_COST_UNKNOWN,
@@ -71,9 +103,15 @@ def _side(r: dict) -> dict:
 
 
 def markdown(c: dict) -> str:
-    sim, st = c["simulator"], c["start_state"]
-    lines = ["# witness before/after", "",
-             f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}",
+    st = c["start_state"]
+    if c["platform"] == "web":
+        where = (f"- Browser: {c['browser']['version']} (profile: {c['browser']['profile']}), viewport "
+                 f"{c['viewport']}, URL path `{c['url_path']}`")
+    else:
+        sim = c["simulator"]
+        where = f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}"
+    lines = ["# witness before/after", "", f"- Platform: {c['platform']}", where,
+             f"- Shared navigation: `{c['navigation']}`",
              f"- Shared starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else "")
              + f" (tests: {st['tests_selection']})",
              f"- Screenshots pixel-identical (sha256): {c['screenshots_identical']}",

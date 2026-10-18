@@ -16,14 +16,29 @@ def write(report: dict, out: Path, stem: str) -> tuple[Path, Path]:
 
 
 def markdown(r: dict) -> str:
-    sim, co, st = r["simulator"], r["checkout"], r["start_state"]
+    co, st, nav = r["checkout"], r["start_state"], r.get("navigation")
+    web = r.get("platform") == "web"
     lines = [
         f"# witness proof: {r['label']}", "",
         f"- Generated (UTC): {r['generated_at']}",
+        f"- Platform: {r.get('platform', 'ios')}",
         f"- Outcome: {r['outcome']}",
-        f"- Project: `{r['project']}` (scheme `{r['scheme']}`, {co['kind']})",
+        (f"- Project: `{r['project']}` ({co['kind']})" if web else
+         f"- Project: `{r['project']}` (scheme `{r['scheme']}`, {co['kind']})"),
         f"- Commit: `{co['commit']}` (dirty: {co['dirty']})",
-        f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}",
+    ]
+    if web:
+        b = r["browser"]
+        lines += [f"- URL: `{r['url']}`", f"- Browser: `{b['path']}` {b['version']} (profile: {b['profile']})",
+                  f"- Viewport: {r['viewport']}"]
+    else:
+        sim = r["simulator"]
+        lines.append(f"- Simulator: {sim['name']} `{sim['udid']}`, {sim['runtime']}")
+    if nav and not web:
+        what = nav.get("url") or nav.get("test")
+        lines.append(f"- Navigation: {nav['mechanism']} `{what}` to screen {nav['screen']!r} "
+                     f"(file sha256 `{nav['sha256']}`; the screen is declared, not verified)")
+    lines += [
         f"- Starting state: {st['mode']}" + (f" - {st['description']}" if st.get("description") else ""),
         (f"- Tests: {r['tests']['result']} (executed: {r['tests'].get('executed', 'unknown')}, "
          f"failures: {r['tests'].get('failures', 'unknown')})"),

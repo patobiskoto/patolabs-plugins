@@ -31,7 +31,7 @@
     {
       "name": "witness",
       "source": "./plugins/witness",
-      "description": "Proves a change of an iOS app in the simulator with xcodebuild and xcrun simctl only: tests, install, launch, screenshot and a dated report; before/after comparison."
+      "description": "Proves a change of an iOS app in the simulator (xcodebuild and xcrun simctl only, scripted navigation by deep link or UI test) or of a local web page in a headless Chromium-family browser: tests, install, launch, screenshot and a dated report; before/after comparison."
     }
   ]
 }

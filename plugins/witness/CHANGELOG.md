@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-18
+
+- PAT-255: scripted navigation and web. `prove --navigation FILE.json` reaches a screen by a versioned
+  deep link (`xcrun simctl openurl`) or a caller-provided UI test (`xcodebuild test -only-testing`, screenshot
+  extracted from the `.xcresult` with `xcrun xcresulttool export attachments`) before the capture. New verb `web`
+  screenshots a local page (`localhost` / `127.0.0.1` only) in a headless Chromium-family browser with a fresh
+  temporary profile, the same command line under Claude Code and Codex (`WITNESS_BROWSER` or known install
+  paths; no agent-host browser tool). Reports gain `platform` and `navigation`; `compare` also refuses
+  proofs of different platform, navigation (file hash or URL path), viewport or browser version. New skill
+  `witness:web`. Real trials per platform are recorded by the coordinator, with unknowns stated.
+
 ## 0.1.0 — 2026-10-18
 
 - PAT-254: first brick. `witness_cli.py prove` resolves a simulator name to a UDID, optionally erases it

@@ -122,3 +122,8 @@ def screenshot(udid: str, path: Path) -> None:
     _must(["io", udid, "screenshot", str(path)], TIMEOUT_SCREENSHOT)
     if not path.is_file() or path.stat().st_size == 0:
         raise SimulatorError("simctl reported success but the screenshot file is missing or empty")
+
+
+def open_url(udid: str, url: str) -> None:
+    """Deep link into the booted simulator (`simctl openurl`)."""
+    _must(["openurl", udid, url], TIMEOUT_CONTROL)

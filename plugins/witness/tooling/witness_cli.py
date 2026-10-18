@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""witness: prove a change of an iOS app in the simulator with xcodebuild and xcrun simctl only (PAT-254)."""
+"""witness: prove a change of an iOS app in the simulator (xcodebuild, xcrun simctl) or of a local web page
+in a headless Chromium-family browser, with a screenshot and a dated report (PAT-254, PAT-255)."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from witness import checkout, compare, prove, simulator
+from witness import checkout, compare, navigation, prove, simulator, web
 
 EXIT_USAGE, EXIT_REFUSED, EXIT_FAILED, EXIT_TESTS_FAILED = 2, 3, 5, 6
 
@@ -23,15 +24,35 @@ def fail(msg: str, code: int) -> int:
 def cmd_prove(args: argparse.Namespace) -> int:
     if args.reset and args.state_description:
         return fail("--reset and --state-description are exclusive", EXIT_USAGE)
+    nav = None
+    if args.navigation:
+        try:
+            nav = navigation.load(Path(args.navigation))
+        except navigation.NavigationError as exc:
+            return fail(f"refused: {exc}", EXIT_REFUSED)
+        if nav["mechanism"] == "uitest" and (args.skip_tests or args.test_plan or args.only_testing):
+            return fail("a uitest navigation is itself the test run: drop --skip-tests, --test-plan, --only-testing",
+                        EXIT_USAGE)
     try:
         rep, j, m, code = prove.prove(
             project=Path(args.project), scheme=args.scheme, sim_name=args.simulator,
             runtime=args.runtime, label=args.label, out=Path(args.out) if args.out else None,
             skip_tests=args.skip_tests, test_plan=args.test_plan, only=args.only_testing,
-            reset=args.reset, state_description=args.state_description)
+            reset=args.reset, state_description=args.state_description, nav=nav)
     except (checkout.Refused, simulator.SimulatorError) as exc:
         return fail(f"refused: {exc}", EXIT_REFUSED)
     print(f"witness: {rep['outcome']} on {rep['simulator']['name']} {rep['simulator']['udid']}")
+    print(f"report: {j}\nreport: {m}")
+    return code
+
+
+def cmd_web(args: argparse.Namespace) -> int:
+    try:
+        rep, j, m, code = web.prove_web(project=Path(args.project), url=args.url, viewport=args.viewport,
+                                        label=args.label, out=Path(args.out) if args.out else None)
+    except (checkout.Refused, web.WebRefused) as exc:
+        return fail(f"refused: {exc}", EXIT_REFUSED)
+    print(f"witness: {rep['outcome']} at {rep['url']} in {rep['browser']['path']}")
     print(f"report: {j}\nreport: {m}")
     return code
 
@@ -66,9 +87,17 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--skip-tests", action="store_true")
     pr.add_argument("--test-plan")
     pr.add_argument("--only-testing", action="append", default=[], metavar="TARGET[/CLASS[/TEST]]")
+    pr.add_argument("--navigation", help="versioned navigation JSON (deeplink or uitest) reaching the screen to capture")
     pr.add_argument("--reset", action="store_true", help="simctl erase the (shut down) simulator first")
     pr.add_argument("--state-description", help="describe the starting state instead of resetting")
     pr.set_defaults(fn=cmd_prove)
+    wp = sub.add_parser("web", help="screenshot a local web page in a headless browser with a fresh profile")
+    wp.add_argument("--project", required=True, help="directory of the web app, in a linked worktree or outside git")
+    wp.add_argument("--url", required=True, help="http://localhost[:port]/path or http://127.0.0.1[:port]/path only")
+    wp.add_argument("--viewport", default=web.DEFAULT_VIEWPORT, help="WIDTHxHEIGHT (default %(default)s)")
+    wp.add_argument("--label", default="proof")
+    wp.add_argument("--out")
+    wp.set_defaults(fn=cmd_web)
     cp = sub.add_parser("compare", help="compare a before and an after proof report")
     cp.add_argument("--before", required=True)
     cp.add_argument("--after", required=True)
