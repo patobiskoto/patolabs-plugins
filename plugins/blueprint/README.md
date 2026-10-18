@@ -4,8 +4,10 @@ Reverse-engineering inventory for Claude Code and Codex, restricted to targets t
 maintainer authorised. It prepares pinned REA, Ghidra and JDK in its own data directory
 (never globally), refuses any target absent from a registry, and writes a reproducible
 inventory with REA evidence, groups it into candidate screens and features, decompiles the entry
-points of one group, and turns a product-language specification into Foundry payloads.
-Stdlib-only Python. Version 0.2.0 (PAT-252, PAT-253, decisions of PAT-181).
+points of one group, runs one Ghidra analysis reused by every decompilation, measures coverage and extracts
+constants, the persistent data model, bundle resources and screens (PAT-260), and turns a
+product-language specification into Foundry payloads.
+Stdlib-only Python. Version 0.3.0 (PAT-252, PAT-253, PAT-260, decisions of PAT-181).
 
 ```
 python3 plugins/blueprint/tooling/blueprint_cli.py setup [--plan|--yes]
@@ -13,18 +15,22 @@ python3 plugins/blueprint/tooling/blueprint_cli.py targets add <target> --reason
 python3 plugins/blueprint/tooling/blueprint_cli.py targets list
 python3 plugins/blueprint/tooling/blueprint_cli.py inventory <target> [--output FILE]
 python3 plugins/blueprint/tooling/blueprint_cli.py groups <inventory.json> [--output FILE]
-python3 plugins/blueprint/tooling/blueprint_cli.py decompile <target> --inventory FILE (--group NAME | --entry ADDR) [--list] [--max N] [--budget SECONDS] [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py decompile <target> --inventory FILE (--group NAME | --entry ADDR) [--analysis FILE] [--list] [--max N] [--budget SECONDS] [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py analyze <target> --inventory FILE [--module NAME] [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py screens <manifest.json> [--output FILE]
+python3 plugins/blueprint/tooling/blueprint_cli.py rebuild <analysis.json> --inventory FILE [--screens manifest.json] [--output FILE]
 python3 plugins/blueprint/tooling/blueprint_cli.py spec check <spec.json> <evidence.json>...
 python3 plugins/blueprint/tooling/blueprint_cli.py spec to-foundry <spec.json> <evidence.json>... [--output DIR] [--epic-id ID]
 ```
 
 Skills: `/blueprint:setup`, `/blueprint:targets`, `/blueprint:inventory`, `/blueprint:decompile`,
 `/blueprint:spec` (Claude Code); `$blueprint:setup`, `$blueprint:targets`, `$blueprint:inventory`,
-`$blueprint:decompile`, `$blueprint:spec` (Codex).
+`$blueprint:decompile`, `$blueprint:spec` (Codex); `/blueprint:rebuild` and `$blueprint:rebuild` for `analyze`, `screens`
+and `rebuild`.
 
 Exit codes (`EXIT_*` in `tooling/blueprint_cli.py`): 0 done, 2 usage or registry error,
 3 target refused (not authorised, or unreadable registry), 4 tooling not prepared,
-5 setup or inventory failed.
+5 setup, inventory, decompile or analyze failed.
 
 ## Data directory
 
@@ -32,8 +38,8 @@ Everything blueprint writes goes under one directory outside any repository
 (`data_dir` in `tooling/blueprint/paths.py`): `$BLUEPRINT_DATA_DIR` if set, else
 `~/Library/Application Support/blueprint` on macOS, else `~/.local/share/blueprint`.
 Layout: `downloads/`, `rea/` (with `node_modules/`), `jdk/`, `ghidra/`, `gradle-home/`,
-`npm-cache/`, `work/` (thin slices), `inventories/`, `decompilations/`, `payloads/`, `targets.json`
-(registry).
+`npm-cache/`, `work/` (thin slices), `inventories/`, `decompilations/`, `payloads/`, `analyses/`,
+`ghidra-projects/` (one saved Ghidra project per slice, `ghidra_projects` in `paths.py`), `targets.json` (registry).
 
 ## setup
 
@@ -170,6 +176,75 @@ took about 52 s, the first one re-analysing the binary, and `--snapshot` did not
 whether the time depends on the target size is unknown. The pseudo-code is Ghidra output with mangled Swift
 names, not source (REA `limitations` field).
 
+## analyze, rebuild, screens (PAT-260)
+
+Flow: `inventory` -> `analyze` (once) -> `groups`/`decompile --analysis` (as many times as wanted, no tool launched)
+-> witness captures -> `screens` -> `rebuild` -> the agent writes a format 2 spec (skill `blueprint:rebuild`)
+-> `spec check` -> `spec to-foundry`.
+
+**analyze** applies the registry gate (exit 3 before anything runs), needs the prepared tooling (exit 4), checks the
+target against the inventory like `decompile` (`slice_for`, exit 5), then `analysis.build`:
+
+1. `ghidra.ensure_analysis`: `analyzeHeadless <project> -import <slice> -overwrite` once, into the project
+   `<data dir>/ghidra-projects/<slice sha256[:16]>`. It writes `blueprint-analysis.json` there (`MARKER`: slice
+   sha256, Ghidra version, program name, analysis seconds) only after the log says `Analysis succeeded` and
+   `Import succeeded`. A later call with the same slice sha256 and `GHIDRA_VERSION` runs nothing and reports
+   `analysis_reused: true`; another slice or version is analysed again. Timeout `TIMEOUT_GHIDRA_IMPORT`.
+2. `ghidra.export`: `analyzeHeadless <project> -process <program> -noanalysis -readOnly -postScript BlueprintExport.java`
+   (`tooling/ghidra_scripts/BlueprintExport.java`, compiled by Ghidra with the pinned JDK). It decompiles every
+   function whose symbol starts with the app module prefix (`_$s<len><module>`; the module is the one owning most plain
+   Swift classes of the inventory, or `--module`), each limited to `DECOMPILE_FUNCTION_SECONDS`, and also reads the
+   Swift type descriptors (`__swift5_types`) with their field descriptors, the module's `vpZ` data symbols, the
+   references to the strings that equal a bundle file name, and the UTF-8 bytes behind the labels the decompiler prints for
+   non-ASCII string literals. Timeout `TIMEOUT_GHIDRA_EXPORT`. The script's arguments are checked against the ones Python
+   passes (`test_script_arguments_match_what_python_passes`).
+3. REA `demangle-swift`, in batches of `DEMANGLE_BATCH` (`TIMEOUT_DEMANGLE` each); REA runs no analysis for it.
+
+Output `<data dir>/analyses/<name>-<sha256[:16]>/analysis.json` (mode 600) plus the raw `ghidra-export.json`: tool versions,
+Ghidra project and program ids, `timing` (`analysis_seconds` of the saved analysis, `analysis_reused`,
+`export_seconds`, `demangle_seconds`, `total_seconds` of this run), function counts, one entry per app function (address,
+symbol, demangled name, status, pseudo-code cut at `MAX_CODE_CHARS` with `truncated`, evidence), the Swift types, the
+references and `unknown_parts`. Evidence of an item is Ghidra evidence: slice sha256 and address (plus the Ghidra program
+id), with `evidence_id = gh_<slice sha256[:16]>_<address without 0x>` (`analysis.ghidra_evidence`), not a REA id.
+
+`decompile --analysis FILE` reads the pseudo-code from that document: same registry gate, same output shape, no Ghidra
+or REA process (`decompile.from_analysis`; `test_decompile_from_analysis_launches_nothing`), `from_analysis.ghidra_runs: 0`,
+and the evidence is the entry's Ghidra evidence. It refuses an analysis made from another target (sha256 differs).
+
+Observed on 2026-10-18 on the authorised target (Debug simulator build, code in `.debug.dylib`; Ghidra 12.1.4):
+first `analyze`: analysis 48.9 s, export 17.6 s, demangle 27.6 s, total 94.1 s; a second `analyze` reused the analysis
+(total 45.8 s, nothing re-imported); 4180 app functions decompiled, 0 failed, 14 cut at `MAX_CODE_CHARS`, of 6813 functions
+in the binary; `decompile --analysis --group` took 0.1 s of wall time. Before, one `rea decompile` cost about 52 s per call
+(see the `decompile` section). Ghidra also writes under `HOME` and `/var/tmp` (its script cache and packed database
+cache: observed in the log and the directories, not confined to the data directory). Whether the times hold on another target: unknown.
+
+**screens** reads a manifest `{"format": 1, "screens": [{"name", "report"}]}` (a relative `report` is relative to the manifest)
+and validates (`screens.build`): the report is a `witness-proof.v1` report written by `witness_cli.py prove` (see
+`plugins/witness/README.md`, "Report" and "Scripted navigation"), its screenshot path exists, the file's sha256 equals
+`screenshot_sha256` of the report, names are unique, and when the report's navigation file declares a `screen` it must equal
+the manifest name (the screen is declared by that file, not verified by Witness). Every problem is listed and exit is 2.
+`--output` writes the normalised document, with `evidence_id = wit_<screenshot sha256>` per screen. Blueprint never runs
+the simulator or Witness.
+
+**rebuild** is offline (reads the analysis, the inventory and optionally the manifest; no registry, no process;
+`rebuild.build`). It refuses an analysis and an inventory of different slices. Sections:
+
+| Section | Content | Rule (code) |
+|---|---|---|
+| `coverage` | detected and analysed counts for `groups`, `screens`, `functions`, screens captured, timing, `not_covered` sentences | groups are role-suffix stems (`SUFFIX_ROLES`) over the Swift types of the image (not the inventory's Objective-C classes, which miss value types), a screen is a group with a `View`, `ViewModel`, `Controller` or `Screen` type, a group is analysed when one of its functions is decompiled (`detect_groups`); preview records (names starting `$s`) are ignored |
+| `constants` | one item per static property getter of the app module: decoded value, type, evidence, or `unknown` with the reason | `constants.extract`: a getter that is a plain `return <literal>;` is decoded by its demangled type (`decode_literal`); a lazily initialised value is read from the `_WZ` one-time initialiser (string literals, and for an object the string and integer literals in code order); SwiftUI preview records are excluded and counted (`excluded_preview_records`) |
+| `data_model` | classes carrying the field `_$backingData` (SwiftData `@Model` macro output; deduced, observed on one target), stored properties with the type of their getter signature or `unknown`; schema and migration type names | `rebuild.data_model`; constraints and relationships are always `unknown` |
+| `resources` | every bundle file of the inventory with sha256, size, kind (`resources.kind_of`) and usage | usage is known only when a binary string equals the file name or its stem (a name match, not proof of use), with the referencing functions when Ghidra finds references; otherwise `unknown`, never `unused` |
+| `screens` | detected screens with their capture `evidence_id` or `unknown`; captures not matched to a detected screen | the manifest name is compared, case-insensitively, with the group stem or one of its type names |
+
+Known limits, stated rather than hidden. The integer literals of a predefined object are listed in code order and which one
+feeds which parameter is `unknown` (the decompiler drops or reorders arguments: observed on the five predefined
+programs of the target). Screen navigation is `unknown` (nothing extracts links between screens). The contents of an asset
+catalog are `unknown` (the inventory holds record counts). Pseudo-code is Ghidra output: a decoded constant is as sound
+as it (deduced). The `not_covered` list always ends with the statement that analysis is static only. On the
+2026-10-18 trial `rebuild` reported groups 37/38, screens 29/29 (0 captured), functions 4180/4180, 46 constants (20
+`unknown`, 75 preview records excluded), 3 data models, 33 resources (14 with unknown usage).
+
 **spec** file format: `{"format": 1, "title", "summary", "features": [{"name", "summary", "points":
 [{"text", "evidence": ["ev_..."] | "unknown"}]}]}` (`tooling/blueprint/spec.py`). `spec check`
 (`spec.check`) refuses a point whose evidence id is not found (any `rea_evidence_id` or `evidence_id` key,
@@ -181,7 +256,9 @@ attached to: the author and the reviewer judge that. `spec to-foundry` runs the 
 and prints the `edit create-issue` command; with `--epic-id` it writes one `ticket-NN-<slug>.json` per
 feature with `parent` set, whose acceptance criteria are the evidenced points and whose body cites their
 ids; points with `unknown` go to an "Unknown" section, not to acceptance criteria. A feature without any
-evidenced point is refused. The payload keys `title`, `body`, `fields`, `parent` are those read by
+evidenced point is refused.
+
+**spec format 2** (PAT-260) is the format 1 plus five required sections, validated by `spec.check_sections`: `coverage` (integer `analysed` and `detected` for `groups`, `screens`, `functions`, `analysed` not above `detected`, and a non-empty `not_covered` list; when a rebuild file is among the evidence files the numbers must equal its `coverage`), `constants` (`name`, `value` or `unknown`, evidence ids or `unknown`; a known value needs ids), `data_model` (entities with `properties` of `name` and `type`), `resources` (`path`, 64-hex `sha256`, `usage`, evidence; with a rebuild file, path and sha256 must be in it) and `screens` (`name`, `navigation` list or `unknown`, `capture` ids or `unknown`). Accepted ids come from the evidence files: `ev_` (REA), `gh_` (Ghidra), `res_` (bundle file), `wit_` (Witness screenshot). A format 1 spec stays valid unchanged. `spec to-foundry` adds the `coverage.not_covered` sentences to the Epic body. The payload keys `title`, `body`, `fields`, `parent` are those read by
 `edit.create_issue` (`plugins/foundry/tooling/foundry/edit.py`). The command never calls the tracker and never
 runs Foundry (`test_cli_to_foundry_writes_payloads_prints_commands_and_never_calls_anything`): the
 commands are printed with `<foundry-root>` and run only after the maintainer's explicit confirmation, by
@@ -210,5 +287,10 @@ it is not used.
 | CLI verbs `groups`, `decompile`, `spec check`, `spec to-foundry` and their options | documented above and in the skills `decompile` and `spec` |
 | Constants `SUFFIX_ROLES`, `MAX_GROUP_STRINGS`, `MAX_DECOMPILE`, `TIMEOUT_DECOMPILE`, `BUDGET_DECOMPILE`, `MAX_CODE_CHARS` | documented above (names; values are in the code) |
 | Spec file format, groups and decompilation output | documented above |
-| Operational constraint: one REA call is about 52 s | documented above (observed once) |
+| Operational constraint: one REA call is about 52 s | documented above (observed once); superseded for repeated decompilation by `analyze` and `decompile --analysis` |
+| CLI verbs `analyze`, `screens`, `rebuild`, option `decompile --analysis`, exit code 5 for analyze | documented above and in the skills `rebuild` and `decompile` |
+| Constants `TIMEOUT_GHIDRA_IMPORT`, `TIMEOUT_GHIDRA_EXPORT`, `TIMEOUT_DEMANGLE`, `DECOMPILE_FUNCTION_SECONDS`, `DEMANGLE_BATCH`, `GHIDRA_PROJECT_NAME`, `GHIDRA_SCRIPT`, `MARKER`, `MODEL_MARKER_FIELD` | documented above (names; values are in the code) |
+| Data directory entries `analyses/`, `ghidra-projects/`; evidence id prefixes `gh_`, `res_`, `wit_` | documented above |
+| Analysis, rebuild, screens manifest and spec format 2 | documented above |
+| Operational constraint: Ghidra writes outside the data directory (`HOME`, `/var/tmp`) | documented above (observed) |
 | Foundry docs | not necessary: no Foundry CLI, constant or skill changed; blueprint only prints `edit create-issue` commands whose payload keys are those `edit.py` already reads |

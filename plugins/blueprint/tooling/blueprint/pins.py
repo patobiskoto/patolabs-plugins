@@ -42,3 +42,12 @@ TIMEOUT_REA = 900
 TIMEOUT_DECOMPILE = 300
 MAX_DECOMPILE = 6
 BUDGET_DECOMPILE = 1800
+# Rebuild-grade analysis (PAT-260). One Ghidra import+analysis per slice (about 50 s on the 2026-10-18 trial, observed),
+# then one batch export from the saved project; REA is used only to demangle Swift symbols (fast, no analysis).
+TIMEOUT_GHIDRA_IMPORT = 3600
+TIMEOUT_GHIDRA_EXPORT = 3600
+TIMEOUT_DEMANGLE = 120
+DECOMPILE_FUNCTION_SECONDS = 60  # Ghidra decompiler limit per function, passed to the export script
+DEMANGLE_BATCH = 150
+GHIDRA_PROJECT_NAME = "bp"
+GHIDRA_SCRIPT = "BlueprintExport.java"

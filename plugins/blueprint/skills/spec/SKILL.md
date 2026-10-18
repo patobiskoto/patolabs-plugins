@@ -30,6 +30,9 @@ address. A point states only what a cited evidence id shows; what you could not 
 `"evidence": "unknown"`. Do not infer from names alone and do not fill a gap with a guess. Take
 the ids from the files you read (`rea_evidence_id` / `evidence_id`).
 
+A spec detailed enough to rebuild the app uses format 2 with the sections `coverage`, `constants`, `data_model`,
+`resources`, `screens`: see `blueprint:rebuild` and the README of the plugin ("spec format 2").
+
 2. Check it. The check refuses a point whose id is absent from the evidence files you pass, a point
 with neither evidence nor `unknown`, and a text that leaks a mangled symbol or a raw address
 (heuristic only: it does not prove the text is true, which you and the reviewer judge):

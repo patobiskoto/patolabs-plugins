@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-18
+
+- `blueprint_cli.py analyze <target> --inventory FILE`: same registry gate; imports and analyses the arm64 slice in
+  Ghidra once into a saved project (`ghidra-projects/`), then exports every app function (decompiled C, address, demangled
+  name), the Swift type descriptors with their fields, string references and the bytes behind non-ASCII literals through
+  a batch script (`tooling/ghidra_scripts/BlueprintExport.java`). The analysis is not repeated for the same slice and
+  Ghidra version, and the times (analysis, export, total) are recorded. Evidence is Ghidra's: slice sha256, address,
+  program id (`gh_` ids).
+- `decompile --analysis FILE`: decompilations read from that analysis, no Ghidra or REA process.
+- `blueprint_cli.py rebuild`: measured coverage (groups, screens, functions analysed over detected, and what is not
+  covered), static constants and predefined objects, the persistent (SwiftData) data model with property types, and the
+  bundle resource inventory with sha256, kind and known usage, each with its evidence or `unknown`.
+- `blueprint_cli.py screens`: validates a manifest linking screens to Witness proof reports and screenshots (files exist,
+  sha256 equals the report's); Blueprint never runs the simulator.
+- Spec format 2: format 1 plus the sections `coverage`, `constants`, `data_model`, `resources`, `screens`, validated by
+  `spec check`; format 1 unchanged. Skill `blueprint:rebuild`.
+- Run once on 2026-10-18 on the authorised target: first `analyze` 94.1 s in total (analysis 48.9 s), a second one reused
+  the analysis; 4180 app functions decompiled; tests use fakes. The maintainer's judgement of the spec ("can the app be
+  rebuilt from it alone") is not part of this entry.
+
 ## 0.2.0 — 2026-10-18
 
 - `blueprint_cli.py groups <inventory>`: offline, deterministic grouping of an inventory's types and

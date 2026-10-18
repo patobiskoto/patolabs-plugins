@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """blueprint: pinned REA/Ghidra tooling, authorised-targets registry, reproducible inventory (PAT-252),
-groups, targeted decompilation and spec-to-Foundry payloads (PAT-253)."""
+groups, targeted decompilation and spec-to-Foundry payloads (PAT-253), one Ghidra analysis reused by every
+decompilation, rebuild-grade coverage, constants, data model, resources and screens (PAT-260)."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +11,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from blueprint import decompile, groups, inventory, paths, pins, registry, setup, spec
+from blueprint import (
+    analysis,
+    decompile,
+    ghidra,
+    groups,
+    inventory,
+    paths,
+    pins,
+    rebuild,
+    registry,
+    screens,
+    setup,
+    spec,
+)
 
 EXIT_USAGE, EXIT_REFUSED, EXIT_NO_TOOLS, EXIT_FAILED = 2, 3, 4, 5
 
@@ -114,7 +128,7 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     if entry is None:
         return fail("refused: this target is not in the registry of authorised targets "
                     "(only the maintainer authorises one, with `targets add`)", EXIT_REFUSED)
-    missing = setup.tools_ready(d)
+    missing = [] if args.analysis else setup.tools_ready(d)
     if missing:
         return fail("tooling not ready (missing " + ", ".join(missing) + "); run `setup` first", EXIT_NO_TOOLS)
     inv = _load_json(args.inventory)
@@ -128,9 +142,13 @@ def cmd_decompile(args: argparse.Namespace) -> int:
         if group is None:
             return fail(f"no group named {args.group!r}; groups: " + ", ".join(g["name"] for g in gdoc["groups"]))
     try:
-        sl = decompile.slice_for(Path(registry.canonical(args.target)), inv, d)
-        doc = decompile.run(inventory.Rea(d), sl, group=group, entry=args.entry, list_only=args.list,
-                            maximum=args.max, budget=args.budget)
+        if args.analysis:
+            doc = decompile.from_analysis(_load_json(args.analysis), inv, group=group, entry=args.entry,
+                                          list_only=args.list, maximum=args.max)
+        else:
+            sl = decompile.slice_for(Path(registry.canonical(args.target)), inv, d)
+            doc = decompile.run(inventory.Rea(d), sl, group=group, entry=args.entry, list_only=args.list,
+                                maximum=args.max, budget=args.budget)
     except (decompile.DecompileError, inventory.InventoryError) as exc:
         return fail(f"decompile failed: {exc}", EXIT_FAILED)
     doc["source"] = gdoc["source"]
@@ -145,10 +163,91 @@ def cmd_decompile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_analyze(args: argparse.Namespace) -> int:
+    d = paths.data_dir()
+    try:
+        entry = registry.find(paths.registry_file(d), args.target)
+    except registry.RegistryError as exc:
+        return fail(str(exc), EXIT_REFUSED)
+    if entry is None:
+        return fail("refused: this target is not in the registry of authorised targets "
+                    "(only the maintainer authorises one, with `targets add`)", EXIT_REFUSED)
+    missing = setup.tools_ready(d)
+    if missing:
+        return fail("tooling not ready (missing " + ", ".join(missing) + "); run `setup` first", EXIT_NO_TOOLS)
+    inv = _load_json(args.inventory)
+    try:
+        sl = decompile.slice_for(Path(registry.canonical(args.target)), inv, d)
+        doc = analysis.build(inv, sl, d, module=args.module)
+    except (decompile.DecompileError, inventory.InventoryError, analysis.AnalysisError, ghidra.GhidraError) as exc:
+        return fail(f"analyze failed: {exc}", EXIT_FAILED)
+    out = Path(args.output) if args.output else (
+        paths.analyses(d) / f"{inv['target']['name']}-{inv['target']['sha256'][:16]}" / "analysis.json")
+    inventory.write(doc, out)
+    t, f = doc["timing"], doc["functions"]
+    print(f"blueprint: analysis written to {out}")
+    print(f"  ghidra {doc['tools']['ghidra']}, slice {doc['source']['arm64_sha256'][:16]}, program id "
+          f"{doc['ghidra']['program_id']}")
+    print(f"  analysis {t['analysis_seconds']:g}s ({'reused, not run' if t['analysis_reused'] else 'run now'}); export "
+          f"{t['export_seconds']:g}s; demangle {t['demangle_seconds']:g}s; total this run {t['total_seconds']:g}s")
+    print(f"  functions: {f['decompiled']} decompiled, {f['failed']} failed, {f['truncated']} truncated, of "
+          f"{f['app']} in the app module ({f['total']} in the binary)")
+    for k, why in doc["unknown_parts"].items():
+        print(f"  unknown {k}: {why}")
+    return 0
+
+
+def cmd_screens(args: argparse.Namespace) -> int:
+    try:
+        doc = screens.build(Path(args.manifest))
+    except screens.ScreensError as exc:
+        for p in exc.problems:
+            print(f"blueprint: screens: {p}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.output:
+        inventory.write(doc, Path(args.output))
+    print(f"blueprint: {len(doc['screens'])} screen capture(s) valid"
+          + (f"; written to {args.output}" if args.output else ""))
+    return 0
+
+
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    scr = None
+    if args.screens:
+        try:
+            scr = screens.build(Path(args.screens))
+        except screens.ScreensError as exc:
+            for p in exc.problems:
+                print(f"blueprint: screens: {p}", file=sys.stderr)
+            return EXIT_USAGE
+    try:
+        doc = rebuild.build(_load_json(args.analysis), _load_json(args.inventory), scr)
+    except (ValueError, KeyError) as exc:
+        return fail(f"rebuild failed: {exc}")
+    text = inventory.render(doc)
+    out = Path(args.output) if args.output else None
+    if out:
+        inventory.write(doc, out)
+    else:
+        print(text, end="")
+    c = doc["coverage"]
+    print(f"blueprint: coverage groups {c['groups']['analysed']}/{c['groups']['detected']}, screens "
+          f"{c['screens']['analysed']}/{c['screens']['detected']} (captured {c['screens_captured']['captured']}), "
+          f"functions {c['functions']['analysed']}/{c['functions']['detected']}; constants "
+          f"{len(doc['constants']['items'])} ({doc['constants']['unknown_count']} unknown); models "
+          f"{len(doc['data_model']['items'])}; resources {len(doc['resources']['items'])}"
+          + (f"; written to {out}" if out else ""), file=sys.stderr)
+    for line in c["not_covered"]:
+        print(f"  not covered: {line}", file=sys.stderr)
+    return 0
+
+
 def cmd_spec(args: argparse.Namespace) -> int:
     sp = _load_json(args.spec)
-    known = spec.evidence_ids(*[_load_json(p) for p in args.evidence])
-    errs = spec.check(sp, known)
+    docs = [_load_json(p) for p in args.evidence]
+    known = spec.evidence_ids(*docs)
+    errs = spec.check(sp, known, next((x for x in docs if isinstance(x, dict) and "coverage" in x and "resources" in x
+                                       and "data_model" in x), None))
     if errs:
         for e in errs:
             print(f"blueprint: spec: {e}", file=sys.stderr)
@@ -202,8 +301,25 @@ def main() -> int:
     c.add_argument("--list", action="store_true", help="only list the entry-point candidates of the group")
     c.add_argument("--max", type=int, default=pins.MAX_DECOMPILE, help="entry points to decompile")
     c.add_argument("--budget", type=float, default=pins.BUDGET_DECOMPILE, help="total seconds")
+    c.add_argument("--analysis", help="analysis JSON from `analyze`: read the pseudo-code from it, no Ghidra or REA call")
     c.add_argument("--output", help="decompilation JSON path (default: <data dir>/decompilations/)")
     c.set_defaults(fn=cmd_decompile)
+    an = sub.add_parser("analyze", help="one Ghidra analysis of an authorised target and a batch export of its app functions")
+    an.add_argument("target")
+    an.add_argument("--inventory", required=True, help="inventory JSON of this target")
+    an.add_argument("--module", help="Swift module of the app (default: the one owning most classes in the inventory)")
+    an.add_argument("--output", help="analysis JSON path (default: <data dir>/analyses/<name>-<sha>/analysis.json)")
+    an.set_defaults(fn=cmd_analyze)
+    sc = sub.add_parser("screens", help="validate a manifest linking screens to Witness proofs (offline)")
+    sc.add_argument("manifest")
+    sc.add_argument("--output", help="normalised screens JSON, an evidence file for `spec check`")
+    sc.set_defaults(fn=cmd_screens)
+    rb = sub.add_parser("rebuild", help="coverage, constants, data model, resources and screens from an analysis (offline)")
+    rb.add_argument("analysis")
+    rb.add_argument("--inventory", required=True)
+    rb.add_argument("--screens", help="screens manifest (validated as by `screens`)")
+    rb.add_argument("--output", help="rebuild JSON path (default: standard output)")
+    rb.set_defaults(fn=cmd_rebuild)
     sp = sub.add_parser("spec", help="check a product-language spec, or turn it into Foundry payloads")
     ss = sp.add_subparsers(dest="action", required=True)
     k = ss.add_parser("check", help="refuse unsupported evidence ids and points with neither evidence nor unknown")

@@ -125,3 +125,45 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
         e.update({"symbol": c["symbol"], "method": c["method"]})
         doc["entries"].append(e)
     return doc
+
+
+def from_analysis(an: dict, inv: dict, *, group: dict | None, entry: str | None, list_only: bool,
+                  maximum: int) -> dict:
+    """The same document as `run`, read from the saved analysis: no Ghidra and no REA call (PAT-260). The pseudo-code and
+    evidence are those of the one analysis (`analysis.build`); the evidence is Ghidra's (slice sha256 and address)."""
+    if (an.get("source") or {}).get("sha256") != inv["target"].get("sha256") or \
+            an["source"].get("arm64_sha256") != inv["target"].get("arm64_sha256"):
+        raise DecompileError("the analysis was not made from this inventory's target (sha256 differs)")
+    by_addr = {int(e["address"], 16): e for e in an["entries"]}
+    doc: dict = {"format": FORMAT, "group": group["name"] if group else None, "entries": [], "unknown_parts": {},
+                 "from_analysis": {"ghidra_program_id": an["ghidra"]["program_id"], "ghidra_runs": 0}}
+    if entry is not None:
+        chosen, candidates = [{"address": entry, "symbol": None, "method": None}], []
+    else:
+        hint = group["search_hint"]
+        if "module" not in hint:
+            doc["unknown_parts"]["entry_points"] = hint.get("unknown", "no symbol search hint")
+            candidates = []
+        else:
+            rows = [{"value": e["symbol"], "address": e["address"]} for e in an["entries"]]
+            candidates = entry_points(rows, hint["module"], hint["classes"])
+        chosen = candidates[:maximum]
+        doc["candidates"] = {"total": len(candidates), "listed": candidates[:200],
+                             "chosen": len(chosen), "truncated": len(candidates) > len(chosen)}
+    if list_only:
+        return doc
+    for c in chosen:
+        try:
+            e = by_addr.get(int(c["address"], 16))
+        except ValueError:
+            e = None
+        if e is None:
+            doc["entries"].append({"address": c["address"], "status": "unknown", "pseudo_code": None, "evidence": None,
+                                   "reason": "no app function at this address in the analysis", "symbol": c["symbol"],
+                                   "method": c["method"]})
+            continue
+        doc["entries"].append({"address": c["address"], "status": e["status"], "reason": e["reason"],
+                               "pseudo_code": e["pseudo_code"], "truncated": e["truncated"],
+                               "evidence": e["evidence"], "symbol": c["symbol"] or e["symbol"],
+                               "method": c["method"]})
+    return doc
