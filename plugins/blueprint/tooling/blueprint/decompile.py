@@ -74,13 +74,14 @@ def _evidence(doc: dict, address: str | None) -> dict:
             "target_sha256": (doc.get("subject") or {}).get("digest", {}).get("sha256"), "address": address}
 
 
-def search_group(rea: inventory.Rea, sl: Path, group: dict) -> tuple[list[dict], dict | None, str | None]:
+def search_group(rea: inventory.Rea, sl: Path, group: dict,
+                 timeout: float = pins.TIMEOUT_REA) -> tuple[list[dict], dict | None, str | None]:
     """(entry points, evidence of the search, unknown reason)."""
     hint = group["search_hint"]
     if "module" not in hint:
         return [], None, hint.get("unknown", "no symbol search hint")
     doc, why = rea.call(["search", str(sl), "--kind", "procedures", "--mode", "regex",
-                         "--pattern", search_pattern(hint["module"], hint["classes"])], pins.TIMEOUT_REA)
+                         "--pattern", search_pattern(hint["module"], hint["classes"])], timeout)
     rows = (doc or {}).get("normalized_result")
     if doc is None or not isinstance(rows, list):
         return [], None, why or "procedure search not readable"
@@ -105,7 +106,8 @@ def run(rea: inventory.Rea, sl: Path, *, group: dict | None, entry: str | None, 
     if entry is not None:
         chosen, candidates = [{"address": entry, "symbol": None, "method": None}], []
     else:
-        candidates, ev, why = search_group(rea, sl, group)
+        # The search counts against the run budget too, so `--budget` bounds the whole run.
+        candidates, ev, why = search_group(rea, sl, group, min(pins.TIMEOUT_REA, budget))
         doc["search_evidence"] = ev
         if why:
             doc["unknown_parts"]["entry_points"] = why

@@ -182,6 +182,7 @@ class DecompileTest(unittest.TestCase):
         self.assertEqual(sum(1 for c, _ in calls if c[1] == "decompile"), 2)
         self.assertNotIn("/nowhere", json.dumps(doc))
         self.assertTrue(all(t <= 300 for c, t in calls if c[1] == "decompile"))
+        self.assertEqual([t for c, t in calls if c[1] == "search"], [100])  # the search is within --budget
 
     def test_list_only_and_single_entry(self):
         calls: list = []

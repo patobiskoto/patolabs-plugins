@@ -158,7 +158,8 @@ the Swift procedures of the group's classes, `entry_points` keeps functions (man
 and initialisers (`fC`) and drops accessors, closures, coroutine helpers and Observation boilerplate
 (`BOILERPLATE_METHODS`, `BOILERPLATE_MARKERS`), then one `rea decompile <slice> <address>` per entry
 point. `--list` stops after the search. Bounds: `--max` entry points (default `MAX_DECOMPILE`), each call
-at most `TIMEOUT_DECOMPILE` seconds and the whole run `BUDGET_DECOMPILE` seconds by default (`--budget`),
+at most `TIMEOUT_DECOMPILE` seconds, the procedure search at most `TIMEOUT_REA` seconds, and the whole run (search
+included) `BUDGET_DECOMPILE` seconds by default (`--budget`),
 all in `tooling/blueprint/pins.py`; pseudo-code is cut at `MAX_CODE_CHARS` and says `truncated`. Output
 (default `<data dir>/decompilations/<name>-<group>.json`, mode 600) keeps per entry the address, the mangled
 symbol, the method name, the pseudo-code and the evidence (`rea_evidence_id`, `target_sha256`, `address`);
