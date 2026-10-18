@@ -71,7 +71,8 @@ here, not produced by the tool. Per case:
   description first; the cause may be the skill, the prompt, the model or noise (with
   `runs: 1`, one sample, no variance estimate). The launcher prints no promotion, removal or
   change;
-- `unknown`: partial run (cost ceiling, interruption, credential rejected), run error, case
+- `unknown`: partial run whose score reaches the threshold (cost ceiling, interruption, credential rejected; a partial
+  run below the threshold is a regression to examine, `_case_verdict`), run error, case
   absent, no run recorded, no score (absent or NaN), no suite case found (no `prompt.md`), a score at or above the
   threshold without every grader passed, or an
   unreadable result, unexpected `schemaVersion` or unexpected shape. Never counted as pass.
