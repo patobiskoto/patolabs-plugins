@@ -82,7 +82,7 @@ The commits below also merged these plugins. Each has its own version, README an
 changelog; this page does not summarise their behaviour beyond the description in their
 own manifest, and does not promote them.
 
-| Plugin | Version (manifest) | Manifest description | Pointers |
+| Plugin | Version (manifest) | Short summary | Pointers |
 | --- | --- | --- | --- |
 | Gauge | 0.2.1 | Read-only quota gauge for Codex, Claude, Linear and GitHub Actions counters. | [README](../../gauge/README.md), [CHANGELOG](../../gauge/CHANGELOG.md) |
 | Relay | 0.2.1 | Writes a verified, secret-free session resume state as a local owner-only file outside git tracking, and reloads it re-verified at session start. | [README](../../relay/README.md), [CHANGELOG](../../relay/CHANGELOG.md) |
@@ -90,7 +90,8 @@ own manifest, and does not promote them.
 | Witness | 0.2.1 | Proves a change of an iOS app in the simulator or of a local web page in a headless browser; the full description is in its manifest. | [README](../../witness/README.md), [CHANGELOG](../../witness/CHANGELOG.md) |
 | Ship-iOS | 0.3.0, unchanged | See its manifest and [README](../../ship-ios/README.md). | [CHANGELOG](../../ship-ios/CHANGELOG.md) |
 
-Versions are those of the `.claude-plugin/plugin.json` of each plugin on `main` at
+The summaries paraphrase the manifests; the exact descriptions are in each plugin's
+`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`. Versions are those of the `.claude-plugin/plugin.json` of each plugin on `main` at
 `ec86938`; their `.codex-plugin/plugin.json` carry the same version (read when this
 page was written). Nothing here says that any of them is installed on a host.
 
@@ -102,7 +103,8 @@ page was written). Nothing here says that any of them is installed on a host.
 - No tag, installation or loaded version (see "Release phases and evidence").
 - **Gauge alert display on the hosts:** the real display of the Gauge alert in Claude Code
   and in Codex was not observed for this release; it is to be observed after the merge
-  (PAT-251, `AGENTS.md#R9`). Unknown until then.
+  (remark R9 of the PAT-251 review, deferred by the maintainer to this release). Unknown
+  until then.
 - No run of the host commands of `foundry:release`.
 - The mechanical documentation-status gate of FOUNDRY-ADR-0018 (FOUNDRY-123) is not
   shipped.
@@ -171,9 +173,9 @@ Gauge, Relay, Blueprint and Witness are part of "Other plugins of the same catal
 | PAT-254 | #200 | Witness: prove an iOS app change in the simulator |
 | PAT-255 | #201 | Witness: scripted navigation and proof in the browser |
 | PAT-260 | #202 | Blueprint: rebuild specification, measured coverage of an app |
-| PAT-262 | #203 | Settle the deferred remarks of PAT-160 |
-| PAT-257 | #204 | Settle the deferred remarks of PAT-158 |
-| PAT-251 | #205 | Settle the deferred remarks of PAT-157 |
+| PAT-262 | #204 | Settle the deferred remarks of PAT-160 |
+| PAT-257 | #205 | Settle the deferred remarks of PAT-158 |
+| PAT-251 | #203 | Settle the deferred remarks of PAT-157 |
 | PAT-259 | #206 | Settle the deferred remarks of PAT-159 |
 | PAT-244 | #207 | Settle the deferred remarks of PAT-18 |
 

@@ -15,7 +15,8 @@ without a new verb: `campaign-approval approve` caps the approval at the preview
 `campaign-approval approve` command shapes (PAT-234); the campaign next step, review,
 correction and deferral decide differently in the cases listed by PAT-235, PAT-236, PAT-237
 and PAT-238; `issue accept --status` wording and the `issue close-epic` unknown-flag message change
-(PAT-239, PAT-242). PAT-240, PAT-241, PAT-246, PAT-248, PAT-251, PAT-252 and PAT-254 correct
+(PAT-239, PAT-242), and `campaign_effects._save_summary` writes a lone surrogate as `?`
+instead of raising `UnicodeEncodeError` (PAT-242). PAT-240, PAT-241, PAT-246, PAT-248, PAT-251, PAT-252 and PAT-254 correct
 documentation, a code comment, tests or the CI jobs list. The same
 catalogue also carries other plugins merged in this period, with their own versions and
 changelogs (see the release note). Release note: `docs/release-2.0.0.md`; upgrade guide:

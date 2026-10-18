@@ -33,11 +33,16 @@ Two checks, for what the release note announces. Neither edits a cache.
    and the approval rules are in the changelog entry of PAT-234 and in
    [campaign-approval.md](campaign-approval.md) ("Commands", "An agent cannot approve
    (layers and limit)"). An approval recorded under 1.5.0 is not rewritten by a package
-   change; how 2.0.0 reads it against the new `policy.expires_at` cap was not run for
-   this guide: unknown.
-2. **Scripts that parse refusal text of `issue accept --status` or `issue close-epic`.**
-   Their wording changed (changelog entries of PAT-239 and PAT-242). Nothing else in the
-   changelog section names a changed output.
+   change; [campaign-approval.md](campaign-approval.md) states that such a record keeps its own
+   `expires_at`, at most `MAX_TTL` (7 days) after its approval (documented there, not run for
+   this guide).
+2. **Scripts that parse Foundry output.** The replay hint of `issue accept --status` and
+   the unknown-flag message of `issue close-epic` changed (changelog entries of PAT-239 and
+   PAT-242). `campaign-approval` and `campaign-cadence` emit new or replaced codes, among them
+   `journal_invalid`, `review_proof_integrity`, `review_state_without_branch_or_pr`,
+   `pr_head_not_in_branch`, `description_worktree_head_moved` and
+   `description_head_unreadable` (which replaces `description_session_moved_head`); the
+   changelog entries of PAT-234, PAT-235 and PAT-237 list them.
 
 No project data, routing policy, credential or configuration key needs to change. The
 changelog entries name no new configuration key. Retain a private snapshot of the
@@ -48,8 +53,12 @@ their secret store. The shared Foundry state lives under `FOUNDRY_DATA` or
 ([migration-1.0.0.md](migration-1.0.0.md)) states that package replacement preserves the
 shared data, and does not migrate project data. That has not been observed for an update
 from 1.5.0 to 2.0.0. The local files created by a campaign are those of
-[migration-1.5.0.md](migration-1.5.0.md) ("New local files"); this release adds none
-that this guide established. The two new on-demand tools of the release note
+[migration-1.5.0.md](migration-1.5.0.md) ("New local files"). This release adds one, written
+only when `foundry.rollback_native_trial` runs: the reservation ledger `LEDGER_NAME`
+(`pat198-native-rollback-ledger.jsonl`) and its `.lock`, in `registry.data_dir()`
+(`tooling/foundry/rollback_native_trial.py`; protocol
+`docs/qualification/pat-198-native-rollback-protocol.md`). Keep it: it holds the
+reservations of the native trials already run. The two new on-demand tools of the release note
 (`foundry.rollback_native_trial`, `scripts/skill_evals.py`) write nothing during an
 upgrade (deduced from their being run on demand; not run for this guide).
 
@@ -174,5 +183,5 @@ bindings.
 - **PAT-162:** plugin rollback: untried, see above.
 - **Gauge:** the real display of its alert on Claude Code and Codex is not observed
   (release note, "What this release does not claim").
-- **PAT-234:** the reading of a 1.5.0 approval under the new expiry cap is unknown, see
-  check 1.
+- **PAT-234:** the reading of a 1.5.0 approval under the new expiry cap is documented in
+  campaign-approval.md and not run for this guide, see check 1.
