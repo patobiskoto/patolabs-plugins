@@ -4,7 +4,8 @@
 The pre-hook stores a private, sanitized route projection keyed by an HMAC of
 ``tool_use_id``. This post-hook consumes it once. No tool input, response, error,
 session, repository, issue, user, or machine value enters telemetry. The hook emits no
-output or model context on success or failure.
+output or model context on success; an internal failure (or an unsupported Python) prints
+one ``systemMessage`` and still fails open (PAT-265).
 """
 from __future__ import annotations
 
@@ -15,6 +16,13 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "tooling"))
+
+import python_floor  # noqa: E402
+
+_UNSUPPORTED = python_floor.hook_unsupported_output("observe_agent")
+if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
+    print(_UNSUPPORTED)
+    raise SystemExit(0)
 
 from foundry.routing_facades import claude_invocation_completed  # noqa: E402
 from foundry.telemetry import TelemetryObserver  # noqa: E402
@@ -43,9 +51,10 @@ def main() -> None:
     try:
         payload = json.load(sys.stdin)
         observe(payload, environ=os.environ)
-    except Exception:
-        # Shared observation hooks are invisible and fail-open per ADR-0005.
-        return
+    except Exception as exc:
+        # Silent on the nominal path; fail-open per ADR-0005, but an internal failure
+        # is made visible (PAT-265, type name only).
+        print(python_floor.hook_failure_output("observe_agent", exc))
 
 
 if __name__ == "__main__":

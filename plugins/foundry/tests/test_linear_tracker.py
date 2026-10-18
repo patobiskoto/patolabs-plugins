@@ -6986,9 +6986,10 @@ def test_linear_adr_readback_rewrites_only_top_level_dash_lists(
     ).replace(
         "- third top-level item", "* third top-level item", 1
     )
+    escaped_header = header.replace("[", "\\[").replace("]", "\\]")  # no backslash in an f-string before 3.12
     provider = (
         f"{linear_module._ADR_HEADER}"
-        f"{header.replace('[', r'\[').replace(']', r'\]')}"
+        f"{escaped_header}"
         f"\n\\-->\n\n{provider_body}"
     )
     hostile = provider.replace(

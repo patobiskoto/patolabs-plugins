@@ -991,7 +991,11 @@ enforcement.
 
 Invalid policy or a gate with no eligible model is an explicit, visible denial. Internal
 hook failures remain fail-open as required by ADR-0005: hooks are discipline, never a
-security boundary. An unrouted logical entrypoint has only `Read` and self-stops without
+security boundary. Since PAT-265 a fail-open is visible: the hook prints one
+`systemMessage` naming the exception type only (`python_floor.hook_failure_output`,
+`tooling/python_floor.py`), and without a denial; `observe_agent.py` stays silent on its
+nominal path. An interpreter below `MINIMUM_PYTHON` gets the same kind of message
+(`hook_unsupported_output`) before any `foundry` module is imported. An unrouted logical entrypoint has only `Read` and self-stops without
 the routed marker. Routed read-only profiles omit editing tools; their defense-in-depth
 Bash guard allows the claimed readers and the explicit advisory postmerge reader
 (`hooks/guard_routed_readonly.py`; [postmerge-review.md](postmerge-review.md)).

@@ -80,8 +80,9 @@ def test_the_stat_guard_keeps_the_os_support_sets_so_shutil_copies_symlinks(tmp_
     os.unlink(tmp_path / "l2")
     shutil.copy2(tmp_path / "l1", tmp_path / "l2", follow_symlinks=False)
     assert os.path.islink(tmp_path / "l2")
-    assert os.stat in os.supports_dir_fd and os.stat in os.supports_fd and os.stat in os.supports_follow_symlinks
-    assert os.lstat in os.supports_dir_fd and os.lstat not in os.supports_fd
+    for name in ("stat", "lstat"):
+        for support, held in conftest._ORIGINAL_SUPPORT_MEMBERSHIP[name].items():
+            assert (getattr(os, name) in getattr(os, support)) is held, (name, support)
 
 
 def test_the_stat_guard_never_raises_on_its_own(tmp_path, monkeypatch):

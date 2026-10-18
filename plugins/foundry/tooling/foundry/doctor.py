@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import socket
 import subprocess
 
 import foundry
+import python_floor
 from foundry import config, local_scout, registry
 from foundry.escalation import EscalationStore
 from foundry.routing import (
@@ -31,6 +33,37 @@ from foundry.routing_facades import (
 def check(label, ok, detail=""):
     print(f"  {'🟢' if ok else '🔴'} {label}" + (f" — {detail}" if detail else ""))
     return ok
+
+
+def hook_python_diagnostic(*, runner=subprocess.run, which=shutil.which):
+    """Interpreter the hooks run under (PAT-265): path, version and where it was read.
+
+    Preferred source: the record SessionStart writes (`python_floor.record_interpreter`).
+    Fallback: `python3` resolved on this process's PATH, which is what `hooks/hooks.json`
+    asks the host to run, but not proof of the host's own PATH.
+    """
+    minimum = ".".join(str(part) for part in python_floor.MINIMUM_PYTHON)
+    observed = python_floor.read_observed()
+    if observed is not None:
+        path, version, source = observed["executable"], observed["version"], "observed by hook"
+        if observed["recorded_at"]:
+            source += f" at {observed['recorded_at']}"
+    else:
+        path, version, source = which("python3"), None, "resolved on doctor PATH"
+        if path:
+            try:
+                answer = runner(
+                    [path, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                version = tuple(int(part) for part in answer.stdout.strip().split("."))
+            except Exception:
+                version = None
+    if version is None:
+        return {"ok": False, "detail": f"python3 not found or unreadable ({source}); minimum {minimum}"}
+    shown = ".".join(str(part) for part in version)
+    ok = tuple(version[:2]) >= python_floor.MINIMUM_PYTHON
+    return {"ok": ok, "detail": f"{path or '?'} Python {shown} ({source}); minimum {minimum}"}
 
 
 def registered_project_diagnostic(tracker, project):
@@ -445,6 +478,10 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     print("🩺 Foundry doctor\n")
+
+    # PAT-265: local read, printed before the Config preflight so it shows even when Config fails.
+    diagnostic = hook_python_diagnostic()
+    check("Hook Python", diagnostic["ok"], diagnostic["detail"])
 
     # Public provider discovery and DevHub transport validation are the first
     # configuration reads. In particular this precedes local-scout's compatible
