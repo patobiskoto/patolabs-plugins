@@ -24,6 +24,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -59,12 +60,19 @@ ROLLBACK = {
     ("claude", "reviewer"): ("opus-5", "high"), ("claude", "architect"): ("fable-5", "high"),
 }
 LINES = {f"{host}-{role}": (host, role) for host, role in ROLLBACK}
-_UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|supported)|unavailable|invalid|unknown)"
-                          r"|(not (found|available)|unavailable|invalid).{0,60}model"
+_UNAVAILABLE = re.compile(r"(?i)(model.{0,60}(not (found|available|exist|supported)|unavailable|invalid)"
+                          r"|(not (found|available)|unavailable|invalid).{0,60}model|unknown model"
                           r"|model.{0,60}(does not exist|no access)|(does not exist|no access).{0,60}model)")
 _MASKS = ((re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "<masked-key>"),
           (re.compile(r"(?i)(bearer|basic)\s+[A-Za-z0-9._\-=+/]{8,}"), r"\1 <masked>"),
-          (re.compile(r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+"), r"\1=<masked>"),
+          # an UPPER_CASE name (API_TOKEN=...) or a known lower-case one; never a word that merely contains "key" or
+          # "auth" ("monkey:", "Authentication: failed")
+          (re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH)[A-Z0-9_]*)\s*[=:]\s*\S+"), r"\1=<masked>"),
+          (re.compile(r"(?i)\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd))\s*[=:]\s*\S+"),
+           r"\1=<masked>"),
+          # OpenAI identifiers shorter than 32 characters (org-..., proj_..., user-...): a digit is required so that a
+          # plain word such as "user-configuration" is kept
+          (re.compile(r"\b(?:org|proj|user)[-_](?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{10,}"), "<masked-id>"),
           (re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+"), "<masked-email>"),
           (re.compile(r"\b[A-Za-z0-9_\-]{32,}\b"), "<masked-long-token>"))
 _ERROR_LIMIT = 2000
@@ -137,6 +145,12 @@ def ledger_path() -> Path:
     """Out-of-checkout record of reservations (Foundry data directory): a git revert, stash or other worktree of the
     matrix cannot re-arm a line recorded here."""
     return Path(registry.data_dir()).expanduser() / LEDGER_NAME
+
+
+def data_dir_fingerprint() -> str:
+    """First 12 hex characters of the sha256 of the resolved data directory path: two runs recorded with different
+    fingerprints used two ledgers (the ledger guarantee then does not hold), and the path itself is not written."""
+    return hashlib.sha256(str(Path(registry.data_dir()).expanduser().resolve()).encode("utf-8")).hexdigest()[:12]
 
 
 def _ledger_lines(path: Path) -> list[str]:
@@ -234,8 +248,8 @@ def declares_unavailable(facts: dict[str, Any], model: str | None = None) -> boo
         if facts["observed"].get("completed_turn") or any(_USAGE_LIMIT.search(t) for t in texts):
             return False
         named = re.escape(model)
-        pattern = re.compile(rf"(?i)({named}.{{0,60}}(not (found|available|exist|supported)|unavailable|invalid|unknown"
-                             rf"|does not exist|no access)|(not (found|available)|unavailable|invalid|does not exist"
+        pattern = re.compile(rf"(?i)({named}.{{0,60}}(not (found|available|exist|supported)|unavailable|invalid"
+                             rf"|does not exist|no access)|unknown model|(not (found|available)|unavailable|invalid|does not exist"
                              rf"|no access).{{0,60}}{named})")
     return not facts["observed"]["models"] and any(pattern.search(t) for t in texts)
 
@@ -392,7 +406,7 @@ def observe_line(stream: Path, projects_dir: Path, session_id: str, token: str, 
             if record.get("type") == "assistant" and isinstance(message, dict):
                 if record.get("isApiErrorMessage") or message.get("model") == "<synthetic>":
                     # a host-written API-error record (deduced from Claude Code, not observed here): not a model
-                    errors.append(mask(_text(message)))
+                    errors.append(mask(_text(message)) or "<API-error record without text>")
                 elif isinstance(message.get("model"), str):
                     models.add(message["model"])
     host_versions = versions or ({init["claude_code_version"]} if isinstance(init.get("claude_code_version"), str) else set())
@@ -491,8 +505,10 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
     if matrix.get("native_calls", 0) >= MAX_NATIVE_CALLS:
         raise RollbackTrialError("the ceiling of eight native calls is reached")
     _check_ledger(ledger_path(), args.line)
-    if not args.dry_run and not (isinstance(args.max_budget_usd, (int, float)) and args.max_budget_usd > 0):
-        raise RollbackTrialError("--max-budget-usd is required for a real run (the maintainer-authorised amount)")
+    if not args.dry_run and not (isinstance(args.max_budget_usd, (int, float))
+                                   and math.isfinite(args.max_budget_usd) and args.max_budget_usd > 0):
+        raise RollbackTrialError("--max-budget-usd is required for a real run: a finite amount above 0 (the "
+                                 "maintainer-authorised amount)")
     policy = policy_for(role, model, effort)
     with base._policy_root(policy) as root:
         route = _load_claude_policy(root).resolve(role, "claude")
@@ -519,7 +535,8 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
                    "environment_names": sorted(environment)},
         "source": source,
         "ledger": {"path": f"<data_dir>/{LEDGER_NAME}",
-                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default"},
+                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default",
+                   "data_dir_fingerprint": data_dir_fingerprint()},
         "argv": [p if p != session_id else "<session id>" for p in
                  (command[0], "-p", "<parent prompt>", *command[3:-3], "<plugins/foundry of this checkout>", *command[-2:])],
         "requested": {"role": role, "tier": route.selected_tier, "model": route.model, "effort": route.effort},
@@ -556,8 +573,10 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
     after = {f"guard-{n}:{g.name}": policy_digest(g) for n, g in enumerate(guards, 1)}
     guard_ok = before == after
     state, open_points = verdict(process, facts)
-    if facts["conformity"]["profile"] == "divergent" and facts["account_availability"] == "unavailable_declared":
-        facts["account_availability"] = "unknown"  # the model tried was not necessarily the line's
+    if (facts["conformity"]["profile"] == "divergent" or facts["observed"]["children"] > 1) and \
+            facts["account_availability"] == "unavailable_declared":
+        facts["account_availability"] = "unknown"  # the model tried was not necessarily the line's (also with
+        # several children, whatever their readable agent types)
     if not guard_ok:
         state, open_points = "not_conforming", ["policy_guard", *open_points]
     body["policy_guard"].update({"real_policy_digests_after": after, "unchanged": guard_ok})
@@ -566,7 +585,8 @@ def _run_claude(args: Any, role: str, model: str, effort: str | None, work: Path
     row.update({
         "status": "run", "verdict": state, "resolved_route": body["requested"], "transmitted": body["transmitted"],
         "native_observation": {"models": facts["observed"]["models"] or "unknown",
-                               "agent_types": facts["observed"]["agent_types"] or "unknown",
+                               "agent_types": (facts["observed"]["agent_types"]
+                                        if any(t is not None for t in facts["observed"]["agent_types"]) else "unknown"),
                                "efforts": facts["observed"]["efforts"] or "unknown",
                                "host_version": facts["host"]["claude_code_version"] or "unknown"},
         "account_availability": facts["account_availability"], "errors": facts["errors"],
@@ -608,7 +628,8 @@ def _run_codex(args: Any, role: str, model: str, effort: str, work: Path, out: P
                    "environment_names": sorted(environment)},
         "source": source,
         "ledger": {"path": f"<data_dir>/{LEDGER_NAME}",
-                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default"},
+                   "data_dir_from": "FOUNDRY_DATA" if os.environ.get("FOUNDRY_DATA") else "default",
+                   "data_dir_fingerprint": data_dir_fingerprint()},
         "argv": [p if p != str(work) else "<work dir>" for p in command],
         "stdin": "the packet of codex_prompt(), fixed text naming fixture/marker.txt",
         "requested": {"role": role, "tier": TIER[role], "model": model, "effort": effort},

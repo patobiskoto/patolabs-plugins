@@ -12,15 +12,21 @@ import argparse
 import json
 import math
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 EVALS_DIR = PLUGIN_ROOT / "evals"
 DEFAULT_MODEL = "haiku"
-DEFAULT_OUT = EVALS_DIR / "results" / "skill-evals.json"
+# Outside `evals/`: `claude plugin eval` walks that folder, and an installed plugin dir is a cache (docs/skill-evals.md).
+DEFAULT_OUT = Path(tempfile.gettempdir()) / "foundry-skill-evals" / "skill-evals.json"
+PASS_THRESHOLD = 1.0  # a case passes only at this score; a lower `suite.threshold` in the result never relaxes it
+# The one run error that is the expected end of a `max_turns: 1` run (observed 2026-10-17, docs/skill-evals.md).
+MAX_TURNS_ERROR = re.compile(r"(?:exit \d+: )?Reached maximum number of turns \(\d+\)")
 RESULT_SCHEMA_VERSION = 1
 # Documented prompt.md frontmatter keys and the graders that cost no model call.
 ALLOWED_PROMPT_KEYS = frozenset(
@@ -62,7 +68,7 @@ def discover_cases(evals_dir: Path = EVALS_DIR) -> list[dict]:
         front = parse_frontmatter(prompt.read_text(encoding="utf-8"))
         cases.append({
             "name": prompt.parent.name,
-            "runs": int(front.get("runs", "3")),  # the tool's own default is 3
+            "runs": int(front.get("runs", "3")),  # assumed default when absent, not sourced; every shipped case sets runs: 1
             "max_turns": int(front.get("max_turns", "10")),
         })
     return cases
@@ -136,25 +142,48 @@ def _case_verdict(case: dict, threshold: float, partial: bool) -> tuple[str, str
     if not runs:
         return UNKNOWN, "no run recorded"
     errors = [r["error"] for r in runs if r.get("error")]
-    if errors:
+    graders = [g for r in runs for g in r.get("graders", [])]
+    all_passed = bool(graders) and all(g.get("passed") is True for g in graders)
+    # The max-turns error ends a max_turns: 1 run after the Skill call the grader checks: expected, but only when
+    # every grader passed; any other error stays unknown.
+    expected_end = bool(errors) and all(isinstance(e, str) and MAX_TURNS_ERROR.fullmatch(e) for e in errors)
+    if errors and not (expected_end and all_passed):
         return UNKNOWN, f"run error: {errors[0]}"
     score = case.get("aggregates", {}).get("score")
     if not isinstance(score, (int, float)) or isinstance(score, bool) or math.isnan(score):
         return UNKNOWN, "no score"
+    if score >= threshold and all_passed:
+        if partial:
+            return UNKNOWN, f"score {score:g} but the run is partial"
+        return PASS, f"score {score:g}" + (" (run ended on the expected max-turns limit)" if errors else "")
     if score >= threshold:
-        return (UNKNOWN, f"score {score:g} but the run is partial") if partial else (
-            PASS, f"score {score:g}")
+        return UNKNOWN, f"score {score:g} but no grader result shows every grader passed"
     failed = sorted({g["name"] for r in runs for g in r.get("graders", []) if not g.get("passed")})
     return REGRESSION, f"score {score:g} < {threshold:g}; failing graders: {', '.join(failed) or '?'}"
 
 
+def _unreadable(expected: list[str], note: str) -> dict:
+    return {"overall": UNKNOWN, "note": note, "cases": {name: (UNKNOWN, "no readable result") for name in expected}}
+
+
 def interpret(result: object, expected: list[str]) -> dict:
-    """Verdicts of one aggregate-result.json.  Anything not shown to pass is `unknown`."""
+    """Verdicts of one aggregate-result.json.  Anything not shown to pass is `unknown`, a result of an unexpected
+    shape included."""
+    try:
+        return _interpret(result, expected)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        return _unreadable(expected, "result of an unexpected shape")
+
+
+def _interpret(result: object, expected: list[str]) -> dict:
     if not isinstance(result, dict) or result.get("schemaVersion") != RESULT_SCHEMA_VERSION:
-        return {"overall": UNKNOWN, "note": "unreadable result or unexpected schemaVersion",
-                "cases": {name: (UNKNOWN, "no readable result") for name in expected}}
+        return _unreadable(expected, "unreadable result or unexpected schemaVersion")
+    if not expected:
+        return _unreadable(expected, "no eval case found (no prompt.md): nothing was checked")
     partial = bool(result.get("partial"))
-    threshold = result.get("suite", {}).get("threshold", 1.0)
+    declared = result.get("suite", {}).get("threshold")
+    threshold = max(PASS_THRESHOLD, float(declared)) if isinstance(declared, (int, float)) and not isinstance(
+        declared, bool) else PASS_THRESHOLD
     by_name = {c.get("name"): c for c in result.get("cases", []) if isinstance(c, dict)}
     verdicts = {}
     for name in expected:
@@ -184,7 +213,7 @@ def report(summary: dict) -> str:
 def print_plan(argv: list[str], cases: list[dict], model: str, max_cost: str | None) -> None:
     print("Foundry skill evals (claude plugin eval, deterministic graders only)")
     print(f"model (pinned): {model}")
-    print(f"max cost: {max_cost if max_cost is not None else 'NOT SET - a launch is refused'} USD")
+    print("max cost: " + (f"{max_cost} USD" if max_cost is not None else "NOT SET - a launch is refused"))
     for case in cases:
         print(f"  case {case['name']}: runs={case['runs']} max_turns={case['max_turns']}")
     print("argv: " + " ".join(argv))
@@ -198,7 +227,11 @@ def main(args: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="print the plan only")
     parser.add_argument("--read", type=Path, help="interpret an existing result file, launch nothing")
     ns = parser.parse_args(args)
-    cases = discover_cases()
+    try:
+        cases = discover_cases()
+    except (OSError, ValueError) as exc:
+        print(f"unknown: the eval cases cannot be read ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return 2
     names = [c["name"] for c in cases]
     if ns.read is not None:
         try:
@@ -217,9 +250,13 @@ def main(args: list[str] | None = None) -> int:
         except Refused as exc:
             print(f"refused: {exc}", file=sys.stderr)
             return 3
-        ns.out.parent.mkdir(parents=True, exist_ok=True)
-        ns.out.unlink(missing_ok=True)  # never read a stale result
-        subprocess.run(argv, check=False)
+        try:
+            ns.out.parent.mkdir(parents=True, exist_ok=True)
+            ns.out.unlink(missing_ok=True)  # never read a stale result
+            subprocess.run(argv, check=False)
+        except OSError as exc:  # no result directory, or `claude` absent from PATH: nothing ran, not a regression
+            print(f"unknown: the eval could not be started ({type(exc).__name__})", file=sys.stderr)
+            return 2
         try:
             summary = interpret(json.loads(ns.out.read_text(encoding="utf-8")), names)
         except (OSError, ValueError):

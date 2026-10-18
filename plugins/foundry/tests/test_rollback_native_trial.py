@@ -366,7 +366,10 @@ def test_the_stderr_branch_declares_unavailable_whatever_the_children(tmp_path):
     rt.run(_args(tmp_path, "claude-architect"),
            launch=_host(tmp_path, "claude-architect", exit_code=1, model="<synthetic>", stderr_text="the model is unavailable"))
     body = json.loads((tmp_path / "result.json").read_text())
+    # the journalled effort (medium, the helper's default) is not the line's high: divergent, so the verdict stays
+    # not_conforming whatever the availability text says (PAT-244: discriminates `set(failed) <= {"process"}`)
     assert body["account_availability"] == "unavailable_declared"
+    assert body["conformity"]["effort"] == "divergent" and body["verdict"] == "not_conforming"
 
 
 def test_a_refused_fixture_does_not_decide_the_model_verdict(tmp_path):
@@ -380,8 +383,10 @@ def test_a_refused_fixture_does_not_decide_the_model_verdict(tmp_path):
 def test_the_result_records_the_anonymised_ledger_location_and_the_data_dir_source(tmp_path, monkeypatch):
     rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer"))
     body = json.loads((tmp_path / "result.json").read_text())
-    assert body["ledger"] == {"path": f"<data_dir>/{rt.LEDGER_NAME}", "data_dir_from": "FOUNDRY_DATA"}
-    assert str(tmp_path) not in json.dumps(body["ledger"])
+    ledger = body["ledger"]
+    assert ledger["path"] == f"<data_dir>/{rt.LEDGER_NAME}" and ledger["data_dir_from"] == "FOUNDRY_DATA"
+    assert re.fullmatch(r"[0-9a-f]{12}", ledger["data_dir_fingerprint"])
+    assert str(tmp_path) not in json.dumps(ledger)
     monkeypatch.delenv("FOUNDRY_DATA")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     rt.run(_args(tmp_path, "claude-reviewer", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json"),
@@ -719,3 +724,216 @@ def test_the_codex_launcher_kills_the_process_group_at_the_bound(tmp_path, monke
     process = rt._launch_codex(["sleep", "30"], cwd=tmp_path, env={"PATH": "/usr/bin:/bin"}, stdout=tmp_path / "o",
                                stderr=tmp_path / "e", stdin=tmp_path / "in.txt")
     assert process["timed_out"] is True and process["seconds"] < 10
+
+
+# --- PAT-244: remarks deferred from the reviews of PAT-198 and PAT-245 -----------------------------------------
+def test_the_data_dir_fingerprint_tells_two_data_directories_apart_without_writing_the_path(tmp_path, monkeypatch):
+    first = rt.data_dir_fingerprint()
+    assert first == rt.data_dir_fingerprint() and str(tmp_path) not in first
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "another-data"))
+    assert rt.data_dir_fingerprint() != first
+    rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer"))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["ledger"]["data_dir_fingerprint"] == rt.data_dir_fingerprint()
+
+
+@pytest.mark.parametrize("budget", [float("inf"), float("nan"), 0, -1])
+def test_a_budget_that_is_not_finite_and_positive_is_refused_before_any_write(tmp_path, budget):
+    calls = []
+    with pytest.raises(rt.RollbackTrialError, match="finite"):
+        rt.run(_args(tmp_path, "claude-scout", max_budget_usd=budget), launch=_host(tmp_path, "claude-scout", calls=calls))
+    assert calls == [] and not (tmp_path / "work").exists() and _matrix(tmp_path)["native_calls"] == 0
+
+
+def test_the_cli_refuses_inf_as_a_budget(tmp_path, capsys):
+    argv = ["--line", "claude-scout", "--work-dir", str(tmp_path / "w"), "--out", str(tmp_path / "o.json"),
+            "--matrix", str(tmp_path / "matrix.json"), "--max-budget-usd", "inf"]
+    assert rt.main(argv) == 2 and "finite" in capsys.readouterr().err and not (tmp_path / "w").exists()
+
+
+def test_masking_keeps_ordinary_words_and_masks_short_openai_identifiers_and_named_secrets():
+    text = ("org-AbCdEf1234567890xyz proj_abc123def456ghi789 user-9fG8hJ7k6L5m "
+            "api_key=abcd1234 password: hunter2 token=xyz API_TOKEN=abc")
+    out = rt.mask(text, home="/")
+    for leaked in ("org-AbCdEf", "proj_abc123", "user-9fG8", "abcd1234", "hunter2", "xyz", "abc"):
+        assert leaked not in out
+    kept = "monkey: yes. Authentication: failed. the user-configuration of an organisation"
+    assert rt.mask(kept, home="/") == kept
+
+
+def test_the_committed_matrix_holds_no_short_openai_identifier():
+    text = (QUAL / "pat-198-native-rollback-2026-10-17.json").read_text()
+    assert not re.search(r"\b(?:org|proj|user)[-_][A-Za-z0-9_\-]*\d[A-Za-z0-9_\-]{9,}", text)
+
+
+@pytest.mark.parametrize("text", ["model gpt-x: unknown error", "model claude-opus-5 returned an unknown error",
+                                  "unknown error while loading the model"])
+def test_a_generic_unknown_error_text_near_the_word_model_is_not_unavailable(tmp_path, text):
+    rt.run(_args(tmp_path, "claude-reviewer"),
+           launch=_host(tmp_path, "claude-reviewer", children=False, result=text, is_error=True, exit_code=1))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["account_availability"] == "unknown" and body["verdict"] != "unavailable"
+
+
+def test_an_unknown_model_text_is_still_unavailable(tmp_path):
+    rt.run(_args(tmp_path, "claude-reviewer"),
+           launch=_host(tmp_path, "claude-reviewer", children=False, result="unknown model claude-opus-5",
+                        is_error=True, exit_code=1))
+    assert json.loads((tmp_path / "result.json").read_text())["verdict"] == "unavailable"
+
+
+def test_a_codex_generic_unknown_error_naming_the_model_is_not_unavailable_and_unknown_model_is(tmp_path):
+    host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=["gpt-5.6-luna: unknown error"], session=False)
+    rt.run(_args(tmp_path, "codex-scout"), codex_launch=host)
+    assert _codex_row(tmp_path, "codex-scout")["account_availability"] == "unknown"
+    other = tmp_path / "other"
+    other.mkdir()
+    _fresh_matrix(other / "matrix.json")
+    host = _codex_host(tmp_path, completed=False, exit_code=1, stream_errors=["unknown model gpt-5.6-terra"], session=False)
+    rt.run(_args(tmp_path, "codex-implementer", matrix=str(other / "matrix.json"), work_dir=str(other / "w"),
+                 out=str(other / "o.json")), codex_launch=host)
+    row = next(r for r in json.loads((other / "matrix.json").read_text())["rows"] if r["line"] == "codex-implementer")
+    assert row["account_availability"] == "unavailable_declared"
+
+
+def test_an_unwritable_ledger_refuses_before_any_launch_or_matrix_claim(tmp_path, monkeypatch):
+    real_open, calls = rt.os.open, []
+
+    def refuse(path, *a, **k):
+        if Path(path).name == rt.LEDGER_NAME:
+            raise PermissionError("denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(rt.os, "open", refuse)
+    with pytest.raises(rt.RollbackTrialError, match="cannot be written"):
+        rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer", calls=calls))
+    assert calls == [] and _matrix(tmp_path)["native_calls"] == 0
+    assert next(r for r in _matrix(tmp_path)["rows"] if r["line"] == "claude-implementer")["status"] == "not_run"
+    assert not (tmp_path / "matrix.json.lock").exists() and not list((tmp_path / "data").glob("*.lock"))
+
+
+def test_a_data_dir_that_cannot_be_created_refuses_before_any_launch(tmp_path, monkeypatch):
+    (tmp_path / "blocker").write_text("a file, not a directory")
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path / "blocker" / "data"))
+    calls = []
+    with pytest.raises(rt.RollbackTrialError, match="cannot be created"):
+        rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer", calls=calls))
+    assert calls == [] and _matrix(tmp_path)["native_calls"] == 0 and not (tmp_path / "matrix.json.lock").exists()
+
+
+def test_a_synthetic_record_without_text_keeps_a_placeholder_not_an_empty_error(tmp_path):
+    empty = {"type": "assistant", "isApiErrorMessage": True, "message": {"model": "<synthetic>", "content": []}}
+    rt.run(_args(tmp_path, "claude-implementer"),
+           launch=_host(tmp_path, "claude-implementer", child_records=[empty]))
+    errors = json.loads((tmp_path / "result.json").read_text())["errors"]
+    assert errors == ["<API-error record without text>"] and "" not in errors
+
+
+def test_the_monkey_and_authentication_words_survive_in_a_kept_error_text(tmp_path):
+    text = "monkey: patch failed. Authentication: failed for the model gpt-x"
+    rt.run(_args(tmp_path, "claude-implementer"),
+           launch=_host(tmp_path, "claude-implementer", children=False, result=text, is_error=True, exit_code=1))
+    assert text in json.loads((tmp_path / "result.json").read_text())["errors"]
+
+
+def test_a_launch_that_raises_still_counts_as_a_reservation_and_blocks_the_line(tmp_path):
+    def boom(command, **kw):
+        raise FileNotFoundError("claude")
+
+    with pytest.raises(FileNotFoundError):
+        rt.run(_args(tmp_path, "claude-implementer"), launch=boom)
+    matrix = _matrix(tmp_path)
+    row = next(r for r in matrix["rows"] if r["line"] == "claude-implementer")
+    assert matrix["native_calls"] == 1 and row["status"] == "started"  # a reservation, not a call that ran
+    assert (tmp_path / "data" / rt.LEDGER_NAME).read_text().count("claude-implementer") == 1
+    with pytest.raises(rt.RollbackTrialError, match="no retry"):
+        rt.run(_args(tmp_path, "claude-implementer", work_dir=str(tmp_path / "w2"), out=str(tmp_path / "r2.json")))
+
+
+@pytest.mark.parametrize("line", ["claude-implementer", "claude-reviewer", "claude-architect"])
+def test_a_logged_null_effort_is_an_absence_on_every_line_never_conforming(tmp_path, line):
+    model = WIRE[line]
+    null = [{"type": "assistant", "version": "2.1.300", "message": {"model": model}, "effort": None}]
+    rt.run(_args(tmp_path, line), launch=_host(tmp_path, line, child_records=null))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["effort"] == "unknown" and body["verdict"] == "unknown"
+
+
+def test_agent_types_that_could_not_be_read_are_unknown_not_a_list_of_null(tmp_path):
+    def launch(command, **kw):
+        outcome = _host(tmp_path, "claude-implementer")(command, **kw)
+        for meta in (tmp_path / "projects").glob("*/*/subagents/*.meta.json"):
+            meta.write_text("{not json")
+        return outcome
+
+    rt.run(_args(tmp_path, "claude-implementer"), launch=launch)
+    row = next(r for r in _matrix(tmp_path)["rows"] if r["line"] == "claude-implementer")
+    assert row["native_observation"]["agent_types"] == "unknown"
+    assert json.loads((tmp_path / "result.json").read_text())["conformity"]["profile"] == "unknown"
+
+
+def test_several_children_with_an_unreadable_meta_and_an_unavailable_text_reset_the_availability(tmp_path):
+    text = "model not found"
+    inner = _host(tmp_path, "claude-implementer", result=text, is_error=True, exit_code=1,
+                  child_records=[_synthetic(text)])
+
+    def launch(command, **kwargs):
+        outcome = inner(command, **kwargs)
+        for folder in (tmp_path / "projects").glob("*/*/subagents"):
+            (folder / "agent-1.jsonl").write_text((folder / "agent-0.jsonl").read_text())
+            (folder / "agent-1.meta.json").write_text("{not json")
+            (folder / "agent-0.meta.json").write_text("{not json")
+        return outcome
+
+    rt.run(_args(tmp_path, "claude-implementer"), launch=launch)
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["profile"] == "unknown" and body["observed"]["children"] == 2
+    assert body["verdict"] == "not_conforming" and body["account_availability"] == "unknown"
+
+
+def test_two_codex_session_files_for_one_thread_leave_the_model_and_effort_unknown(tmp_path):
+    inner = _codex_host(tmp_path)
+
+    def launch(command, **kwargs):
+        outcome = inner(command, **kwargs)
+        first = next((tmp_path / "sessions").glob("**/rollout-*.jsonl"))
+        twin = first.parent.parent / "19" / first.name
+        twin.parent.mkdir(parents=True, exist_ok=True)
+        twin.write_text(first.read_text())
+        return outcome
+
+    assert rt.run(_args(tmp_path, "codex-implementer"), codex_launch=launch) == 1
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["observed"]["session_files"] == 2 and body["observed"]["models"] == []
+    assert body["verdict"] == "unknown" and body["account_availability"] == "unknown"
+    row = _codex_row(tmp_path, "codex-implementer")
+    assert row["native_observation"]["models"] == "unknown" and row["native_observation"]["efforts"] == "unknown"
+
+
+def test_the_codex_environment_is_the_allow_list_plus_the_isolation_marker_and_codex_home(tmp_path, monkeypatch):
+    from foundry import config
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    env = rt.codex_environment()
+    assert set(env) <= set(rt._claude_child_environment()) | {"CODEX_HOME"} and "OPENAI_API_KEY" not in env
+    assert env[config.RUNTIME_CONFIG_ISOLATION_ENV] == "1" and env["CODEX_HOME"] == str(tmp_path / "codex-home")
+    claude_env = rt._claude_child_environment()
+    assert set(claude_env) - {config.RUNTIME_CONFIG_ISOLATION_ENV} <= {
+        "HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TMPDIR", "USER"}
+
+
+def test_the_claude_child_environment_names_add_foundry_data_to_the_allow_list_and_the_marker(tmp_path):
+    calls = []
+    rt.run(_args(tmp_path, "claude-implementer"), launch=_host(tmp_path, "claude-implementer", calls=calls))
+    names = json.loads((tmp_path / "result.json").read_text())["bounds"]["environment_names"]
+    assert "FOUNDRY_DATA" in names and "FOUNDRY_RUNTIME_CONFIG_ISOLATED" in names
+    assert set(names) <= {"FOUNDRY_DATA", "FOUNDRY_RUNTIME_CONFIG_ISOLATED", "HOME", "LANG", "LC_ALL", "LOGNAME",
+                          "PATH", "TMPDIR", "USER"}
+
+
+def test_a_stderr_unavailability_text_gives_unavailable_only_when_nothing_else_diverges(tmp_path):
+    # `set(failed) <= {"process"}` in verdict(): with the effort the line wants (high) only the exit diverges.
+    rt.run(_args(tmp_path, "claude-architect"),
+           launch=_host(tmp_path, "claude-architect", exit_code=1, model="<synthetic>", efforts=("high",),
+                        stderr_text="the model is unavailable"))
+    body = json.loads((tmp_path / "result.json").read_text())
+    assert body["conformity"]["effort"] == "exact" and body["verdict"] == "unavailable"

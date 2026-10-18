@@ -6,6 +6,8 @@ matrix [`pat-198-native-rollback-2026-10-17.json`](pat-198-native-rollback-2026-
 what a run showed, never what was expected. Section 10 (2026-10-18) is the amendment written before the Codex calls;
 it withdraws the Codex usage-limit statement of sections 3 and 9, kept below as written. The four Codex lines were
 then run once each on 2026-10-18: see section 11 (amendment written after the calls).
+Section 12 (2026-10-18, PAT-244) clarifies sections 3, 4, 7, 9 and 10 and records corrections of the tool made after
+the eight runs; it changes no recorded value, and the sections it clarifies are kept as written.
 
 ## 1. What this is and is not
 
@@ -314,3 +316,83 @@ took of it is unknown.
 Unknown, not settled by these runs: the money cost (`codex exec` reports tokens only, no cost); whether `codex exec`
 retried HTTP or stream requests internally within any of the four calls; whether the backend served the model the
 host recorded; availability beyond this account and this date. One call per line is not a sample (section 7).
+
+## 12. Clarifications and tool corrections (2026-10-18, PAT-244), amendment after the eight runs
+
+Written after all eight runs. It settles remarks left open by the reviews of PAT-198 and PAT-245. No observed value
+of section 9, section 11 or the matrix is rewritten: the eight rows and their `result_file_sha256` are untouched.
+
+**Clarifications of what was recorded.**
+
+- Child environment (sections 3 and 10). The Claude child environment is the R6 allow-list
+  (`_CLAUDE_CHILD_ENV_ALLOWLIST`) plus `FOUNDRY_RUNTIME_CONFIG_ISOLATED=1` (`_claude_child_environment`,
+  `command_runtime.py`, from `RUNTIME_CONFIG_ISOLATION_ENV` in `config.py`) plus `FOUNDRY_DATA` pointing at the work
+  directory (`_run_claude`, `environment`). The four Claude results list exactly these names in
+  `bounds.environment_names` (observed, read on 2026-10-18). The Codex child environment is the same allow-list
+  plus the isolation marker (`codex_environment()` calls `_claude_child_environment()`) plus `CODEX_HOME` if set; section 11
+  lists the marker among the names recorded for the four Codex results. `tests/test_rollback_native_trial.py`
+  (`test_the_codex_environment_is_the_allow_list_plus_the_isolation_marker_and_codex_home`,
+  `test_the_claude_child_environment_names_add_foundry_data_to_the_allow_list_and_the_marker`) checks both.
+- `native_calls` counts reservations, not calls that ran (section 4 says "counts them"). It is incremented after the
+  ledger line is written and before the launch (`_run_claude`, `_run_codex`); a launch that raises before the host
+  starts therefore still counts, leaves the row `started` and blocks the line
+  (`test_a_launch_that_raises_still_counts_as_a_reservation_and_blocks_the_line`). `agent_types` in a row is `unknown`
+  when no child agent type could be read; a list holding some unreadable entries is kept as is.
+- A logged `effort: null` is an absence for every Claude line, not only `haiku-4.5` (section 7): `observe_line` ignores a
+  `null` `effort` / `perTurnEffort` whatever the line, so a `sonnet-5`, `opus-5` or `fable-5` line whose host logs only
+  nulls has effort `unknown` and the verdict `unknown`, never `conforming`
+  (`test_a_logged_null_effort_is_an_absence_on_every_line_never_conforming`).
+- `haiku-4.5` and an effort logged by the host (section 7): any real effort journalled for the child, even one
+  inherited from the parent, makes the effort `divergent`. That is kept as the rule: it is the only way the tool can
+  see an effort that was transmitted to a line that must carry none, and whether the host journals an inherited effort
+  is unknown. A reader who judges the logged value inherited reads `unknown`; the recorded value stays `divergent`
+  (`test_a_real_effort_logged_on_haiku_stays_divergent`). No recorded run is affected: the `claude-scout` row logged no effort.
+- What the Claude check proves about the routing. The agent type read in the child's `.meta.json` (`foundry:<profile>`)
+  is what is compared. It does not prove that this checkout did the routing: the same profile names exist in an
+  installed copy of the plugin (deduced from the reviewers' remark, not observed here). The tool keeps the hook's own
+  statement in the result (`hook`, from `claude_profile_trial._hook_context`) but does not compute `plugin_source` or
+  `profile_listed_at_init`, which `claude_profile_trial` reports for PAT-125; for the four recorded runs the question
+  stays `unknown`.
+- Usage limit (section 10). The stop on a usage-limit text depends on the operator, not on the tool: for Codex the
+  tool sets `usage_limit_text` and writes "stop the sequence" in `limits` (`_run_codex`) and stops nothing itself; for Claude
+  it has no such flag, and the operator reads `errors` and `parent_reply`, as section 4 already asks.
+- `claude-architect` `parent_reply` (section 9). The reply says that the marker file holds a second line `end`. The tool
+  writes the marker as `token + "\n"` (`_run_claude`), the reply of `claude-reviewer` says one line, and the work-directory
+  copy of the file, still present on 2026-10-18, has one line (line count, observed). The statement of the reply is an
+  observed affirmation, the cause is unknown (an assertion of the model or the rendering of the host's read tool). `fixture_compliance:
+  exact` only means that the marker is in the reply; it does not vouch for the other sentences of the reply.
+- Where the costs and the hashes of section 9 come from. The costs are `total_cost_usd` of each parent `stream.ndjson`
+  (observed on 2026-10-18 in the four work directories: 0.1164, 0.1324, 0.1488 and 0.1930 USD, which round to the figures of
+  section 9). The sha256 of each `--out` file equals the `result_file_sha256` of its row (observed, checked on 2026-10-18 for
+  the four Claude files). Neither the streams nor the result files are in this repository, and the Codex result files were not
+  looked for. They sit in a temporary directory outside the repository; section 6 asks to delete the work directory, and
+  once it is deleted the cost and the hashes can no longer be checked. The tool does not decide where `--out` is kept: keep it
+  until the maintainer decides. The maximum budget per call
+  (`max_budget_usd`, 1 USD) is in section 9 and in each result's `bounds`.
+
+**Corrections of the tool** (`tooling/foundry/rollback_native_trial.py`; they apply to runs made from now on; each
+has a test in `tests/test_rollback_native_trial.py`).
+
+- `--max-budget-usd` must be finite and above 0 (`math.isfinite` in `_run_claude`): `inf` and `nan` are refused before any write.
+- Masking (`_MASKS`, section 7 list). The `KEY`, `TOKEN`, `SECRET`, `PASSWORD` and `AUTH` names are masked when written in
+  upper case or as a known lower-case name (`api_key`, `access_token`, `auth_token`, `token`, `secret`, `password`, `passwd`);
+  a word that merely contains one (`monkey:`, `Authentication: failed`) is kept. OpenAI-style identifiers `org-...`,
+  `proj_...`, `user-...` of 10 characters or more after the prefix, with at least one digit, are masked even under 32
+  characters. The committed matrix holds none (`test_the_committed_matrix_holds_no_short_openai_identifier`); check again before each commit
+  of a matrix, as the pattern cannot recognise every identifier shape.
+- `_UNAVAILABLE` and its Codex counterpart no longer match a bare `unknown` after the word `model` or after the model
+  identifier ("model X: unknown error"); `unknown model` still does. The other branches (`does not exist`, `no access`) stay
+  tied to the word `model` or to the identifier within 60 characters, as section 7 says; a hook or authentication refusal
+  that names the model close to those words can still be read as unavailable, the texts being kept so that a reader
+  can overrule it (residual risk, unchanged).
+- Account availability is set back to `unknown` when the profile is `divergent` or when more than one child ran
+  (`_run_claude`), whatever the readability of their `.meta.json`; section 7 spoke of the divergent profile only.
+- A `<synthetic>` or `isApiErrorMessage` record without text adds `<API-error record without text>` to `errors`, no longer an empty string.
+- Each result records `ledger.data_dir_fingerprint`, the first 12 hexadecimal characters of the sha256 of the resolved
+  data directory path (`data_dir_fingerprint()`); two results with different fingerprints used two ledgers, so section 4's
+  ledger guarantee does not hold between them. The path is not written. The eight recorded results predate it and
+  carry only `data_dir_from`.
+
+**Documentation status (R5, PAT-244).** Updated: this section; `docs/skill-evals.md` and `scripts/skill_evals.py` (PAT-184
+remarks); `changelog.d/PAT-244.md`. Not changed, with reason: `model-routing.md` (no new CLI option or constant there;
+the pointer of PAT-198 stays true); the matrix and the PAT-17 record (historical proofs).
