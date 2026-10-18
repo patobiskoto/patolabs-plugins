@@ -1,0 +1,34 @@
+{
+  "name": "blueprint",
+  "description": "Prepares pinned REA/Ghidra tooling without a global install, enforces a registry of targets the maintainer authorised, and writes a reproducible inventory of an authorised target with REA evidence.",
+  "version": "0.1.0",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/blueprint",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "reverse-engineering",
+    "inventory",
+    "rea",
+    "ghidra",
+    "codex",
+    "claude"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "blueprint",
+    "shortDescription": "Inventory an authorised target with pinned REA evidence.",
+    "longDescription": "Prepares pinned REA, Ghidra and JDK in a data directory after an explicit plan, refuses any target absent from the maintainer's registry, and writes a reproducible inventory (modules, types, UI strings, resources) where unreadable facts are unknown.",
+    "developerName": "patolabs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/patobiskoto/patolabs-plugins/tree/main/plugins/blueprint",
+    "defaultPrompt": [
+      "Show the blueprint setup plan."
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "blueprint",
+  "description": "Prepares pinned REA/Ghidra tooling without a global install, enforces a registry of targets the maintainer authorised, and writes a reproducible inventory of an authorised target with REA evidence.",
+  "version": "0.1.0",
+  "author": {
+    "name": "pato"
+  },
+  "homepage": "https://github.com/patobiskoto/patolabs-plugins",
+  "repository": "https://github.com/patobiskoto/patolabs-plugins",
+  "keywords": [
+    "reverse-engineering",
+    "inventory",
+    "rea",
+    "ghidra",
+    "codex",
+    "claude"
+  ]
+}

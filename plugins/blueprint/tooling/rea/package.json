@@ -1,0 +1,9 @@
+{
+  "name": "blueprint-rea",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned REA install for the blueprint plugin",
+  "dependencies": {
+    "rea-agents": "6.5.0"
+  }
+}

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_NAMES = ("foundry", "ship-ios", "gauge", "relay")
+PLUGIN_NAMES = ("foundry", "ship-ios", "gauge", "relay", "blueprint")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 ROOT_PLACEHOLDER = "<plugin-root>"
 
