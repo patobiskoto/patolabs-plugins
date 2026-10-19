@@ -515,8 +515,9 @@ def test_an_unmerged_base_changing_a_file_of_the_pr_is_refused(tmp_path):
     text = "".join(f"line {n}\n" for n in range(1, 21)).replace("line 20\n", "line 20 main\n")
     scenario = Scenario(tmp_path, unmerged_base=True, unmerged_edit=("a.txt", text))
     scenario.merge_main()
-    # Observed: refused by the diff-hash identity check (the diff of the merged head against
-    # the unchanged base now carries main's hunk), not by the "shared paths" check.
+    # Observed: refused by the diff-hash identity check, not by the "shared paths" check.
+    # Deduced from `git_diff` (base...HEAD): the recomputed diff keeps the PR's hunk, but its
+    # `index` blob lines for a.txt change, since both sides now carry main's edit.
     with pytest.raises(RoutingConfigError, match="le diff a changé"):
         scenario.carry()
 
