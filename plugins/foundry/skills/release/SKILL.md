@@ -143,7 +143,7 @@ merged with the audited `--allow-incomplete-ac --ac-override-reason=<code>` of
 
 ## 6. STOP — tag
 Do not tag without the maintainer's explicit agreement, and only after the CI of the merge
-commit is proven green (`AGENTS.md#R4`). Then create an annotated tag `foundry-v<version>`
+commit is proven green (`AGENTS.md#R4`). To wait for the CI of a release PR, use `issue wait-ci <PR-NUMBER>` (read-only, `docs/ci-wait.md`), never `gh pr checks` or `gh run watch`. Then create an annotated tag `foundry-v<version>`
 on the merge commit and push it with an explicit refspec, never a bare `git push`:
 ```bash
 git fetch origin

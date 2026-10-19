@@ -384,7 +384,9 @@ python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" 
 instruction you could skip. It reads BOTH sources (check-runs + legacy commit-statuses,
 so a red Jenkins blocks too) and refuses unless at least one check concluded `success`
 with nothing red or pending (`neutral`/`skipped` are fine alongside a success, never
-alone). Zero checks right after a push means the CI is queued — WAIT and retry, don't
+alone). Zero checks right after a push means the CI is queued — WAIT with the read-only
+`issue wait-ci <PR-NUMBER> [--timeout=S] [--interval=S]` (exit 0 green, 2 red, 3 timeout;
+`docs/ci-wait.md`), never `gh pr checks` or `gh run watch`, and don't
 override; the gate refuses `--allow-no-ci` while a fresh check-suite is queued.
 `--allow-no-ci` is only for a repo that genuinely has no CI at all, and only after
 asking the human. It squash-merges (REST, pinned to the CI-gated sha — if the head
@@ -436,7 +438,7 @@ until the conflict or unavailable ADR is resolved (`query adr`/`query adrs` stil
 closed on either); say so explicitly rather than silently skipping this step.
 
 ## Anti-rules
-- Never GraphQL (`gh pr create/merge/checks`). REST only — the adapter enforces it.
+- Never GraphQL (`gh pr create/merge/checks`); wait for CI with `issue wait-ci`. REST only — the adapter enforces it.
 - Never bypass the CI gate. Never transition workflow state before `merged=true`.
   The only pre-merge administrative exception is the proof-bound, provider-audited AC
   checkbox synchronization defined in step 1; it grants no transition or merge authority.
