@@ -1612,6 +1612,13 @@ def _modelled_agents_references(masked: str):
         line = masked[start:end]
         before = masked[start : match.start()]
         after = masked[match.end() : end]
+        # Look past list-item and blockquote prefixes: the content they carry
+        # can still be a reference definition or indented code.
+        while True:
+            container = re.match(r" {0,3}(?:>[ ]?|(?:[*+-]|[0-9]{1,9}[.)])[ \t])", line)
+            if container is None:
+                break
+            line = line[container.end() :]
         indentation = line[: len(line) - len(line.lstrip(" \t"))]
         if (
             len(indentation.expandtabs(4)) >= 4

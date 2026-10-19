@@ -46,6 +46,7 @@ def test_orphan_adr_document_content_is_accepted_as_exact_readback():
         ("x AGENTS.md#R12", "x [AGENTS.md#R12](<http://AGENTS.md#R12>)"),
         ("a (AGENTS.md#R3) b", "a ([AGENTS.md#R3](<http://AGENTS.md#R3>)) b"),
         ("`AGENTS.md#R9 x`", "`AGENTS.md#R9 x`"),
+        ("- see AGENTS.md#R9 x", "* see [AGENTS.md#R9](<http://AGENTS.md#R9>) x"),
     ],
 )
 def test_only_the_observed_reference_forms_are_rewritten(source, rendered):
@@ -64,6 +65,10 @@ def test_only_the_observed_reference_forms_are_rewritten(source, rendered):
         ("[a (AGENTS.md#R9) b](#x)", "AGENTS.md"),
         ("[r]: AGENTS.md#R9", "AGENTS.md"),
         ("    AGENTS.md#R9 x", "AGENTS.md"),
+        ("- [r]: AGENTS.md#R9", "AGENTS.md"),
+        ("> [r]: AGENTS.md#R9", "AGENTS.md"),
+        ("-     AGENTS.md#R9 x", "AGENTS.md"),
+        (">     AGENTS.md#R9 x", "AGENTS.md"),
     ],
 )
 def test_other_domain_like_references_are_refused_before_any_write(source, named):
