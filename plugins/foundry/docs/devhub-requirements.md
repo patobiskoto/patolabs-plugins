@@ -43,9 +43,14 @@ not part of `-m tracker_conformance` (`docs/tracker-conformance.md`): that suite
 deterministic over fake transports, this one needs a server.
 
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
-expected red, listed below with its owner) that raised the exception its `gap` declares in `raises=`, any other exception, a setup error included, is a failure or an error, not an `xfailed` (limit: DHN-27 and DHN-28 declare `DevHubTrackerError`, which a transport error, an invalid response or a refusal of the issue creation or start also raises, so their `xfailed` alone does not show the refused transition); `XPASS(strict)` reported as a failure means a
-gap closed and its test must be turned into a plain need (see "Closing a gap"); `failed`
-on a need expected green is a regression or a wrong expectation to discuss on this page.
+expected red, listed below with its owner) that raised the exception its `gap` declares in
+`raises=`, any other exception, a setup error included, is a failure or an error, not an
+`xfailed` (limit: DHN-27 and DHN-28 declare `DevHubTrackerError`, which a transport error,
+an invalid response or a refusal of the issue creation or start also raises, so their
+`xfailed` alone does not show the refused transition); `XPASS(strict)` reported as a failure
+means a gap closed and its test must be turned into a plain need (see "Closing a gap");
+`failed` on a need expected green is a regression or a wrong expectation to discuss on this
+page.
 
 ### Environment variables
 
@@ -86,15 +91,16 @@ at the commit read above has a project deletion route under `admin/projects`, wi
 
 ## Needs
 
-Status vocabulary: **green** = the test passed against a DevHub instance; **red** = the
-need is not met (a strict `xfail` test that names the exact exception of the gap in `raises=`, never a pass); **unknown** = the test exists and has
-not been run against a DevHub instance. The owner column names who must act when the need
-is red. Basis: *adapter* = observed in `trackers/devhub.py` / `trackers/base.py` (the
-method is inherited from the `Tracker` default, checked by script on 2026-10-19);
-*server* = deduced from the DevHub source (repository `dev-hub`, paths relative to its root),
-read-only, not run. Read at commit `68c7ef0` (2026-10-19), the `HEAD` of that checkout at
-reading time; the files cited here are identical at the earlier `3fedc57` (`git diff 3fedc57
-68c7ef0` on them was empty that day).
+Status vocabulary: **green** = the test passed against a DevHub instance; **red** = the need
+is not met (a strict `xfail` test that names the exact exception of the gap in `raises=`,
+never a pass); **unknown** = the test exists and has not been run against a DevHub instance.
+The owner column names who must act when the need is red. Basis: *adapter* = observed in
+`trackers/devhub.py` / `trackers/base.py` (the method is inherited from the `Tracker`
+default, checked by script on 2026-10-19); *server* = deduced from the DevHub source
+(repository `dev-hub`, paths relative to its root), read-only, not run. Read at commit
+`68c7ef0` (2026-10-19), the `HEAD` of that checkout at reading time; the files cited here
+are identical at the earlier `3fedc57` (`git diff 3fedc57 68c7ef0` on them was empty that
+day).
 
 No test has been run against a DevHub instance when this page was written: every
 `unknown` is unknown for that reason, and every `red` is deduced from code, not observed on
@@ -218,7 +224,7 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
 | `trackers/devhub.py`, `tracker-contract.md`, `tracker-contract.v1.json` | Not changed: no adapter behaviour, CLI verb or contract cell changed. |
 
 Mechanical enforcement: `tests/test_devhub_requirements.py` checks that this table and the
-test decorators carry the same ids, tests and red/not-red status, that every `@gap` carries one
-`raises=`, that a gate refusal makes every test an error and never an `xfailed` (offline run, no
-network), and that this page names the command and variables; it does not prove that a sentence here is true (FOUNDRY-123 is
-the separate, not-yet-shipped documentation gate).
+test decorators carry the same ids, tests and red/not-red status, that every `@gap` carries
+one `raises=`, that a gate refusal makes every test an error and never an `xfailed` (offline
+run, no network), and that this page names the command and variables; it does not prove that
+a sentence here is true (FOUNDRY-123 is the separate, not-yet-shipped documentation gate).
