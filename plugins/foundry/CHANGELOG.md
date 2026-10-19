@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 2.1.0 — 2026-10-19
+
+Minor release. Behaviour changes without a new verb or option: Foundry declares Python
+3.11 as its minimum (`MINIMUM_PYTHON`, `tooling/python_floor.py`), `tooling/foundry_cli.py`
+exits non-zero under an older interpreter, the hooks that import `foundry` become inactive
+with a visible `systemMessage` under it, internal hook failures stay fail-open but are no
+longer silent, and `doctor` prints a `Hook Python` line (PAT-265); `mask_credentials` also
+masks a JSON-quoted `Authorization` / `Proxy-Authorization` header (PAT-226). No routing
+default, model or effort changes. Release note: `docs/release-2.1.0.md`; upgrade guide:
+`docs/migration-2.1.0.md`. This dated section is not a claim that 2.1.0 is already tagged
+or installed. The entries below are the fragments present after `foundry-v2.0.0`, kept as
+written.
+
+- PAT-265: Foundry declares Python 3.11 as its minimum (`MINIMUM_PYTHON`, `tooling/python_floor.py`, one declaration). `tooling/foundry_cli.py` exits non-zero with a message naming the interpreter, its version and the minimum, before importing any `foundry` module; the `route_agent`, `guard_bash`, `observe_agent` and `session_start` hooks print one `systemMessage` and stay fail-open under an older interpreter. Observed cause: on a host where `python3` was 3.9.6, `zip(..., strict=True)` raised `TypeError` in `route_agent.py`, whose `except Exception` swallowed it and the logical agent then self-stopped with a misleading message. Internal failures of `route_agent`, `guard_bash`, `guard_routed_readonly`, `observe_agent` and `session_start` are still fail-open (FOUNDRY-ADR-0005, PAT-42 fail-closed branch unchanged) but now print a `systemMessage` naming the exception type only; the previously silent paths are no longer silent. `doctor` adds a `Hook Python` line (path, version, source) and fails below the minimum; `session_start.py` writes `hook-python.json` in the data directory for it. `guard_bash.py` gains `from __future__ import annotations` (its `str | None` annotations did not import on 3.9). `.github/workflows/ci.yml` gains a ninth job, `foundry-python-min`, which runs the public pure-logic suite under Python 3.11 with the same plan and fork conditions as `foundry`; the job `foundry` (3.13) and its required name are unchanged. R5 documentation status: `README.md` ("Install or upgrade" and the CI jobs list), the root `README.md` CI line and `docs/model-routing.md` (fail-open paragraph) updated; `hooks/hooks.json` unchanged. Under Python 3.10 or older the four hooks that import `foundry`, including the `guard_bash` R1 deny and the PAT-215 `campaign-approval approve` deny, are now inactive with that visible message on every hook call; whether they worked under 3.10 before is unknown. `hook-python.json` also carries a `recorded_at` UTC time shown by `doctor`, whose `Hook Python` line now prints before the `Config` preflight; `route_agent` also reports an unreadable or non-object payload as a visible fail-open message. `skills/doctor/SKILL.md` lists the new line and its remedy.
+- PAT-226: Settle the non-blocking remarks deferred from PAT-221 (PAT-222, PAT-223, PAT-224): `campaign_effects.mask_credentials` now also masks a JSON-quoted `Authorization` / `Proxy-Authorization` header (`"Authorization": "Bearer x"`; the previous header pattern is unchanged and still applied first; a second pattern, applied after it, masks the JSON-quoted form; unit test); `docs/campaign-approval.md`, `docs/campaign-effects.md` and `docs/campaign-cadence.md` state their sources, status labels and exit codes precisely. R5: `mask_credentials` documented in `docs/campaign-effects.md`; exit codes of `campaign-cadence next` / `step` / `run` documented in `docs/campaign-cadence.md` and `docs/campaign-effects.md`; no other public surface changed.
+
 ## 2.0.0 — 2026-10-18
 
 Major release by version number only: 2.0.0 is a milestone chosen by the maintainer on
