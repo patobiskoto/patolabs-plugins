@@ -90,6 +90,8 @@ def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
     def command(*args, **_kwargs):
         if args[-2:] == ("--abbrev-ref", "HEAD"):
             return branch
+        if args[:3] == ("git", "rev-parse", "--verify"):
+            return ""  # no remote-tracking ref: empty lease value (PAT-273)
         if args[:2] == ("git", "push"):
             events.append("codehost:push")
             return ""

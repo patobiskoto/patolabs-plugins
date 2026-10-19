@@ -56,7 +56,8 @@ repository (`default_worktrees_dir`, or `--worktrees-dir`), created by `git work
 detached at the remote default branch for a new ticket, or on the existing ticket branch.
 `issue start` then creates the branch from it, as it does in any linked worktree
 (`_prepare_branch`, `issue.py`). `issue openpr` pushes the branch itself (`openpr`,
-`issue.py`); the cadencer runs no `git push`. A worktree is never removed: nothing in
+`issue.py`), under a `--force-with-lease` pinned to the remote-tracking sha the clone last knew (empty when
+absent, no fetch first; remote commits fetched but not integrated, e.g. by a `git pull --ff-only` or a background fetch, pass the lease and are overwritten: deduced from the lease semantics, not observed) and never on the default branch (`_push_branch`, `issue.py`, PAT-273); the cadencer runs no `git push`. A worktree is never removed: nothing in
 `campaign_effects.py`, `campaign_review.py` or `campaign_defer.py` runs `git worktree remove`
 or deletes it (searched, PAT-236); a finished ticket keeps its directory under the worktrees
 directory until a human removes it, and `ensure_worktree` reuses an existing directory as is.
