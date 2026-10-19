@@ -215,26 +215,26 @@ The release notes open with the behaviour changes and claim no gain. Statuses:
   the Gauge alert on Claude Code and Codex (to be observed after the merge), and the return
   to 1.5.0 through an official manager (not tried, PAT-162).
 
-**Release 2.1.0, prepared by its release pull request:** that pull request sets both
-Foundry host manifests to **2.1.0** (Ship-iOS stays at **0.3.0**) and carries the dated
-`2.1.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the two
-fragments of `plugins/foundry/changelog.d/` (which it deletes), the
-[release notes](plugins/foundry/docs/release-2.1.0.md), the
-[upgrade and rollback guide](plugins/foundry/docs/migration-2.1.0.md) and the freeze
-entry of `plugins/foundry/tests/fixtures/release-history.json`. The release notes open
-with the behaviour changes (Python 3.11 as the declared minimum, visible hook failures)
-and claim no gain. Statuses:
+**Release 2.1.1, prepared by its release pull request:** that pull request sets both
+Foundry host manifests to **2.1.1** (Ship-iOS stays at **0.3.0**) and carries the dated
+`2.1.1` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the one
+fragment of `plugins/foundry/changelog.d/` (which it deletes) and the freeze entry of
+`plugins/foundry/tests/fixtures/release-history.json`. It is a patch: it adds no release
+note and no migration guide (the [2.1.0 release notes](plugins/foundry/docs/release-2.1.0.md)
+and [upgrade and rollback guide](plugins/foundry/docs/migration-2.1.0.md) still describe
+2.1.0 and are untouched). The section names the behaviour change (re-execution of the CLI
+and the hooks under a supported Python found in a closed list, PAT-267) and claims no
+gain. Statuses:
 
-- **Done by the release pull request:** the manifests, the CHANGELOG section, the two
-  pages, the freeze entry, the removal of the fragments and one comment line of
-  `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
-- **Not done by it, and not claimed here:** the tag `foundry-v2.1.0`, the update of the
+- **Done by the release pull request:** the manifests, the CHANGELOG section, the freeze
+  entry, the removal of the fragment and one comment line of `scripts/ci_plan.py`.
+- **Not done by it, and not claimed here:** the tag `foundry-v2.1.1`, the update of the
   installed plugin on Claude Code and on Codex, and the readback of the version a host
   actually loads. They come after the merge; the tag and the host update each need the
   maintainer's explicit authorization, and all are recorded on the release ticket
   (`skills/release/SKILL.md`, steps 6 to 9).
-- **Not verified:** the Foundry 2.1.0 / Ship-iOS 0.3.0 pair on a host, the interpreter a
-  host resolves as `python3` for hooks, and the return to 2.0.0 through an official
+- **Not verified:** the Foundry 2.1.1 / Ship-iOS 0.3.0 pair on a host, the interpreter a
+  host resolves as `python3` for hooks, and the return to 2.1.0 through an official
   manager (not tried, PAT-162).
 
 ## Public scope
@@ -270,7 +270,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 2.1.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 2.1.1 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
