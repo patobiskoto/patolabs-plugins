@@ -126,7 +126,26 @@ def body(issue_id, expected_path, updated_path):
     print(f"✏️  {issue_id} · corps {'mis à jour' if changed else 'inchangé'}")
 
 
+_COMMANDS = {"create-issue": create_issue, "reconcile-create": reconcile_create, "set-field": set_field,
+             "transition": transition, "link": link, "comment": comment, "body": body}
+
+
+def main(argv):
+    """PAT-275: `--help`/`-h` prints the module usage and writes nothing."""
+    if not argv or argv[0] in ("-h", "--help") or argv[0] not in _COMMANDS:
+        wanted_help = bool(argv) and argv[0] in ("-h", "--help")
+        if not wanted_help and argv:
+            print(f"⛔ Commande inconnue : {argv[0]!r}", file=sys.stderr)
+        print((__doc__ or "").split("CLI:\n", 1)[-1].rstrip())
+        return 0 if wanted_help else 2
+    cmd, args = argv[0], argv[1:]
+    if any(a in ("-h", "--help") for a in args):
+        usage = [ln for ln in (__doc__ or "").splitlines() if f"foundry.edit {cmd} " in ln]
+        print("\n".join(usage) or cmd)
+        return 0
+    _COMMANDS[cmd](*args)
+    return 0
+
+
 if __name__ == "__main__":
-    cmd, args = sys.argv[1], sys.argv[2:]
-    {"create-issue": create_issue, "reconcile-create": reconcile_create, "set-field": set_field,
-     "transition": transition, "link": link, "comment": comment, "body": body}[cmd](*args)
+    raise SystemExit(main(sys.argv[1:]))
