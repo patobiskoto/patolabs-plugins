@@ -43,8 +43,10 @@ if mod == "routing":
 
     try:
         routing_main(handle_config_errors=False)
-    except (RoutingConfigError, RoutingUnavailableError):
-        print("Configuration de routage invalide.", file=sys.stderr)
+    except (RoutingConfigError, RoutingUnavailableError) as exc:
+        # PAT-271: name the cause. Messages of these exceptions are fixed texts
+        # without claim_id, attempt token or diff bytes (tests/test_routing_errors.py).
+        print(f"Configuration de routage invalide : {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 elif mod == "command-worker":
     runpy.run_module("foundry.command_runtime", run_name="__main__", alter_sys=False)
