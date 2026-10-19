@@ -427,14 +427,59 @@ def test_a_ticket_of_a_companion_epic_gets_no_deferral_but_a_correction(env):
     assert env.world.edits == []
 
 
-def test_a_ticket_without_an_origin_epic_gets_no_deferral_but_a_correction(env):
-    env.world.issues["APP-1"].type = "Task"  # the direct parent is not an Epic
+def test_a_ticket_of_the_nits_epic_gets_no_deferral_but_a_correction(env):
+    env.world.issues["APP-1"].title = "Nits"  # PAT-ADR-0029: `Nits` is a companion Epic too
     reviewed(env)
     result = step(env)
     assert (result.decision.kind, result.decision.reason) == (
         "correct", "remarks_not_deferrable")
-    assert result.decision.evidence["cause"] == "no_origin_epic"
+    assert result.decision.evidence["cause"] == "companion_epic"
     assert env.world.edits == []
+
+
+def nits_epics(env):
+    return [i for i in env.world.issues.values() if i.title == "Nits"]
+
+
+def test_a_ticket_without_an_origin_epic_defers_to_nits_with_the_four_writes(env):
+    env.world.issues["APP-1"].type = "Task"  # the direct parent is not an Epic
+    reviewed(env)
+    result = step(env)
+    assert (result.decision.kind, result.decision.reason, result.outcome) == (
+        "defer-remarks", "non_blocking_remarks", "executed")
+    assert result.decision.evidence["origin"] is None
+    assert verbs(env) == ["create-issue", "create-issue", "comment"]
+    epic_spec, child_spec = (json.loads(e[1][0]) for e in env.world.edits[:2])
+    assert epic_spec["title"] == "Nits" and epic_spec["fields"]["Type"] == "Epic"
+    assert "parent" not in epic_spec
+    nits, = nits_epics(env)
+    follow_up, = follow_ups(env)
+    assert follow_up.title == cd.NO_ORIGIN_FOLLOW_UP_TITLE
+    assert child_spec["parent"] == nits.id
+    assert result.effect["deferral"]["state"] == "done"
+    assert result.effect["deferral"]["companion"] == nits.id
+
+
+def test_a_ticket_without_an_origin_epic_reuses_the_open_nits_follow_up(env):
+    env.world.issues["APP-1"].type = "Task"
+    env.world.add_issue("APP-50", "Nits", "Epic", "backlog")
+    env.world.add_issue("APP-51", cd.NO_ORIGIN_FOLLOW_UP_TITLE, "Task", "backlog",
+                        parent="APP-50")
+    reviewed(env)
+    assert step(env).outcome == "executed"
+    assert verbs(env) == ["comment"]
+    assert len(nits_epics(env)) == 1 and len(follow_ups(env)) == 1
+
+
+def test_two_nits_epics_are_a_durable_refusal_for_a_ticket_without_an_origin_epic(env):
+    env.world.issues["APP-1"].type = "Task"
+    env.world.add_issue("APP-50", "Nits", "Epic", "backlog")
+    env.world.add_issue("APP-60", "Nits", "Epic", "backlog")
+    reviewed(env)
+    result = step(env)
+    assert result.effect["deferral"]["state"] == "refused"
+    assert result.effect["deferral"]["reason"] == "companion_epic_ambiguous"
+    assert step(env).decision.evidence["cause"] == "refused"
 
 
 def test_nits_beside_a_fix_before_merge_are_deferred_then_the_correction_and_re_review(env):
@@ -457,7 +502,7 @@ def test_nits_beside_a_fix_before_merge_are_deferred_then_the_correction_and_re_
 
 
 def test_nits_that_cannot_be_deferred_are_corrected_with_the_fix_before_merge_ones(env):
-    env.world.issues["APP-1"].type = "Task"
+    env.world.issues["APP-1"].title = "Nits"  # a ticket of a companion Epic
     reviewed(env, nits=1, fix=1)
     result = step(env)
     assert (result.decision.kind, result.decision.reason) == (
@@ -482,6 +527,12 @@ def test_decide_is_pure_over_the_deferral_facts():
     assert cc._ticket_step(ticket(state="exhausted")).reason == "deferral_retries_exhausted"
     clean = cc.TicketFacts(**{**ticket().__dict__, "deferral": cc.DeferralFacts()})
     assert cc._ticket_step(clean).kind == "merge"
+    no_origin = cc.TicketFacts(**{**ticket().__dict__, "deferral": cc.DeferralFacts(
+        deferrable=1, origin=None)})  # PAT-ADR-0029: deferred to `Nits`
+    assert cc._ticket_step(no_origin).kind == "defer-remarks"
+    companion = cc.TicketFacts(**{**ticket().__dict__, "deferral": cc.DeferralFacts(
+        deferrable=1, origin="APP-1", origin_is_companion=True)})
+    assert cc._ticket_step(companion).evidence["cause"] == "companion_epic"
 
 
 def test_classification_of_failures():

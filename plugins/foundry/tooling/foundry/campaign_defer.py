@@ -31,6 +31,8 @@ COMPANION_PREFIX = "Nits "
 # that only starts with `Nits` is not a companion Epic.
 _COMPANION_NAME = re.compile(r"Nits(?: [A-Za-z][A-Za-z0-9]*-[0-9]+)?")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
+NO_ORIGIN_COMPANION = "Nits"  # PAT-ADR-0029: the companion Epic of the tickets with no origin Epic
+NO_ORIGIN_FOLLOW_UP_TITLE = "Review remarks deferred from tickets with no origin Epic"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
 DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or the reset_at of a
 # quota error when later (capped by MAX_RESET_WAIT_SECONDS); not measured
@@ -428,7 +430,7 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
                                      facts.diff_hash)
     deferrable = [r for r in deferrable if r["text"] not in earlier]  # no double deferral
     origin = facts.origin
-    if origin is None or facts.origin_is_companion:
+    if facts.origin_is_companion:
         raise Durable("no_deferral_case")
     if not deferrable and last is not None:  # PAT-237: nothing left, no deferral read or write
         field = deferral_field("done", facts.diff_hash, ledger, follow_up=last["follow_up"],
@@ -436,18 +438,20 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
         if review.update_pr_body(runtime, epic, ticket, attempts, worktree, None, deferral=field):
             raise Transient("pr_body_not_updated")
         return field
-    name = f"{COMPANION_PREFIX}{origin}"
+    name = NO_ORIGIN_COMPANION if origin is None else f"{COMPANION_PREFIX}{origin}"
     listing = Listing(tracker, project)
     known, maybe_created = journal_memory(attempts, epic)
     companion = _find_companion(listing, name, known)
     if companion is None:
         companion = _create(runtime, worktree, {
             "title": name, "fields": {"Type": "Epic", "State": "backlog"},
-            "body": f"Companion Epic of {origin}: holds the non-blocking review remarks "
-                    "deferred from it (AGENTS.md#R9 (b)). No tracker link to the origin Epic.",
+            "body": f"Companion Epic of {origin or 'the tickets with no origin Epic'}: holds the "
+                    "non-blocking review remarks deferred from it (AGENTS.md#R9 (b)). "
+                    "No tracker link to the origin Epic.",
         }, ledger, WRITE_COMPANION)
     ledger["companion"] = companion
-    title = FOLLOW_UP_TITLE.format(origin=origin)
+    title = (NO_ORIGIN_FOLLOW_UP_TITLE if origin is None
+             else FOLLOW_UP_TITLE.format(origin=origin))
     follow_up, attach = _find_follow_up(listing, companion, title,
                                         maybe_created or listing.loaded)
     if follow_up is None:

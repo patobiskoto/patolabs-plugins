@@ -361,8 +361,7 @@ whose direct parent is not an Epic, the chain of parents not being walked up (ma
 decision of 2026-10-11).
 Inside an Epic campaign run by the Foundry cadencer, the cadencer makes these four writes
 itself after a validated review, so do not repeat them by hand (for an issue with no origin
-Epic it does not yet defer to `Nits`: it has the remarks corrected by its correction loop,
-`docs/campaign-effects.md`): it keeps the reviewer's
+Epic it defers to `Nits`, `docs/campaign-effects.md`): it keeps the reviewer's
 remarks in a local receipt that the merge gate never reads, defers the ones that are not
 marked "fix before merge", cites the follow-up issue in the PR description, and has the
 others corrected by its correction loop (`docs/review-rounds.md`, "What is not mechanical

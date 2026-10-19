@@ -639,7 +639,6 @@ remark, the marked ones included.
 | Facts (`DeferralFacts`) | Decision |
 | --- | --- |
 | no deferrable remark, or the deferral is `done` for this diff hash | none: the pass goes on to CI and `merge` |
-| no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up). PAT-ADR-0029 now defers such a ticket to the project companion Epic `Nits` (`AGENTS.md#R9` (b)); **the cadencer does not yet apply it**: it keeps this row, and no `defer-remarks` effect creates or fills `Nits` (PAT-283) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
 | the origin Epic is itself a companion Epic (its title is exactly `Nits ` and an identifier such as `APP-1`, or exactly `Nits` since PAT-283, `_COMPANION_NAME`, PAT-238; a title that only starts with `Nits` is not): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
 | the last attempt ended in a durable refusal | `correct` `remarks_not_deferrable`, cause `refused` |
 | the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed, or the `reset_at` of a quota error (see "Classification of a failure"; capped by `MAX_RESET_WAIT_SECONDS`) has not | `wait` `deferral_transient_failure` |
@@ -664,7 +663,9 @@ that an earlier attempt of this journal or the project listing shows (limit in s
 
 1. Read the receipt for the ticket and the diff hash; absent, or a deferrable count that differs
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
-2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>`. First the
+2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>`, or exactly `Nits`
+   for a ticket with no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain
+   of parents is not walked up; PAT-291, PAT-ADR-0029; `NO_ORIGIN_COMPANION`). First the
    companions that earlier deferral attempts of this Epic journaled (`journal_memory`, the
    `companion` of their `deferral` field, most recent first) are read by identifier (`get_issue`)
    and the first that is still an Epic with that title is kept; otherwise the project is listed
@@ -675,7 +676,8 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    `backlog`, no `parent`; no link to the origin Epic is made.
 3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
    with the lowest identifier; a started or closed child is never used. Otherwise an issue titled
-   `Review remarks deferred from <ORIGIN-EPIC-ID>` in `backlog` or `ready` with no parent is an
+   `Review remarks deferred from <ORIGIN-EPIC-ID>` (`Review remarks deferred from tickets with no origin Epic`
+   under `Nits`, `NO_ORIGIN_FOLLOW_UP_TITLE`) in `backlog` or `ready` with no parent is an
    orphan of a creation whose parent link failed: write 4, `edit link <FOLLOW-UP> subtask-of
    <COMPANION>`. This scan reads the listing of step 2; it is skipped (`_find_follow_up`
    `scan_orphans`) only when step 2 did not need the listing (the companion came from the
