@@ -453,6 +453,73 @@ def test_merge_reports_the_merged_sha(monkeypatch, capsys):
     assert "a1b2c3d4e5f6a7b8" in capsys.readouterr().out
 
 
+def _merge_with_failing_pull(monkeypatch, tmp_path):
+    """Run merge() in a real checkout whose `git pull --ff-only` fails (no remote)."""
+    import subprocess
+
+    for cmd in (
+        ("git", "init", "-q", "-b", "main"),
+        ("git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "commit", "-q", "--allow-empty", "-m", "init"),
+        ("git", "branch", "chore/demo-7-release"),
+    ):
+        subprocess.run(cmd, cwd=tmp_path, check=True, capture_output=True)
+    monkeypatch.chdir(tmp_path)
+    events = []
+    head = SimpleNamespace(sha="headsha1234", head="chore/demo-7-release", merged=False)
+    landed = SimpleNamespace(sha="a1b2c3d4e5f6a7b8", head=head.head, merged=True)
+    ch = SimpleNamespace(
+        resolve_repo=lambda: "acme/demo",
+        get_pr=lambda repo, n: head,
+        merge_pr=lambda repo, n, method="squash", sha=None: landed,
+        delete_branch=lambda repo, branch: None,
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: SimpleNamespace(
+        get_issue=lambda _id: SimpleNamespace(id="DEMO-7", body="", ac_done=0, ac_total=0),
+    ))
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: ch)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+    monkeypatch.setattr(write, "ci_gate", lambda *a, **k: {
+        "passed": True, "waived": False, "total": 2, "pending": 0, "failing": 0})
+    monkeypatch.setattr(
+        write, "transition", lambda _t, _i, state, **_k: events.append(state),
+    )
+    return events
+
+
+def test_merge_local_pull_failure_is_a_distinct_exit_after_a_reported_success(
+    monkeypatch, tmp_path, capsys,
+):
+    events = _merge_with_failing_pull(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as raised:
+        issue.merge("DEMO-7", "12")
+
+    out, err = capsys.readouterr()
+    assert raised.value.code == issue.EXIT_LOCAL_CLEANUP_FAILED == 3
+    assert events == ["done"]
+    assert "✅ PR #12 mergée" in out and "DEMO-7 → done" in out
+    assert "a1b2c3d4e5f6a7b8" in out
+    assert "seul le nettoyage local a échoué" in err
+    assert (
+        "git checkout main && git pull --ff-only && git branch -D chore/demo-7-release"
+        in err
+    )
+
+
+def test_refused_merge_still_exits_with_a_message_not_the_cleanup_code(
+    monkeypatch, tmp_path,
+):
+    _merge_with_failing_pull(monkeypatch, tmp_path)
+    monkeypatch.setattr(write, "ci_gate", lambda *a, **k: (_ for _ in ()).throw(
+        SystemExit("⛔ CI refusée")))
+
+    with pytest.raises(SystemExit) as raised:
+        issue.merge("DEMO-7", "12")
+
+    assert raised.value.code == "⛔ CI refusée"
+
+
 def test_youtrack_merge_records_exact_delivery_before_done_and_branch_delete(monkeypatch):
     events = []
     project = Project("DEMO", "project-demo")
