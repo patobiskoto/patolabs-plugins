@@ -79,35 +79,53 @@ def _probe(path):
 _attempted = False
 
 
+def _consume_reexec_env() -> None:
+    """On a supported interpreter: keep the re-execution origin, drop both variables so
+    that no descendant process inherits them."""
+    global _origin
+    if _origin is None:
+        _origin = _reexec_origin()
+    os.environ.pop(REEXEC_GUARD, None)
+    os.environ.pop(REEXEC_FROM, None)
+
+
 def reexec_if_unsupported(argv=None) -> None:
     """PAT-267: below the minimum, re-run this same script under a supported interpreter.
 
     Returns (so the PAT-265 message path runs) when the interpreter is supported, when a
     re-execution was already made (``REEXEC_GUARD``, no loop), when no candidate of the
-    closed list reports a supported version, or when ``os.execv`` fails. Nothing is read
-    from stdin before the exec.
+    closed list reports a supported version, when ``os.execv`` fails, or on any
+    unexpected error (fail-open, FOUNDRY-ADR-0005). Nothing is read from stdin before the
+    exec. On a supported interpreter the two variables are removed from the environment.
     """
     global _attempted
-    if unsupported_message() is None or _attempted or os.environ.get(REEXEC_GUARD):
+    try:
+        if unsupported_message() is None:
+            _consume_reexec_env()
+            return
+        if _attempted or os.environ.get(REEXEC_GUARD):
+            return
+        _attempted = True
+        args = list(sys.argv if argv is None else argv)
+        current = os.path.realpath(sys.executable) if sys.executable else None
+        for path in _candidates():
+            if os.path.realpath(path) == current:
+                continue
+            version = _probe(path)
+            if version is None or version < MINIMUM_PYTHON:
+                continue
+            os.environ[REEXEC_GUARD] = "1"
+            os.environ[REEXEC_FROM] = f"{_dotted(sys.version_info)} {sys.executable or '?'}"
+            try:
+                os.execv(path, [path] + args)
+            finally:
+                os.environ.pop(REEXEC_GUARD, None)
+                os.environ.pop(REEXEC_FROM, None)
+    except Exception:
         return
-    _attempted = True
-    args = list(sys.argv if argv is None else argv)
-    current = os.path.realpath(sys.executable) if sys.executable else None
-    for path in _candidates():
-        if os.path.realpath(path) == current:
-            continue
-        version = _probe(path)
-        if version is None or version < MINIMUM_PYTHON:
-            continue
-        os.environ[REEXEC_GUARD] = "1"
-        os.environ[REEXEC_FROM] = f"{_dotted(sys.version_info)} {sys.executable or '?'}"
-        try:
-            os.execv(path, [path] + args)
-        except Exception:
-            pass
-        os.environ.pop(REEXEC_GUARD, None)
-        os.environ.pop(REEXEC_FROM, None)
-        return
+
+
+_origin = None
 
 
 def _reexec_origin():
@@ -149,8 +167,9 @@ def hook_failure_output(hook: str, exc: BaseException) -> str:
     )
 
 
-# The hooks' interpreter is what the host resolves as ``python3`` when it runs
-# hooks/hooks.json; ``doctor`` cannot see it from its own process, so SessionStart records it.
+# The hooks' interpreter is the one that actually runs them: what the host resolves as
+# ``python3`` for hooks/hooks.json, or the one ``reexec_if_unsupported`` re-executed into.
+# ``doctor`` cannot see it from its own process, so SessionStart records it.
 OBSERVED_FILE = "hook-python.json"
 
 
@@ -170,7 +189,7 @@ def record_interpreter() -> None:
                   "version": list(tuple(sys.version_info)[:3]),
                   "recorded_at": datetime.datetime.now(datetime.timezone.utc)
                   .strftime("%Y-%m-%dT%H:%M:%SZ")}
-        origin = _reexec_origin()
+        origin = _origin
         if origin:
             record["reexec_from"] = {"executable": origin["executable"],
                                      "version": list(origin["version"])}

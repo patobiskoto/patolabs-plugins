@@ -319,7 +319,7 @@ def test_candidates_are_the_closed_list_in_order(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(python_floor, "FIXED_PATHS", (str(tmp_path / "fixed" / "python3"),))
     names = [os.path.relpath(p, tmp_path) for p in python_floor._candidates()]
-    assert fixed is not None
+    assert fixed.parent.name == "fixed" and fixed.name == "python3.log"
     assert names == [
         "bin/python3.13", "bin/python3.11", "bin/python3", "fixed/python3",
         "home/.local/bin/python3.12"]
@@ -327,19 +327,56 @@ def test_candidates_are_the_closed_list_in_order(tmp_path, monkeypatch):
 
 def test_session_start_records_the_reexecuting_interpreter_only_after_exec(tmp_path):
     bin_dir = tmp_path / "bin"
-    # The "supported" interpreter is the real one, wrapped so the hook runs for real.
     bin_dir.mkdir()
+    data = tmp_path / "data"
+    # The "supported" interpreter is the real one, wrapped so the hook runs for real; the
+    # wrapper first logs whether a record already exists (the old process must write none)
+    # and what the child environment holds.
     wrapper = bin_dir / "python3.12"
     wrapper.write_text(
         '#!/bin/sh\nif [ "$1" = "-c" ]; then echo "3 12"; exit 0; fi\n'
-        'exec "%s" "$@"\n' % sys.executable)
+        'if [ -e "%s/%s" ]; then echo present > "%s/before"; else echo absent > "%s/before"; fi\n'
+        'exec "%s" -c "import os, sys, runpy; sys.argv = sys.argv[1:]; '
+        'runpy.run_path(sys.argv[0], run_name=\'__main__\')" "$@" \n'
+        % (data, python_floor.OBSERVED_FILE, tmp_path, tmp_path, sys.executable))
     wrapper.chmod(0o755)
+    data.mkdir()
     result = _run_old(HOOKS / "session_start.py", home=tmp_path, path=bin_dir, stdin="{}")
     assert result.returncode == 0
-    recorded = json.loads((tmp_path / "data" / python_floor.OBSERVED_FILE).read_text())
+    assert (tmp_path / "before").read_text().strip() == "absent"
+    recorded = json.loads((data / python_floor.OBSERVED_FILE).read_text())
     assert recorded["executable"] == sys.executable
     assert recorded["version"] == list(tuple(sys.version_info)[:3])
     assert recorded["reexec_from"] == {"executable": sys.executable, "version": [3, 9, 6]}
+
+
+def test_reexecuted_process_drops_the_variables_but_keeps_the_origin(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    out = tmp_path / "env.txt"
+    wrapper = bin_dir / "python3.12"
+    wrapper.write_text(
+        '#!/bin/sh\nif [ "$1" = "-c" ]; then echo "3 12"; exit 0; fi\n'
+        'exec "%s" -c "import os, sys, runpy; sys.argv = sys.argv[1:]; '
+        'sys.path.insert(0, \'%s\'); import python_floor; '
+        'python_floor.reexec_if_unsupported(); '
+        'open(\'%s\', \'w\').write(repr((os.environ.get(\'FOUNDRY_PYTHON_REEXEC\'), '
+        'os.environ.get(\'FOUNDRY_PYTHON_REEXEC_FROM\'), python_floor._origin)))" "$@"\n'
+        % (sys.executable, PLUGIN_ROOT / "tooling", out))
+    wrapper.chmod(0o755)
+    _run_old(HOOKS / "session_start.py", home=tmp_path, path=bin_dir)
+    guard, origin_var, origin = eval(out.read_text())
+    assert guard is None and origin_var is None
+    assert origin == {"executable": sys.executable, "version": (3, 9, 6)}
+
+
+def test_unexpected_error_in_the_search_falls_back_visibly(monkeypatch):
+    monkeypatch.setattr(python_floor, "_attempted", False)
+    monkeypatch.setattr(python_floor.sys, "version_info", OLD)
+    monkeypatch.setattr(python_floor, "_candidates",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    python_floor.reexec_if_unsupported(["x.py"])
+    assert "3.9.6" in python_floor.hook_unsupported_output("h")
 
 
 def test_read_observed_accepts_records_without_and_with_reexec_from():
