@@ -173,7 +173,22 @@ def link_issue(adr_id, issue_id):
     print(f"🔗 {linked.id} ↔ {issue_id}")
 
 
+_USAGE = (
+    "usage: adr.py <create '<title>' [status] | accept <ADR-ID> "
+    "[--framed-by <ISSUE-ID>] | "
+    "edit <ADR-ID> <expected-body.md> <updated-body.md> | "
+    "supersede <ADR-ID> <replacement-ADR-ID> | "
+    "link-issue <ADR-ID> <ISSUE-ID>>"
+)
+
 if __name__ == "__main__":
+    # PAT-286: `-h`/`--help` anywhere prints the usage and writes nothing; it must fire
+    # before any tracker is built (an ADR titled `--help` was created otherwise).
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(_USAGE)
+        raise SystemExit(0)
+    if len(sys.argv) < 2:
+        raise SystemExit(_USAGE)
     cmd = sys.argv[1]
     if cmd == "create":
         create(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "proposed")
@@ -194,10 +209,4 @@ if __name__ == "__main__":
     elif cmd == "link-issue":
         link_issue(sys.argv[2], sys.argv[3])
     else:
-        raise SystemExit(
-            "usage: adr.py <create '<title>' [status] | accept <ADR-ID> "
-            "[--framed-by <ISSUE-ID>] | "
-            "edit <ADR-ID> <expected-body.md> <updated-body.md> | "
-            "supersede <ADR-ID> <replacement-ADR-ID> | "
-            "link-issue <ADR-ID> <ISSUE-ID>>"
-        )
+        raise SystemExit(_USAGE)

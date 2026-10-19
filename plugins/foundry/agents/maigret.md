@@ -39,8 +39,9 @@ findings with evidence. Skip the active-claim and merge-proof steps below.
    python3 "${CLAUDE_PLUGIN_ROOT}/tooling/foundry_cli.py" routing read-review --diff-hash <DIFF-HASH> --claim-id <CLAIM-ID> --root <ROOT> --base <BASE-SHA>
    ```
 
-   When the packet says the review is partial, it gives the same command with
-   `--since <PREVIOUS-HEAD-SHA>` added, which emits the range since the previous round.
+   When the packet says the review is partial, its send text gives the
+   `--since <PREVIOUS-HEAD-SHA>` argument to add to this command; with it the command emits
+   the range since the previous round.
 
    Never substitute an unverified `gh pr diff` or `git diff`. The dynamically selected
    internal profile supplies the guarded Bash capability needed for this command.

@@ -56,19 +56,23 @@ def test_only_the_observed_reference_forms_are_rewritten(source, rendered):
 @pytest.mark.parametrize(
     ("source", "named"),
     [
-        ("CLAUDE.md#R9 x", "CLAUDE.md"),
-        ("voir (AGENTS.md#R9(b)) ici", "AGENTS.md"),
-        ("voir docs/guide.md ici", "guide.md"),
-        ("AGENTS.md#R9, puis", "AGENTS.md"),
-        ("AGENTS.md#R9\tx", "AGENTS.md"),
-        ("[voir AGENTS.md#R9 ici](#ancre)", "AGENTS.md"),
-        ("[a (AGENTS.md#R9) b](#x)", "AGENTS.md"),
-        ("[r]: AGENTS.md#R9", "AGENTS.md"),
-        ("    AGENTS.md#R9 x", "AGENTS.md"),
-        ("- [r]: AGENTS.md#R9", "AGENTS.md"),
-        ("> [r]: AGENTS.md#R9", "AGENTS.md"),
-        ("-     AGENTS.md#R9 x", "AGENTS.md"),
-        (">     AGENTS.md#R9 x", "AGENTS.md"),
+        ("CLAUDE.md#R9 x", "CLAUDE.md#R9"),
+        ("voir (AGENTS.md#R9(b)) ici", "(AGENTS.md#R9(b))"),
+        ("voir docs/guide.md ici", "docs/guide.md"),
+        ("AGENTS.md#R9, puis", "AGENTS.md#R9,"),
+        ("AGENTS.md#R9\tx", "AGENTS.md#R9"),
+        ("[voir AGENTS.md#R9 ici](#ancre)", "AGENTS.md#R9"),
+        ("[a (AGENTS.md#R9) b](#x)", "(AGENTS.md#R9)"),
+        ("[r]: AGENTS.md#R9", "AGENTS.md#R9"),
+        ("    AGENTS.md#R9 x", "AGENTS.md#R9"),
+        ("- [r]: AGENTS.md#R9", "AGENTS.md#R9"),
+        ("> [r]: AGENTS.md#R9", "AGENTS.md#R9"),
+        ("-     AGENTS.md#R9 x", "AGENTS.md#R9"),
+        (">     AGENTS.md#R9 x", "AGENTS.md#R9"),
+        # PAT-286: a tab before the token is never measured, so never rewritten.
+        ("-\t  AGENTS.md#R9 x", "AGENTS.md#R9"),
+        ("-\t AGENTS.md#R9 x", "AGENTS.md#R9"),
+        ("> \t AGENTS.md#R9 x", "AGENTS.md#R9"),
     ],
 )
 def test_other_domain_like_references_are_refused_before_any_write(source, named):
@@ -85,3 +89,20 @@ def test_reference_in_a_fenced_block_is_not_rewritten():
     body = "```\nAGENTS.md#R9 x\n```"
     assert linear_module._linear_markdown_readback_body(body) == body
     linear_module._preflight_adr_body_readback(body)
+
+
+def test_the_refusal_names_the_whole_reference_as_written_in_the_source():
+    """PAT-286: `docs/guide.md`, not the matched suffix `guide.md`, and never a placeholder."""
+    with pytest.raises(TrackerConflictError) as raised:
+        linear_module._preflight_adr_body_readback("voir docs/guide.md ici")
+    assert "'docs/guide.md'" in str(raised.value) and "'guide.md'" not in str(raised.value)
+    with pytest.raises(TrackerConflictError) as raised:
+        linear_module._preflight_adr_body_readback("voir `code`x.md ici")
+    assert "'`code`x.md'" in str(raised.value)  # the source bytes, not the masked text
+
+
+@pytest.mark.parametrize("source", ["-\t  AGENTS.md#R9 x", "-\t AGENTS.md#R9 x", "a\tAGENTS.md#R9 x"])
+def test_a_tab_before_the_token_leaves_it_unmodelled_and_unrewritten(source):
+    """PAT-286: `-\t  AGENTS.md#R9 x` is indented code for CommonMark; fail closed."""
+    assert list(linear_module._modelled_agents_references(source)) == []
+    assert linear_module._linear_autolinked_agents_references(source) == source

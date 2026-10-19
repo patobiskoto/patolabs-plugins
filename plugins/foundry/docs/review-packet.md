@@ -40,11 +40,17 @@ It then validates active claim ownership, generation, Git HEAD and diff hash thr
 the existing ledger. The command refuses a stale coordinate, unavailable selected ADR,
 non-owner or terminal claim, and an existing output directory or symlink. Each refusal
 of `RoutingConfigError` prints `Préparation du paquet de review refusée : <cause>` and
-exits 2, where the cause names one of: base not a full 40-hex SHA (short or ref), PR base
-differing from `--base`, PR head differing from the local HEAD (wrong branch or unpushed
-commits), PR not open or wrong number, ADR absent or not accepted (superseded), CI
-observation impossible (provider error), HEAD or diff changed since the claim, stale
-claim generation (messages in `review_packet.py` and `routing.py`). This is a
+exits 2. The causes below are the main ones, not an exhaustive list: the code is
+authoritative (every `raise RoutingConfigError` of `review_packet.py` and of the routing
+helpers it calls, `routing.py`). The cause names one of: base not a full 40-hex SHA (short
+or ref), PR base differing from `--base`, PR head differing from the local HEAD (wrong
+branch or unpushed commits), PR head SHA missing or not a full SHA in the provider answer,
+issue and PR disagreeing (the issue links another PR), PR not open or wrong number, ADR
+absent or without text, ADR not accepted (the message states its status, for example
+`superseded` or `proposed`), CI observation impossible (provider error), HEAD or diff
+changed since the claim (the diff computation can also fail with git's own standard
+error, `git_diff`), stale claim generation (messages in `review_packet.py` and
+`routing.py`). This is a
 snapshot at those reads: a later PR, issue or Git change still requires the existing
 review/proof/merge revalidation. Source: `prepare_review_packet` and
 `routing.py::ReviewDeduplicator.active_git_claim`.
@@ -62,11 +68,16 @@ four literal sections used by the delegation facade. It carries `diff_hash`, `cl
 `root`, and `base`, and references the directory rather than embedding ADR corpora.
 Only the designated reviewer receives this file. The entire directory is private;
 none of its files belong in public PRs, tracker notes or logs. Stdout contains only
-`schema`, `status`, and `files`; refusals print their cause, which may name a hash, the base or a provider status but
-never a `claim_id`, attempt token or provider error text (any other failure prints only
+`schema`, `status`, and `files`; refusals print their cause, which may name a hash, the base, a status, or the
+standard error of a failed git command (`git_diff`, `git_range_diff`, `_git_is_ancestor` in
+`routing.py`) but never a `claim_id`, attempt token or provider error text (any other failure prints only
 `Préparation du paquet de review refusée.`). Source: `review_packet.py` and `routing.py::main`.
 
-`manifest.json` distinguishes `tool_read` from `coordinator_declared`. Tool-read files
+`manifest.json` distinguishes `tool_read` from `coordinator_declared`. When
+`--previous-head` is given, the manifest also carries `coordinator_declared_fields`
+(`{"coordinates.json": ["previous_head"]}`, PAT-286): `coordinates.json` is tool-read as a
+file, but its `previous_head` key is a coordinator declaration (the tool checks only that
+it is an ancestor of HEAD, `validate_since`). Tool-read files
 are `issue.json` (provider issue body), `acceptance.json` (ordered criterion identities
 and digests from `acceptance_criteria` and `acceptance_digest`), `pr.json` (PR coordinates
 and description), `ci.json` (both check sources, `ci_expected` and `observed_at`, the UTC time of the
@@ -95,7 +106,8 @@ empty description. Sources: `models.py::PullRequest`, `codehosts/github.py::get_
 `routing read-review` takes an optional `--since <SHA>` (PAT-283). Under the same
 claim, lock, coordinate and HEAD checks as the full read, and after the `base...HEAD` hash
 check, it emits `git diff --binary --no-ext-diff <SHA>..HEAD` instead of the full diff
-(`routing.py::claimed_review_diff`, `git_range_diff`). A `--since` that is not a full
+(`routing.py::claimed_review_diff`, `git_range_diff`); `claimed_review_diff` refuses `since`
+together with a snapshot consumer (PAT-286). A `--since` that is not a full
 40-hex SHA, names an absent commit or is not an ancestor of HEAD (rebase, force-push) is
 refused with `--since n'est pas un ancêtre du HEAD ...` or a format message: the review is
 then full. The guard of the read-only reviewer (`hooks/guard_routed_readonly.py::

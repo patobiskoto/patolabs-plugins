@@ -62,6 +62,9 @@ def _registry_target_project(project: Project) -> Project:
 
 def main(argv=None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if any(a in ("-h", "--help") for a in args):  # PAT-286: usage first, no manifest write
+        print(_usage())
+        return
     if len(args) != 4 or args[0] not in {"preflight", "copy", "activate"}:
         raise SystemExit(_usage())
     action, target_name, raw_config, raw_path = args

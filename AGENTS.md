@@ -262,7 +262,8 @@ an issue with no origin Epic go to the companion Epic of the project, named exac
 (PAT-ADR-0029, which amends the maintainer decision of 2026-10-10 that gave such an issue
 no deferral); the rules of this paragraph apply to it unchanged. Inside the companion Epic
 the remarks are held by a single follow-up issue, which gathers all the deferred remarks
-of the origin Epic. If that issue is already started or closed, a new follow-up issue is
+of the origin Epic. In `Nits`, which has no origin Epic, that issue gathers the remarks of
+every issue of the project with no origin Epic. If that issue is already started or closed, a new follow-up issue is
 created: no remark is added to a started or closed issue (maintainer decision of
 2026-10-11). The follow-up issue that receives the remarks of a PR is cited in that PR's
 description before the merge. These three cases are still corrected before the merge; the

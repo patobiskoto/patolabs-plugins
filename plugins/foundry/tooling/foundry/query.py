@@ -643,6 +643,10 @@ def serialize_stdout(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
 
 if __name__ == "__main__":
+    # PAT-286: `-h`/`--help` anywhere prints the commands and makes no tracker call.
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(f"usage: query [{'|'.join(_CMDS)}] [arg]")
+        raise SystemExit(0)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "backlog"
     arg = sys.argv[2] if len(sys.argv) > 2 else None
     fn = _CMDS.get(cmd)

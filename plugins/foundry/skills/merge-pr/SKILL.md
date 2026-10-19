@@ -251,7 +251,8 @@ nothing else. The remarks deferred from an issue with no origin Epic go to the c
 Epic of the project, named exactly `Nits` (PAT-ADR-0029, which amends the maintainer
 decision of 2026-10-10 that gave such an issue no deferral); the rules of this section
 apply to it unchanged. Inside the companion Epic, put the remarks in a single follow-up issue,
-which gathers all the deferred remarks of the origin Epic, and cite that issue in the PR
+which gathers all the deferred remarks of the origin Epic (in `Nits`, which has no origin
+Epic, those of every issue of the project with no origin Epic), and cite that issue in the PR
 description before the merge. If that issue is already started or closed, create a new
 follow-up issue: never add a remark to a started or closed issue (maintainer decision of
 2026-10-11). These three cases are still corrected before the merge; the rest of this
@@ -392,9 +393,12 @@ instruction you could skip. It reads BOTH sources (check-runs + legacy commit-st
 so a red Jenkins blocks too) and refuses unless at least one check concluded `success`
 with nothing red or pending (`neutral`/`skipped` are fine alongside a success, never
 alone). Zero checks right after a push means the CI is queued — WAIT with the read-only
-`issue wait-ci <PR-NUMBER> [--timeout=S] [--interval=S]` (exit 0 green, 2 red, 3 timeout;
-`docs/ci-wait.md`), never `gh pr checks` or `gh run watch`, and don't
-override; the gate refuses `--allow-no-ci` while a fresh check-suite is queued.
+`issue wait-ci` (exit 0 green, 2 red or not provably green, 3 timeout; `docs/ci-wait.md`):
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue wait-ci <PR-NUMBER> [--timeout=S] [--interval=S]
+```
+never `gh pr checks` or `gh run watch`, and don't override; the gate refuses
+`--allow-no-ci` while a fresh check-suite is queued.
 `--allow-no-ci` is only for a repo that genuinely has no CI at all, and only after
 asking the human. It squash-merges (REST, pinned to the CI-gated sha — if the head
 moved since the verdict, it refuses and you re-run the gate), sets the issue `done`,
@@ -402,9 +406,10 @@ then deletes the branch and cleans up local. If GitHub already reports the exact
 merged, it repairs only the missing tracker transition and never calls the merge endpoint
 again.
 
-Exit code 3 (`EXIT_LOCAL_CLEANUP_FAILED`, `tooling/foundry/issue.py`, PAT-272) means the merge
-and the `done` transition are durable and announced (`✅ PR #<n> mergée …` on standard output),
-but the local checkout of the default branch or its `git pull --ff-only` failed. Do not re-run
+The `issue merge` exit code 3 (`EXIT_LOCAL_CLEANUP_FAILED`, `tooling/foundry/issue.py`, PAT-272;
+not the `issue wait-ci` "3 timeout") means the merge and the `done` transition are durable and
+announced (`✅ PR #<n> mergée …`, or `✅ Reprise PR #<n> … déjà done` on the resume path of an
+already merged PR, on standard output), but the local checkout of the default branch or its `git pull --ff-only` failed. Do not re-run
 the merge: run the command printed on standard error (`git checkout <default> && git pull
 --ff-only && git branch -D <branch>`) once the checkout is clean. A refused merge exits 1 with
 its reason as the message; in a linked worktree the cleanup is left to the host and this code

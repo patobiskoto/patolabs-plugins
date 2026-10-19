@@ -429,11 +429,12 @@ body (link, status; `test_pat209_link_and_replay_keep_the_source_bytes`,
 (`strict`, PAT-103; `test_pat209_create_adr_refuses_the_body_of_adr_0017`). See the
 "PAT-209" section of the same page.
 PAT-284 adds one observed inline rewrite to the ADR body rendering, seen on the orphan
-`PAT-ADR-0029` Document: the bare reference `AGENTS.md#R<n>` (before a space or at the end of
-a line, outside code spans and fences) is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`
+`PAT-ADR-0029` Document: the bare reference `AGENTS.md#R<n>` followed by a space (outside code spans and fences) is
+stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`; at the end of a line it is rewritten the same
+way by the adapter, which is deduced, not observed (the fixture holds only the form followed by a space)
 (`linear.py::_linear_autolinked_agents_references`, applied last in
 `_linear_nonfenced_markdown_readback`; the parenthesised form is the PAT-209 issue form, assumed
-identical for ADRs: deduced, not observed). The token is modelled only in the observed context: inside a link label, on a link reference definition line or on a line indented 4 or more columns it is not rewritten and is refused like any other (`_modelled_agents_references`). For a new ADR body, any other `*.md` name outside code
+identical for ADRs: deduced, not observed). The token is modelled only in the observed context: inside a link label, on a link reference definition line, on a line indented 4 or more columns or after a tab it is not rewritten and is refused like any other (`_modelled_agents_references`); the content behind a list-item or blockquote prefix is examined for the same contexts once the prefix is removed (PAT-286), and a tab anywhere before the token fails closed, because a tab after a list marker can make the content indented code (`-<tab>  AGENTS.md#R9 x`, deduced from the CommonMark tab rule, not observed on Linear). The refusal message names the whole token as written in the source (for example `docs/guide.md`). For a new ADR body, any other `*.md` name outside code
 is refused before any write with `unsupported domain-like reference` in the refusal message
 (`_refuse_unmodelled_domain_references`, `_preflight_adr_body_readback`); the digest-pinned
 profiles and the stored bodies read by `new_body=False` callers are not subject to it. Only `.md`

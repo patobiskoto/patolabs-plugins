@@ -1526,8 +1526,7 @@ class ReviewDeduplicator:
         if record.get("coordinates") != coordinates:
             raise RoutingConfigError(
                 "les coordonnées immuables (root, base) ne correspondent pas au claim "
-                "actif ; relancer avec le root et la base du claim, aucune récupération "
-                "n'a été créée."
+                "actif ; relancer avec le root et la base du claim."
             )
 
     def _assert_no_orphaned_acceptance_proof(
@@ -2562,6 +2561,7 @@ def claimed_review_diff(
     ``since`` (PAT-283, ``read-review --since``): the consumer receives
     ``git diff <since>..HEAD`` instead; the ``base...HEAD`` diff is still read and hash-checked
     under the same claim, so the range bytes are only emitted for a currently claimed diff.
+    ``since`` with ``consume_snapshot`` is refused (PAT-286): that variant never reads a range.
 
     Exactly one consumer runs before releasing the ledger lock. The snapshot
     variant receives the ledger's immutable HEAD too (not a fresh HEAD lookup).
@@ -2571,6 +2571,12 @@ def claimed_review_diff(
     if callable(consume) == callable(consume_snapshot):
         raise RoutingConfigError(
             "lecture de review : consommateur synchrone de bytes requis ; refus fermé."
+        )
+    if since is not None and consume_snapshot is not None:
+        # PAT-286: the snapshot variant hands out the full diff and never reads the range.
+        raise RoutingConfigError(
+            "lecture de review : --since n'est pas pris en charge avec un consommateur "
+            "d'instantané ; refus fermé."
         )
     deduplicator = ReviewDeduplicator(repository, state_dir)
     if root is None:
@@ -3059,7 +3065,8 @@ def main(
         if args.command == "prepare-review":
             from foundry.review_packet import prepare_review_packet
             # Provider errors and input paths may contain capabilities or prose.
-            # No raw exception, input value or private packet is printed here.
+            # A RoutingConfigError prints its cause text (below); any other exception
+            # prints nothing of its own: no raw exception, input value or packet.
             try:
                 result = prepare_review_packet(
                     issue_id=args.issue, pr_number=args.pr, root=args.root,
@@ -3069,8 +3076,9 @@ def main(
                     previous_head=args.previous_head,
                 )
             except RoutingConfigError as exc:
-                # Messages raised by review_packet.py and the ledger are fixed
-                # cause texts (PAT-271): no claim_id, token or diff bytes.
+                # PAT-271: the message names a cause. It may carry a hash, the base, a
+                # status or git's own standard error (git_diff); a static scan
+                # (tests/test_routing_errors.py) keeps claim_id and token names out.
                 print(f"Préparation du paquet de review refusée : {exc}", file=sys.stderr)
                 raise SystemExit(2) from None
             except (Exception, SystemExit):

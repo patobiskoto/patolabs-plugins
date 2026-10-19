@@ -978,3 +978,28 @@ def test_the_exact_title_nits_is_a_companion_epic_and_nothing_longer_is():
     assert cd._COMPANION_NAME.fullmatch("Nits")
     for title in ("Nits ", "nits", "Nits and polish", "Nits APP", "Nits-2", "NitsAPP-1"):
         assert cd._COMPANION_NAME.fullmatch(title) is None
+
+
+def _origin_tracker(parent_title, parent_type="Epic", parents=1):
+    issues = {
+        "APP-9": SimpleNamespace(
+            id="APP-9", title="Task", type="Task",
+            links=[SimpleNamespace(type="subtask-of", target="APP-50")] * parents),
+        "APP-50": SimpleNamespace(id="APP-50", title=parent_title, type=parent_type, links=[]),
+    }
+    return SimpleNamespace(get_issue=lambda issue_id: issues[issue_id])
+
+
+@pytest.mark.parametrize("title, companion", [
+    ("Nits", True), ("Nits APP-1", True), ("Nits app-1", True), ("Nits APP-1 x", False),
+    ("Nits-APP-1", False), ("nits APP-1", False), ("Feature Epic", False),
+])
+def test_origin_of_tells_a_companion_epic_by_its_exact_title(title, companion):
+    """PAT-286: the direct parent Epic is the origin; only `Nits` / `Nits <ID>` is a companion."""
+    assert cd.origin_of(_origin_tracker(title), "APP-9") == ("APP-50", companion)
+
+
+def test_origin_of_ignores_a_parent_that_is_not_an_epic_or_not_unique():
+    assert cd.origin_of(_origin_tracker("Nits", parent_type="Task"), "APP-9") == (None, False)
+    assert cd.origin_of(_origin_tracker("Nits", parents=2), "APP-9") == (None, False)
+    assert cd.origin_of(_origin_tracker("Nits", parents=0), "APP-9") == (None, False)

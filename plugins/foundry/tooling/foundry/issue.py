@@ -10,13 +10,14 @@ CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept|wait-ci> [IS
              sources (check-runs + legacy statuses) are empty AND no active
              check-suite signals CI for the commit (see write.ci_gate/ADR-0002).
      wait-ci: `wait-ci <PR#> [--timeout=S] [--interval=S]` read-only wait for the
-             ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red, 3 timeout.
+             ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red or not provably green, 3 timeout.
      accept: `accept <ID> --human-verdict=accepted --decision-file=<path>` accepts a
              non-code issue without a PR (Linear only, PAT-ADR-0025); `accept <ID>
              --status` reads its state and takes no other flag.
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -384,6 +385,7 @@ def _push_branch(branch):
 def openpr(issue_id=None, base=None, flags=()):
     tr, ch = foundry.tracker(), foundry.codehost()
     branch = _sh("git", "rev-parse", "--abbrev-ref", "HEAD")
+    explicit_id = bool(issue_id)
     if not issue_id:
         # derive the id ONLY from the shape `start` mints (<type>/<ticker>-<n>-<slug>) —
         # a loose search would turn chore/upgrade-node-20 into issue "NODE-20" and
@@ -395,6 +397,16 @@ def openpr(issue_id=None, base=None, flags=()):
         issue_id = m.group(1).upper()
     binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
+    if explicit_id:
+        # PAT-286: an explicit id must be the issue of the branch about to be pushed; a
+        # push of another issue's branch (or of a detached HEAD) would be attached to it.
+        m = re.match(r"(?i)^[a-z]+/([a-z][a-z0-9]*-\d+)(?:-|$)", branch)
+        if not m or m.group(1).upper() != issue_id.upper():
+            raise SystemExit(
+                f"⛔ Ouverture PR refusée — la branche courante '{branch}' n'est pas la "
+                f"branche de {issue_id} (<type>/{issue_id.lower()}-…) ; aucun push ni "
+                "effet code-host n'a été tenté."
+            )
     try:
         it = tr.get_issue(issue_id)
     except TrackerConflictError:
@@ -1386,8 +1398,9 @@ def _wait_ci_seconds(flags, name, default):
         value = float(values[0])
     except ValueError:
         value = 0
-    if value <= 0:
-        raise SystemExit(f"⛔ --{name}=<secondes> doit être un nombre > 0.")
+    # PAT-286: `nan` and `inf` parse as floats; a non-finite delay is refused.
+    if not math.isfinite(value) or value <= 0:
+        raise SystemExit(f"⛔ --{name}=<secondes> doit être un nombre fini > 0.")
     return value
 
 
@@ -1395,7 +1408,8 @@ def wait_ci(pr_number, flags=(), *, codehost=None, sleep=None, clock=None, now=N
     """Read-only: poll `write.ci_gate` on the PR head sha (PAT-274, ADR-0002).
 
     Never merges nor writes. Returns WAIT_CI_EXIT_GREEN when the gate passes,
-    WAIT_CI_EXIT_RED as soon as a check fails, WAIT_CI_EXIT_TIMEOUT when the
+    WAIT_CI_EXIT_RED as soon as a check fails or every check is complete without a
+    `success` (verdict ``not_green``, PAT-286), WAIT_CI_EXIT_TIMEOUT when the
     delay elapses with checks still pending or absent. The gate is unchanged
     and the `--allow-no-ci` waiver is never applied here.
     """
@@ -1417,6 +1431,11 @@ def wait_ci(pr_number, flags=(), *, codehost=None, sleep=None, clock=None, now=N
             verdict, code = "green", WAIT_CI_EXIT_GREEN
         elif gate["failing"]:
             verdict, code = "red", WAIT_CI_EXIT_RED
+        elif gate["total"] and not gate["pending"]:
+            # PAT-286: every check is complete, none failed, none succeeded (all
+            # neutral/skipped): the run is final and not provably green (ADR-0002), so
+            # polling until the timeout cannot change the verdict.
+            verdict, code = "not_green", WAIT_CI_EXIT_RED
         elif clock() + interval > deadline:
             verdict, code = "timeout", WAIT_CI_EXIT_TIMEOUT
         else:
@@ -1442,10 +1461,24 @@ _CLOSE_EPIC_ALLOWED = ("--accept-dropped=ID[,ID...], --accept-override=ID[,ID...
                        "--human-verdict=<verdict>, --status")
 _ALLOWED_TEXT = {"wait-ci": "--timeout=<secondes>, --interval=<secondes>", "accept": _ACCEPT_ALLOWED, "close-epic": _CLOSE_EPIC_ALLOWED}
 
+_VERBS = ("start", "openpr", "merge", "close-epic", "accept", "wait-ci")
+
 if __name__ == "__main__":
+    # PAT-286: `-h`/`--help` anywhere prints the usage and runs no verb (`start -h` would
+    # otherwise take `-h` as an issue id and call the tracker).
+    if len(sys.argv) < 2 or any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print("usage: " + (__doc__ or "").split("CLI: ", 1)[-1].rstrip(),
+              file=sys.stdout if len(sys.argv) > 1 else sys.stderr)
+        raise SystemExit(0 if len(sys.argv) > 1 else 2)
     cmd, rest = sys.argv[1], sys.argv[2:]
+    if cmd not in _VERBS:
+        raise SystemExit(f"⛔ Verbe inconnu : {cmd!r}. Verbes : {', '.join(_VERBS)}.")
     flags = {a for a in rest if a.startswith("--")}
-    reason_flags = {flag for flag in flags if flag.startswith("--ac-override-reason=")}
+    # PAT-286: the override reason is read by `merge` only; elsewhere it is an unknown flag.
+    reason_flags = (
+        {flag for flag in flags if flag.startswith("--ac-override-reason=")}
+        if cmd == "merge" else set()
+    )
     epic_verdict_flags = (
         {flag for flag in flags
          if flag == "--status"
@@ -1469,7 +1502,7 @@ if __name__ == "__main__":
         raise SystemExit(f"⛔ Flag(s) inconnus pour '{cmd}' : {', '.join(sorted(unknown))}. "
                          f"Autorisés : {_ALLOWED_TEXT.get(cmd) or ', '.join(sorted(_KNOWN_FLAGS.get(cmd, set()))) or '(aucun)'}.")
     args = [a for a in rest if not a.startswith("--")]
-    if cmd == "accept":  # keep repeated flags: a repeated verdict or file is refused
+    if cmd in ("accept", "wait-ci"):  # keep repeated flags: a repeated one is refused
         flags = [a for a in rest if a.startswith("--")]
     if cmd == "wait-ci":
         sys.exit(wait_ci(*args, flags=flags))

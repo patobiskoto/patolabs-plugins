@@ -132,4 +132,10 @@ def materialize(spec: dict) -> dict:
 
 
 if __name__ == "__main__":
+    # PAT-286: `-h`/`--help` prints the usage; the spec is read from stdin otherwise, and
+    # nothing is read or written before this check.
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print("usage: frame.py < spec.json   (JSON frame spec on stdin; materializes ADRs, "
+              "epic and issues)")
+        raise SystemExit(0)
     materialize(json.load(sys.stdin))

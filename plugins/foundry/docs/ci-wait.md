@@ -15,12 +15,22 @@ python3 tooling/foundry_cli.py issue wait-ci <PR-NUMBER> [--timeout=SECONDS] [--
   waiver does not exist here.
 - `--timeout` (default `WAIT_CI_DEFAULT_TIMEOUT` = 900 s) is the maximum wait;
   `--interval` (default `WAIT_CI_DEFAULT_INTERVAL` = 15 s) is the delay between two
-  reads. Both must be numbers > 0 and may not be repeated.
+  reads. Both must be finite numbers > 0 (`nan` and `inf` are refused) and may not be
+  repeated, even with the same value (`_wait_ci_seconds`, PAT-286).
 - Zero checks, or checks pending, keep waiting (CI queued after a push); a failing
-  check ends the wait at once.
-- Output (four lines): `verdict=<green|red|timeout> pr= sha= observed_at=` (UTC,
+  check ends the wait at once. When every check is complete and none failed nor
+  concluded `success` (all `neutral` or `skipped`, for example workflows path-filtered),
+  the run is final and not provably green (`write.ci_gate`, FOUNDRY-ADR-0002): the verb
+  answers at once with `verdict=not_green` and exit `2`, without waiting for the timeout.
+- Output (four lines): `verdict=<green|red|not_green|timeout> pr= sha= observed_at=` (UTC,
   `YYYY-MM-DDTHH:MM:SSZ`, taken after the gate reads), `reason=` (the gate's reason),
   `in_progress=[names]`, `failed=[names]`.
-- Exit codes: `0` green, `2` red, `3` timeout (`WAIT_CI_EXIT_*`). Any refusal or
-  error (unknown flag, unreadable PR) exits `1` through `SystemExit` with a message.
+- Exit codes: `0` green, `2` red or not green (`not_green`), `3` timeout (`WAIT_CI_EXIT_*`).
+  This `3` is the timeout of `wait-ci`; it is not the exit code 3 of `issue merge`
+  (`EXIT_LOCAL_CLEANUP_FAILED`). A refusal raised as `SystemExit` with a message (unknown
+  flag, invalid or repeated option) exits `1`. An error that `wait_ci` does not catch (a
+  `RuntimeError` or `TypeError` from the code host, a `ValueError` from a non-numeric
+  `<PR-NUMBER>`) ends the process with a Python traceback and exit `1` (deduced from the
+  interpreter's behaviour on an uncaught exception, checked on the non-numeric PR number in
+  `tests/test_issue_wait_ci.py`), not through `SystemExit`.
 - A push during the wait is not followed: the verdict is for the printed `sha`.
