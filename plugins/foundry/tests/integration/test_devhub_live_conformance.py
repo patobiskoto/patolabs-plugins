@@ -60,7 +60,8 @@ def gap(need_id: str, owner: str, reason: str, *, raises):
     """Mark a test as the expected-red proof of one need (strict xfail, never a pass).
 
     ``raises`` is the exact exception the current adapter or server answer produces, so
-    an unrelated failure (gate refusal at setup, signature bug) is a failure, not xfailed.
+    an unrelated failure (gate refusal at setup, signature bug) is a failure or an error,
+    never xfailed.
     """
     def decorate(function):
         function.devhub_need = need_id
