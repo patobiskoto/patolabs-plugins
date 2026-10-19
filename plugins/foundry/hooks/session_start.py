@@ -25,8 +25,10 @@ sys.path.insert(0, os.path.join(_PLUGIN_ROOT, "tooling"))
 
 import python_floor  # noqa: E402
 
-# PAT-265: record the interpreter that runs the hooks (read by `doctor`), then, if it is
-# below the minimum, fail open with a visible message before any foundry import.
+# PAT-267: below the minimum, first re-run under a supported interpreter if one is found.
+# PAT-265: then record the interpreter that runs the hooks (read by `doctor`) and, if it is
+# still below the minimum, fail open with a visible message before any foundry import.
+python_floor.reexec_if_unsupported()
 python_floor.record_interpreter()
 _UNSUPPORTED = python_floor.hook_unsupported_output("session_start")
 if _UNSUPPORTED:

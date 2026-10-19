@@ -232,8 +232,9 @@ settled unless explicitly superseded.
 ## Install or upgrade
 
 **Python.** The minimum is Python 3.11, declared once as `MINIMUM_PYTHON` in
-`tooling/python_floor.py` (PAT-265). Hooks run `python3` as resolved by the host
-(`hooks/hooks.json`), not a Foundry-chosen interpreter. The launcher
+`tooling/python_floor.py` (PAT-265). Hooks start with the `python3` that the host resolves
+(`hooks/hooks.json`); a Foundry-chosen interpreter takes over only in the PAT-267 case
+below. The launcher
 `tooling/foundry_cli.py` checks the minimum before importing any `foundry` module and
 exits non-zero with a message naming the interpreter, its version and the minimum. Each hook
 that imports `foundry` does the same check but stays fail-open: it prints one
@@ -241,8 +242,26 @@ that imports `foundry` does the same check but stays fail-open: it prints one
 (path, version, source, minimum) read from the record `hooks/session_start.py` writes to
 `hook-python.json` in the data directory (with a `recorded_at` UTC time; the last
 SessionStart of any host and repository wins), else from `python3` on doctor's own `PATH`.
-`python3 --version` must report 3.11 or later on the `PATH` the host gives its hooks.
-Under Python 3.10 or older the four hooks that import `foundry` are inactive, including the `guard_bash` R1 deny and
+`python3 --version` should report 3.11 or later on the `PATH` the host gives its hooks;
+otherwise a supported interpreter must exist in the list below.
+Since PAT-267, when the running interpreter is below the minimum, the launcher and the four
+hooks look for a supported one in a closed list and, if they find one, re-run the same script
+with it (`os.execv`, same arguments, stdin untouched; `reexec_if_unsupported` in
+`tooling/python_floor.py`). The list, in this order: `python3.N` for N from 20 down to 11
+(`NEWEST_MINOR_TRIED`, `MINIMUM_PYTHON`), then `python3`, each resolved on the current `PATH`;
+then `FIXED_PATHS` (`/opt/homebrew/bin/python3`, `/usr/local/bin/python3`); then
+`~/.local/bin/python3.N` for the same N. No other directory is scanned and no environment
+variable names the interpreter. A candidate counts only if it reports a supported version
+within `PROBE_TIMEOUT_SECONDS`. `FOUNDRY_PYTHON_REEXEC` prevents a second re-execution.
+`hook-python.json` and the `Hook Python` line show the interpreter that ran the hook and,
+after a re-execution, `reexec_from`, the one started first. The two variables are removed
+from the environment of the re-executed process, so its descendants do not inherit them.
+Nothing is cached: under a too-old interpreter every hook call repeats the search, whose
+worst case is bounded by `PROBE_TIMEOUT_SECONDS` times the number of existing candidates
+(deduced, not measured). When nothing is found, `os.execv` fails or the search raises an
+unexpected error, the behaviour of the next sentences applies.
+Under Python 3.10 or older with no supported candidate, the four hooks that import
+`foundry` are inactive, including the `guard_bash` R1 deny and
 the PAT-215 `campaign-approval approve` deny; each hook call (every Bash and Agent call, in
 every repository, registered or not) then prints the `systemMessage` instead. Whether the
 hooks worked under 3.10 before this change is unknown. How Codex displays that

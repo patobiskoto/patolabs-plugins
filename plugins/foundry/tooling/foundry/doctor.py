@@ -63,7 +63,13 @@ def hook_python_diagnostic(*, runner=subprocess.run, which=shutil.which):
         return {"ok": False, "detail": f"python3 not found or unreadable ({source}); minimum {minimum}"}
     shown = ".".join(str(part) for part in version)
     ok = tuple(version[:2]) >= python_floor.MINIMUM_PYTHON
-    return {"ok": ok, "detail": f"{path or '?'} Python {shown} ({source}); minimum {minimum}"}
+    origin = (observed or {}).get("reexec_from")
+    moved = ""
+    if origin:
+        moved = (f"; re-executed from {origin['executable']} Python "
+                 f"{'.'.join(str(part) for part in origin['version'])}")
+    return {"ok": ok,
+            "detail": f"{path or '?'} Python {shown} ({source}){moved}; minimum {minimum}"}
 
 
 def registered_project_diagnostic(tracker, project):
