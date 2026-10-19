@@ -24,6 +24,11 @@ CLI:
   python3 -m foundry.edit link <SRC-ID> <link-type> <DST-ID>
   python3 -m foundry.edit comment <ISSUE-ID> < note.md   (progress note, body on stdin)
   python3 -m foundry.edit body <ISSUE-ID> <expected-body.md> <updated-body.md>
+
+Help (PAT-275, PAT-286): `-h`/`--help` alone prints this usage and exits 0. Any argument
+exactly equal to `-h` or `--help` after a command prints that command's usage entry (its
+line and its continuation lines) and writes nothing, before any tracker is built. An
+unknown command prints its name and this usage on standard error and exits 2.
 """
 from __future__ import annotations
 
@@ -130,18 +135,34 @@ _COMMANDS = {"create-issue": create_issue, "reconcile-create": reconcile_create,
              "transition": transition, "link": link, "comment": comment, "body": body}
 
 
+def _command_usage(cmd):
+    """The usage entry of ``cmd`` in the CLI docstring: its line and its continuations."""
+    entry, collecting = [], False
+    for line in (__doc__ or "").split("CLI:\n", 1)[-1].splitlines():
+        if not line.strip():
+            collecting = False
+        elif "python3 -m foundry.edit " in line:
+            collecting = f"foundry.edit {cmd} " in line
+        if collecting:
+            entry.append(line)
+    return "\n".join(entry) or cmd
+
+
 def main(argv):
-    """PAT-275: `--help`/`-h` prints the module usage and writes nothing."""
+    """PAT-275: `--help`/`-h` prints the module usage and writes nothing.
+
+    PAT-286: the usage of an unknown command goes to standard error (exit code 2).
+    """
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in _COMMANDS:
         wanted_help = bool(argv) and argv[0] in ("-h", "--help")
         if not wanted_help and argv:
             print(f"⛔ Commande inconnue : {argv[0]!r}", file=sys.stderr)
-        print((__doc__ or "").split("CLI:\n", 1)[-1].rstrip())
+        usage = (__doc__ or "").split("CLI:\n", 1)[-1].rstrip()
+        print(usage, file=None if wanted_help else sys.stderr)
         return 0 if wanted_help else 2
     cmd, args = argv[0], argv[1:]
     if any(a in ("-h", "--help") for a in args):
-        usage = [ln for ln in (__doc__ or "").splitlines() if f"foundry.edit {cmd} " in ln]
-        print("\n".join(usage) or cmd)
+        print(_command_usage(cmd))
         return 0
     _COMMANDS[cmd](*args)
     return 0

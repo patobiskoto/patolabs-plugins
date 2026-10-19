@@ -219,6 +219,10 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_four_standing_write
     assert "named `Nits` followed by the identifier of the origin Epic" in rule
     assert "no tracker link between them: no parent, no dependency, no relation" in rule
     assert "a single follow-up issue, which gathers all the deferred remarks of the origin Epic" in rule
+    # PAT-286: `Nits` has no origin Epic; its follow-up issue gathers the remarks of every
+    # issue of the project with no origin Epic.
+    assert ("In `Nits`, which has no origin Epic, that issue gathers the remarks of every "
+            "issue of the project with no origin Epic") in rule
     assert "one per batch or per theme" not in rule
     assert ("If that issue is already started or closed, a new follow-up issue is created: "
             "no remark is added to a started or closed issue") in rule
@@ -283,7 +287,7 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_four_standing_write
 def test_r9_lists_every_case_that_is_corrected_before_the_merge():
     """Each case of rule (b) that sends a remark back into the PR is written in AGENTS.md."""
     rule = _r9_deferral_rule()
-    # the three cases kept from before, then the three that the rule adds
+    # the three cases kept from before, then the two that the rule adds
     assert ("These three cases are still corrected before the merge; the rest of this "
             "rule adds two more") in rule
     assert "The first three cases are:" in rule

@@ -908,6 +908,58 @@ def test_already_done_exact_pr_retry_only_finishes_cleanup(monkeypatch, capsys):
     assert "déjà done" in capsys.readouterr().out
 
 
+def _resume_world(monkeypatch, *, tracker_pr_url, merged=True):
+    pr_url = "https://github.com/acme/demo/pull/12"
+    tracker = SimpleNamespace(
+        bounded_transition_proofs=True,
+        get_issue=lambda _id: SimpleNamespace(
+            id="DEMO-7", state="done", pr_url=tracker_pr_url or pr_url, body="",
+            ac_done=1, ac_total=1,
+        ),
+    )
+    pr = SimpleNamespace(
+        number=12, sha="a" * 40, head="feat/demo-7", base="main", state="closed",
+        merged=merged, base_sha="c" * 40, merge_sha="b" * 40, url=pr_url,
+    )
+    codehost = SimpleNamespace(
+        resolve_repo=lambda: "acme/demo", get_pr=lambda *_: pr,
+        merge_pr=lambda *_a, **_k: pytest.fail("merge endpoint called"),
+        delete_branch=lambda *_a: None,
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_default_branch", lambda: "main")
+
+
+def test_already_done_resume_exits_3_when_the_local_cleanup_fails(monkeypatch, capsys):
+    """PAT-286: the resume path (`✅ Reprise PR …`) shares the exit code 3 of PAT-272."""
+    _resume_world(monkeypatch, tracker_pr_url=None)
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "cleanup-failed")
+
+    with pytest.raises(SystemExit) as raised:
+        issue.merge("DEMO-7", "12")
+
+    out, err = capsys.readouterr()
+    assert raised.value.code == issue.EXIT_LOCAL_CLEANUP_FAILED == 3
+    assert "✅ Reprise PR #12" in out and "déjà done" in out
+    assert "git checkout main && git pull --ff-only && git branch -D feat/demo-7" in err
+
+
+@pytest.mark.parametrize("tracker_pr_url, merged", [
+    ("https://github.com/acme/demo/pull/11", True),  # receipt of another PR
+    (None, False),  # issue done, PR not merged
+])
+def test_a_refused_resume_never_exits_with_code_3(monkeypatch, tracker_pr_url, merged):
+    """PAT-286: a refusal is a message (exit 1), never the cleanup code 3."""
+    _resume_world(monkeypatch, tracker_pr_url=tracker_pr_url, merged=merged)
+    monkeypatch.setattr(issue, "_cleanup_branch", lambda _b: pytest.fail("cleanup reached"))
+
+    with pytest.raises(SystemExit) as raised:
+        issue.merge("DEMO-7", "12")
+
+    assert isinstance(raised.value.code, str) and raised.value.code != 3
+
+
 def test_already_done_retry_refuses_mismatched_pr_receipt(monkeypatch):
     events = []
     tracker = SimpleNamespace(
@@ -1029,6 +1081,61 @@ def test_proof_bound_openpr_rejects_invalid_api_base_before_tracker_write(
         issue.openpr("DEMO-7")
 
     assert events == []
+
+
+@pytest.mark.parametrize("branch", [
+    "feat/demo-8-other", "feat/other-7-x", "HEAD", "main", "feature-demo-7", "feat/demo-70-x",
+])
+def test_openpr_with_an_explicit_id_refuses_a_branch_that_is_not_that_issues(
+    monkeypatch, branch,
+):
+    """PAT-286: `openpr DEMO-7` from another issue's branch (or a detached HEAD)."""
+    network = []
+    tracker = SimpleNamespace(
+        get_issue=lambda _id: network.append("get_issue"),
+    )
+    codehost = SimpleNamespace(
+        resolve_repo=lambda: network.append("resolve_repo"),
+        list_prs=lambda *_a: network.append("list_prs"),
+        open_pr=lambda *_a: network.append("open_pr"),
+    )
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
+    monkeypatch.setattr(issue, "_sh", lambda *args, **_kwargs: (
+        branch if args[-2:] == ("--abbrev-ref", "HEAD") else pytest.fail(f"git {args}")
+    ))
+    monkeypatch.setattr(issue, "_push_branch", lambda _b: pytest.fail("push"))
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    monkeypatch.setattr(write, "preflight_issue_operation", lambda *_a: None)
+
+    with pytest.raises(SystemExit, match="n'est pas la branche de DEMO-7"):
+        issue.openpr("DEMO-7")
+
+    assert network == []
+
+
+@pytest.mark.parametrize("issue_id, branch", [
+    ("DEMO-7", "feat/demo-7-slug"), ("DEMO-7", "chore/DEMO-7"), ("MY_PROJ-7", "feat/my_proj-7-x"),
+])
+def test_openpr_with_an_explicit_id_accepts_that_issues_branch(monkeypatch, issue_id, branch):
+    """PAT-286: the branch check compares the exact id, `_` in a ticker included."""
+    class Reached(Exception):
+        pass
+
+    def get_issue(_id):
+        raise Reached
+
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: SimpleNamespace(get_issue=get_issue))
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: SimpleNamespace())
+    monkeypatch.setattr(issue, "_sh", lambda *args, **_kwargs: (
+        branch if args[-2:] == ("--abbrev-ref", "HEAD") else pytest.fail(f"git {args}")
+    ))
+    monkeypatch.setattr(issue, "_push_branch", lambda _b: pytest.fail("push"))
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    monkeypatch.setattr(write, "preflight_issue_operation", lambda *_a: None)
+
+    with pytest.raises(Reached):
+        issue.openpr(issue_id)
 
 
 def test_openpr_reuses_existing_pr_and_preserves_required_body_markers(

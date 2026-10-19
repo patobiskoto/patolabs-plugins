@@ -245,7 +245,10 @@ home, the network, other hosts and versions.
   mode, so moving HEAD needs the host to let through a command outside those rules); a test of the
   interval has not been written. Deduced from the code: in the `review` effect the reviewer session
   runs between `branch_mismatch` (before the claim) and the `issue openpr` of `update_pr_body`, so
-  the interval is real for that effect.
+  the interval is real for that effect. Since PAT-286, `issue openpr <ID>` itself refuses a
+  current branch that is not the ticket's branch (`openpr`, `issue.py`), so a HEAD moved to
+  another branch in that interval is refused before any push; what remains (deduced from the
+  code) is a HEAD moved to another commit of the same branch.
 - `.gitattributes` and `.lfsconfig` of the worktree are files the session writes (it holds the
   worktree) and that no code of the campaign reads or checks (searched, PAT-236). Deduced from git,
   not observed here: a `.gitattributes` can name a `filter`, `diff` or `merge` driver (and

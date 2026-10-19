@@ -398,3 +398,53 @@ def test_read_review_since_refuses_a_non_ancestor_and_a_wrong_claim(packet_case,
         claimed_review_diff(case.claim.diff_hash, "fixture/repository",
                             claim_id="c" * 64, since=base, **kwargs)
     assert out == []
+
+
+def test_manifest_classes_previous_head_as_a_coordinator_declaration(packet_case):
+    """PAT-286: `previous_head` sits in coordinates.json but is declared, not tool-read."""
+    case = packet_case
+    prepare_review_packet(**case.args, previous_head=case.pr.sha)
+    manifest = json.loads((case.args["output_dir"] / "manifest.json").read_text())
+    assert "coordinates.json" in manifest["tool_read"]
+    assert manifest["coordinator_declared_fields"] == {"coordinates.json": ["previous_head"]}
+
+
+def test_manifest_has_no_declared_field_without_a_previous_head(packet_case):
+    prepare_review_packet(**packet_case.args)
+    manifest = json.loads((packet_case.args["output_dir"] / "manifest.json").read_text())
+    assert "coordinator_declared_fields" not in manifest
+
+
+def test_prepare_review_cli_passes_previous_head_to_a_partial_packet(
+    packet_case, monkeypatch, capsys,
+):
+    """PAT-286: `routing prepare-review --previous-head <SHA>` end to end (CLI dispatch)."""
+    from foundry import review_packet, routing
+    case = packet_case
+    real = review_packet.prepare_review_packet
+    monkeypatch.setattr(review_packet, "prepare_review_packet", lambda **kwargs: real(
+        **kwargs, tracker_port=case.args["tracker_port"],
+        codehost_port=case.args["codehost_port"], deduplicator=case.args["deduplicator"],
+    ))
+    previous = case.pr.sha
+    routing.main(["prepare-review", "--issue", "FIX-1", "--pr", "1", "--root", str(case.root),
+                  "--base", case.args["base"], "--claim-file", str(case.args["claim_file"]),
+                  "--output-dir", str(case.args["output_dir"]), "--previous-head", previous])
+    assert json.loads(capsys.readouterr().out)["status"] == "prepared"
+    directory = case.args["output_dir"]
+    assert json.loads((directory / "coordinates.json").read_text())["previous_head"] == previous
+    assert f"--since {previous}" in (directory / "reviewer-send.txt").read_text()
+
+
+def test_read_review_since_with_a_snapshot_consumer_is_refused(packet_case, tmp_path):
+    """PAT-286: `since` used to be ignored silently when `consume_snapshot` was passed."""
+    from foundry.routing import claimed_review_diff
+    case = packet_case
+    seen = []
+    with pytest.raises(RoutingConfigError, match="--since n'est pas pris en charge"):
+        claimed_review_diff(
+            case.claim.diff_hash, "fixture/repository", claim_id=case.claim.claim_id,
+            root=case.root, base=case.args["base"], state_dir=tmp_path / "state",
+            consume_snapshot=lambda diff, head: seen.append(diff), since=case.pr.sha,
+        )
+    assert seen == []

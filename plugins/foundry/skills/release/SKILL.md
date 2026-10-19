@@ -143,8 +143,14 @@ merged with the audited `--allow-incomplete-ac --ac-override-reason=<code>` of
 
 ## 6. STOP — tag
 Do not tag without the maintainer's explicit agreement, and only after the CI of the merge
-commit is proven green (`AGENTS.md#R4`). To wait for the CI of a release PR before the merge, use `issue wait-ci <PR-NUMBER>` (read-only, `docs/ci-wait.md`; it gates the PR head sha, not the merge commit), never `gh pr checks` or `gh run watch`. Then create an annotated tag `foundry-v<version>`
-on the merge commit and push it with an explicit refspec, never a bare `git push`:
+commit is proven green (`AGENTS.md#R4`). To wait for the CI of a release PR before the
+merge, use the read-only `issue wait-ci` (`docs/ci-wait.md`; it gates the PR head sha, not
+the merge commit), never `gh pr checks` or `gh run watch`:
+```bash
+python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue wait-ci <PR-NUMBER>
+```
+Then create an annotated tag `foundry-v<version>` on the merge commit and push it with an
+explicit refspec, never a bare `git push`:
 ```bash
 git fetch origin
 git tag -a foundry-v<version> -m "Foundry <version>" <merge-commit>

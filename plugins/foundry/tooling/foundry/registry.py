@@ -1870,7 +1870,9 @@ def main(argv=None) -> None:
     if not args:
         print(json.dumps(load(), indent=2))
         return
-    if args[0] in ("-h", "--help"):
+    # PAT-286: `-h`/`--help` in any position prints the usage and writes nothing (as a
+    # positional it would be registered as a tracker, repository or key).
+    if any(a in ("-h", "--help") for a in args):
         print(usage)
         return
     if args[0] == "register":

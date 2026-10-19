@@ -268,8 +268,8 @@ fragments of `plugins/foundry/changelog.d/` (which it deletes), the
 [upgrade and rollback guide](plugins/foundry/docs/migration-2.2.0.md) and the freeze
 entry of `plugins/foundry/tests/fixtures/release-history.json`. The release notes open
 with the behaviour changes (`issue wait-ci`, the exit code 3 of `issue merge`, the lease
-push of `issue openpr`, the partial-review options, the `Nits` companion Epic) and claim
-no gain. Statuses:
+push of `issue openpr`, the partial-review options, the `Nits` companion Epic, the refusal
+of other `*.md` names in a new Linear ADR body) and claim no gain. Statuses:
 
 - **Done by the release pull request:** the manifests, the CHANGELOG section, the two
   pages, the freeze entry, the removal of the fragments and one comment line of

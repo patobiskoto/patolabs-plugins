@@ -121,3 +121,22 @@ def test_non_lease_remote_rejection_keeps_the_generic_error(repos, monkeypatch):
         issue._push_branch(BR)
     assert "pre-receive hook declined" in str(exc.value)
     assert "rien n'a été écrasé" not in str(exc.value)
+
+
+def test_detached_head_is_refused_before_any_git_call(repos, monkeypatch):
+    """PAT-286: `rev-parse --abbrev-ref HEAD` answers `HEAD` on a detached HEAD."""
+    monkeypatch.setattr(issue, "_sh", lambda *a, **k: pytest.fail("git called"))
+    monkeypatch.setattr(issue.subprocess, "run", lambda *a, **k: pytest.fail("git called"))
+    with pytest.raises(SystemExit) as exc:
+        issue._push_branch("HEAD")
+    assert "HEAD détaché" in str(exc.value)
+
+
+def test_a_really_detached_checkout_reports_head_and_nothing_is_pushed(repos):
+    bare, local, _other = repos
+    git(local, "checkout", "--detach")
+    branch = issue._sh("git", "rev-parse", "--abbrev-ref", "HEAD")
+    assert branch == "HEAD"
+    with pytest.raises(SystemExit, match="HEAD détaché"):
+        issue._push_branch(branch)
+    assert git(bare, "branch", "--list", BR) == ""

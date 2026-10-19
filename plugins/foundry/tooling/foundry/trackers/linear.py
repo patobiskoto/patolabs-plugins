@@ -1603,7 +1603,12 @@ def _modelled_agents_references(masked: str):
 
     Not observed, hence left unmodelled (and refused by the domain check): a
     token inside a link label, on a link reference definition line, or on a line
-    indented by 4 or more columns (possible indented code).
+    indented by 4 or more columns (possible indented code).  The content behind a
+    list-item or blockquote prefix is examined for the same three contexts, after
+    the prefix is removed.  Fail closed (PAT-286): a tab anywhere before the token
+    leaves it unmodelled, because a tab after a list marker is measured by
+    CommonMark in columns to the next tab stop, which `expandtabs` on the content
+    alone does not reproduce (`-\t  AGENTS.md#R9 x` is indented code).
     """
     for match in _AGENTS_REFERENCE.finditer(masked):
         start = masked.rfind("\n", 0, match.start()) + 1
@@ -1621,7 +1626,8 @@ def _modelled_agents_references(masked: str):
             line = line[container.end() :]
         indentation = line[: len(line) - len(line.lstrip(" \t"))]
         if (
-            len(indentation.expandtabs(4)) >= 4
+            "\t" in before
+            or len(indentation.expandtabs(4)) >= 4
             or re.match(r" {0,3}\[[^\]]*\]:", line)
             or ("[" in before and "]" in after)
         ):
@@ -1676,8 +1682,19 @@ def _refuse_unmodelled_domain_references(body: str) -> None:
             )
         found = _DOMAIN_LIKE_REFERENCE.search(masked)
         if found is not None:
+            # PAT-286: name the whole token as written in the source, not only the
+            # matched suffix (`docs/guide.md`, not `guide.md`).  `masked` has the length
+            # of `chunk`, so the same offsets read the source.
+            start, end = found.start(), found.end()
+            while start > 0 and not masked[start - 1].isspace():
+                start -= 1
+            while end < len(masked) and not masked[end].isspace():
+                end += 1
+            token = chunk[start:end]
+            if len(token) > 120:
+                token = token[:120] + "…"
             raise ValueError(
-                f"unsupported domain-like reference {found[0]!r} in ADR body; "
+                f"unsupported domain-like reference {token!r} in ADR body; "
                 "put it in a code span"
             )
 
@@ -2389,6 +2406,12 @@ def _linear_markdown_readback_bodies(
     Additive: a Document stored with the pre-PAT-94 model output, or with the
     PAT-103 output (no PAT-106 empty line before a glued list), stays readable,
     and the pre-PAT-94 refusals still raise.  Never strict.
+
+    One exception to "additive" (PAT-286): every variant rewrites a modelled bare
+    `AGENTS.md#R<n>` token as Linear's autolink (`_linear_autolinked_agents_references`).
+    A stored Document that holds such a token unrewritten (a source byte-for-byte
+    unchanged by the autolink) no longer reads back; a token left unmodelled by
+    `_modelled_agents_references` still reads back as stored.
     """
     legacy = _linear_markdown_readback_body(
         body, allow_foundry_adr_0001=allow_foundry_adr_0001, observed_lists=False

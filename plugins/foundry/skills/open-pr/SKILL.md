@@ -28,7 +28,9 @@ a PR other than a release PR carries its changelog entry as one fragment
 Write a real PR summary from the diff (what changed and why, not the issue title
 restated) to a scratch file (Write tool), then run — the command must START with
 python3 to match allowed-tools, so use a `<` redirect, never an `echo … |` pipe. The
-id is resolved from the branch name (`<ticker>-<n>`) if not given:
+id is resolved from the branch name (`<ticker>-<n>`) if not given. When the id is given, the
+current branch must be that issue's branch (`<type>/<ISSUE-ID>-…`, the shape `issue start`
+creates); otherwise it refuses before any push (`openpr`, `tooling/foundry/issue.py`, PAT-286):
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" issue openpr <ISSUE-ID> --summary-stdin < /path/to/summary.md
 ```

@@ -159,6 +159,11 @@ def setup(name, short, repo, adr_dir=None):
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
+    # PAT-286: `-h`/`--help` anywhere prints the usage and writes nothing (it would
+    # otherwise be taken as a project name, short key or repository).
+    if any(a in ("-h", "--help") for a in argv):
+        print('usage: setup_project "<Name>" <SHORT> <repo> [--import-adrs <dir>]')
+        raise SystemExit(0)
     adr_dir = None
     if "--import-adrs" in argv:
         i = argv.index("--import-adrs")

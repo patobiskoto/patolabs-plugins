@@ -202,6 +202,8 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert "named `Nits` followed by the identifier of the origin Epic" in text
     assert "no tracker link: no parent, no dependency, no relation" in text
     assert "put the remarks in a single follow-up issue, which gathers all the deferred" in text
+    assert ("(in `Nits`, which has no origin Epic, those of every issue of the project with "
+            "no origin Epic)") in text
     assert "one per batch or per theme" not in text
     assert ("If that issue is already started or closed, create a new follow-up issue: never "
             "add a remark to a started or closed issue") in text

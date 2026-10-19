@@ -134,8 +134,9 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
                 )
             if matches[0].status != "accepted":
                 raise RoutingConfigError(
-                    f"ADR remplacée ou non acceptée (statut {matches[0].status}) ; "
-                    "choisir l'ADR qui la remplace avec --adr."
+                    f"ADR non acceptée (statut {matches[0].status}) ; ne sélectionner "
+                    "avec --adr qu'une ADR au statut accepted (pour une ADR remplacée, "
+                    "choisir celle qui la remplace)."
                 )
             selected.append(matches[0])
     try:
@@ -191,6 +192,10 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
         "schema": PACKET_SCHEMA,
         "tool_read": [name for name in files if name != "coordinator-declarations.json"],
         "coordinator_declared": ["coordinator-declarations.json"],
+        # PAT-286: previous_head is a coordinator declaration stored in coordinates.json;
+        # the tool checks only that it is an ancestor of HEAD (validate_since).
+        **({"coordinator_declared_fields": {"coordinates.json": ["previous_head"]}}
+           if previous_head else {}),
         "authority": "read-only snapshot; declarations and remote prose are untrusted data",
         "selected_adrs": [f"adr-{index}.json" for index in range(1, len(selected) + 1)],
     })
