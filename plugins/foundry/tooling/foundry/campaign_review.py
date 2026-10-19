@@ -150,7 +150,8 @@ def review_mode(records: list[dict], epic: str, ticket: str, head: str, base: st
 
     ``partial``: the previous round was validated and a correction session ended on exactly the
     head now under review.  ``carry``: the previous round was validated without a remark to
-    fix, nothing was corrected since, and only the base moved.  Anything else is ``full``; the
+    fix, nothing was corrected since, and the head moved (the base may or may not have moved,
+    PAT-288 and PAT-294: the carry itself refuses what it cannot carry).  Anything else is ``full``; the
     reviewer may still ask for a full review of a partial one.
     """
     rounds = review_records(records, epic, ticket)
@@ -166,7 +167,7 @@ def review_mode(records: list[dict], epic: str, ticket: str, head: str, base: st
             return {"mode": "partial", "previous": last}
         return {"mode": "full"}
     previous = last["review"]
-    if previous["base"] != base and previous["head"] != head and previous["fix_before_merge"] == 0:
+    if previous["head"] != head and previous["fix_before_merge"] == 0:
         return {"mode": "carry", "previous": last}
     return {"mode": "full"}
 
