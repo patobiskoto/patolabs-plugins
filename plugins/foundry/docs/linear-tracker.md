@@ -187,7 +187,7 @@ heading that contains no backtick when the next line is not empty, wraps a compl
 `https://` token as `[URL](<URL>)` with identical label and destination, wraps the reference
 `(AGENTS.md#R<n>)` as `([AGENTS.md#R<n>](<http://AGENTS.md#R<n>>))` (observed on PAT-209, where
 Linear returned that form; only this form is qualified: the bare `AGENTS.md#R<n>`, `CLAUDE.md#R<n>`
-and `(AGENTS.md#R9(b))`, which Linear probably autolinks too, stay refused, behaviour unknown),
+and `(AGENTS.md#R9(b))`, which Linear probably autolinks too, stay refused, behaviour unknown; issue bodies only, ADR bodies are in the PAT-284 paragraph below),
 escapes an unescaped `~/` outside a word, and removes one terminal
 LF only when it is not preceded by another LF.
 The URL token alphabet is `[A-Za-z0-9./_%-]` after its initial alphanumeric character;
@@ -428,6 +428,19 @@ body (link, status; `test_pat209_link_and_replay_keep_the_source_bytes`,
 `test_pat209_status_change_keeps_the_source_bytes`): its table stays refused as a new body
 (`strict`, PAT-103; `test_pat209_create_adr_refuses_the_body_of_adr_0017`). See the
 "PAT-209" section of the same page.
+PAT-284 adds one observed inline rewrite to the ADR body rendering, seen on the orphan
+`PAT-ADR-0029` Document: the bare reference `AGENTS.md#R<n>` (before a space or at the end of
+a line, outside code spans and fences) is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`
+(`linear.py::_linear_autolinked_agents_references`, applied last in
+`_linear_nonfenced_markdown_readback`; the parenthesised form is the PAT-209 issue form, assumed
+identical for ADRs: deduced, not observed). For a new ADR body, any other `*.md` name outside code
+is refused before any write with `unsupported domain-like reference` in the refusal message
+(`_refuse_unmodelled_domain_references`, `_preflight_adr_body_readback`); the digest-pinned
+profiles and the stored bodies read by `new_body=False` callers are not subject to it. Only `.md`
+names are scanned: other extensions are unobserved and not scanned. The orphan is completed by
+replaying `adr create` with the exact title and body; it is never deleted or rewritten.
+Test: `tests/test_linear_agents_reference.py`.
+
 PAT-94 adds one closed list form observed on the native `PAT-ADR-0014` Document: outside
 fenced code, a top-level ordered list numbered `1.` to at most `9.` (+1 per item, one
 space after the dot, flush left), whose items are one plain LF line each (item text that

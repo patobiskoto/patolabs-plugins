@@ -22,6 +22,15 @@ exception `__cause__`) names the family.
 | empty lines inside a fenced block (``` or ~~~) | unchanged |
 | a single empty line | unchanged |
 
+One more rewrite is observed (PAT-284, on the orphan `PAT-ADR-0029` Document): outside
+code spans and fenced blocks, the reference `AGENTS.md#R<n>` followed by a space or the end
+of the line is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`; the same reference alone
+in parentheses is stored as `([AGENTS.md#R<n>](<http://AGENTS.md#R<n>>))` (the form observed on
+issue bodies, PAT-209, not on an ADR: deduced to be the same autolinking). Likewise a top-level
+`- ` list marker is stored as `* ` (PAT-94). Both are covered by
+`linear.py::_linear_autolinked_agents_references` and the list conversion; the exact source
+and stored bodies are `tests/fixtures/pat284_adr0029_source.md` and `..._stored.md`.
+
 Prose, headings and fenced blocks are all covered. The adapter applies the same
 rendering when it verifies the read-back, so none of this is an error. Prefer
 writing the stored form directly (one empty line, no final newline) so that what you
@@ -107,6 +116,7 @@ avoid all of these.
 | a body made only of empty lines | `unsupported empty body` | write content |
 | a final newline after a closing fence, inside an unclosed fence, after `\r` or a trailing tab, or when the last line is indented or quoted | `unsupported final newline` | end the body on a prose line without trailing newline, or close the fence and add a closing sentence |
 | list blank lines outside the observed form | `unsupported list Markdown` | tight list |
+| a `*.md` name outside a code span or fenced block that is not one of the two `AGENTS.md#R<n>` forms above (`CLAUDE.md#R9`, `AGENTS.md#R9(b)`, `AGENTS.md#R9,`, `docs/guide.md`, a bare `x.md`) | `unsupported domain-like reference '<name>'` (this one is appended to the refusal message, `_refuse_unmodelled_domain_references`) | write it in a code span; Linear probably autolinks such a name too, its rendering is unknown (PAT-284) |
 
 Trailing spaces before a newline, hard breaks and raw HTML were already refused by the
 earlier model. The strict check applies to a new or edited body, and also to the unchanged
