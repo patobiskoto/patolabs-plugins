@@ -594,8 +594,11 @@ def test_an_unchanged_base_with_a_new_head_tries_the_carry_first(env):
     result = step(env)
     carry, = env.world.carried
     assert carry[carry.index("--base") + 1] == carry[carry.index("--from-base") + 1] == "b" * 40
+    assert carry[carry.index("--from-diff-hash") + 1] == DIFF_HASH
     assert result.effect["review"]["carried"] is True
     assert len([c for c in env.world.calls if c[0][0] == "claude"]) == sessions
+    # a carried review is not a review round
+    assert cr.history(env.kwargs["attempts"], "APP-1")("APP-2", "7" * 40, "b" * 40) == (0, 1, 0)
 
 
 def test_a_refused_carry_on_an_unchanged_base_means_a_full_review(env):
