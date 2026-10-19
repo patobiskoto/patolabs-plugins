@@ -214,7 +214,8 @@ class GitHubCodeHost(CodeHost):
     @classmethod
     def _suite_signals_ci(cls, suite, now=None) -> bool:
         """Does this check-suite signal ACTIVE CI for the commit? True for a suite
-        with runs or in progress, or freshly queued (post-push window). False for
+        with runs, in a non-terminal status other than ``queued`` (``in_progress``,
+        ``waiting``, ``requested``, ``pending``), or freshly queued (post-push window). False for
         completed-with-zero-runs and for stale queued-empty suites — refusing the
         waiver on those would deadlock repos whose workflows never match the push."""
         if (suite.get("latest_check_runs_count") or 0) > 0:

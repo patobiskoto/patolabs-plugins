@@ -56,12 +56,28 @@ def packet_case(tmp_path):
     return SimpleNamespace(args=args, root=root, pr=pr, issue=issue, claim=claim, calls=calls)
 
 
-def test_packet_built_with_pending_check_shows_it_in_ci_json(packet_case):
+def test_packet_built_with_waiting_check_shows_it_in_ci_json(packet_case):
     case = packet_case
     case.args["codehost_port"].check_runs = lambda *_a: [Check("tests", "waiting", None)]
     prepare_review_packet(**case.args)
     ci = json.loads((case.args["output_dir"] / "ci.json").read_text())
     assert ci["check_runs"][0]["status"] == "waiting" and "observed_at" in ci
+
+
+@pytest.mark.parametrize("status", ["waiting", "requested", "pending"])
+def test_packet_built_right_after_a_push_with_the_real_suite_reader(packet_case, status):
+    # PAT-270 replay: the real GitHubCodeHost.ci_expected reads a non-terminal suite
+    # (it used to raise "Invalid check-suite record" and abort prepare-review).
+    from foundry.codehosts.github import GitHubCodeHost
+    host = GitHubCodeHost()
+    suite = {"id": 1, "status": status, "latest_check_runs_count": 0}
+    host._gh = lambda *_a, **_k: json.dumps({"total": 1, "batch": [suite]})
+    case = packet_case
+    case.args["codehost_port"].check_runs = lambda *_a: []
+    case.args["codehost_port"].ci_expected = host.ci_expected
+    prepare_review_packet(**case.args)
+    ci = json.loads((case.args["output_dir"] / "ci.json").read_text())
+    assert ci["ci_expected"] is True and "observed_at" in ci
 
 
 def test_private_bounded_tool_facts_and_injection_shaped_declarations(packet_case, tmp_path):
