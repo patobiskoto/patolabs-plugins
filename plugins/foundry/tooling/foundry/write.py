@@ -2021,7 +2021,8 @@ def ci_gate(codehost, repo: str, sha: str, allow_no_ci: bool = False) -> dict:
 
     The ONE waiver lives here, not in callers: allow_no_ci=True passes the
     zero-check-on-BOTH-sources case only, and only if `ci_expected()` sees no sign of
-    ACTIVE CI for the commit (a suite in progress, with runs, or freshly queued —
+    ACTIVE CI for the commit (a suite with runs, in progress, waiting, requested,
+    pending, or freshly queued —
     the post-push window; stale queued-empty suites don't count, see the adapter).
     Legacy-only CIs (Jenkins…) create no check-suite, so their post-push window is
     not detectable — there, the explicit human flag is the only guard (ADR-0002,

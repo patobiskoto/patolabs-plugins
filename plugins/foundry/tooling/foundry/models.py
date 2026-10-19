@@ -289,5 +289,5 @@ class PullRequest:
 @dataclass
 class Check:
     name: str
-    status: str                         # queued | in_progress | completed
+    status: str                         # queued | in_progress | waiting | requested | pending | completed
     conclusion: Optional[str] = None    # success | failure | neutral | cancelled | ...

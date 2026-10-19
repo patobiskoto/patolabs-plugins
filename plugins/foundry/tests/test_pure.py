@@ -803,7 +803,6 @@ def test_ci_expected_rejects_invalid_page_response(monkeypatch, response):
 
 @pytest.mark.parametrize("suite", [
     {"id": 1, "status": None, "latest_check_runs_count": 0},
-    {"id": 1, "status": "unknown", "latest_check_runs_count": 0},
     {"id": 1, "status": "completed", "latest_check_runs_count": None},
     {"id": 1, "status": "completed"},
     {"id": 1, "status": "completed", "latest_check_runs_count": -1},
@@ -817,6 +816,45 @@ def test_ci_expected_rejects_invalid_suite_records(monkeypatch, suite):
     monkeypatch.setattr(host, "_gh", lambda *_args, **_kwargs: response)
     with pytest.raises(RuntimeError, match="Invalid check-suite record"):
         host.ci_expected("owner/repo", "sha")
+
+
+@pytest.mark.parametrize("status", ["queued", "in_progress", "waiting", "requested",
+                                    "pending", "completed"])
+def test_ci_expected_accepts_every_documented_suite_status(monkeypatch, status):
+    host = GitHubCodeHost()
+    suite = {"id": 1, "status": status, "latest_check_runs_count": 0,
+             "created_at": "2026-01-01T00:00:00Z"}
+    monkeypatch.setattr(host, "_gh", lambda *_a, **_k: json.dumps(
+        {"total": 1, "batch": [suite]}))
+    # stale queued-empty and completed-empty are inert; every other status is active CI
+    assert host.ci_expected("owner/repo", "sha") is (
+        status not in ("queued", "completed"))
+
+
+def test_ci_expected_unknown_suite_status_is_named_and_refused(monkeypatch):
+    host = GitHubCodeHost()
+    suite = {"id": 1, "status": "mystery", "latest_check_runs_count": 0}
+    monkeypatch.setattr(host, "_gh", lambda *_a, **_k: json.dumps(
+        {"total": 1, "batch": [suite]}))
+    with pytest.raises(RuntimeError, match="Unknown check-suite status 'mystery'"):
+        host.ci_expected("owner/repo", "sha")
+
+
+@pytest.mark.parametrize("status", ["waiting", "requested", "pending"])
+def test_ci_gate_refuses_waiver_for_new_non_terminal_statuses(status):
+    pend = write.ci_gate(_FakeCodeHost([Check("b", status, None)]),
+                         "o/r", "sha", allow_no_ci=True)
+    assert pend["passed"] is False and pend["waived"] is False
+    assert pend["pending"] == ["b"]
+    # zero checks but a pending/waiting/requested suite: waiver refused
+    host = GitHubCodeHost()
+    suite = {"id": 1, "status": status, "latest_check_runs_count": 0}
+    host._gh = lambda *_a, **_k: json.dumps({"total": 1, "batch": [suite]})
+    class Empty(_FakeCodeHost):
+        def ci_expected(self, repo, sha):
+            return host.ci_expected(repo, sha)
+    v = write.ci_gate(Empty([]), "o/r", "sha", allow_no_ci=True)
+    assert v["passed"] is False and v["waived"] is False
 
 
 def test_check_runs_falls_back_to_suites_and_keeps_latest_per_app(monkeypatch):
