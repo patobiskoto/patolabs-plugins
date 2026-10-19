@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2.1.1 — 2026-10-19
+
+Patch release. One behaviour change, no new verb or option: below `MINIMUM_PYTHON`,
+`tooling/foundry_cli.py` and the four hooks that import `foundry` re-run themselves under a
+supported interpreter found in a closed list (`reexec_if_unsupported`,
+`tooling/python_floor.py`) instead of stopping at once (PAT-267). No routing default,
+model or effort changes. There is no release note and no migration guide for this patch.
+This dated section is not a claim that 2.1.1 is already tagged or installed. The entry
+below is the fragment present after `foundry-v2.1.0`, kept as written.
+
+- PAT-267: below `MINIMUM_PYTHON`, `tooling/foundry_cli.py` and the `route_agent`, `guard_bash`, `observe_agent` and `session_start` hooks now look for a supported interpreter in a closed list and re-run the same script with it (`reexec_if_unsupported` in `tooling/python_floor.py`, `os.execv`, same arguments, stdin read by nobody before the exec). Order: `python3.N` for N from 20 down to 11, then `python3`, resolved on the current `PATH`; then `FIXED_PATHS` (`/opt/homebrew/bin/python3`, `/usr/local/bin/python3`); then `~/.local/bin/python3.N`. Each candidate is checked by a subprocess bounded by `PROBE_TIMEOUT_SECONDS` (stdin `/dev/null`); no other directory is scanned and no environment variable chooses the interpreter. `FOUNDRY_PYTHON_REEXEC` stops any loop and, with `FOUNDRY_PYTHON_REEXEC_FROM`, is removed from the environment of the re-executed process; any unexpected error in the search falls back the same way; with no candidate, or if `os.execv` fails, the 2.1.0 behaviour is unchanged (visible `systemMessage` and exit 0 for hooks, FOUNDRY-ADR-0005; non-zero exit for the CLI). `session_start` now records after the re-execution; `hook-python.json` gains the optional `reexec_from` (records without it stay readable) and `doctor`'s `Hook Python` line adds `re-executed from <path> Python <version>`. Observed cause: PAT-267 issue, 2026-10-19 (host PATH fallback gives Python 3.9.6; for Codex the mechanism is unknown). R5 documentation status: `README.md` ("Install or upgrade", Python), `docs/model-routing.md` (fail-open paragraph) and `skills/doctor/SKILL.md` updated; `hooks/hooks.json` unchanged; the constants and `reexec_if_unsupported` are documented in the README.
+
 ## 2.1.0 — 2026-10-19
 
 Minor release. Behaviour changes without a new verb or option: Foundry declares Python
