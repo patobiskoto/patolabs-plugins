@@ -53,8 +53,8 @@ four literal sections used by the delegation facade. It carries `diff_hash`, `cl
 `root`, and `base`, and references the directory rather than embedding ADR corpora.
 Only the designated reviewer receives this file. The entire directory is private;
 none of its files belong in public PRs, tracker notes or logs. Stdout contains only
-`schema`, `status`, and `files`; refusals print a fixed cause without input values, `claim_id`, attempt token or
-provider error text (any other failure prints only
+`schema`, `status`, and `files`; refusals print their cause, which may name a hash, the base or a provider status but
+never a `claim_id`, attempt token or provider error text (any other failure prints only
 `Préparation du paquet de review refusée.`). Source: `review_packet.py` and `routing.py::main`.
 
 `manifest.json` distinguishes `tool_read` from `coordinator_declared`. Tool-read files

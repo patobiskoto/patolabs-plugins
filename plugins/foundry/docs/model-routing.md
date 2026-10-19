@@ -157,13 +157,14 @@ unavailable for operator decision; it never silently selects a newer alias.
 That diagnostic detail belongs to the internal/direct module boundary: calling
 `foundry.routing.main()` directly (including development use through
 `python -m foundry.routing`) preserves the precise configuration error so developers can locate the
-invalid field. The shared public wrapper, `foundry_cli.py routing`, deliberately crosses
-a stricter boundary: for a `RoutingConfigError` or `RoutingUnavailableError` it prints
+invalid field. The shared public wrapper, `foundry_cli.py routing`, prints the same text: for a
+`RoutingConfigError` or `RoutingUnavailableError` it writes
 `Configuration de routage invalide : <cause>` on standard error, where `<cause>` is the
-exception message, and exits 2 (PAT-271, `tooling/foundry_cli.py`). Those messages are
-fixed cause texts (an expected action included) and carry no `claim_id`, attempt token or
-diff bytes (`tests/test_routing_errors.py`); an unexpected error other than these two keeps its Python
-traceback. A new message raised in `routing.py` or `review_packet.py` must keep that property.
+exception message, and exits 2 (PAT-271, `tooling/foundry_cli.py`). That message may hold a
+path, a configuration value, a hash, an issue identifier or git's standard error, but never a
+`claim_id`, an attempt token or diff bytes (`tests/test_routing_errors.py`); an unexpected error
+other than these two keeps its Python traceback. A new message raised behind this wrapper must
+keep that property.
 
 If an explicitly requested model is unavailable, fallback uses the configured model of
 the next eligible tier. An explicit reasoning effort is independent of model availability
