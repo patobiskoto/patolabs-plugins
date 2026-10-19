@@ -1591,11 +1591,35 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
 # is modelled: the token must end the line or precede a space, or sit alone in
 # parentheses.
 _AGENTS_REFERENCE = re.compile(
-    r"(?<!\S)AGENTS\.md#R[0-9]+(?=[ \t]|\r?$)"
+    r"(?<!\S)AGENTS\.md#R[0-9]+(?=[ ]|\r?$)"
     r"|(?<![\w\\\]])\(AGENTS\.md#R[0-9]+\)",
     re.MULTILINE,
 )
 _DOMAIN_LIKE_REFERENCE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\.md(?![A-Za-z0-9_])")
+
+
+def _modelled_agents_references(masked: str):
+    """Yield the `_AGENTS_REFERENCE` matches in an observed context only.
+
+    Not observed, hence left unmodelled (and refused by the domain check): a
+    token inside a link label, on a link reference definition line, or on a line
+    indented by 4 or more columns (possible indented code).
+    """
+    for match in _AGENTS_REFERENCE.finditer(masked):
+        start = masked.rfind("\n", 0, match.start()) + 1
+        end = masked.find("\n", match.end())
+        end = len(masked) if end < 0 else end
+        line = masked[start:end]
+        before = masked[start : match.start()]
+        after = masked[match.end() : end]
+        indentation = line[: len(line) - len(line.lstrip(" \t"))]
+        if (
+            len(indentation.expandtabs(4)) >= 4
+            or re.match(r" {0,3}\[[^\]]*\]:", line)
+            or ("[" in before and "]" in after)
+        ):
+            continue
+        yield match
 
 
 def _linear_autolinked_agents_references(fragment: str) -> str:
@@ -1603,7 +1627,7 @@ def _linear_autolinked_agents_references(fragment: str) -> str:
     masked = _masked_backtick_spans(fragment, preserve_newlines=True)
     out = []
     last = 0
-    for match in _AGENTS_REFERENCE.finditer(masked):
+    for match in _modelled_agents_references(masked):
         token = match[0]
         inner = token[1:-1] if token.startswith("(") else token
         link = f"[{inner}](<http://{inner}>)"
@@ -1639,7 +1663,10 @@ def _refuse_unmodelled_domain_references(body: str) -> None:
     chunks.append("".join(current))
     for chunk in chunks:
         masked = _masked_backtick_spans(chunk, preserve_newlines=True)
-        masked = _AGENTS_REFERENCE.sub(lambda match: "x" * len(match[0]), masked)
+        for match in reversed(list(_modelled_agents_references(masked))):
+            masked = (
+                masked[: match.start()] + "x" * len(match[0]) + masked[match.end() :]
+            )
         found = _DOMAIN_LIKE_REFERENCE.search(masked)
         if found is not None:
             raise ValueError(

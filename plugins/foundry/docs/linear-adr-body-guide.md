@@ -24,7 +24,7 @@ exception `__cause__`) names the family.
 
 One more rewrite is observed (PAT-284, on the orphan `PAT-ADR-0029` Document): outside
 code spans and fenced blocks, the reference `AGENTS.md#R<n>` followed by a space or the end
-of the line is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`; the same reference alone
+of the line (not inside a link label, on a link reference definition or on a line indented 4 or more columns: refused) is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`; the same reference alone
 in parentheses is stored as `([AGENTS.md#R<n>](<http://AGENTS.md#R<n>>))` (the form observed on
 issue bodies, PAT-209, not on an ADR: deduced to be the same autolinking). Likewise a top-level
 `- ` list marker is stored as `* ` (PAT-94). Both are covered by

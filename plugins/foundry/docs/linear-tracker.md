@@ -433,7 +433,7 @@ PAT-284 adds one observed inline rewrite to the ADR body rendering, seen on the 
 a line, outside code spans and fences) is stored as `[AGENTS.md#R<n>](<http://AGENTS.md#R<n>>)`
 (`linear.py::_linear_autolinked_agents_references`, applied last in
 `_linear_nonfenced_markdown_readback`; the parenthesised form is the PAT-209 issue form, assumed
-identical for ADRs: deduced, not observed). For a new ADR body, any other `*.md` name outside code
+identical for ADRs: deduced, not observed). The token is modelled only in the observed context: inside a link label, on a link reference definition line or on a line indented 4 or more columns it is not rewritten and is refused like any other (`_modelled_agents_references`). For a new ADR body, any other `*.md` name outside code
 is refused before any write with `unsupported domain-like reference` in the refusal message
 (`_refuse_unmodelled_domain_references`, `_preflight_adr_body_readback`); the digest-pinned
 profiles and the stored bodies read by `new_body=False` callers are not subject to it. Only `.md`

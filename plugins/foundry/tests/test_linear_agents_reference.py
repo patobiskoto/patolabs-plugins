@@ -59,6 +59,11 @@ def test_only_the_observed_reference_forms_are_rewritten(source, rendered):
         ("voir (AGENTS.md#R9(b)) ici", "AGENTS.md"),
         ("voir docs/guide.md ici", "guide.md"),
         ("AGENTS.md#R9, puis", "AGENTS.md"),
+        ("AGENTS.md#R9\tx", "AGENTS.md"),
+        ("[voir AGENTS.md#R9 ici](#ancre)", "AGENTS.md"),
+        ("[a (AGENTS.md#R9) b](#x)", "AGENTS.md"),
+        ("[r]: AGENTS.md#R9", "AGENTS.md"),
+        ("    AGENTS.md#R9 x", "AGENTS.md"),
     ],
 )
 def test_other_domain_like_references_are_refused_before_any_write(source, named):
@@ -69,3 +74,9 @@ def test_other_domain_like_references_are_refused_before_any_write(source, named
 
 def test_domain_like_reference_in_code_is_not_refused():
     linear_module._preflight_adr_body_readback("`CLAUDE.md#R9` et\n\n```\nfoo.md\n```")
+
+
+def test_reference_in_a_fenced_block_is_not_rewritten():
+    body = "```\nAGENTS.md#R9 x\n```"
+    assert linear_module._linear_markdown_readback_body(body) == body
+    linear_module._preflight_adr_body_readback(body)
