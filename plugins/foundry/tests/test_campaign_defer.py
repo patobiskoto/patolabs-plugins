@@ -441,7 +441,7 @@ def nits_epics(env):
     return [i for i in env.world.issues.values() if i.title == "Nits"]
 
 
-def test_a_ticket_without_an_origin_epic_defers_to_nits_with_the_four_writes(env):
+def test_a_ticket_without_an_origin_epic_defers_to_nits_with_a_companion_a_follow_up_and_a_comment(env):
     env.world.issues["APP-1"].type = "Task"  # the direct parent is not an Epic
     reviewed(env)
     result = step(env)
@@ -458,6 +458,41 @@ def test_a_ticket_without_an_origin_epic_defers_to_nits_with_the_four_writes(env
     assert child_spec["parent"] == nits.id
     assert result.effect["deferral"]["state"] == "done"
     assert result.effect["deferral"]["companion"] == nits.id
+    assert epic_spec["body"] == cd.NO_ORIGIN_COMPANION_BODY
+    assert "from them" in epic_spec["body"] and "No tracker link" not in epic_spec["body"]
+
+
+def test_the_companion_body_of_an_origin_epic_names_it_and_says_there_is_no_link(env):
+    reviewed(env)
+    step(env)
+    spec = json.loads(env.world.edits[0][1][0])
+    assert spec["body"] == cd.COMPANION_BODY.format(origin="APP-1")
+
+
+def test_an_orphan_nits_follow_up_is_attached_to_nits(env):
+    env.world.issues["APP-1"].type = "Task"
+    env.world.add_issue("APP-50", "Nits", "Epic", "backlog")
+    env.world.add_issue("APP-51", cd.NO_ORIGIN_FOLLOW_UP_TITLE, "Task", "backlog")
+    reviewed(env)
+    assert step(env).outcome == "executed"
+    assert verbs(env) == ["link", "comment"]
+    assert env.world.edits[0][1] == ["APP-51", "subtask-of", "APP-50"]
+
+
+def test_a_transient_failure_for_a_ticket_without_an_origin_epic_waits_then_is_exhausted(env):
+    env.world.issues["APP-1"].type = "Task"
+    reviewed(env)
+    moment = NOW
+    env.world.search_failure = ConnectionError("transport_error")
+    assert step(env, moment).outcome == "waiting"
+    assert step(env, moment).decision.kind == "wait"
+    for _ in range(cd.MAX_DEFER_TRIES - 1):
+        moment += timedelta(minutes=5)
+        assert step(env, moment).outcome == "waiting"
+    result = step(env, moment + timedelta(minutes=5))
+    assert (result.decision.kind, result.decision.reason) == (
+        "suspend", "deferral_retries_exhausted")
+    assert env.world.edits == []
 
 
 def test_a_ticket_without_an_origin_epic_reuses_the_open_nits_follow_up(env):
@@ -1054,3 +1089,9 @@ def test_origin_of_ignores_a_parent_that_is_not_an_epic_or_not_unique():
     assert cd.origin_of(_origin_tracker("Nits", parent_type="Task"), "APP-9") == (None, False)
     assert cd.origin_of(_origin_tracker("Nits", parents=2), "APP-9") == (None, False)
     assert cd.origin_of(_origin_tracker("Nits", parents=0), "APP-9") == (None, False)
+
+
+def test_observe_refuses_a_deferral_given_without_origin(tmp_path):
+    with pytest.raises(ValueError, match="deferral requires origin"):
+        cc.observe(None, None, PROJECT, "APP-1", str(tmp_path), NOW,
+                   deferral=lambda *a: cc.DeferralFacts())

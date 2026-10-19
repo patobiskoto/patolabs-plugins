@@ -494,7 +494,12 @@ def observe(
     origin: Callable[[str], tuple[str | None, bool]] | None = None,
     description: Callable[[str, str | None, str | None], tuple[int, bool]] | None = None,
 ) -> Observation:
-    """Gather one observation with declared capabilities and read-only calls only."""
+    """Gather one observation with declared capabilities and read-only calls only.
+
+    ``deferral`` needs ``origin``: without it a ticket would read as having no origin Epic.
+    """
+    if deferral is not None and origin is None:
+        raise ValueError("observe: deferral requires origin")
     missing = missing_capabilities(tracker)
     if missing:
         return Observation(epic=epic, missing_capabilities=missing)

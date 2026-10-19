@@ -665,7 +665,9 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    from the journal's: durable refusal (`remarks_receipt_missing`, `remarks_receipt_inconsistent`).
 2. Find the companion Epic: an issue of type `Epic` titled `Nits <ORIGIN-EPIC-ID>`, or exactly `Nits`
    for a ticket with no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain
-   of parents is not walked up; PAT-291, PAT-ADR-0029; `NO_ORIGIN_COMPANION`). First the
+   of parents is not walked up, and a ticket with several `subtask-of` parents has none either:
+   deduced from `origin_of`, not observed on a tracker, none known to allow it; PAT-291,
+   PAT-ADR-0029; `NO_ORIGIN_COMPANION`). First the
    companions that earlier deferral attempts of this Epic journaled (`journal_memory`, the
    `companion` of their `deferral` field, most recent first) are read by identifier (`get_issue`)
    and the first that is still an Epic with that title is kept; otherwise the project is listed
@@ -688,7 +690,9 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    that did not end `done` may have created the issue; deduced from `_create`, which records
    nothing for that failure). Residual risk: `journal_memory` reads the journal of this campaign Epic only
    (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
-   in that case and a second follow-up can be created. Otherwise `edit create-issue` with `parent` set to the companion Epic.
+   in that case and a second follow-up can be created. Under `Nits` the orphan is wider: the
+   follow-up is shared by every ticket of the project with no origin Epic, including those
+   deferred by hand through `merge-pr` (`origin_of`, `NO_ORIGIN_FOLLOW_UP_TITLE`). Otherwise `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number,
    the ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff
    hash>`: at most one comment per validated round, never one per remark (a correction
@@ -817,14 +821,15 @@ Decided from the journal by `campaign_review.review_mode`, for the review attemp
   `full`. The proof is the same as a full one and relies on the previous round for the unchanged
   parts; no mechanical check tells them apart (`review-rounds.md`).
 - `carry` (PAT-ADR-0021, `review-rounds.md`, "Carrying a terminal proof"): the last round is
-  validated with no remark to fix, no correction since, and the head differs from the reviewed one (the base may be the same, PAT-288,
-  PAT-294, or differ; `campaign_review.review_mode`). The effect
-  runs `routing carry-review-proof --issue --root --base <new base> --from-base <old base>
+  validated with no remark to fix, no correction since, and the head differs from the reviewed
+  one; the base may be the same or differ (PAT-288, PAT-294; `campaign_review.review_mode`).
+  The effect runs `routing carry-review-proof --issue --root --base <new base> --from-base <old base>
   --from-diff-hash <old diff hash>` first; `AcceptanceProofStore.carry` checks the conditions
   (ancestry, clean merge tree, no path changed by both, identical diff bytes) and a refusal
   makes the same attempt go on with a full review (also when the base did not change and the
-  reviewed head already contained it: `AcceptanceProofStore.carry` refuses it as nothing to carry). A carried review is recorded with
-  `carried: true`, is not a review round and launches no session.
+  reviewed head already contained it: `AcceptanceProofStore.carry` refuses it as nothing to
+  carry). A carried review is recorded with `carried: true`, is not a review round and launches
+  no session.
 - Anything else is `full`.
 
 ## Not executed yet

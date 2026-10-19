@@ -1,7 +1,7 @@
 """Deferral of the non-blocking remarks of a validated review (PAT-141, PAT-ADR-0028).
 
 After a validated review the cadencer carries the deferrable remarks to the companion Epic
-``Nits <ORIGIN-EPIC-ID>`` with the four writes that AGENTS.md#R9 (b) authorizes in advance.
+``Nits <ORIGIN-EPIC-ID>`` (``Nits`` for a ticket with no origin Epic, PAT-ADR-0029) with the four writes that AGENTS.md#R9 (b) authorizes in advance.
 Every write is a Foundry command run as a subprocess (``edit create-issue``, ``edit comment``,
 ``edit link``, ``edit reconcile-create``); the tracker is only read, through ``search`` and
 ``get_issue``, before each write, so that a retry finds what an earlier attempt of this journal
@@ -32,6 +32,10 @@ COMPANION_PREFIX = "Nits "
 _COMPANION_NAME = re.compile(r"Nits(?: [A-Za-z][A-Za-z0-9]*-[0-9]+)?")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
 NO_ORIGIN_COMPANION = "Nits"  # PAT-ADR-0029: the companion Epic of the tickets with no origin Epic
+COMPANION_BODY = ("Companion Epic of {origin}: holds the non-blocking review remarks deferred "
+                  "from it (AGENTS.md#R9 (b)). No tracker link to the origin Epic.")
+NO_ORIGIN_COMPANION_BODY = ("Companion Epic of the tickets with no origin Epic: holds the "
+                            "non-blocking review remarks deferred from them (AGENTS.md#R9 (b)).")
 NO_ORIGIN_FOLLOW_UP_TITLE = "Review remarks deferred from tickets with no origin Epic"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
 DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or the reset_at of a
@@ -130,6 +134,8 @@ def origin_of(tracker, ticket: str) -> tuple[str | None, bool]:
     """(direct parent Epic, whether it is a companion Epic); ``(None, False)`` without one.
 
     R9 (b): the chain of parents is not walked up; a parent that is not an Epic is no origin.
+    Several ``subtask-of`` parents give no origin either (deferred to ``Nits``, documented in
+    ``docs/campaign-effects.md``).
     """
     parents = [link.target for link in tracker.get_issue(ticket).links
                if link.type == "subtask-of"]
@@ -445,9 +451,7 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
     if companion is None:
         companion = _create(runtime, worktree, {
             "title": name, "fields": {"Type": "Epic", "State": "backlog"},
-            "body": f"Companion Epic of {origin or 'the tickets with no origin Epic'}: holds the "
-                    "non-blocking review remarks deferred from it (AGENTS.md#R9 (b)). "
-                    "No tracker link to the origin Epic.",
+            "body": COMPANION_BODY.format(origin=origin) if origin else NO_ORIGIN_COMPANION_BODY,
         }, ledger, WRITE_COMPANION)
     ledger["companion"] = companion
     title = (NO_ORIGIN_FOLLOW_UP_TITLE if origin is None
