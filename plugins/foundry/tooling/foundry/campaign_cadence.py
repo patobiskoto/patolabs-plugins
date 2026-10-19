@@ -60,7 +60,7 @@ class DeferralFacts:
     """The non-blocking remarks of the validated review of the current PR head (PAT-141).
 
     ``deferrable`` is the number of remarks that are not marked "fix before merge";
-    ``origin`` the direct parent Epic of the ticket (``None``: no origin Epic) and
+    ``origin`` the direct parent Epic of the ticket (``None``: no origin Epic, deferred to the project companion Epic, PAT-ADR-0029) and
     ``origin_is_companion`` whether that Epic is itself a companion Epic.  ``state`` comes from
     the attempt journal, for this ``diff_hash``: ``pending`` (never attempted), ``done``,
     ``refused`` (durable refusal), ``transient`` (to retry; ``cooling`` while the wait runs)
@@ -198,10 +198,9 @@ def _remarks(ticket: TicketFacts, evidence: dict) -> Decision | None:
     if facts is None or facts.deferrable == 0 or facts.state == "done":
         return None
     detail = {**evidence, "remarks": facts.deferrable}
-    cause = ("no_origin_epic" if facts.origin is None
-             else "companion_epic" if facts.origin_is_companion
+    cause = ("companion_epic" if facts.origin_is_companion
              else "refused" if facts.state == "refused" else None)
-    if cause is not None:  # no second-level deferral, no origin Epic, or a durable refusal
+    if cause is not None:  # no second-level deferral, or a durable refusal
         return _bounded(ticket, Decision(
             "correct", ticket.id, "remarks_not_deferrable", {**detail, "cause": cause}))
     if facts.state == "exhausted":

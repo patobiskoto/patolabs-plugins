@@ -335,8 +335,10 @@ def test_r9_defers_an_issue_with_no_origin_epic_to_nits_and_reads_the_partial_ra
             "decision of 2026-10-10 that gave such an issue no deferral); the rules of this "
             "paragraph apply to it unchanged") in rule
     assert "They apply to `Nits` as to any companion Epic (PAT-ADR-0029)" in rule
-    assert "the cadencer does not yet apply PAT-ADR-0029 to it" in " ".join(
-        _repo_text("AGENTS.md").split())
+    agents = " ".join(_repo_text("AGENTS.md").split())
+    assert "the cadencer does not yet apply PAT-ADR-0029" not in agents
+    assert ("a ticket with no origin Epic defers to the companion Epic named exactly `Nits` "
+            "(PAT-291, PAT-ADR-0029") in agents
     assert ("`routing prepare-review --previous-head <SHA>` records the head the previous "
             "round saw") in rule
     assert ("argument to add to the `routing read-review` command of the reviewer's role contract"

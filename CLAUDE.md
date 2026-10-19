@@ -413,8 +413,10 @@ still accepts exactly the keys `outcomes` and `quality`, and neither `issue.py` 
 `write.py` refers to the receipt, so the merge gate never reads it
 (`plugins/foundry/tests/test_campaign_defer.py`). After a validated review whose remarks
 are not marked "fix before merge", the cadencer decides `defer-remarks` before `merge`
-when the direct parent Epic of the ticket exists and is not itself a companion Epic (a title
-`Nits <ID>` or exactly `Nits`, `_COMPANION_NAME`). The
+when the direct parent Epic of the ticket is not itself a companion Epic (a title
+`Nits <ID>` or exactly `Nits`, `_COMPANION_NAME`); a ticket with no origin Epic defers to the
+companion Epic named exactly `Nits` (PAT-291, PAT-ADR-0029; `NO_ORIGIN_COMPANION`,
+`NO_ORIGIN_FOLLOW_UP_TITLE` in `campaign_defer.py`), with the same writes, reads and refusals. The
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
 `edit link` and `edit comment`, posts at most one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
@@ -422,9 +424,7 @@ its attempt journal. The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
 targets the PR description alone: the correction then replaces the description, which is not
 re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),
-a ticket with no origin Epic (the cadencer
-does not yet apply PAT-ADR-0029 to it: `campaign_cadence.py` decides `correct`, cause
-`no_origin_epic`, and `docs/campaign-effects.md` says so), a ticket of a companion Epic,
+a ticket of a companion Epic,
 `Nits` included, and a durable refusal (capability absent, `Epic` type refused,
 several companion Epics with the same name, found only when the effect lists the project (`_find_companion`, not when `journal_memory` names the companion), an adapter that refuses to replay a
 creation). The orphan scan is skipped when the journal names the companion and every earlier attempt of the campaign Epic ended `done` without creating a follow-up (`journal_memory`, `_find_follow_up`; an attempt that ended otherwise may have created one whose answer was lost, and makes the scan run): an orphan follow-up of the same origin Epic created outside that journal (by hand, or by a campaign on another Epic with the same origin) is then not seen, and a second follow-up can be created. A transient failure, including a creation that the read shows did not

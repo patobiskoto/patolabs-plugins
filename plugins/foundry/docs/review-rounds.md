@@ -240,10 +240,10 @@ remarks after a validated round to the companion Epic of the project named exact
 with the rules of PAT-ADR-0018 (no tracker link, one open follow-up issue, a new one when
 it is started or closed, the four writes authorized in advance). The PR of an issue of any
 companion Epic, `Nits` included, corrects its remarks. The effect on the number of rounds
-is unknown and not counted here. The campaign cadencer does not yet defer a ticket with no
-origin Epic: it still decides `correct` (`campaign_cadence.py`, cause `no_origin_epic`);
-it only recognizes the title `Nits` as a companion Epic (`campaign_defer._COMPANION_NAME`),
-so a ticket of `Nits` is never deferred again (`docs/campaign-effects.md`).
+is unknown and not counted here. Since PAT-291 the campaign cadencer defers such a ticket
+(`defer-remarks`, `campaign_defer.run_deferral`) and recognizes the title `Nits` as a
+companion Epic (`campaign_defer._COMPANION_NAME`), so a ticket of `Nits` is corrected, never
+deferred again (`docs/campaign-effects.md`).
 
 ## Partial review on every pull request (PAT-172, PAT-ADR-0022)
 
@@ -348,7 +348,7 @@ steps, its journal record and its refusals:
   exactly the keys `outcomes` and `quality`, and neither `tooling/foundry/issue.py` nor
   `tooling/foundry/write.py` refers to the receipt, so the merge gate never reads it
   (`tests/test_campaign_defer.py`).
-- A remark marked "fix before merge", a ticket with no origin Epic, a ticket of a
+- A remark marked "fix before merge", a ticket of a
   companion Epic, `Nits` included (no second-level deferral) and a durable refusal are
   corrected by the correction loop of the campaign and re-reviewed as stated in "Partial review on every
   pull request"; a transient failure makes the campaign wait and retry.
