@@ -258,8 +258,8 @@ after a re-execution, `reexec_from`, the one started first. The two variables ar
 from the environment of the re-executed process, so its descendants do not inherit them.
 Nothing is cached: under a too-old interpreter every hook call repeats the search, whose
 worst case is bounded by `PROBE_TIMEOUT_SECONDS` times the number of existing candidates
-(deduced, not measured). When nothing is found or `os.execv` fails, the behaviour of the
-next sentences applies.
+(deduced, not measured). When nothing is found, `os.execv` fails or the search raises an
+unexpected error, the behaviour of the next sentences applies.
 Under Python 3.10 or older with no supported candidate, the four hooks that import
 `foundry` are inactive, including the `guard_bash` R1 deny and
 the PAT-215 `campaign-approval approve` deny; each hook call (every Bash and Agent call, in

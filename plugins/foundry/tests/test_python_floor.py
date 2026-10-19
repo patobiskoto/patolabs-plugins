@@ -302,6 +302,9 @@ def test_execv_failure_falls_back_and_cleans_the_environment(tmp_path, monkeypat
 
 def test_supported_interpreter_never_searches(monkeypatch):
     monkeypatch.setattr(python_floor, "_attempted", False)
+    monkeypatch.setattr(python_floor, "_origin", None)
+    monkeypatch.delenv(python_floor.REEXEC_GUARD, raising=False)
+    monkeypatch.delenv(python_floor.REEXEC_FROM, raising=False)
     monkeypatch.setattr(python_floor, "_candidates",
                         lambda: (_ for _ in ()).throw(AssertionError("searched")))
     python_floor.reexec_if_unsupported(["x.py"])
@@ -314,12 +317,11 @@ def test_candidates_are_the_closed_list_in_order(tmp_path, monkeypatch):
                             (bin_dir, "python3"), (local, "python3.12"),
                             (bin_dir, "python3.99"), (bin_dir, "python3.10")):
         _fake(directory, name)
-    fixed = _fake(tmp_path / "fixed", "python3")
+    _fake(tmp_path / "fixed", "python3")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(python_floor, "FIXED_PATHS", (str(tmp_path / "fixed" / "python3"),))
     names = [os.path.relpath(p, tmp_path) for p in python_floor._candidates()]
-    assert fixed.parent.name == "fixed" and fixed.name == "python3.log"
     assert names == [
         "bin/python3.13", "bin/python3.11", "bin/python3", "fixed/python3",
         "home/.local/bin/python3.12"]
