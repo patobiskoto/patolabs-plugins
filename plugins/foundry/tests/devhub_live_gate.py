@@ -1,7 +1,7 @@
 """PAT-296: fail-closed gate of the live DevHub conformance suite.
 
-The suite writes to the DevHub it targets and DevHub v1 has no delete endpoint, so it
-must never reach a production instance.  This module decides, from an explicit
+The suite writes to the DevHub it targets and deletes nothing it creates, so it must
+never reach a production instance.  This module decides, from an explicit
 environment mapping only, whether the suite may run.  It never reads the user's
 configuration, keychain, registry or ``config.env``: every coordinate comes from the
 ``DEVHUB_LIVE_*`` variables documented in ``docs/devhub-requirements.md``.

@@ -32,8 +32,9 @@ python3 -m pytest -q -m devhub_live tests/integration/test_devhub_live_conforman
 `-m devhub_live` replaces the default `-m "not integration"` of `pytest.ini`. Without
 `DEVHUB_LIVE_URL` every test is skipped with the reason
 `DEVHUB_LIVE_URL not set: live DevHub conformance suite not requested`. The public CI
-expressions all contain `not integration` (`.github/workflows/ci.yml`, `plugins/foundry/README.md`,
-"pytest -q -n auto -m"), so they never collect the suite. A `-m` expression without
+runs do not collect it: `-m tracker_conformance` and the expressions with `not integration`
+exclude it, and the runs without `-m` keep the `pytest.ini` default
+(`.github/workflows/ci.yml`, `plugins/foundry/README.md`). A `-m` expression without
 `not integration` (for example `-m "not historical_fixture"`) replaces the `pytest.ini`
 default and collects it: skipped when `DEVHUB_LIVE_URL` is unset, but run against that URL
 (writes included) when the four `DEVHUB_LIVE_*` variables are exported, so unset them for
@@ -42,7 +43,7 @@ not part of `-m tracker_conformance` (`docs/tracker-conformance.md`): that suite
 deterministic over fake transports, this one needs a server.
 
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
-expected red, listed below with its owner) that raised the exception its `gap` declares in `raises=`, any other exception, a setup error included, is a failure or an error, not an `xfailed`; `XPASS(strict)` reported as a failure means a
+expected red, listed below with its owner) that raised the exception its `gap` declares in `raises=`, any other exception, a setup error included, is a failure or an error, not an `xfailed` (limit: DHN-27 and DHN-28 declare `DevHubTrackerError`, which a transport error, an invalid response or a refusal of the issue creation or start also raises, so their `xfailed` alone does not show the refused transition); `XPASS(strict)` reported as a failure means a
 gap closed and its test must be turned into a plain need (see "Closing a gap"); `failed`
 on a need expected green is a regression or a wrong expectation to discuss on this page.
 
@@ -91,8 +92,9 @@ not been run against a DevHub instance. The owner column names who must act when
 is red. Basis: *adapter* = observed in `trackers/devhub.py` / `trackers/base.py` (the
 method is inherited from the `Tracker` default, checked by script on 2026-10-19);
 *server* = deduced from the DevHub source (repository `dev-hub`, paths relative to its root),
-read-only, not run. Read at commit `68c7ef0` (2026-10-19); the files cited here are
-identical at the earlier `3fedc57` (`git diff 3fedc57 68c7ef0` on them is empty).
+read-only, not run. Read at commit `68c7ef0` (2026-10-19), the `HEAD` of that checkout at
+reading time; the files cited here are identical at the earlier `3fedc57` (`git diff 3fedc57
+68c7ef0` on them was empty that day).
 
 No test has been run against a DevHub instance when this page was written: every
 `unknown` is unknown for that reason, and every `red` is deduced from code, not observed on
@@ -139,7 +141,7 @@ a server. Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-37 | Reconcile an interrupted issue creation without recreating it (Epic cadencer) | `test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it` | red | adapter | adapter: `reconcile_issue_creation` inherited; `campaign_cadence.missing_capabilities` reports `issue_creation_reconciliation` |
 | DHN-38 | Append-only lifecycle capability required by the Epic cadencer (PAT-ADR-0026) | `test_dhn_38_lifecycle_is_append_only_for_the_cadencer` | red | adapter + server | adapter: `append_only_lifecycle_supported` is `False` (script, 2026-10-19); what DevHub must provide for it is a question below |
 | DHN-39 | Read a mapped release scope without approximate discovery | `test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery` | red | adapter + server | adapter: `read_release_scope` inherited, `ReleaseScopeUnavailableError`; how a release is mapped on DevHub is a question below |
-| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), covered by DHN-41; the Epic cadencer also needs DHN-37 and DHN-38 |
+| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), with no live test (DHN-41 covers `verify_project_identity` only); the Epic cadencer also needs DHN-37 and DHN-38 |
 | DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | red | adapter | adapter: `verify_project_identity` inherited from `trackers/base.py`, `ProjectProvisioningUnavailableError`; the test covers it only, the `resolve_checkout_project` pilot path of DHN-40 has no live test |
 
 Counts (equal to the table): 41 needs; 16 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-41);
