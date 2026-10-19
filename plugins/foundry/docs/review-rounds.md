@@ -229,6 +229,22 @@ decides, in either of these cases:
   divided by the number of origin issues is not below 3.2, the figure of the baseline
   (maintainer decision of 2026-10-11).
 
+## A ticket with no origin Epic defers to `Nits` (PAT-283, PAT-ADR-0029)
+
+Rule (b) of `AGENTS.md#R9` gave an issue with no origin Epic no deferral (maintainer
+decision of 2026-10-10): every non-blocking remark was corrected before the merge and
+re-reviewed, so the rule had no stopping criterion. Observed: PR 209 (PAT-265) took five
+rounds, four of them for docstring sentences; PAT-ADR-0029 cites the same observation on a
+consuming project (2026-10-19). Since PAT-ADR-0029 such an issue defers its non-blocking
+remarks after a validated round to the companion Epic of the project named exactly `Nits`,
+with the rules of PAT-ADR-0018 (no tracker link, one open follow-up issue, a new one when
+it is started or closed, the four writes authorized in advance). The PR of an issue of any
+companion Epic, `Nits` included, corrects its remarks. The effect on the number of rounds
+is unknown and not counted here. The campaign cadencer does not yet defer a ticket with no
+origin Epic: it still decides `correct` (`campaign_cadence.py`, cause `no_origin_epic`);
+it only recognizes the title `Nits` as a companion Epic (`campaign_defer._COMPANION_NAME`),
+so a ticket of `Nits` is never deferred again (`docs/campaign-effects.md`).
+
 ## Partial review on every pull request (PAT-172, PAT-ADR-0022)
 
 Until PAT-172, only the PR of an issue of a companion Epic had a partial review after the
@@ -242,7 +258,8 @@ whole diff. A validated round is one where every criterion is `pass` and quality
 blocking round, when the change since the previous round goes beyond correcting the
 remarks it carried, and when the reviewer asks for it with a reason. The packet gives the
 reviewer the previous round's verdict and remarks, the commit range since that round, and
-the full diff through the shared verifier; the reviewer checks that each correction
+the full diff through the shared verifier (the range is read with `routing read-review
+--since`, PAT-283, `docs/review-packet.md`); the reviewer checks that each correction
 settles its remark without a new defect and that nothing else changed, and returns a
 verdict on all criteria for the exact diff. The proof has the same form as a full one,
 relies on the previous round for the unchanged parts, and the PR description says so. No
@@ -253,9 +270,12 @@ observation each; the effect of this extension on the number of rounds is unknow
 not counted on this page. The only figure on what giving up the extra full look costs is
 the one in "Limits" (one of 11 full re-reviews after the correction of remarks caught an
 old defect); it comes from that section, written before this extension, and is not
-re-counted for it. The commit range and the previous round's remarks that the packet
-carries are declarations of the coordinator, not checked against the bytes (see
-`skills/review-pr/SKILL.md`).
+re-counted for it. The previous round's verdict and remarks that the packet carries
+are declarations of the coordinator, not checked against any byte. The commit range is
+read from the bytes since PAT-283 (`routing prepare-review --previous-head`, `routing
+read-review --since`: `docs/review-packet.md`); the tool checks that the head passed is an
+ancestor of HEAD, not that it is the head of the previous round. Before PAT-283 the range
+was a declaration too, and the send text did not say that the review was partial.
 
 ## Limits
 
@@ -329,8 +349,8 @@ steps, its journal record and its refusals:
   `tooling/foundry/write.py` refers to the receipt, so the merge gate never reads it
   (`tests/test_campaign_defer.py`).
 - A remark marked "fix before merge", a ticket with no origin Epic, a ticket of a
-  companion Epic (no second-level deferral) and a durable refusal are corrected by the
-  correction loop of the campaign and re-reviewed as stated in "Partial review on every
+  companion Epic, `Nits` included (no second-level deferral) and a durable refusal are
+  corrected by the correction loop of the campaign and re-reviewed as stated in "Partial review on every
   pull request"; a transient failure makes the campaign wait and retry.
   Exception (PAT-227): when every remark of the round marked "fix before merge" targets the
   PR description alone, the correction replaces the description and is not re-reviewed, the

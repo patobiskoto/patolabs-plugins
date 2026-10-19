@@ -971,3 +971,10 @@ def test_the_companion_name_rule_accepts_every_identifier_the_preview_accepts():
         assert epic_preview.ISSUE_ID.fullmatch(identifier)
         assert cd._COMPANION_NAME.fullmatch(f"{cd.COMPANION_PREFIX}{identifier}")
     assert cd._COMPANION_NAME.fullmatch("Nits APP-1 and more") is None
+
+
+def test_the_exact_title_nits_is_a_companion_epic_and_nothing_longer_is():
+    """PAT-283 / PAT-ADR-0029: `Nits` alone is the per-project companion Epic."""
+    assert cd._COMPANION_NAME.fullmatch("Nits")
+    for title in ("Nits ", "nits", "Nits and polish", "Nits APP", "Nits-2", "NitsAPP-1"):
+        assert cd._COMPANION_NAME.fullmatch(title) is None

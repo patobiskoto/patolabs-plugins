@@ -257,14 +257,17 @@ The remarks deferred from the issues of an Epic go to a companion Epic, named `N
 followed by the identifier of the origin Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic
 of an issue is its direct parent Epic: an issue under a sub-Epic uses that sub-Epic. The
 two Epics have no tracker link between them: no parent, no dependency, no relation. What
-relates them is that name and a mention in text, nothing else. Inside the companion Epic
+relates them is that name and a mention in text, nothing else. The remarks deferred from
+an issue with no origin Epic go to the companion Epic of the project, named exactly `Nits`
+(PAT-ADR-0029, which amends the maintainer decision of 2026-10-10 that gave such an issue
+no deferral); the rules of this paragraph apply to it unchanged. Inside the companion Epic
 the remarks are held by a single follow-up issue, which gathers all the deferred remarks
 of the origin Epic. If that issue is already started or closed, a new follow-up issue is
 created: no remark is added to a started or closed issue (maintainer decision of
 2026-10-11). The follow-up issue that receives the remarks of a PR is cited in that PR's
 description before the merge. These three cases are still corrected before the merge; the
-rest of this rule adds three more (the PR of an issue of a companion Epic, an issue with
-no origin Epic, a durable refusal of one of the writes), corrected the same way. The
+rest of this rule adds two more (the PR of an issue of a companion Epic, `Nits` included,
+and a durable refusal of one of the writes), corrected the same way. The
 first three cases are:
 
 - a remark the reviewer marks "fix before merge";
@@ -274,7 +277,7 @@ first three cases are:
   a deferrable remark.
 
 There is no second-level deferral: the non-blocking remarks left by the PR of an issue
-that belongs to a companion Epic are corrected before the merge. On every pull request,
+that belongs to a companion Epic, `Nits` included, are corrected before the merge. On every pull request,
 the review that follows the correction of the non-blocking remarks of a validated round
 (every criterion `pass` and quality `mergeable`, even with remarks marked "fix before
 merge") covers what changed since that round, not the whole diff (PAT-ADR-0022). It stays
@@ -284,10 +287,17 @@ holds for every non-blocking remark, the three cases above included. The partial
 packet gives the reviewer the previous round's verdict and remarks, the commit range
 since that round, and the full diff through the shared verifier; the reviewer checks that
 each correction settles its remark without a new defect and that nothing else changed,
-and returns a verdict on all criteria for the exact diff. The commit range and the previous
-round's remarks are declarations of the coordinator: the reviewer cannot confront them with
-the bytes it is given (the shared verifier supplies only `base...HEAD`), and the send text
-of `routing prepare-review` does not say that the review is partial. When the criteria of the issue are
+and returns a verdict on all criteria for the exact diff. The previous
+round's verdict and remarks are declarations of the coordinator that the reviewer cannot
+confront with any byte. The commit range is read from the bytes (PAT-283):
+`routing prepare-review --previous-head <SHA>` records the head the previous round saw and
+makes `reviewer-send.txt` say that the review is partial and give the `--since <SHA>`
+argument to add to the `routing read-review` command of the reviewer's role contract, which emits `git diff <SHA>..HEAD` under the claim
+checks of the full read (`claimed_review_diff` and `git_range_diff`,
+`plugins/foundry/tooling/foundry/routing.py`) and refuses a `--since` that is not a full
+40-hex ancestor of HEAD (after a rebase the review is full). The coordinator still chooses
+which head it passes: the tool checks that it is an ancestor, not that it is the previous
+round's head. When the criteria of the issue are
 not all checked in the tracker, and also when they are all checked on a tracker whose
 adapter sets `delivery_receipt_supported` if the issue has a binding
 (`write.issue_binding`), the merge gate asks for a review proof covering all criteria for
@@ -311,7 +321,8 @@ plugin is installed. For these four writes this rule gives the confirmation that
    three writes", where creating an issue under a parent makes two writes and the second
    failed).
 
-The coordinator reports these writes in the PR description. Nothing else is
+The coordinator reports these writes in the PR description. They apply to `Nits` as to
+any companion Epic (PAT-ADR-0029). Nothing else is
 pre-authorized: the companion Epic and its issues are neither prioritized nor started
 without the maintainer (deciding to treat them, and when, is a human verdict under
 FOUNDRY-ADR-0014), and every other intake write keeps its confirmation.
@@ -347,10 +358,9 @@ refused retry is the coordinator's reading of those two decisions), not decision
 PAT-ADR-0018; the re-review they mention is the one of PAT-ADR-0022, not part of those
 decisions.
 
-PAT-ADR-0018 decides for Epics only. An issue that has no origin Epic gets no deferral:
-its non-blocking remarks are corrected before the merge and then re-reviewed as stated
-above (the re-review is PAT-ADR-0022's; the absence of deferral is the maintainer decision
-of 2026-10-10). That includes an issue whose direct parent is not an
+PAT-ADR-0018 decides for Epics only; PAT-ADR-0029 extends it to an issue that has no
+origin Epic, with `Nits` as destination, and amends the maintainer decision of 2026-10-10
+that gave such an issue no deferral. That includes an issue whose direct parent is not an
 Epic: the chain of parents is not walked up (maintainer decision of 2026-10-11).
 
 The Foundry skills apply this grouped deferral and this standing authorization in every
@@ -401,7 +411,8 @@ still accepts exactly the keys `outcomes` and `quality`, and neither `issue.py` 
 `write.py` refers to the receipt, so the merge gate never reads it
 (`plugins/foundry/tests/test_campaign_defer.py`). After a validated review whose remarks
 are not marked "fix before merge", the cadencer decides `defer-remarks` before `merge`
-when the direct parent Epic of the ticket exists and is not itself a companion Epic. The
+when the direct parent Epic of the ticket exists and is not itself a companion Epic (a title
+`Nits <ID>` or exactly `Nits`, `_COMPANION_NAME`). The
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
 `edit link` and `edit comment`, posts at most one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
@@ -409,8 +420,10 @@ its attempt journal. The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
 targets the PR description alone: the correction then replaces the description, which is not
 re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),
-a ticket with no origin Epic, a ticket
-of a companion Epic, and a durable refusal (capability absent, `Epic` type refused,
+a ticket with no origin Epic (the cadencer
+does not yet apply PAT-ADR-0029 to it: `campaign_cadence.py` decides `correct`, cause
+`no_origin_epic`, and `docs/campaign-effects.md` says so), a ticket of a companion Epic,
+`Nits` included, and a durable refusal (capability absent, `Epic` type refused,
 several companion Epics with the same name, found only when the effect lists the project (`_find_companion`, not when `journal_memory` names the companion), an adapter that refuses to replay a
 creation). The orphan scan is skipped when the journal names the companion and every earlier attempt of the campaign Epic ended `done` without creating a follow-up (`journal_memory`, `_find_follow_up`; an attempt that ended otherwise may have created one whose answer was lost, and makes the scan run): an orphan follow-up of the same origin Epic created outside that journal (by hand, or by a campaign on another Epic with the same origin) is then not seen, and a second follow-up can be created. A transient failure, including a creation that the read shows did not
 happen, makes the campaign wait and retry, up to `MAX_DEFER_TRIES` attempts in total for the diff, the

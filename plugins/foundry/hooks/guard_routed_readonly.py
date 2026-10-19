@@ -65,7 +65,10 @@ def allows_verified_diff(command: str) -> bool:
         and (len(tokens) == 12 and tokens[3] != "search-review"
              or len(tokens) == 14 and tokens[3] == "search-review"
              and tokens[12] == "--text" and 0 < len(tokens[13]) <= 512
-             and not _SHELL_SYNTAX.search(tokens[13]))
+             and not _SHELL_SYNTAX.search(tokens[13])
+             # PAT-283: the partial review reads the range since the previous round
+             or len(tokens) == 14 and tokens[3] == "read-review"
+             and tokens[12] == "--since" and bool(_GIT_SHA.fullmatch(tokens[13])))
     )
 
 
@@ -79,7 +82,8 @@ def decision(agent_type: object, command: object) -> str | None:
         "`routing postmerge-review read --root <root> --packet-dir <dir> --attempt-id <id> --packet-hash <hash>` "
         "ou `routing read-review|list-review|search-review "
         "--diff-hash <sha256> --claim-id <claim-id> --root <root-absolue> "
-        "--base <sha-git>` (search-review ajoute --text <texte-littéral>). Utilise Read/Grep/Glob pour le reste."
+        "--base <sha-git>` (search-review ajoute --text <texte-littéral>, read-review "
+        "peut ajouter --since <sha-git-complet>). Utilise Read/Grep/Glob pour le reste."
     )
 
 

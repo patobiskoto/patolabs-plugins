@@ -18,6 +18,15 @@ python3 <foundry-root>/tooling/foundry_cli.py routing prepare-review \
   --adr <ADR-ID> --declarations-file /private/path/declarations.json
 ```
 
+`--previous-head <SHA>` is optional (PAT-283): the head the previous review round saw, a
+full 40-hex SHA that must be an ancestor of the local HEAD (`routing.py::validate_since`;
+otherwise `Préparation du paquet de review refusée : --since ...`, exit 2). It makes the
+packet a partial one (PAT-ADR-0022): `coordinates.json` gains a `previous_head` key and
+`reviewer-send.txt` says that the review is partial and gives the `--since <SHA>`
+argument to add to the `routing read-review` command of the reviewer's role contract. Without it, neither carries a trace of a
+partial review. The tool checks the ancestry of the SHA, not that it is the head of the
+previous round: that stays the coordinator's choice.
+
 `--adr` is repeatable and optional: the caller selects constraining accepted ADRs after
 reading the index; the command validates those selections and writes their full texts
 as separate JSON files. `--declarations-file` is optional and must contain a JSON object.
@@ -82,6 +91,16 @@ The CodeHost `PullRequest` model adds an optional trailing `body` field, default
 existing constructors remain valid. `GitHubCodeHost.get_pr` reads the description in the
 same REST response; adapters that do not provide it expose `null`, not a verified
 empty description. Sources: `models.py::PullRequest`, `codehosts/github.py::get_pr`.
+
+`routing read-review` takes an optional `--since <SHA>` (PAT-283). Under the same
+claim, lock, coordinate and HEAD checks as the full read, and after the `base...HEAD` hash
+check, it emits `git diff --binary --no-ext-diff <SHA>..HEAD` instead of the full diff
+(`routing.py::claimed_review_diff`, `git_range_diff`). A `--since` that is not a full
+40-hex SHA, names an absent commit or is not an ancestor of HEAD (rebase, force-push) is
+refused with `--since n'est pas un ancêtre du HEAD ...` or a format message: the review is
+then full. The guard of the read-only reviewer (`hooks/guard_routed_readonly.py::
+allows_verified_diff`) allows that one extra option on `read-review` only. Tests:
+`tests/test_review_packet.py`, `tests/test_agent_routing.py`, `tests/test_routing.py`.
 
 R5 status: **updated** for the command/options, schema/file vocabulary, bounds, private
 output constraints, optional PR `body`, and review-pr/merge-pr caller surfaces on this

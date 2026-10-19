@@ -27,8 +27,9 @@ from foundry import review_remarks
 KIND = "defer-remarks"
 COMPANION_PREFIX = "Nits "
 # AGENTS.md#R9 (b): the companion Epic is named `Nits ` followed by the identifier of the origin
-# Epic (PAT-238); a title that only starts with `Nits ` is not a companion Epic.
-_COMPANION_NAME = re.compile(r"Nits [A-Za-z][A-Za-z0-9]*-[0-9]+")
+# Epic (PAT-238), or exactly `Nits` for a ticket with no origin Epic (PAT-ADR-0029); a title
+# that only starts with `Nits` is not a companion Epic.
+_COMPANION_NAME = re.compile(r"Nits(?: [A-Za-z][A-Za-z0-9]*-[0-9]+)?")
 FOLLOW_UP_TITLE = "Review remarks deferred from {origin}"
 FOLLOW_UP_BODY = "- [ ] The deferred non-blocking review remarks are corrected or dropped"
 DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or the reset_at of a

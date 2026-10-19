@@ -783,6 +783,39 @@ def git_diff(
     return result.stdout
 
 
+def validate_since(root: str | os.PathLike | None, since: str) -> Path:
+    """``since`` (PAT-283) is the head the previous review round saw: a full 40-hex SHA that
+    is an ancestor of HEAD (a rebase or force-push makes it a non-ancestor: refused, the
+    review is then full).  Returns the project root."""
+    if not isinstance(since, str) or re.fullmatch(r"[0-9a-f]{40}", since) is None:
+        raise RoutingConfigError(
+            "--since : un SHA Git complet de 40 caractères hexadécimaux est requis."
+        )
+    project_root = _project_root(root)
+    if _git_run(project_root, "cat-file", "-e", f"{since}^{{commit}}").returncode != 0 \
+            or not _git_is_ancestor(project_root, since, "HEAD"):
+        raise RoutingConfigError(
+            "--since n'est pas un ancêtre du HEAD (commit absent, branche réécrite) ; "
+            "faire une relecture complète sans --since."
+        )
+    return project_root
+
+
+def git_range_diff(root: str | os.PathLike | None, since: str) -> bytes:
+    """``git diff <since>..HEAD`` bytes, in the same form as ``git_diff`` (PAT-283)."""
+    project_root = validate_since(root, since)
+    result = subprocess.run(
+        ["git", "diff", "--binary", "--no-ext-diff", f"{since}..HEAD"],
+        cwd=project_root, capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RoutingConfigError(
+            f"impossible de calculer le diff {since}..HEAD : {detail or 'git diff a échoué'}."
+        )
+    return result.stdout
+
+
 def _git_run(root: str | os.PathLike, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args], cwd=_project_root(root), capture_output=True, text=True,
@@ -2519,8 +2552,13 @@ def claimed_review_diff(
     state_dir: str | os.PathLike | None = None,
     consume: Callable[[bytes], _ReviewDiffConsumer] | None = None,
     consume_snapshot: Callable[[bytes, str | None], _ReviewDiffConsumer] | None = None,
+    since: str | None = None,
 ) -> _ReviewDiffConsumer:
     """Consume one verified review diff while its ownership remains active.
+
+    ``since`` (PAT-283, ``read-review --since``): the consumer receives
+    ``git diff <since>..HEAD`` instead; the ``base...HEAD`` diff is still read and hash-checked
+    under the same claim, so the range bytes are only emitted for a currently claimed diff.
 
     Exactly one consumer runs before releasing the ledger lock. The snapshot
     variant receives the ledger's immutable HEAD too (not a fresh HEAD lookup).
@@ -2561,6 +2599,8 @@ def claimed_review_diff(
             )
         if consume_snapshot is not None:
             return consume_snapshot(diff, claimed_head)
+        if since is not None:
+            diff = git_range_diff(root, since)
         return consume(diff)
 
 
@@ -2680,6 +2720,10 @@ def main(
     prepare.add_argument("--output-dir", required=True, help="new private packet directory")
     prepare.add_argument("--adr", action="append", default=[], help="selected accepted ADR id")
     prepare.add_argument("--declarations-file", help="unverified coordinator JSON object")
+    prepare.add_argument(
+        "--previous-head", help="40-hex head of the previous review round: the packet "
+        "asks for a partial review through read-review --since",
+    )
     recover_review = sub.add_parser(
         "recover-review", help="explicitly replace one abandoned review generation",
     )
@@ -2754,6 +2798,10 @@ def main(
     read_review.add_argument("--diff-hash", required=True)
     read_review.add_argument("--claim-id", required=True)
     read_review.add_argument("--base", required=True, help="immutable 40-hex Git base SHA")
+    read_review.add_argument(
+        "--since", help="40-hex head of the previous review round: emit "
+        "`git diff <since>..HEAD` (partial review) instead of base...HEAD",
+    )
     read_review.add_argument("--repository", help="repo namespace; defaults to origin URL")
     read_review.add_argument("--root", required=True, help="exact Git worktree root")
     for verb in ("search-review", "list-review"):
@@ -3015,6 +3063,7 @@ def main(
                     base=args.base, claim_file=args.claim_file,
                     output_dir=args.output_dir, adr_ids=args.adr,
                     declarations_file=args.declarations_file,
+                    previous_head=args.previous_head,
                 )
             except RoutingConfigError as exc:
                 # Messages raised by review_packet.py and the ledger are fixed
@@ -3219,7 +3268,7 @@ def main(
 
             claimed_review_diff(
                 args.diff_hash, repository, claim_id=args.claim_id,
-                root=args.root, base=args.base, consume=emit,
+                root=args.root, base=args.base, consume=emit, since=args.since,
             )
             return
         if args.command == "escalation":

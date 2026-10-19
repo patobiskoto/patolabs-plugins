@@ -134,12 +134,16 @@ round, not the whole diff. It stays full after a blocking round, when the change
 the previous round goes beyond correcting the remarks it carried, and when the reviewer
 asks for it with a reason. The partial-review packet gives the reviewer the previous
 round's verdict and remarks, the commit range since that round (the coordinator supplies
-both as `--declarations-file` assertions, kept in `coordinator-declarations.json` with
+the verdict and remarks as `--declarations-file` assertions, kept in `coordinator-declarations.json` with
 `verified_by_tool=false`: `docs/review-packet.md`), and the full diff through the shared
-verifier above. Neither declaration can be confronted with the bytes the reviewer is
-given (the verifier supplies only `base...HEAD`), and the send text of
-`routing prepare-review` does not say that the review is partial: that comes from the
-coordinator's own message. The reviewer checks that each correction settles its remark
+verifier above. The previous verdict and remarks cannot be confronted with any byte. The
+commit range can: build the packet with `--previous-head <PREVIOUS-HEAD-SHA>` (the head
+the previous round saw) added to the `prepare-review` command; `reviewer-send.txt` then
+says that the review is partial, and the reviewer reads the range with the same
+`routing read-review` command plus `--since <PREVIOUS-HEAD-SHA>`, which emits
+`git diff <PREVIOUS-HEAD-SHA>..HEAD` under the claim checks of the full read and refuses a
+SHA that is not a full 40-hex ancestor of HEAD (after a rebase, do a full review). The
+reviewer checks that each correction settles its remark
 without a new defect and that nothing else changed, and returns a verdict on all criteria
 for the exact diff, in the same Output form and JSON object as a full review. That proof
 relies on the previous round for the unchanged parts and the PR description says so; no

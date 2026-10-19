@@ -98,6 +98,10 @@ def test_review_pr_describes_the_partial_review_on_every_pr():
     assert ("The partial-review packet gives the reviewer the previous round's verdict "
             "and remarks, the commit range since that round") in text
     assert "no mechanical check distinguishes a partial from a full review" in text
+    # PAT-283: the commit range is read from the bytes
+    assert "--previous-head <PREVIOUS-HEAD-SHA>" in text
+    assert "`routing read-review` command plus `--since <PREVIOUS-HEAD-SHA>`" in text
+    assert "does not say that the review is partial" not in text
 
 
 def test_review_pr_requires_claim_capability_before_diff_access():
@@ -216,9 +220,9 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert "neither prioritized nor started without the maintainer" in text
     assert "every other intake write keeps its confirmation" in text
     # no second-level deferral
-    assert ("when the PR belongs to an issue of a companion Epic, correct its non-blocking "
-            "remarks before the merge. On every pull request, the review that follows the "
-            "correction of the non-blocking remarks of a validated round") in text
+    assert ("when the PR belongs to an issue of a companion Epic, `Nits` included, correct "
+            "its non-blocking remarks before the merge. On every pull request, the review "
+            "that follows the correction of the non-blocking remarks of a validated round") in text
     assert ("covers what changed since that round, not the whole diff (PAT-ADR-0022). It "
             "stays full after a blocking round, when the change since the previous round "
             "goes beyond correcting the remarks it carried, and when the reviewer asks for "
@@ -238,9 +242,14 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     # maintainer decisions of 2026-10-10: origin Epic, issue without Epic, two failures
     assert ("The origin Epic of an issue is its direct parent Epic: an issue under a "
             "sub-Epic uses that sub-Epic") in text
-    assert ("An issue that has no origin Epic gets no deferral: correct its non-blocking "
-            "remarks before the merge and re-review as stated above") in text
-    assert ("that includes an issue whose direct parent is not an Epic, the chain of "
+    assert ("An issue that has no origin Epic defers to `Nits` as stated above") in text
+    assert ("The remarks deferred from an issue with no origin Epic go to the companion Epic "
+            "of the project, named exactly `Nits` (PAT-ADR-0029, which amends the maintainer "
+            "decision of 2026-10-10 that gave such an issue no deferral)") in text
+    assert "An issue that has no origin Epic gets no deferral" not in text
+    assert "--previous-head <PREVIOUS-HEAD-SHA>" in text
+    assert "does not say that the review is partial" not in text
+    assert ("whose direct parent is not an Epic, the chain of "
             "parents not being walked up") in text
     assert "stays with the maintainer" not in text
     assert ("durable refusal (the project cannot carry the write, for example it has no "
@@ -258,6 +267,7 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert "has no\neffect yet" not in text and "not coded yet" not in text
     # this skill is shipped to every repository: it names no issue of this repository
     assert not re.search(r"PAT-\d+", text.replace("PAT-ADR-0018", ""))
+    assert "PAT-283" not in text
     assert "PAT-TBD" not in text
 
 
@@ -284,7 +294,7 @@ def test_intake_points_to_the_standing_authorization_of_the_four_writes():
     assert ("attaching to the companion Epic a follow-up issue whose creation succeeded but "
             "whose parent link was not set") in text
     assert "creating the companion Epic of an origin Epic" in text
-    assert "with no tracker link to it" in text
+    assert "with no tracker link to it, or `Nits` for an issue with no origin Epic" in text
     assert "creating a follow-up issue in that companion Epic" in text
     assert "adding deferred non-blocking remarks to such an issue" in text
     assert "Every other write keeps its confirmation" in text

@@ -2288,6 +2288,22 @@ def test_read_review_cli_emits_the_verified_bytes(monkeypatch, capsys):
     assert capsys.readouterr().out == "exact verified diff\n"
 
 
+def test_read_review_cli_passes_since_to_the_verifier(monkeypatch, capsys):
+    seen = {}
+
+    def fake(*_args, consume, **kwargs):
+        seen.update(kwargs)
+        consume(b"range\n")
+
+    monkeypatch.setattr("foundry.routing.claimed_review_diff", fake)
+    common = ["read-review", "--diff-hash", "a" * 64, "--claim-id", "b" * 64,
+              "--repository", "owner/repo", "--root", "/tmp/review-root", "--base", BASE_SHA]
+    main(common)
+    assert seen["since"] is None
+    main([*common, "--since", "d" * 40])
+    assert seen["since"] == "d" * 40 and capsys.readouterr().out == "range\nrange\n"
+
+
 def test_read_review_cli_holds_claim_until_stdout_write_and_flush(monkeypatch, tmp_path):
     """Recovery cannot replace the owner before the CLI has emitted its bytes."""
     repository, state, diff = "owner/repo", tmp_path / "state", b"stdout-locked diff"

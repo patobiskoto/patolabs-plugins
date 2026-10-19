@@ -78,7 +78,7 @@ creation validation.
 Confirm before writing, except for the four writes that the grouped-deferral rule of
 `foundry:merge-pr` authorizes in advance, inside and outside an Epic campaign, in every
 repository where the plugin is installed: creating the companion Epic of an origin Epic
-(`Nits <ORIGIN-EPIC-ID>`, with no tracker link to it), creating a follow-up issue in that
+(`Nits <ORIGIN-EPIC-ID>`, with no tracker link to it, or `Nits` for an issue with no origin Epic), creating a follow-up issue in that
 companion Epic, adding deferred non-blocking remarks to such an issue, and attaching to
 the companion Epic a follow-up issue whose creation succeeded but whose parent link was
 not set. Every other write keeps its confirmation. Prefer refining a duplicate over
