@@ -33,9 +33,11 @@ These checks are for the release note items 1, 2, 4, 5 and 6. They edit nothing.
 - **Rebased branches (item 2).** `issue openpr` now pushes with a lease (changelog entry
   of PAT-273). Verify that no wrapper around it relied on the previous refusal.
 - **Reviewer guard and `read-review --since` (item 4).** The guard that accepts the option
-  is `hooks/guard_routed_readonly.py` of the installed plugin. Deduced from its code, not
-  run: an installed plugin older than 2.2.0 refuses `--since`, so update the plugin on
-  the host that runs partial reviews before using it.
+  is `hooks/guard_routed_readonly.py` of the installed plugin. Read in its code at the tag
+  `foundry-v2.1.1` (`allows_verified_diff`), not run: that guard, which predates PAT-283,
+  refuses `--since`, so update the plugin on the host that runs partial reviews before
+  using it. A host updated after PAT-283 but before this release may already carry the
+  newer guard under the `2.1.1` label (see above).
 - **Companion Epic `Nits` (item 5).** The Foundry skills may create the companion Epic
   `Nits` and its follow-up issue in any repository where the plugin is installed, for a
   ticket with no origin Epic, without a human confirmation (`AGENTS.md#R9` (b),
@@ -171,5 +173,5 @@ bindings.
 ## Known unknowns carried by this release
 
 - **PAT-162:** plugin rollback: untried, see above.
-- **Behaviour of an installed plugin older than 2.2.0 under `--since`:** deduced from the
-  guard code, not run.
+- **Behaviour under `--since` of the guard as shipped at `foundry-v2.1.1`:** read in its
+  code, not run.

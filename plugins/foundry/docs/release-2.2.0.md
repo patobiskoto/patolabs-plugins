@@ -38,7 +38,8 @@ refused before can now go through; a remote state the clone never fetched is ref
 
 ### 3. New read-only verb `issue wait-ci` (PAT-274)
 
-Syntax, defaults and exit codes `0`, `2` and `3` are in [ci-wait.md](ci-wait.md). The
+Syntax, defaults and exit codes (`0` green, `2` red, `3` timeout, `1` on a refusal or an
+error) are in [ci-wait.md](ci-wait.md). The
 skills `merge-pr`, `review-pr` and `release` cite it instead of `gh pr checks`. A script
 that reads an exit code `3` must not confuse the `issue wait-ci` timeout with the
 `issue merge` code of item 1: they are two different verbs.
@@ -48,10 +49,10 @@ that reads an exit code `3` must not confuse the `issue wait-ci` timeout with th
 `routing read-review --since <SHA>` and `routing prepare-review --previous-head <SHA>` are
 new; see the `2.2.0` changelog entry of PAT-283 and [review-packet.md](review-packet.md).
 The read-only reviewer guard that accepts `read-review --since` is
-`hooks/guard_routed_readonly.py`, shipped by the plugin. **Deduced, not run:** a reviewer
-session running under an installed plugin older than 2.2.0 uses the older guard, which
-does not accept `--since`, so a partial review there is refused until the plugin is
-updated.
+`hooks/guard_routed_readonly.py`, shipped by the plugin. **Read in its code, not run:** the
+guard as shipped at the tag `foundry-v2.1.1` predates PAT-283 and does not accept
+`--since` (`allows_verified_diff`), so a reviewer session running under that guard has
+its partial-review read refused until the plugin is updated.
 
 ### 5. Companion Epic `Nits` for a ticket with no origin Epic (PAT-283, PAT-ADR-0029)
 
@@ -151,7 +152,8 @@ documentation only.
 | `tests/fixtures/release-history.json` | Updated: the `2.2.0` entry, with the digests of the changelog section and of the two pages |
 | Root and Foundry README | Updated: pointers to these two pages, the statement that the tag, the installation and the loaded-version readback are not done here, the Release rule's version list and the migration-guide pointer in the Foundry README, and the version table row of the root README |
 | `scripts/ci_plan.py` comment | Updated: its list of release versions includes 2.2.0; no behaviour changes |
-| `issue wait-ci`, `EXIT_LOCAL_CLEANUP_FAILED`, `--force-with-lease` push, `read-review --since`, `prepare-review --previous-head`, `edit <command> --help`, `observed_at`, `_COMPANION_NAME` | Not necessary here: documented by their own pull requests (`docs/ci-wait.md`, `skills/merge-pr/SKILL.md`, `skills/open-pr/SKILL.md`, `docs/review-packet.md`, `docs/review-rounds.md`, `docs/campaign-effects.md`); this release changes none of them |
+| `issue wait-ci`, `EXIT_LOCAL_CLEANUP_FAILED`, `--force-with-lease` push, `read-review --since`, `prepare-review --previous-head`, `observed_at`, `_COMPANION_NAME` | Not necessary here: documented by their own pull requests (`docs/ci-wait.md`, `skills/merge-pr/SKILL.md`, `skills/open-pr/SKILL.md`, `docs/review-packet.md`, `docs/review-rounds.md`, `docs/campaign-effects.md`); this release changes none of them |
+| `edit <command> --help` (PAT-275) | Not documented in a page: only the PAT-275 entry of the `2.2.0` changelog section and the usage that `tooling/foundry/edit.py` prints describe it; this release adds no page for it |
 | `changelog.d/README.md` | Not necessary: unchanged, the fragment convention is already documented there (PAT-210) |
 | Gauge, Relay, Blueprint, Witness and Ship-iOS manifests, READMEs and changelogs | Not necessary: no file under their plugin directories is changed by this release preparation; their versions do not move |
 | `AGENTS.md` / `CLAUDE.md` | Not necessary: no numbered rule changes, and no rule of the contract states a Foundry version |
