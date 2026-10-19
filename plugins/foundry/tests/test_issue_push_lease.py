@@ -106,3 +106,18 @@ def test_default_branch_is_refused_before_any_git_call(repos, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         issue._push_branch("main")
     assert "branche par défaut" in str(exc.value)
+
+
+def test_non_lease_remote_rejection_keeps_the_generic_error(repos, monkeypatch):
+    stderr = " ! [remote rejected] feat/pat-1-x -> feat/pat-1-x (pre-receive hook declined)"
+
+    def fake_sh(*args, check=True):
+        if args[1] == "push":
+            raise SystemExit(f"$ {' '.join(args)}\n{stderr}")
+        return ""
+
+    monkeypatch.setattr(issue, "_sh", fake_sh)
+    with pytest.raises(SystemExit) as exc:
+        issue._push_branch(BR)
+    assert "pre-receive hook declined" in str(exc.value)
+    assert "rien n'a été écrasé" not in str(exc.value)

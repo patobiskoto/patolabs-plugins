@@ -325,7 +325,10 @@ def _push_branch(branch):
     last knew of the remote branch, without fetching first: the sha of
     `refs/remotes/origin/<branch>`, or the empty value (the remote branch must not exist)
     when that ref is absent. Remote commits this clone never fetched are refused, not
-    overwritten.
+    overwritten. Residual risk (deduced from the lease semantics, not observed): remote
+    commits fetched but not integrated, whose tracking ref was advanced by `git pull
+    --ff-only` (`_prepare_branch`, `_cleanup_branch`) or a background fetch, pass the
+    lease and are overwritten.
     """
     if branch == _default_branch() or branch == "HEAD":
         raise SystemExit(
@@ -339,7 +342,7 @@ def _push_branch(branch):
             "origin", f"{branch}:refs/heads/{branch}")
     except SystemExit as exc:
         err = str(exc)
-        if "stale info" not in err and "rejected" not in err:
+        if "stale info" not in err:
             raise
         seen = known[:12] if known else "aucune branche distante"
         raise SystemExit(

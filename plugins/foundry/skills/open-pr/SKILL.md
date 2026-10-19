@@ -36,7 +36,7 @@ This pushes the branch (`_push_branch`, `tooling/foundry/issue.py`) with
 `--force-with-lease=refs/heads/<branch>:<sha>`, where `<sha>` is what this clone last knew
 (`refs/remotes/origin/<branch>`, no fetch first) or empty when that ref is absent (the remote
 branch must not exist), so a rebased branch goes through. It is refused, nothing overwritten,
-when the remote holds commits this clone has not fetched: fetch, integrate, retry. It never
+when the remote holds commits this clone has not fetched: fetch, integrate, retry. Residual risk (deduced from the lease semantics, not observed): commits fetched but not integrated (tracking ref advanced by `git pull --ff-only` or a background fetch) pass the lease and are overwritten. It never
 pushes the default branch; there is no bare `--force`. It then first resolves PRs for its exact head. With no candidate it
 opens the PR through REST. With one open candidate on the requested base it reuses that
 PR. A non-empty `--summary-stdin` explicitly replaces its canonical body while preserving
