@@ -924,8 +924,9 @@ class ReviewDeduplicator:
                 not coordinates["root"] or len(coordinates["base"]) != 40 or
                 any(character not in "0123456789abcdef" for character in coordinates["base"])):
             raise RoutingConfigError(
-                "coordonnées immuables de review invalides ; root et base SHA Git figé "
-                "sont requis."
+                "coordonnées immuables de review invalides : la base doit être un SHA "
+                "Git complet de 40 caractères hexadécimaux (ni SHA court ni référence) "
+                "et root requis ; relancer avec --base <sha complet>."
             )
         return {"root": coordinates["root"], "base": coordinates["base"]}
 
@@ -1491,8 +1492,9 @@ class ReviewDeduplicator:
     ) -> None:
         if record.get("coordinates") != coordinates:
             raise RoutingConfigError(
-                "les coordonnées immuables ne correspondent pas au claim actif ; "
-                "aucune récupération n'a été créée."
+                "les coordonnées immuables (root, base) ne correspondent pas au claim "
+                "actif ; relancer avec le root et la base du claim, aucune récupération "
+                "n'a été créée."
             )
 
     def _assert_no_orphaned_acceptance_proof(
@@ -3014,6 +3016,11 @@ def main(
                     output_dir=args.output_dir, adr_ids=args.adr,
                     declarations_file=args.declarations_file,
                 )
+            except RoutingConfigError as exc:
+                # Messages raised by review_packet.py and the ledger are fixed
+                # cause texts (PAT-271): no claim_id, token or diff bytes.
+                print(f"Préparation du paquet de review refusée : {exc}", file=sys.stderr)
+                raise SystemExit(2) from None
             except (Exception, SystemExit):
                 print("Préparation du paquet de review refusée.", file=sys.stderr)
                 raise SystemExit(2) from None

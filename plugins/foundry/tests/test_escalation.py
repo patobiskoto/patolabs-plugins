@@ -923,7 +923,7 @@ def test_remediation_arm_rejects_nonhashable_halted_role_redacted_in_api_and_cli
     )
     assert cli.returncode == 2
     assert cli.stdout == ""
-    assert cli.stderr == "Configuration de routage invalide.\n"
+    assert cli.stderr.startswith("Configuration de routage invalide : ")  # PAT-271: cause shown
     assert "Traceback" not in cli.stderr
     assert sentinel not in cli.stdout + cli.stderr
 
@@ -976,7 +976,7 @@ def test_foundry_cli_routing_config_error_is_concise_and_redacts_sensitive_value
 
     assert rejected.returncode == 2
     assert rejected.stdout == ""
-    assert rejected.stderr == "Configuration de routage invalide.\n"
+    assert rejected.stderr.startswith("Configuration de routage invalide : ")  # PAT-271: cause shown
     assert "Traceback" not in rejected.stderr
     assert sensitive_reason not in rejected.stderr
     assert sensitive_reason not in rejected.stdout
@@ -1002,9 +1002,9 @@ runpy.run_path({str(launcher)!r}, run_name="__main__")
 
     assert unavailable.returncode == 2
     assert unavailable.stdout == ""
-    assert unavailable.stderr == "Configuration de routage invalide.\n"
+    assert unavailable.stderr.startswith("Configuration de routage invalide : ")  # PAT-271: cause shown
     assert "Traceback" not in unavailable.stderr
-    assert "FOUNDRY_23_UNAVAILABLE_SENTINEL" not in unavailable.stderr
+    assert "FOUNDRY_23_UNAVAILABLE_SENTINEL" in unavailable.stderr  # PAT-271: message shown
 
 
 def test_foundry_cli_routing_keeps_unexpected_exception_traceback():
@@ -1646,7 +1646,7 @@ def test_hostile_outer_ledger_is_total_redacted_and_denies_api_and_cli_routing(
     )
     assert cli.returncode == 2
     assert cli.stdout == ""
-    assert cli.stderr == "Configuration de routage invalide.\n"
+    assert cli.stderr.startswith("Configuration de routage invalide : ")  # PAT-271: cause shown
     assert "Traceback" not in cli.stderr
     assert "TypeError" not in cli.stderr
     assert "KeyError" not in cli.stderr
