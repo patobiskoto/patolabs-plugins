@@ -80,3 +80,6 @@ the real-provider recipe.
 
 The six real configurations — three trackers times Claude Code/Codex — remain the
 PAT-61 recipe. PAT-68 must never be cited as a substitute for that recipe.
+
+The live suite against a disposable DevHub instance (`-m devhub_live`, PAT-296) is outside
+`-m tracker_conformance`; see `docs/devhub-requirements.md`.
