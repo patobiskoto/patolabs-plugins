@@ -1,7 +1,8 @@
 """Deferral of the non-blocking remarks of a validated review (PAT-141, PAT-ADR-0028).
 
 After a validated review the cadencer carries the deferrable remarks to the companion Epic
-``Nits <ORIGIN-EPIC-ID>`` (``Nits`` for a ticket with no origin Epic, PAT-ADR-0029) with the four writes that AGENTS.md#R9 (b) authorizes in advance.
+``Nits <ORIGIN-EPIC-ID>`` (``Nits`` for a ticket with no origin Epic, PAT-ADR-0029) with the
+four writes that AGENTS.md#R9 (b) authorizes in advance.
 Every write is a Foundry command run as a subprocess (``edit create-issue``, ``edit comment``,
 ``edit link``, ``edit reconcile-create``); the tracker is only read, through ``search`` and
 ``get_issue``, before each write, so that a retry finds what an earlier attempt of this journal

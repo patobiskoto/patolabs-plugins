@@ -692,7 +692,8 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    (`epic`, not the origin Epic), so an orphan follow-up of the same origin Epic created outside it is not seen
    in that case and a second follow-up can be created. Under `Nits` the orphan is wider: the
    follow-up is shared by every ticket of the project with no origin Epic, including those
-   deferred by hand through `merge-pr` (`origin_of`, `NO_ORIGIN_FOLLOW_UP_TITLE`). Otherwise `edit create-issue` with `parent` set to the companion Epic.
+   deferred by hand through `merge-pr` (`origin_of`, `NO_ORIGIN_FOLLOW_UP_TITLE`). Otherwise
+   `edit create-issue` with `parent` set to the companion Epic.
 4. One `edit comment <FOLLOW-UP>` carrying every deferrable remark, the pull request number,
    the ticket and the review round, and the reference `<ticket>@<first 16 hex of the diff
    hash>`: at most one comment per validated round, never one per remark (a correction
@@ -823,8 +824,8 @@ Decided from the journal by `campaign_review.review_mode`, for the review attemp
 - `carry` (PAT-ADR-0021, `review-rounds.md`, "Carrying a terminal proof"): the last round is
   validated with no remark to fix, no correction since, and the head differs from the reviewed
   one; the base may be the same or differ (PAT-288, PAT-294; `campaign_review.review_mode`).
-  The effect runs `routing carry-review-proof --issue --root --base <new base> --from-base <old base>
-  --from-diff-hash <old diff hash>` first; `AcceptanceProofStore.carry` checks the conditions
+  The effect runs `routing carry-review-proof --issue --root --base <new base>
+  --from-base <old base> --from-diff-hash <old diff hash>` first; `AcceptanceProofStore.carry` checks the conditions
   (ancestry, clean merge tree, no path changed by both, identical diff bytes) and a refusal
   makes the same attempt go on with a full review (also when the base did not change and the
   reviewed head already contained it: `AcceptanceProofStore.carry` refuses it as nothing to
