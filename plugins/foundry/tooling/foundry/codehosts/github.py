@@ -205,6 +205,12 @@ class GitHubCodeHost(CodeHost):
     # workflows keep one forever), not the post-push window this guard protects
     _QUEUE_GRACE_S = 900
 
+    # GitHub REST `status` values of a check suite / check run (PAT-270). Every
+    # non-terminal one is active CI; an unlisted value is refused, never guessed.
+    _NON_TERMINAL_STATUSES = frozenset(
+        ("queued", "in_progress", "waiting", "requested", "pending"))
+    _KNOWN_STATUSES = _NON_TERMINAL_STATUSES | {"completed"}
+
     @classmethod
     def _suite_signals_ci(cls, suite, now=None) -> bool:
         """Does this check-suite signal ACTIVE CI for the commit? True for a suite
@@ -214,8 +220,8 @@ class GitHubCodeHost(CodeHost):
         if (suite.get("latest_check_runs_count") or 0) > 0:
             return True
         status = suite.get("status")
-        if status == "in_progress":
-            return True
+        if status in cls._NON_TERMINAL_STATUSES and status != "queued":
+            return True  # running or about to run: never a stale queued suite
         if status != "queued":
             return False  # completed with zero runs: nothing ran, nothing coming
         created = suite.get("created_at")
@@ -268,8 +274,12 @@ class GitHubCodeHost(CodeHost):
                 status = suite.get("status")
                 runs_count = suite.get("latest_check_runs_count")
                 created_at = suite.get("created_at")
+                if isinstance(status, str) and status not in self._KNOWN_STATUSES:
+                    raise RuntimeError(
+                        f"Unknown check-suite status {status!r} on page {page}: "
+                        "refused, no waiver."
+                    )
                 if (not isinstance(status, str)
-                        or status not in {"queued", "in_progress", "completed"}
                         or not isinstance(runs_count, int)
                         or isinstance(runs_count, bool) or runs_count < 0
                         or created_at is not None and not isinstance(created_at, str)):

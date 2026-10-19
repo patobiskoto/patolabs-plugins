@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import datetime
 import json
 import os
 from pathlib import Path
@@ -111,6 +112,8 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
             selected.append(matches[0])
     checks = {
         "head": pr.sha,
+        "observed_at": datetime.datetime.now(datetime.timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "check_runs": [asdict(check) for check in ch.check_runs(repo, pr.sha)],
         "commit_statuses": [asdict(check) for check in ch.commit_statuses(repo, pr.sha)],
         "ci_expected": ch.ci_expected(repo, pr.sha),

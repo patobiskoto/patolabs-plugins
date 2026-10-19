@@ -53,7 +53,8 @@ provider error text. Source: `review_packet.py` and `routing.py::main`.
 `manifest.json` distinguishes `tool_read` from `coordinator_declared`. Tool-read files
 are `issue.json` (provider issue body), `acceptance.json` (ordered criterion identities
 and digests from `acceptance_criteria` and `acceptance_digest`), `pr.json` (PR coordinates
-and description), `ci.json` (both check sources and `ci_expected`, with no CI verdict),
+and description), `ci.json` (both check sources, `ci_expected` and `observed_at`, the UTC time of the
+observation as `YYYY-MM-DDTHH:MM:SSZ`, taken in `review_packet.py` before the reads; no CI verdict),
 `adr-index.json`, the selected `adr-N.json` files, and `coordinates.json`. The private
 claim capability in `coordinates.json` is caller supplied and verified against the
 active ledger, rather than read from a remote provider. The sole coordinator-declared

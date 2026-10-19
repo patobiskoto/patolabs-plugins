@@ -1,4 +1,5 @@
 import json
+import re
 import stat
 import subprocess
 from types import SimpleNamespace
@@ -55,6 +56,14 @@ def packet_case(tmp_path):
     return SimpleNamespace(args=args, root=root, pr=pr, issue=issue, claim=claim, calls=calls)
 
 
+def test_packet_built_with_pending_check_shows_it_in_ci_json(packet_case):
+    case = packet_case
+    case.args["codehost_port"].check_runs = lambda *_a: [Check("tests", "waiting", None)]
+    prepare_review_packet(**case.args)
+    ci = json.loads((case.args["output_dir"] / "ci.json").read_text())
+    assert ci["check_runs"][0]["status"] == "waiting" and "observed_at" in ci
+
+
 def test_private_bounded_tool_facts_and_injection_shaped_declarations(packet_case, tmp_path):
     case = packet_case
     declaration = tmp_path / "declaration.json"
@@ -71,6 +80,8 @@ def test_private_bounded_tool_facts_and_injection_shaped_declarations(packet_cas
     assert "coordinator-declarations.json" not in manifest["tool_read"]
     assert json.loads((directory / "coordinator-declarations.json").read_text())["verified_by_tool"] is False
     assert json.loads((directory / "ci.json").read_text())["check_runs"][0]["conclusion"] == "success"
+    ci = json.loads((directory / "ci.json").read_text())
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", ci["observed_at"])
     assert json.loads((directory / "pr.json").read_text())["body"] == case.pr.body
     send = (directory / "reviewer-send.txt").read_text()
     for key in ("root", "base", "claim_id", "diff_hash"):
