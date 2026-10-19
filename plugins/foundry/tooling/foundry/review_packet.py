@@ -46,6 +46,11 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
     from foundry.query import _read_scope
 
     review_root, review_base = review_diff_coordinates(root, base)
+    if re.fullmatch(r"[0-9a-f]{40}", review_base) is None:
+        raise RoutingConfigError(
+            "base non immuable : un SHA Git complet de 40 caractères hexadécimaux est "
+            "requis (ni SHA court ni référence) ; relancer avec --base <sha complet>."
+        )
     coordinates = {"root": str(review_root), "base": review_base}
     ReviewDeduplicator._validate_coordinates(coordinates)
     if not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", issue_id):
@@ -89,11 +94,25 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
 
     def verify_pr():
         pr = ch.get_pr(repo, pr_number)
-        if (pr.number != pr_number or pr.state != "open" or pr.merged
-                or not isinstance(pr.sha, str)
-                or re.fullmatch(r"[0-9a-f]{40}", pr.sha) is None
-                or pr.base_sha != review_base or pr.sha != git_head(review_root)):
-            raise RoutingConfigError("PR coordinates are stale or unavailable")
+        if pr.number != pr_number or pr.state != "open" or pr.merged:
+            raise RoutingConfigError(
+                "la PR n'est pas ouverte ou son numéro ne correspond pas ; vérifier --pr."
+            )
+        if not isinstance(pr.sha, str) or re.fullmatch(r"[0-9a-f]{40}", pr.sha) is None:
+            raise RoutingConfigError(
+                "le fournisseur n'a pas renvoyé de SHA de tête complet pour la PR ; "
+                "relancer plus tard."
+            )
+        if pr.base_sha != review_base:
+            raise RoutingConfigError(
+                "la base de la PR diffère de --base ; relancer avec le SHA de base "
+                "actuel de la PR."
+            )
+        if pr.sha != git_head(review_root):
+            raise RoutingConfigError(
+                "la tête de la PR diffère du HEAD local (mauvaise branche extraite ou "
+                "commits non poussés) ; extraire la branche de la PR et pousser."
+            )
         return pr
 
     pr = verify_pr()
@@ -107,16 +126,34 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
         selected = []
         for adr_id in sorted(adr_ids):
             matches = [adr for adr in adrs if adr.id == adr_id]
-            if len(matches) != 1 or matches[0].status != "accepted" or not matches[0].body:
-                raise RoutingConfigError("selected accepted ADR unavailable")
+            if len(matches) != 1 or not matches[0].body:
+                raise RoutingConfigError(
+                    "ADR absente ou sans texte dans le tracker ; vérifier --adr."
+                )
+            if matches[0].status != "accepted":
+                raise RoutingConfigError(
+                    f"ADR remplacée ou non acceptée (statut {matches[0].status}) ; "
+                    "choisir l'ADR qui la remplace avec --adr."
+                )
             selected.append(matches[0])
+    try:
+        check_runs = [asdict(check) for check in ch.check_runs(repo, pr.sha)]
+        commit_statuses = [asdict(check) for check in ch.commit_statuses(repo, pr.sha)]
+        ci_expected = ch.ci_expected(repo, pr.sha)
+    except RoutingConfigError:
+        raise
+    except Exception:
+        # Provider text may carry prose or capabilities: name the cause, never the text.
+        raise RoutingConfigError(
+            "observation CI impossible (erreur du fournisseur) ; réessayer plus tard."
+        ) from None
     checks = {
         "head": pr.sha,
         "observed_at": datetime.datetime.now(datetime.timezone.utc)
         .strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "check_runs": [asdict(check) for check in ch.check_runs(repo, pr.sha)],
-        "commit_statuses": [asdict(check) for check in ch.commit_statuses(repo, pr.sha)],
-        "ci_expected": ch.ci_expected(repo, pr.sha),
+        "check_runs": check_runs,
+        "commit_statuses": commit_statuses,
+        "ci_expected": ci_expected,
         "interpretation": "observations only; not a merge verdict",
     }
     files = {

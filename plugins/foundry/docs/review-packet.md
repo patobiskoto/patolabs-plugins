@@ -29,7 +29,13 @@ Before publication, `prepare_review_packet` reads the PR twice and requires both
 observations to match the immutable base, the current local HEAD, and the same open PR.
 It then validates active claim ownership, generation, Git HEAD and diff hash through
 the existing ledger. The command refuses a stale coordinate, unavailable selected ADR,
-non-owner or terminal claim, and an existing output directory or symlink. This is a
+non-owner or terminal claim, and an existing output directory or symlink. Each refusal
+of `RoutingConfigError` prints `Préparation du paquet de review refusée : <cause>` and
+exits 2, where the cause names one of: base not a full 40-hex SHA (short or ref), PR base
+differing from `--base`, PR head differing from the local HEAD (wrong branch or unpushed
+commits), PR not open or wrong number, ADR absent or not accepted (superseded), CI
+observation impossible (provider error), HEAD or diff changed since the claim, stale
+claim generation (messages in `review_packet.py` and `routing.py`). This is a
 snapshot at those reads: a later PR, issue or Git change still requires the existing
 review/proof/merge revalidation. Source: `prepare_review_packet` and
 `routing.py::ReviewDeduplicator.active_git_claim`.
@@ -47,8 +53,9 @@ four literal sections used by the delegation facade. It carries `diff_hash`, `cl
 `root`, and `base`, and references the directory rather than embedding ADR corpora.
 Only the designated reviewer receives this file. The entire directory is private;
 none of its files belong in public PRs, tracker notes or logs. Stdout contains only
-`schema`, `status`, and `files`; refusals print a fixed error without input values or
-provider error text. Source: `review_packet.py` and `routing.py::main`.
+`schema`, `status`, and `files`; refusals print a fixed cause without input values, `claim_id`, attempt token or
+provider error text (any other failure prints only
+`Préparation du paquet de review refusée.`). Source: `review_packet.py` and `routing.py::main`.
 
 `manifest.json` distinguishes `tool_read` from `coordinator_declared`. Tool-read files
 are `issue.json` (provider issue body), `acceptance.json` (ordered criterion identities
