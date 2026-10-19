@@ -8800,7 +8800,9 @@ def test_linear_public_openpr_replays_partial_review_without_github_repair_port(
     def shell(*args, **_kwargs):
         if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
             return branch
-        if args == ("git", "push", "-u", "origin", branch):
+        if args[:3] == ("git", "rev-parse", "--verify"):
+            return ""  # no remote-tracking ref: empty lease value (PAT-273)
+        if args[:2] == ("git", "push") and args[-2:] == ("origin", f"{branch}:refs/heads/{branch}"):
             return ""
         raise AssertionError(f"unexpected shell call: {args}")
 

@@ -1097,7 +1097,9 @@ def test_pat67_common_openpr_publishes_corrected_head_as_next_review(
     def shell(*args, **_kwargs):
         if args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
             return branch
-        if args == ("git", "push", "-u", "origin", branch):
+        if args[:3] == ("git", "rev-parse", "--verify"):
+            return ""  # no remote-tracking ref: empty lease value (PAT-273)
+        if args[:2] == ("git", "push") and args[-2:] == ("origin", f"{branch}:refs/heads/{branch}"):
             return ""
         raise AssertionError(f"unexpected shell call: {args}")
 

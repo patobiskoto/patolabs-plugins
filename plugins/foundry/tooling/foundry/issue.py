@@ -318,6 +318,38 @@ def start(issue_id, flags=()):
     print(f"🚀 {issue_id} → in-progress · branche {branch}{suffix}\n   {it.title}")
 
 
+def _push_branch(branch):
+    """Push the issue branch; a rebased branch is replaced under a pinned lease (PAT-273).
+
+    Never on the default branch, never a bare `--force`. The lease expects what this clone
+    last knew of the remote branch, without fetching first: the sha of
+    `refs/remotes/origin/<branch>`, or the empty value (the remote branch must not exist)
+    when that ref is absent. Remote commits this clone never fetched are refused, not
+    overwritten.
+    """
+    if branch == _default_branch() or branch == "HEAD":
+        raise SystemExit(
+            f"⛔ Push refusé — '{branch}' est la branche par défaut (ou un HEAD détaché) ; "
+            "`issue openpr` ne pousse que la branche de l'issue."
+        )
+    known = _sh("git", "rev-parse", "--verify", "--quiet",
+                f"refs/remotes/origin/{branch}", check=False)
+    try:
+        _sh("git", "push", "-u", f"--force-with-lease=refs/heads/{branch}:{known}",
+            "origin", f"{branch}:refs/heads/{branch}")
+    except SystemExit as exc:
+        err = str(exc)
+        if "stale info" not in err and "rejected" not in err:
+            raise
+        seen = known[:12] if known else "aucune branche distante"
+        raise SystemExit(
+            f"⛔ Push refusé — la branche distante '{branch}' n'est plus celle que ce clone "
+            f"connaît ({seen}) : elle porte des commits non récupérés (lease "
+            "--force-with-lease non satisfait) ; rien n'a été écrasé. "
+            "Fais un fetch, intègre-les (rebase ou merge), puis relance.\n" + err
+        ) from None
+
+
 def openpr(issue_id=None, base=None, flags=()):
     tr, ch = foundry.tracker(), foundry.codehost()
     branch = _sh("git", "rev-parse", "--abbrev-ref", "HEAD")
@@ -376,7 +408,7 @@ def openpr(issue_id=None, base=None, flags=()):
         if piped:
             summary = piped
             summary_supplied = True
-    _sh("git", "push", "-u", "origin", branch)
+    _push_branch(branch)
     btype = _BRANCH_TYPE.get(it.type, "chore")
     title = f"[{issue_id}] {btype}: {it.title}"
     body = (f"{summary}\n\nCloses tracker issue **{issue_id}**.\n\n"
