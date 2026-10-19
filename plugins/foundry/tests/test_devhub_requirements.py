@@ -43,7 +43,10 @@ def _suite_tests() -> dict[str, dict]:
         call = decorators[0]
         need_id = call.args[0].value
         assert need_id not in found, need_id
-        found[need_id] = {"test": node.name, "kind": call.func.id}
+        found[need_id] = {
+            "test": node.name, "kind": call.func.id,
+            "raises": [kw.value for kw in call.keywords if kw.arg == "raises"],
+        }
     return found
 
 
@@ -65,7 +68,10 @@ def test_expected_red_needs_are_strict_gaps_and_never_green_on_the_page():
         else:
             assert row["status"] in {"green", "unknown"} and row["owner"] == "-", need_id
     source = SUITE.read_text(encoding="utf-8")
-    assert "pytest.mark.xfail(\n            strict=True" in source
+    assert "pytest.mark.xfail(\n            strict=True, raises=raises" in source
+    for need_id, test in tests.items():
+        if test["kind"] == "gap":
+            assert len(test["raises"]) == 1, f"{need_id} needs one raises= exception"
 
 
 def test_page_counts_equal_the_table():
@@ -106,3 +112,23 @@ def test_live_suite_is_skipped_with_its_reason_without_the_url():
     assert result.returncode == 0, result.stdout[-2000:]
     assert f"{len(_suite_tests())} skipped" in result.stdout
     assert "DEVHUB_LIVE_URL not set" in result.stdout
+
+
+def test_a_gate_refusal_is_an_error_for_every_test_and_never_an_xfail():
+    # Same origin as DEVHUB_URL: the gate refuses before any request is made.
+    env = {
+        name: value for name, value in os.environ.items() if not name.startswith("DEVHUB_")
+    }
+    env.update({
+        gate.ENV_URL: "http://127.0.0.1:9", gate.ENV_CONFIRM: gate.CONFIRM,
+        gate.ENV_TOKEN: "t" * 32, gate.ENV_PROOF_SECRET: "s" * 40,
+        "DEVHUB_URL": "http://127.0.0.1:9",
+    })
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist",
+         "-m", "devhub_live", str(SUITE)],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode != 0, result.stdout[-2000:]
+    assert f"{len(_suite_tests())} error" in result.stdout, result.stdout[-2000:]
+    assert "xfailed" not in result.stdout and "passed" not in result.stdout

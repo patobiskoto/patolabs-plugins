@@ -14,7 +14,7 @@ only.
 DevHub is still a pilot outside the V1 contract: `registry._V1_TRACKERS` holds
 `youtrack`, `linear`, `ghprojects` (`registry.py`), and `tracker-contract.v1.json` lists
 DevHub "for contrast only" (observed, 2026-10-19). DHN-40 states the Foundry-side
-prerequisite that follows.
+prerequisite that follows, with DHN-41.
 
 ## Run the suite
 
@@ -31,14 +31,18 @@ python3 -m pytest -q -m devhub_live tests/integration/test_devhub_live_conforman
 
 `-m devhub_live` replaces the default `-m "not integration"` of `pytest.ini`. Without
 `DEVHUB_LIVE_URL` every test is skipped with the reason
-`DEVHUB_LIVE_URL not set: live DevHub conformance suite not requested`; the public CI
-command excludes `integration` (`.github/workflows/ci.yml`), and the full local command
-(`-m "not historical_fixture"`) reaches the suite only in that skipped form. The suite is
+`DEVHUB_LIVE_URL not set: live DevHub conformance suite not requested`. The public CI
+expressions all contain `not integration` (`.github/workflows/ci.yml`, `plugins/foundry/README.md`,
+"pytest -q -n auto -m"), so they never collect the suite. A `-m` expression without
+`not integration` (for example `-m "not historical_fixture"`) replaces the `pytest.ini`
+default and collects it: skipped when `DEVHUB_LIVE_URL` is unset, but run against that URL
+(writes included) when the four `DEVHUB_LIVE_*` variables are exported, so unset them for
+such a run. The suite is
 not part of `-m tracker_conformance` (`docs/tracker-conformance.md`): that suite is
 deterministic over fake transports, this one needs a server.
 
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
-expected red, listed below with its owner); `XPASS(strict)` reported as a failure means a
+expected red, listed below with its owner) that raised the exception its `gap` declares in `raises=`, any other exception, a setup error included, is a failure or an error, not an `xfailed`; `XPASS(strict)` reported as a failure means a
 gap closed and its test must be turned into a plain need (see "Closing a gap"); `failed`
 on a need expected green is a regression or a wrong expectation to discuss on this page.
 
@@ -73,18 +77,22 @@ Implemented in `tests/devhub_live_gate.py`, covered offline by
    with `LV` followed by eight random characters.
 
 Limits, stated plainly: check 3 only knows what the environment holds, and check 4 only
-sees what the token can see. Use credentials created for the disposable instance. DevHub v1
-has no delete endpoint (`docs/devhub-tracker.md`, "Destructive smoke"): every run leaves
-`LV*` projects behind, so use a throwaway database.
+sees what the token can see. Use credentials created for the disposable instance. The suite
+deletes nothing: every run leaves `LV*` projects behind, so use a throwaway database. DevHub
+at the commit read above has a project deletion route under `admin/projects`, with its own
+`DEVHUB_TRACKER_ADMIN_TOKEN` (DevHub `docs/TRACKER_API.md`, "Authentication and version");
+`docs/devhub-tracker.md`, "Destructive smoke", predates it, and the suite does not use it.
 
 ## Needs
 
 Status vocabulary: **green** = the test passed against a DevHub instance; **red** = the
-need is not met (a strict `xfail` test, never a pass); **unknown** = the test exists and has
+need is not met (a strict `xfail` test that names the exact exception of the gap in `raises=`, never a pass); **unknown** = the test exists and has
 not been run against a DevHub instance. The owner column names who must act when the need
 is red. Basis: *adapter* = observed in `trackers/devhub.py` / `trackers/base.py` (the
 method is inherited from the `Tracker` default, checked by script on 2026-10-19);
-*server* = deduced from the DevHub source at commit `3fedc57`, read-only, not run.
+*server* = deduced from the DevHub source (repository `dev-hub`, paths relative to its root),
+read-only, not run. Read at commit `68c7ef0` (2026-10-19); the files cited here are
+identical at the earlier `3fedc57` (`git diff 3fedc57 68c7ef0` on them is empty).
 
 No test has been run against a DevHub instance when this page was written: every
 `unknown` is unknown for that reason, and every `red` is deduced from code, not observed on
@@ -105,7 +113,7 @@ a server. Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-11 | `depends-on`, `blocks`, `relates` links round-trip with the inverse on the target | `test_dhn_11_dependency_links_round_trip_with_inverse` | unknown | - | not run |
 | DHN-12 | Reparent an existing issue with `subtask-of` and `parent-of` | `test_dhn_12_existing_issue_can_be_reparented_in_both_directions` | unknown | - | not run |
 | DHN-13 | Add comments; read them back in order with a creation time | `test_dhn_13_comments_round_trip_in_order` | unknown | - | not run |
-| DHN-14 | Return every comment of an issue past 100 | `test_dhn_14_every_comment_is_returned_past_one_hundred` | unknown | - | not run; the issue read has no row limit in `store.ts:457` (server, observed) |
+| DHN-14 | Return every comment of an issue past 100 | `test_dhn_14_every_comment_is_returned_past_one_hundred` | unknown | - | not run; the issue read has no row limit in `src/tracker/store.ts:457` (server, observed) |
 | DHN-15 | Bounded Epic subgraph projection holding the Epic and its children | `test_dhn_15_epic_subgraph_projection_is_bounded_and_complete` | unknown | - | not run |
 | DHN-16 | One public audit receipt per create, update, transition, link, comment | `test_dhn_16_audit_projection_holds_one_receipt_per_operation` | unknown | - | not run |
 | DHN-17 | Start path `backlog` to `in-progress`; resume from `blocked` | `test_dhn_17_start_path_and_resume_from_blocked` | unknown | - | not run |
@@ -115,25 +123,26 @@ a server. Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-21 | Update an issue body (frame/groom) checked against the expected body | `test_dhn_21_arbitrary_body_update_is_checked_against_the_expected_body` | red | adapter | adapter: `update_body` inherited, `BodyUpdateUnavailableError`; the body `PATCH` route exists (used by DHN-20) |
 | DHN-22 | Close an Epic atomically from a receipt; replay; recover the original closure | `test_dhn_22_epic_closure_is_atomic_audited_and_replayable` | unknown | - | not run |
 | DHN-23 | Refuse a closure whose graph differs from the receipt | `test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt` | unknown | - | not run |
-| DHN-24 | Close an Epic over a dropped child by explicit acceptance (`--accept-dropped`, PAT-ADR-0017) | `test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance` | red | adapter | adapter: `epic_dropped_closure_supported` is `False` and `write.py` refuses the flag without it; the DevHub closure itself already admits `dropped` children (`epic-closure-store.ts:182`, server, observed) |
+| DHN-24 | Close an Epic over a dropped child by explicit acceptance (`--accept-dropped`, PAT-ADR-0017) | `test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance` | red | adapter | adapter: `epic_dropped_closure_supported` is `False` and `write.py` refuses the flag without it; the DevHub closure itself already admits `dropped` children (`src/tracker/epic-closure-store.ts:182`, server, observed) |
 | DHN-25 | Typed acceptance-override receipt before merge | `test_dhn_25_acceptance_override_leaves_a_typed_receipt` | red | adapter | adapter: `project_acceptance_override` inherited, `TrackerCapabilityUnavailableError`; the end-to-end `issue merge` with an AC override on DevHub has never been run (unknown) |
 | DHN-26 | Accept a non-code issue by a human decision without a PR (PAT-ADR-0025) | `test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr` | red | adapter | adapter: `accept_issue` inherited. The test passes a minimal decision document; the first implementation must complete it |
-| DHN-27 | Abandon a started issue (`dropped` from `in-progress` or `review`) | `test_dhn_27_started_issue_can_be_abandoned` | red | server | server, deduced: `workflow.ts` transitions give `in-progress` only `review`, `blocked`, and `review` only `in-progress`, `blocked`, `done` |
+| DHN-27 | Abandon a started issue (`dropped` from `in-progress` or `review`) | `test_dhn_27_started_issue_can_be_abandoned` | red | server | server, deduced: `src/tracker/workflow.ts:3-10` transitions give `in-progress` only `review`, `blocked`, and `review` only `in-progress`, `blocked`, `done` |
 | DHN-28 | Return a started issue to `backlog` | `test_dhn_28_started_issue_can_return_to_backlog` | red | server | server, deduced: same table, no edge to `backlog` from `in-progress` or `review` |
 | DHN-29 | Create an ADR as `proposed` with an id `<KEY>-ADR-NNNN`; list it with its exact body | `test_dhn_29_adr_is_created_proposed_and_listed_with_its_exact_body` | unknown | - | not run |
 | DHN-30 | ADR status `proposed` to `accepted` to `deprecated` with a signed proof | `test_dhn_30_adr_status_moves_proposed_to_accepted_to_deprecated` | unknown | - | not run |
-| DHN-31 | `accepted` to `superseded` through the status route in Foundry mode | `test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route` | unknown | - | not run; `assertAdrTransition` allows it (`contract.ts:269`, server, observed) but `DEVHUB-73-ADR-DECISIONS.md` limits Foundry projects to recorded intents for decisions (unknown which applies to the status route) |
+| DHN-31 | `accepted` to `superseded` through the status route in Foundry mode | `test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route` | unknown | - | not run; `assertAdrTransition` allows it (`src/tracker/contract.ts:268-277`, server, observed) but `docs/DEVHUB-73-ADR-DECISIONS.md` limits Foundry projects to recorded intents for decisions (unknown which applies to the status route) |
 | DHN-32 | Supersede an ADR by a named replacement | `test_dhn_32_adr_is_superseded_by_a_named_replacement` | red | adapter | adapter: `supersede_adr` inherited, `TrackerCapabilityUnavailableError` |
-| DHN-33 | Append a reciprocal ADR-to-issue relation to a decided ADR | `test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation` | red | adapter + server | adapter: `link_adr_issue` inherited; server: decided ADR links are frozen (`DEVHUB-73-ADR-DECISIONS.md`, observed in the document, not run) |
+| DHN-33 | Append a reciprocal ADR-to-issue relation to a decided ADR | `test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation` | red | adapter + server | adapter: `link_adr_issue` inherited; server: decided ADR links are frozen (`docs/DEVHUB-73-ADR-DECISIONS.md`, observed in the document, not run) |
 | DHN-34 | Selective import: a living issue is imported once, found by exact source coordinate, replay-safe | `test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate` | red | adapter + server | adapter: `migration_find_issue`, `migration_import_issue` inherited; server: no source coordinate on issues known (unknown) |
 | DHN-35 | Selective import: relations between imported issues through the staged port | `test_dhn_35_imported_issues_are_linked_through_the_staged_port` | red | adapter | adapter: `migration_link_issue` inherited |
-| DHN-36 | Selective import: a needed ADR keeps its foreign id (for example `FOUNDRY-ADR-0026`), status and exact body | `test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body` | red | adapter + server | adapter: `import_adr`, `migration_import_adrs` inherited; server: ADR ids are generated `<KEY>-ADR-NNNN` (`store.ts:1950`, observed) |
+| DHN-36 | Selective import: a needed ADR keeps its foreign id (for example `FOUNDRY-ADR-0026`), status and exact body | `test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body` | red | adapter + server | adapter: `import_adr`, `migration_import_adrs` inherited; server: ADR ids are generated `<KEY>-ADR-NNNN` (`src/tracker/store.ts:1950`, observed) |
 | DHN-37 | Reconcile an interrupted issue creation without recreating it (Epic cadencer) | `test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it` | red | adapter | adapter: `reconcile_issue_creation` inherited; `campaign_cadence.missing_capabilities` reports `issue_creation_reconciliation` |
 | DHN-38 | Append-only lifecycle capability required by the Epic cadencer (PAT-ADR-0026) | `test_dhn_38_lifecycle_is_append_only_for_the_cadencer` | red | adapter + server | adapter: `append_only_lifecycle_supported` is `False` (script, 2026-10-19); what DevHub must provide for it is a question below |
 | DHN-39 | Read a mapped release scope without approximate discovery | `test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery` | red | adapter + server | adapter: `read_release_scope` inherited, `ReleaseScopeUnavailableError`; how a release is mapped on DevHub is a question below |
-| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry | `registry._V1_TRACKERS` excludes `devhub`; the Epic cadencer also needs DHN-37 and DHN-38 |
+| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), covered by DHN-41; the Epic cadencer also needs DHN-37 and DHN-38 |
+| DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | red | adapter | adapter: `verify_project_identity` inherited from `trackers/base.py`, `ProjectProvisioningUnavailableError`; the test covers it only, the `resolve_checkout_project` pilot path of DHN-40 has no live test |
 
-Counts (equal to the table): 40 needs; 15 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-40);
+Counts (equal to the table): 41 needs; 16 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-41);
 25 unknown, DHN-31 among them (its expectation is doubtful); 0 green.
 
 ### Not covered, on purpose
@@ -203,9 +212,11 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
 | Environment variables `DEVHUB_LIVE_URL`, `DEVHUB_LIVE_CONFIRM`, `DEVHUB_LIVE_TOKEN`, `DEVHUB_LIVE_PROOF_SECRET` | Documented in "Environment variables". |
 | Safety checks of `tests/devhub_live_gate.py` | Documented in "Production safety". |
 | `docs/devhub-tracker.md`, `docs/tracker-conformance.md` | One pointer line each to this page; no other change. |
+| Counts, DHN-40 owner and the new need DHN-41, `raises=` of each gap, server citations by repository path (PAT-299) | Updated in "Needs" and "Reading the result". |
 | `trackers/devhub.py`, `tracker-contract.md`, `tracker-contract.v1.json` | Not changed: no adapter behaviour, CLI verb or contract cell changed. |
 
 Mechanical enforcement: `tests/test_devhub_requirements.py` checks that this table and the
-test decorators carry the same ids, tests and red/not-red status, and that this page names
-the command and variables; it does not prove that a sentence here is true (FOUNDRY-123 is
+test decorators carry the same ids, tests and red/not-red status, that every `@gap` carries one
+`raises=`, that a gate refusal makes every test an error and never an `xfailed` (offline run, no
+network), and that this page names the command and variables; it does not prove that a sentence here is true (FOUNDRY-123 is
 the separate, not-yet-shipped documentation gate).
