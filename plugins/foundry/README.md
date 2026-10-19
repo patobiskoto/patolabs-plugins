@@ -186,15 +186,34 @@ host update each need the maintainer's explicit authorization, and all are recor
 release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not verified: the Foundry 2.0.0 /
 Ship-iOS 0.3.0 pair on a host, and the real display of the Gauge alert on the hosts.
 
-**2.1.1 is a patch release, prepared by its release pull request.** That pull request
-sets both host manifests to 2.1.1 and carries the dated `2.1.1` section of the
+**2.1.0 is a minor release, prepared by its release pull request.** That pull request
+sets both host manifests to 2.1.0 and carries the dated `2.1.0` section of the
+[CHANGELOG](CHANGELOG.md), the [release notes](docs/release-2.1.0.md), the [upgrade and
+rollback guide](docs/migration-2.1.0.md) and the freeze entry of
+`tests/fixtures/release-history.json`; it deletes the two changelog fragments it
+assembles (PAT-265, PAT-226). The release notes open with the behaviour changes: the
+declared Python minimum (3.11), the hooks and the CLI under an older interpreter, and the
+`Hook Python` line of `doctor`. They claim no gain. The guide gives the check of the
+`python3` the hooks run under, the upgrade from 2.0.0 on both hosts and what is known
+and unknown about returning to 2.0.0 (an untried procedure, PAT-162). Both pages are
+frozen from the release pull request on, so they state no tag and no installation. Not
+done by that pull request, and not claimed here: the tag `foundry-v2.1.0`, the update of
+the installed plugin on Claude Code and on Codex, and the readback of the version a host
+actually loads; they come after the merge; the tag and the host update each need the
+maintainer's explicit authorization, and all are recorded on the release ticket
+(`skills/release/SKILL.md`, steps 6 to 9). Not verified: the Foundry 2.1.0 / Ship-iOS
+0.3.0 pair on a host, and the interpreter that any given host resolves as `python3`.
+
+**2.1.1 is a patch release, prepared by its release pull request.** That pull request sets
+both host manifests to 2.1.1 and carries the dated `2.1.1` section of the
 [CHANGELOG](CHANGELOG.md) and the freeze entry of `tests/fixtures/release-history.json`;
 it deletes the one changelog fragment it assembles (PAT-267). A patch needs no release
 note and no migration guide, so there is none for 2.1.1:
 [`docs/release-2.1.0.md`](docs/release-2.1.0.md) and
-[`docs/migration-2.1.0.md`](docs/migration-2.1.0.md) still describe 2.1.0 and are unchanged. The section names the behaviour change (the CLI and the hooks re-run under a
-supported Python found in a closed list, `reexec_if_unsupported` in
-`tooling/python_floor.py`) and claims no gain. Not done by that pull request, and not
+[`docs/migration-2.1.0.md`](docs/migration-2.1.0.md) still describe 2.1.0 and are
+unchanged. The section names the behaviour change (the CLI and the four hooks that import
+`foundry` re-run under a supported Python found in a closed list, `reexec_if_unsupported`
+in `tooling/python_floor.py`) and claims no gain. Not done by that pull request, and not
 claimed here: the tag `foundry-v2.1.1`, the update of the installed plugin on Claude Code
 and on Codex, and the readback of the version a host actually loads; they come after the
 merge; the tag and the host update each need the maintainer's explicit authorization, and
