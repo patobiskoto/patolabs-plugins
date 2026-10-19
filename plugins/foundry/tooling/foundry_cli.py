@@ -45,8 +45,9 @@ if mod == "routing":
         routing_main(handle_config_errors=False)
     except (RoutingConfigError, RoutingUnavailableError) as exc:
         # PAT-271: name the cause. A message may carry a hash, the base, a status or git's
-        # own standard error; a static scan keeps claim_id and attempt-token names out of
-        # the f-strings of the two review modules (tests/test_routing_errors.py).
+        # own standard error; an `ast` scan keeps claim_id and token names out of the
+        # dynamic parts of the messages raised by review_packet.py, routing.py and
+        # review_queries.py (tests/test_routing_errors.py).
         print(f"Configuration de routage invalide : {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 elif mod == "command-worker":

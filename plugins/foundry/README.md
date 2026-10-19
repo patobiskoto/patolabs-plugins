@@ -230,7 +230,8 @@ assembles (PAT-270 to PAT-275, PAT-283, PAT-284). The release notes open with th
 behaviour changes: the new verb `issue wait-ci`, the exit code 3 of `issue merge`, the
 lease push of `issue openpr`, the options `routing read-review --since` and
 `routing prepare-review --previous-head`, the `Nits` companion Epic, and the refusal of
-other `*.md` names in a new Linear ADR body (PAT-284). They claim no gain. The guide gives the checks before upgrading from 2.1.1, the upgrade on both hosts
+other `*.md` names in a new Linear ADR body (PAT-284). They claim no gain.
+The guide gives the checks before upgrading from 2.1.1, the upgrade on both hosts
 and what is known and unknown about returning to 2.1.1 (an untried procedure, PAT-162).
 Both pages are frozen from the release pull request on, so they state no tag and no
 installation. Not done by that pull request, and not claimed here: the tag

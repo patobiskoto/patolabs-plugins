@@ -10,7 +10,8 @@ CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept|wait-ci> [IS
              sources (check-runs + legacy statuses) are empty AND no active
              check-suite signals CI for the commit (see write.ci_gate/ADR-0002).
      wait-ci: `wait-ci <PR#> [--timeout=S] [--interval=S]` read-only wait for the
-             ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red or not provably green, 3 timeout.
+             ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red or not
+             provably green, 3 timeout.
      accept: `accept <ID> --human-verdict=accepted --decision-file=<path>` accepts a
              non-code issue without a PR (Linear only, PAT-ADR-0025); `accept <ID>
              --status` reads its state and takes no other flag.
@@ -393,15 +394,15 @@ def openpr(issue_id=None, base=None, flags=()):
         m = re.match(r"(?i)^[a-z]+/([a-z][a-z0-9]*-\d+)(?:-|$)", branch)
         if not m:
             raise SystemExit(f"⛔ Pas d'ID d'issue donné et la branche '{branch}' ne "
-                             f"suit pas <type>/<ticker>-<n>-… ; passe l'ID explicitement.")
+                             f"suit pas <type>/<ticker>-<n>-… ; passe l'ID explicitement "
+                             f"depuis la branche <type>/<id>-… de l'issue.")
         issue_id = m.group(1).upper()
     binding = write.issue_binding(tr, issue_id)
     write.preflight_issue_operation(tr, "openpr")
     if explicit_id:
         # PAT-286: an explicit id must be the issue of the branch about to be pushed; a
         # push of another issue's branch (or of a detached HEAD) would be attached to it.
-        m = re.match(r"(?i)^[a-z]+/([a-z][a-z0-9]*-\d+)(?:-|$)", branch)
-        if not m or m.group(1).upper() != issue_id.upper():
+        if not re.match(rf"(?i)^[a-z]+/{re.escape(issue_id)}(?:-|$)", branch):
             raise SystemExit(
                 f"⛔ Ouverture PR refusée — la branche courante '{branch}' n'est pas la "
                 f"branche de {issue_id} (<type>/{issue_id.lower()}-…) ; aucun push ni "
@@ -1433,8 +1434,8 @@ def wait_ci(pr_number, flags=(), *, codehost=None, sleep=None, clock=None, now=N
             verdict, code = "red", WAIT_CI_EXIT_RED
         elif gate["total"] and not gate["pending"]:
             # PAT-286: every check is complete, none failed, none succeeded (all
-            # neutral/skipped): the run is final and not provably green (ADR-0002), so
-            # polling until the timeout cannot change the verdict.
+            # neutral/skipped): not provably green (ADR-0002). Treated as final (deduced):
+            # a suite still queued without any check-run is not seen here.
             verdict, code = "not_green", WAIT_CI_EXIT_RED
         elif clock() + interval > deadline:
             verdict, code = "timeout", WAIT_CI_EXIT_TIMEOUT

@@ -20,8 +20,11 @@ python3 tooling/foundry_cli.py issue wait-ci <PR-NUMBER> [--timeout=SECONDS] [--
 - Zero checks, or checks pending, keep waiting (CI queued after a push); a failing
   check ends the wait at once. When every check is complete and none failed nor
   concluded `success` (all `neutral` or `skipped`, for example workflows path-filtered),
-  the run is final and not provably green (`write.ci_gate`, FOUNDRY-ADR-0002): the verb
-  answers at once with `verdict=not_green` and exit `2`, without waiting for the timeout.
+  the run is not provably green (`write.ci_gate`, FOUNDRY-ADR-0002): the verb answers at
+  once with `verdict=not_green` and exit `2`, without waiting for the timeout. Treating
+  that run as final is deduced, not observed: in a repository with several workflows, a
+  suite still queued with no check-run yet is not seen, so `not_green` can come before
+  that suite reports. The merge gate is unaffected (`write.ci_gate` refuses it too).
 - Output (four lines): `verdict=<green|red|not_green|timeout> pr= sha= observed_at=` (UTC,
   `YYYY-MM-DDTHH:MM:SSZ`, taken after the gate reads), `reason=` (the gate's reason),
   `in_progress=[names]`, `failed=[names]`.

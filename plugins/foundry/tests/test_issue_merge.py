@@ -1114,6 +1114,30 @@ def test_openpr_with_an_explicit_id_refuses_a_branch_that_is_not_that_issues(
     assert network == []
 
 
+@pytest.mark.parametrize("issue_id, branch", [
+    ("DEMO-7", "feat/demo-7-slug"), ("DEMO-7", "chore/DEMO-7"), ("MY_PROJ-7", "feat/my_proj-7-x"),
+])
+def test_openpr_with_an_explicit_id_accepts_that_issues_branch(monkeypatch, issue_id, branch):
+    """PAT-286: the branch check compares the exact id, `_` in a ticker included."""
+    class Reached(Exception):
+        pass
+
+    def get_issue(_id):
+        raise Reached
+
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: SimpleNamespace(get_issue=get_issue))
+    monkeypatch.setattr(issue.foundry, "codehost", lambda: SimpleNamespace())
+    monkeypatch.setattr(issue, "_sh", lambda *args, **_kwargs: (
+        branch if args[-2:] == ("--abbrev-ref", "HEAD") else pytest.fail(f"git {args}")
+    ))
+    monkeypatch.setattr(issue, "_push_branch", lambda _b: pytest.fail("push"))
+    monkeypatch.setattr(write, "issue_binding", lambda *_a: None)
+    monkeypatch.setattr(write, "preflight_issue_operation", lambda *_a: None)
+
+    with pytest.raises(Reached):
+        issue.openpr(issue_id)
+
+
 def test_openpr_reuses_existing_pr_and_preserves_required_body_markers(
     monkeypatch, capsys,
 ):

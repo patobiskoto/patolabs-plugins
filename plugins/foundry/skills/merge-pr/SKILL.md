@@ -409,7 +409,8 @@ again.
 The `issue merge` exit code 3 (`EXIT_LOCAL_CLEANUP_FAILED`, `tooling/foundry/issue.py`, PAT-272;
 not the `issue wait-ci` "3 timeout") means the merge and the `done` transition are durable and
 announced (`✅ PR #<n> mergée …`, or `✅ Reprise PR #<n> … déjà done` on the resume path of an
-already merged PR, on standard output), but the local checkout of the default branch or its `git pull --ff-only` failed. Do not re-run
+already merged PR, on standard output), but the local checkout of the default branch or its
+`git pull --ff-only` failed. Do not re-run
 the merge: run the command printed on standard error (`git checkout <default> && git pull
 --ff-only && git branch -D <branch>`) once the checkout is clean. A refused merge exits 1 with
 its reason as the message; in a linked worktree the cleanup is left to the host and this code
