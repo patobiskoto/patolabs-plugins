@@ -399,10 +399,13 @@ PR's base SHA as read on the code host, the one `issue merge` uses. The conditio
    pairs of the proof).
 2. `--from-base` is the base recorded in the original proof, and the diff recomputed
    from that base to the head recorded in the proof has the hash `--from-diff-hash`.
-3. The new base differs from `--from-base` (with an unchanged base there is no
-   integration of the main branch, so nothing is carried even if the head moved to the
-   same tree); the old base is an ancestor of the new base, and the new base is an
-   ancestor of the current head.
+3. The new base differs from `--from-base`, or equals it while the old reviewed head
+   does not contain it (PAT-288: the PR was reviewed against a base the branch did not
+   yet contain, then integrated it; `tests/test_review_carry.py::test_an_unchanged_base_not_contained_in_the_reviewed_head_is_carried`).
+   With an unchanged base that the old head already contains there is no integration of
+   the main branch, so nothing is carried even if the head moved to the same tree. The
+   old base is an ancestor of the new base, and the new base is an ancestor of the
+   current head.
 4. The tree of the current head is exactly the tree printed by `git merge-tree
    --write-tree` of the old reviewed head with the new base, which must be conflict free.
 5. No path changed by the PR (`old base...old head`) is changed by the main branch

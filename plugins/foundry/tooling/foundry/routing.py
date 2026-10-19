@@ -2361,9 +2361,12 @@ class AcceptanceProofStore:
                 raise RoutingConfigError(
                     "report de preuve AC : le diff d'origine ne se recalcule pas à l'identique."
                 )
-            if base == from_base:
-                # No integration of the main branch: nothing for PAT-ADR-0021 to carry,
-                # even when the head moved to the same tree.
+            if base == from_base and _git_is_ancestor(project_root, base, old_head):
+                # The reviewed head already contained the base: no integration of the main
+                # branch, nothing for PAT-ADR-0021 to carry, even when the head moved to the
+                # same tree.  With an unchanged base the reviewed head did not contain
+                # (PAT-288), the checks below apply as usual; the "shared paths" set is then
+                # empty by construction (``from_base`` to ``base`` changes nothing).
                 raise RoutingConfigError("report de preuve AC : rien à reporter.")
             if not _git_is_ancestor(project_root, from_base, base):
                 raise RoutingConfigError(

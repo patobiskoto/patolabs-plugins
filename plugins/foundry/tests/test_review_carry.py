@@ -55,7 +55,7 @@ def _commit(root: Path, name: str, text: str, message: str) -> str:
 
 class Scenario:
     def __init__(self, tmp_path: Path, *, quality: str = "mergeable", verdict: str = "pass",
-                 pr_change=None):
+                 pr_change=None, unmerged_base: bool = False):
         self.root = tmp_path / "repo"
         self.root.mkdir(parents=True)
         self.state = tmp_path / "state"
@@ -74,6 +74,10 @@ class Scenario:
             pr_change(self.root)
             _git(self.root, "commit", "-m", "feature extra change")
         self.old_head = git_head(self.root)
+        if unmerged_base:
+            _git(self.root, "checkout", "main")
+            self.old_base = _commit(self.root, "b.txt", "b changed on main\n", "main b")
+            _git(self.root, "checkout", "feature")
         diff = git_diff(self.root, self.old_base)
         self.old_hash = review_diff_hash(diff)
         coordinates = {"root": str(self.root.resolve()), "base": self.old_base}
@@ -468,3 +472,37 @@ def test_cli_carry_review_proof_prints_the_new_proof(tmp_path, monkeypatch, caps
     printed = json.loads(capsys.readouterr().out)
     assert printed["carried"] is True
     assert printed["diff_hash"] == scenario.old_hash
+
+
+def _scenario_with_unmerged_base(tmp_path: Path) -> Scenario:
+    # PAT-288: the PR is reviewed against a base the branch does not contain yet.
+    return Scenario(tmp_path, unmerged_base=True)
+
+def test_an_unchanged_base_not_contained_in_the_reviewed_head_is_carried(tmp_path):
+    scenario = _scenario_with_unmerged_base(tmp_path)
+    assert subprocess.run(
+        ["git", "merge-base", "--is-ancestor", scenario.old_base, scenario.old_head],
+        cwd=scenario.root,
+    ).returncode == 1
+    scenario.merge_main()
+    result = scenario.carry()
+    assert result["carried"] is True
+    new_head = git_head(scenario.root)
+    new_diff = git_diff(scenario.root, scenario.new_base)
+    assert review_diff_hash(new_diff) == scenario.old_hash
+    store = AcceptanceProofStore(REPOSITORY, scenario.state)
+    proof = store.valid_for_merge(
+        issue_id=ISSUE, issue_body=BODY, head=new_head, diff=new_diff,
+        base=scenario.new_base,
+    )
+    assert proof["carried_from"]["head"] == scenario.old_head
+
+
+def test_an_unchanged_base_not_contained_is_refused_when_head_is_not_the_clean_merge(tmp_path):
+    scenario = _scenario_with_unmerged_base(tmp_path)
+    scenario.merge_main()
+    (scenario.root / "e.txt").write_text("extra\n", encoding="utf-8")
+    _git(scenario.root, "add", "e.txt")
+    _git(scenario.root, "commit", "-m", "extra after merge")
+    with pytest.raises(RoutingConfigError, match="arbre de HEAD"):
+        scenario.carry()
