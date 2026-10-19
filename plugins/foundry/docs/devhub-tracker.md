@@ -224,6 +224,9 @@ the merge endpoint again.
 
 ## Destructive smoke
 
+The live conformance suite against a disposable instance, with the list of Foundry's needs towards
+DevHub, is described in `docs/devhub-requirements.md` (PAT-296); the smoke below is a separate, older check.
+
 The real-provider smoke is skipped unless all coordinates and the exact confirmation
 are supplied. It creates persistent disposable project/issue/ADR rows; DevHub v1 has no
 delete endpoint. Run it only against a disposable database or with a unique ticker:
