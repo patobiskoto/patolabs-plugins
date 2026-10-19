@@ -238,7 +238,7 @@ deploy, and STOP for explicit validation. Exception: pure refactor (justify in t
 ### Grouped deferral of non-blocking remarks (rule R9 (b))
 This is the behaviour of the Foundry skills in every repository where the plugin is
 installed (maintainer decision of 2026-10-10); it is recorded as rule R9 in the Foundry
-monorepo's `AGENTS.md` / `CLAUDE.md` and decided by its PAT-ADR-0018, and this skill's
+monorepo's `AGENTS.md` / `CLAUDE.md` and decided by its PAT-ADR-0018 and PAT-ADR-0029, and this skill's
 text is what applies it. The `docs/…` paths in this section are relative to
 `<foundry-root>`.
 After a review round that is fully validated (`AC: PASS` and `QUALITY: OK to merge`),
@@ -247,13 +247,16 @@ of an Epic go to a companion Epic, named `Nits` followed by the identifier of th
 Epic (`Nits <ORIGIN-EPIC-ID>`). The origin Epic of an issue is its direct parent Epic:
 an issue under a sub-Epic uses that sub-Epic. Give the two Epics no tracker link: no
 parent, no dependency, no relation. What relates them is that name and a mention in text,
-nothing else. Inside the companion Epic, put the remarks in a single follow-up issue,
+nothing else. The remarks deferred from an issue with no origin Epic go to the companion
+Epic of the project, named exactly `Nits` (PAT-ADR-0029, which amends the maintainer
+decision of 2026-10-10 that gave such an issue no deferral); the rules of this section
+apply to it unchanged. Inside the companion Epic, put the remarks in a single follow-up issue,
 which gathers all the deferred remarks of the origin Epic, and cite that issue in the PR
 description before the merge. If that issue is already started or closed, create a new
 follow-up issue: never add a remark to a started or closed issue (maintainer decision of
 2026-10-11). These three cases are still corrected before the merge; the rest of this
-section adds three more (the PR of an issue of a companion Epic, an issue with no origin
-Epic, a durable refusal of one of the writes), corrected the same way. The first three
+section adds two more (the PR of an issue of a companion Epic, `Nits` included, and a
+durable refusal of one of the writes), corrected the same way. The first three
 cases are:
 
 - a remark the reviewer marks "fix before merge" (see `foundry:review-pr`);
@@ -263,7 +266,7 @@ cases are:
   repository's contract carries it).
 
 There is no second-level deferral: when the PR belongs to an issue of a companion Epic,
-correct its non-blocking remarks before the merge. On every pull request, the review that
+`Nits` included, correct its non-blocking remarks before the merge. On every pull request, the review that
 follows the correction of the non-blocking remarks of a validated round (every criterion
 `pass` and quality `mergeable`, even with remarks marked "fix before merge") covers what
 changed since that round, not the whole diff (PAT-ADR-0022). It stays full after a
@@ -273,11 +276,12 @@ non-blocking remark, the three cases above included. The partial-review packet g
 reviewer the previous round's verdict and remarks, the commit range since that round, and
 the full diff through the shared verifier (`foundry:review-pr`); the reviewer checks that
 each correction settles its remark without a new defect and that nothing else changed,
-and returns a verdict on all criteria for the exact diff. The commit range and the
-previous round's remarks are declarations of the coordinator: the reviewer cannot
-confront them with the bytes it is given (the shared verifier supplies only
-`base...HEAD`), and the send text of `routing prepare-review` does not say that the
-review is partial. When AC are unchecked (step 1 above), and also when they are all checked on a
+and returns a verdict on all criteria for the exact diff. The previous round's verdict
+and remarks are declarations of the coordinator that the reviewer cannot confront with
+any byte. The commit range is read from the bytes: pass `--previous-head <PREVIOUS-HEAD-SHA>`
+to `routing prepare-review` (the head the previous round saw, 40 lowercase hex characters);
+`reviewer-send.txt` then says that the review is partial and gives the exact
+`routing read-review ... --since <PREVIOUS-HEAD-SHA>` command (`foundry:review-pr`). When AC are unchecked (step 1 above), and also when they are all checked on a
 tracker whose adapter sets `delivery_receipt_supported` if the issue has a binding
 (`valid_for_merge`, called twice by `merge` in `<foundry-root>/tooling/foundry/issue.py`),
 the merge gate asks for a review proof covering all criteria for the exact diff, so
@@ -292,11 +296,12 @@ decision of 2026-10-11).
 Four writes are authorized in advance by this skill's rule, without human confirmation,
 inside and outside an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every
 repository where the plugin is installed, as an exception to the confirmation
-`foundry:intake` requires before a write:
+`foundry:intake` requires before a write (they apply to `Nits` as to any companion Epic):
 
 1. create the companion Epic, the first time: look for an existing one first (see
    "Commands to look and to read back" below), then `edit create-issue` (command in
-   `foundry:intake`, section 3) with the title `Nits <ORIGIN-EPIC-ID>`, the field
+   `foundry:intake`, section 3) with the title `Nits <ORIGIN-EPIC-ID>` (`Nits` for an issue
+   with no origin Epic), the field
    `"Type": "Epic"` and no `parent`;
 2. create a follow-up issue in it: `edit create-issue` with `parent` set to the
    companion Epic;
@@ -315,7 +320,7 @@ Nothing else is pre-authorized: the companion Epic and its issues are neither
 prioritized nor started without the maintainer (a human verdict under FOUNDRY-ADR-0014),
 and every other intake write keeps its confirmation.
 
-Commands to look and to read back. To find an existing `Nits <ORIGIN-EPIC-ID>` Epic,
+Commands to look and to read back. To find an existing `Nits <ORIGIN-EPIC-ID>` (or `Nits`) Epic,
 run `query backlog` (the lean list of the project's issues, with `id`, `title`, `type`
 and `state`) and look for an issue whose `type` is `Epic` and whose `title` is exactly
 that name. To read the tracker back after a write, run `query issue <ISSUE-ID>`: its
@@ -350,11 +355,13 @@ When one of the four writes does not go through, tell two cases apart:
   correct the remarks of that round before the merge, re-review as stated above, and report the
   refusal in the PR description.
 
-An issue that has no origin Epic gets no deferral: correct its non-blocking remarks
-before the merge and re-review as stated above; that includes an issue whose direct parent is not
-an Epic, the chain of parents not being walked up (maintainer decision of 2026-10-11).
+An issue that has no origin Epic defers to `Nits` as stated above; that includes an issue
+whose direct parent is not an Epic, the chain of parents not being walked up (maintainer
+decision of 2026-10-11).
 Inside an Epic campaign run by the Foundry cadencer, the cadencer makes these four writes
-itself after a validated review, so do not repeat them by hand: it keeps the reviewer's
+itself after a validated review, so do not repeat them by hand (for an issue with no origin
+Epic it does not yet defer to `Nits`: it has the remarks corrected by its correction loop,
+`docs/campaign-effects.md`): it keeps the reviewer's
 remarks in a local receipt that the merge gate never reads, defers the ones that are not
 marked "fix before merge", cites the follow-up issue in the PR description, and has the
 others corrected by its correction loop (`docs/review-rounds.md`, "What is not mechanical

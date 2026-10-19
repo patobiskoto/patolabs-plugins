@@ -319,3 +319,82 @@ def test_tracker_read_scope_closes_before_local_writes_or_on_failure(packet_case
         prepare_review_packet(**case.args)
         assert case.args["output_dir"].is_dir()
     assert state == {"active": False, "entries": 1, "exits": 1}
+
+
+def _second_round(case):
+    """A correction commit after the head the first round saw."""
+    first = git(case.root, "rev-parse", "HEAD")
+    (case.root / "source").write_text("review\ncorrected\n")
+    git(case.root, "commit", "-qam", "correction")
+    return first
+
+
+def test_partial_packet_records_the_previous_head_and_asks_for_since(packet_case):
+    """PAT-283: `--previous-head` is validated, recorded and named in the send text."""
+    case = packet_case
+    previous = case.pr.sha
+    prepare_review_packet(**case.args, previous_head=previous)
+    directory = case.args["output_dir"]
+    assert json.loads((directory / "coordinates.json").read_text())["previous_head"] == previous
+    send = (directory / "reviewer-send.txt").read_text()
+    assert "PARTIAL review" in send and f"--since {previous}" in send
+    assert len(send) < 8000
+
+
+def test_full_packet_does_not_mention_a_partial_review(packet_case):
+    prepare_review_packet(**packet_case.args)
+    directory = packet_case.args["output_dir"]
+    assert "previous_head" not in json.loads((directory / "coordinates.json").read_text())
+    assert "PARTIAL" not in (directory / "reviewer-send.txt").read_text()
+
+
+@pytest.mark.parametrize("previous", ["abc1234", "f" * 40, "A" * 40, "--output=x"])
+def test_packet_refuses_a_previous_head_that_is_not_an_ancestor_full_sha(packet_case, previous):
+    with pytest.raises(RoutingConfigError, match="--since"):
+        prepare_review_packet(**packet_case.args, previous_head=previous)
+    assert not packet_case.args["output_dir"].exists()
+
+
+def test_read_review_since_emits_the_range_bytes_under_the_same_claim(packet_case, tmp_path):
+    from foundry.routing import claimed_review_diff
+    case = packet_case
+    base = case.args["base"]
+    first = _second_round(case)
+    ledger = case.args["deduplicator"]
+    # the claim is bound to the first-round head: a new HEAD needs a new claim
+    claim = ledger.claim_git(review_diff_hash(git_diff(case.root, base)),
+                             coordinates={"root": str(case.root), "base": base},
+                             claim_attempt_token="b" * 64)
+    out = []
+    claimed_review_diff(claim.diff_hash, "fixture/repository", claim_id=claim.claim_id,
+                        root=case.root, base=base, state_dir=tmp_path / "state",
+                        consume=out.append, since=first)
+    expected = subprocess.check_output(
+        ["git", "-C", str(case.root), "diff", "--binary", "--no-ext-diff", f"{first}..HEAD"])
+    assert out == [expected] and b"corrected" in expected
+    full = []
+    claimed_review_diff(claim.diff_hash, "fixture/repository", claim_id=claim.claim_id,
+                        root=case.root, base=base, state_dir=tmp_path / "state",
+                        consume=full.append)
+    assert full == [git_diff(case.root, base)] and full != out
+
+
+def test_read_review_since_refuses_a_non_ancestor_and_a_wrong_claim(packet_case, tmp_path):
+    from foundry.routing import claimed_review_diff
+    case = packet_case
+    base = case.args["base"]
+    out = []
+    kwargs = dict(root=case.root, base=base, state_dir=tmp_path / "state", consume=out.append)
+    git(case.root, "checkout", "-q", "-b", "other", base)
+    (case.root / "other").write_text("x\n")
+    git(case.root, "add", "other")
+    git(case.root, "commit", "-qm", "other")
+    unrelated = git(case.root, "rev-parse", "HEAD")
+    git(case.root, "checkout", "-q", "-")
+    with pytest.raises(RoutingConfigError, match="--since n'est pas un ancêtre"):
+        claimed_review_diff(case.claim.diff_hash, "fixture/repository",
+                            claim_id=case.claim.claim_id, since=unrelated, **kwargs)
+    with pytest.raises(RoutingConfigError):
+        claimed_review_diff(case.claim.diff_hash, "fixture/repository",
+                            claim_id="c" * 64, since=base, **kwargs)
+    assert out == []

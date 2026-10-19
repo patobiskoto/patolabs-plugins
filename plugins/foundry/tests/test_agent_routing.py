@@ -1179,6 +1179,21 @@ def test_readonly_bash_guard_rejects_shell_syntax_inside_root(root):
     assert readonly_guard.decision("foundry:routed-readonly-high", command) is not None
 
 
+def test_readonly_bash_guard_allows_read_review_since_only_with_a_full_sha_last():
+    """PAT-283: `read-review ... --since <40-hex>` and nothing looser."""
+    agent = "foundry:routed-readonly-high"
+    head = (
+        f'python3 "{PLUGIN_ROOT}/tooling/foundry_cli.py" routing read-review '
+        f'--diff-hash {"a" * 64} --claim-id {"c" * 64} --root "/tmp/review" --base {"e" * 40}'
+    )
+    assert readonly_guard.decision(agent, f'{head} --since {"f" * 40}') is None
+    for tail in ("--since short", f'--since {"F" * 40}', f'--since {"f" * 40} --text x',
+                 f'--other {"f" * 40}', f'--since {"f" * 40};ls'):
+        assert readonly_guard.decision(agent, f"{head} {tail}") is not None
+    listing = head.replace("read-review", "list-review")
+    assert readonly_guard.decision(agent, f'{listing} --since {"f" * 40}') is not None
+
+
 def test_reviewer_contract_receives_the_resolved_guarded_cli_path(tmp_path):
     updated, _ = route_agent.route_tool_input(
         {"subagent_type": "foundry:reviewer", "prompt": _packet()}, cwd=tmp_path, environ={},

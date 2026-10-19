@@ -636,8 +636,8 @@ remark, the marked ones included.
 | Facts (`DeferralFacts`) | Decision |
 | --- | --- |
 | no deferrable remark, or the deferral is `done` for this diff hash | none: the pass goes on to CI and `merge` |
-| no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
-| the origin Epic is itself a companion Epic (its title is exactly `Nits ` and an identifier such as `APP-1`, `_COMPANION_NAME`, PAT-238; a title that only starts with `Nits ` is not): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
+| no origin Epic (the direct parent of the ticket is absent or not an `Epic`; the chain of parents is not walked up). PAT-ADR-0029 now defers such a ticket to the project companion Epic `Nits` (`AGENTS.md#R9` (b)); **the cadencer does not yet apply it**: it keeps this row, and no `defer-remarks` effect creates or fills `Nits` (PAT-283) | `correct` `remarks_not_deferrable`, cause `no_origin_epic` |
+| the origin Epic is itself a companion Epic (its title is exactly `Nits ` and an identifier such as `APP-1`, or exactly `Nits` since PAT-283, `_COMPANION_NAME`, PAT-238; a title that only starts with `Nits` is not): no second-level deferral | `correct` `remarks_not_deferrable`, cause `companion_epic` |
 | the last attempt ended in a durable refusal | `correct` `remarks_not_deferrable`, cause `refused` |
 | the last attempt ended transient and `DEFER_RETRY_SECONDS` have not passed, or the `reset_at` of a quota error (see "Classification of a failure"; capped by `MAX_RESET_WAIT_SECONDS`) has not | `wait` `deferral_transient_failure` |
 | the last attempt ended transient, the wait is over | `defer-remarks` again (a new attempt: the identity carries the `try` count) |

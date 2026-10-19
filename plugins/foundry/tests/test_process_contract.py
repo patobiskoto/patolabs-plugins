@@ -237,9 +237,9 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_four_standing_write
     assert "neither prioritized nor started without the maintainer" in rule
     # no second-level deferral
     assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
-            "companion Epic are corrected before the merge. On every pull request, the "
-            "review that follows the correction of the non-blocking remarks of a validated "
-            "round") in rule
+            "companion Epic, `Nits` included, are corrected before the merge. On every pull "
+            "request, the review that follows the correction of the non-blocking remarks of "
+            "a validated round") in rule
     assert ("covers what changed since that round, not the whole diff (PAT-ADR-0022). It "
             "stays full after a blocking round, when the change since the previous round "
             "goes beyond correcting the remarks it carried, and when the reviewer asks for "
@@ -252,8 +252,10 @@ def test_r9_deferral_goes_to_an_unlinked_companion_epic_with_four_standing_write
     # maintainer decisions of 2026-10-10 on the cases PAT-ADR-0018 leaves open
     assert ("The origin Epic of an issue is its direct parent Epic: an issue under a "
             "sub-Epic uses that sub-Epic") in rule
-    assert ("An issue that has no origin Epic gets no deferral: its non-blocking remarks "
-            "are corrected before the merge and then re-reviewed as stated above") in rule
+    assert ("PAT-ADR-0029 extends it to an issue that has no origin Epic, with `Nits` as "
+            "destination, and amends the maintainer decision of 2026-10-10 that gave such "
+            "an issue no deferral") in rule
+    assert "An issue that has no origin Epic gets no deferral" not in rule
     assert ("That includes an issue whose direct parent is not an Epic: the chain of "
             "parents is not walked up") in rule
     assert ("Checklist (a) and correction rule (c) live in a repository's contract file, so "
@@ -283,7 +285,7 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
     rule = _r9_deferral_rule()
     # the three cases kept from before, then the three that the rule adds
     assert ("These three cases are still corrected before the merge; the rest of this "
-            "rule adds three more") in rule
+            "rule adds two more") in rule
     assert "The first three cases are:" in rule
     assert "fully re-reviewed" not in rule
     assert "Three cases are still corrected" not in rule
@@ -293,15 +295,13 @@ def test_r9_lists_every_case_that_is_corrected_before_the_merge():
                  "- a missing or generic documentation status under R5 and FOUNDRY-ADR-0018, "
                  "which is never a deferrable remark."):
         assert case in rule, case
-    # the three added cases, each stated further in the rule
-    assert ("(the PR of an issue of a companion Epic, an issue with no origin Epic, a "
-            "durable refusal of one of the writes)") in rule
+    # the two added cases (PAT-ADR-0029 moved "no origin Epic" to the deferred side)
+    assert ("(the PR of an issue of a companion Epic, `Nits` included, and a durable "
+            "refusal of one of the writes)") in rule
     assert ("the non-blocking remarks left by the PR of an issue that belongs to a "
-            "companion Epic are corrected before the merge. On every pull request, the "
-            "review that follows the correction of the non-blocking remarks of a validated "
-            "round") in rule
-    assert ("An issue that has no origin Epic gets no deferral: its non-blocking remarks "
-            "are corrected before the merge and then re-reviewed as stated above") in rule
+            "companion Epic, `Nits` included, are corrected before the merge. On every pull "
+            "request, the review that follows the correction of the non-blocking remarks of "
+            "a validated round") in rule
     assert ("durable refusal (the project cannot carry the write, for example it has no "
             "`Epic` type): the coordinator makes no substitute write: the remarks of that "
             "round are corrected before the merge and then re-reviewed as stated above") in rule
@@ -321,6 +321,23 @@ def test_r9_partial_review_on_every_pr_after_a_validated_round_full_after_a_bloc
             "shared verifier") in rule
     assert ("no mechanical check distinguishes a partial from a full review, and the "
             "merge gate and the proof format are not modified") in rule
+
+
+def test_r9_defers_an_issue_with_no_origin_epic_to_nits_and_reads_the_partial_range_from_bytes():
+    """PAT-283 / PAT-ADR-0029 and the byte-checked range of the partial review."""
+    rule = _r9_deferral_rule()
+    assert ("The remarks deferred from an issue with no origin Epic go to the companion Epic "
+            "of the project, named exactly `Nits` (PAT-ADR-0029, which amends the maintainer "
+            "decision of 2026-10-10 that gave such an issue no deferral); the rules of this "
+            "paragraph apply to it unchanged") in rule
+    assert "They apply to `Nits` as to any companion Epic (PAT-ADR-0029)" in rule
+    assert "the cadencer does not yet apply PAT-ADR-0029 to it" in " ".join(
+        _repo_text("AGENTS.md").split())
+    assert ("`routing prepare-review --previous-head <SHA>` records the head the previous "
+            "round saw") in rule
+    assert "`routing read-review ... --since <SHA>` command" in rule
+    assert "the shared verifier supplies only" not in rule
+    assert "does not say that the review is partial" not in rule
 
 
 def test_r9_no_longer_states_the_campaign_special_case_anywhere_in_the_repository():
