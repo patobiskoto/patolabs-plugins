@@ -27,6 +27,7 @@ availability/fallback failures, config (tracker/codehost/URL), tracker auth + re
 project identity/readability, code-host repo resolution, and current-repo → project.
 It also prints a `Hook Python` line first (path, version, source, recorded time, minimum),
 red below the minimum Python (`MINIMUM_PYTHON`, `tooling/python_floor.py`).
+After a PAT-267 re-execution it adds `re-executed from <path> Python <version>`, read from `reexec_from` in `hook-python.json`.
 For GitHub Projects bound to another checkout, doctor verifies the native Project
 identity but reports the issue count as unavailable: the issue search remains bound
 to the current checkout.

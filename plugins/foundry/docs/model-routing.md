@@ -995,7 +995,7 @@ security boundary. Since PAT-265 a fail-open is visible: the hook prints one
 `systemMessage` naming the exception type only (`python_floor.hook_failure_output`,
 `tooling/python_floor.py`), and without a denial; `observe_agent.py` stays silent on its
 nominal path. An interpreter below `MINIMUM_PYTHON` gets the same kind of message
-(`hook_unsupported_output`) before any `foundry` module is imported. An unrouted logical entrypoint has only `Read` and self-stops without
+(`hook_unsupported_output`) before any `foundry` module is imported. Since PAT-267 the hook first tries to re-run itself under a supported interpreter from a closed list (`reexec_if_unsupported`, `tooling/python_floor.py`; list in `README.md`, "Install or upgrade"), and the message and the fail-open stay only when none is found. An unrouted logical entrypoint has only `Read` and self-stops without
 the routed marker. Routed read-only profiles omit editing tools; their defense-in-depth
 Bash guard allows the claimed readers and the explicit advisory postmerge reader
 (`hooks/guard_routed_readonly.py`; [postmerge-review.md](postmerge-review.md)).

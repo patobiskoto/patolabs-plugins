@@ -19,6 +19,7 @@ sys.path.insert(0, str(PLUGIN_ROOT / "tooling"))
 
 import python_floor  # noqa: E402
 
+python_floor.reexec_if_unsupported()  # PAT-267: before any stdin read
 _UNSUPPORTED = python_floor.hook_unsupported_output("observe_agent")
 if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
     print(_UNSUPPORTED)

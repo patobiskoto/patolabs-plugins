@@ -55,6 +55,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 import python_floor  # noqa: E402
 
+python_floor.reexec_if_unsupported()  # PAT-267: before any stdin read
 _UNSUPPORTED = python_floor.hook_unsupported_output("guard_bash")
 if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
     print(_UNSUPPORTED)

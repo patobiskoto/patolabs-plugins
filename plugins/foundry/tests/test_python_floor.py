@@ -23,14 +23,20 @@ HOOKS = PLUGIN_ROOT / "hooks"
 OLD = (3, 9, 6, "final", 0)
 
 # Runs a file as __main__ with sys.version_info replaced by a 3.9 tuple.
+# PAT-267: the fixed absolute paths of the search list are emptied so that a real
+# interpreter of the machine is never found; candidates come from the child PATH only.
 _RUNNER = (
     "import runpy, sys; sys.version_info = (3, 9, 6, 'final', 0); "
+    "sys.path.insert(0, %r); import python_floor; python_floor.FIXED_PATHS = (); "
     "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"
-)
+) % str(Path(__file__).resolve().parents[1] / "tooling")
 
 
-def _run_old(script, *args, stdin="{}", home):
-    env = {"PATH": os.environ["PATH"], "HOME": str(home), "FOUNDRY_DATA": str(home / "data")}
+def _run_old(script, *args, stdin="{}", home, path=None, extra_env=None):
+    empty = home / "empty-bin"
+    empty.mkdir(exist_ok=True)
+    env = {"PATH": str(path or empty), "HOME": str(home), "FOUNDRY_DATA": str(home / "data"),
+           **(extra_env or {})}
     return subprocess.run(
         [sys.executable, "-c", _RUNNER, str(script), *args],
         input=stdin, env=env, capture_output=True, text=True,
@@ -76,6 +82,16 @@ def test_session_start_records_the_interpreter_even_when_unsupported(tmp_path):
     recorded = json.loads((tmp_path / "data" / python_floor.OBSERVED_FILE).read_text())
     assert recorded.pop("recorded_at").endswith("Z")
     assert recorded == {"executable": sys.executable, "version": [3, 9, 6]}
+
+
+def test_cli_reexecutes_when_a_candidate_exists(tmp_path):
+    bin_dir = tmp_path / "bin"
+    log = _fake(bin_dir, "python3.12")
+    result = _run_old(PLUGIN_ROOT / "tooling" / "foundry_cli.py", "doctor",
+                      home=tmp_path, path=bin_dir)
+    assert result.returncode == 0
+    assert log.read_text().splitlines()[0] == (
+        f"ARGS:{PLUGIN_ROOT / 'tooling' / 'foundry_cli.py'} doctor")
 
 
 def test_cli_refuses_under_unsupported_python(tmp_path):
@@ -192,9 +208,161 @@ def test_startup_files_parse_as_python_39():
     files = [PLUGIN_ROOT / "tooling" / "python_floor.py"] + [
         HOOKS / f"{name}.py" for name in (
             "route_agent", "guard_bash", "observe_agent", "session_start",
-            "guard_routed_readonly")]
+            "guard_routed_readonly")] + [PLUGIN_ROOT / "tooling" / "foundry_cli.py"]
     for path in files:
         text = path.read_text(encoding="utf-8")
         ast.parse(text, feature_version=(3, 9))
-        if path.name != "session_start.py":
+        if path.name not in ("session_start.py", "foundry_cli.py"):
             assert "from __future__ import annotations" in text, path.name
+
+
+# -- PAT-267: re-execution under a supported interpreter ---------------------
+
+def _fake(directory, name, reported="3 12", body=None):
+    """Executable that answers the version probe and otherwise logs argv and stdin."""
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / name
+    log = directory / f"{name}.log"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-c" ]; then echo "%s"; exit 0; fi\n'
+        'echo "ARGS:$*" >> "%s"\n'
+        'echo "ENV:$FOUNDRY_PYTHON_REEXEC|$FOUNDRY_PYTHON_REEXEC_FROM" >> "%s"\n'
+        'echo "STDIN:$(/bin/cat)" >> "%s"\n%s'
+        % (reported, log, log, log, body or "echo '{\"ok\": 1}'\n"))
+    script.chmod(0o755)
+    return log
+
+
+def test_reexec_runs_the_same_script_with_arguments_and_stdin_intact(tmp_path):
+    bin_dir = tmp_path / "bin"
+    log = _fake(bin_dir, "python3.12")
+    result = _run_old(HOOKS / "guard_bash.py", "extra", stdin='{"payload": 1}',
+                      home=tmp_path, path=bin_dir)
+    assert result.returncode == 0 and json.loads(result.stdout) == {"ok": 1}
+    lines = log.read_text().splitlines()
+    assert lines[0] == f"ARGS:{HOOKS / 'guard_bash.py'} extra"
+    assert lines[1].startswith("ENV:1|3.9.6 ") and sys.executable in lines[1]
+    assert lines[2] == 'STDIN:{"payload": 1}'
+
+
+def test_reexec_order_prefers_newer_python3n_then_python3(tmp_path):
+    bin_dir = tmp_path / "bin"
+    older = _fake(bin_dir, "python3.11")
+    newer = _fake(bin_dir, "python3.13")
+    plain = _fake(bin_dir, "python3")
+    _run_old(HOOKS / "observe_agent.py", home=tmp_path, path=bin_dir)
+    assert newer.exists() and not older.exists() and not plain.exists()
+
+
+def test_reexec_skips_candidates_that_are_too_old_or_broken(tmp_path):
+    bin_dir = tmp_path / "bin"
+    too_old = _fake(bin_dir, "python3.13", reported="3 10")
+    broken = _fake(bin_dir, "python3.12", body="")
+    (bin_dir / "python3.12").write_text("#!/bin/sh\nexit 3\n")
+    good = _fake(bin_dir, "python3")
+    result = _run_old(HOOKS / "guard_bash.py", home=tmp_path, path=bin_dir)
+    assert result.returncode == 0 and good.exists()
+    assert not too_old.exists() and not broken.exists()
+
+
+def test_no_candidate_keeps_the_2_1_0_message(tmp_path):
+    bin_dir = tmp_path / "bin"
+    _fake(bin_dir, "python3.12", reported="3 9")
+    result = _run_old(HOOKS / "guard_bash.py", home=tmp_path, path=bin_dir)
+    output = json.loads(result.stdout)
+    assert result.returncode == 0 and set(output) == {"systemMessage"}
+    assert "3.9.6" in output["systemMessage"]
+
+
+def test_guard_variable_prevents_a_second_reexec(tmp_path):
+    bin_dir = tmp_path / "bin"
+    log = _fake(bin_dir, "python3.12")
+    result = _run_old(HOOKS / "guard_bash.py", home=tmp_path, path=bin_dir,
+                      extra_env={python_floor.REEXEC_GUARD: "1"})
+    assert not log.exists()
+    assert set(json.loads(result.stdout)) == {"systemMessage"}
+
+
+def test_execv_failure_falls_back_and_cleans_the_environment(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    _fake(bin_dir, "python3.12")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(python_floor, "FIXED_PATHS", ())
+    monkeypatch.setattr(python_floor, "_attempted", False)
+    monkeypatch.delenv(python_floor.REEXEC_GUARD, raising=False)
+    monkeypatch.setattr(python_floor.sys, "version_info", OLD)
+    monkeypatch.setattr(python_floor.os, "execv",
+                        lambda *a: (_ for _ in ()).throw(OSError("denied")))
+    python_floor.reexec_if_unsupported(["x.py"])
+    assert python_floor.REEXEC_GUARD not in os.environ
+    assert python_floor.REEXEC_FROM not in os.environ
+    assert "3.9.6" in python_floor.hook_unsupported_output("h")
+
+
+def test_supported_interpreter_never_searches(monkeypatch):
+    monkeypatch.setattr(python_floor, "_attempted", False)
+    monkeypatch.setattr(python_floor, "_candidates",
+                        lambda: (_ for _ in ()).throw(AssertionError("searched")))
+    python_floor.reexec_if_unsupported(["x.py"])
+
+
+def test_candidates_are_the_closed_list_in_order(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    local = tmp_path / "home" / ".local" / "bin"
+    for directory, name in ((bin_dir, "python3.11"), (bin_dir, "python3.13"),
+                            (bin_dir, "python3"), (local, "python3.12"),
+                            (bin_dir, "python3.99"), (bin_dir, "python3.10")):
+        _fake(directory, name)
+    fixed = _fake(tmp_path / "fixed", "python3")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(python_floor, "FIXED_PATHS", (str(tmp_path / "fixed" / "python3"),))
+    names = [os.path.relpath(p, tmp_path) for p in python_floor._candidates()]
+    assert fixed is not None
+    assert names == [
+        "bin/python3.13", "bin/python3.11", "bin/python3", "fixed/python3",
+        "home/.local/bin/python3.12"]
+
+
+def test_session_start_records_the_reexecuting_interpreter_only_after_exec(tmp_path):
+    bin_dir = tmp_path / "bin"
+    # The "supported" interpreter is the real one, wrapped so the hook runs for real.
+    bin_dir.mkdir()
+    wrapper = bin_dir / "python3.12"
+    wrapper.write_text(
+        '#!/bin/sh\nif [ "$1" = "-c" ]; then echo "3 12"; exit 0; fi\n'
+        'exec "%s" "$@"\n' % sys.executable)
+    wrapper.chmod(0o755)
+    result = _run_old(HOOKS / "session_start.py", home=tmp_path, path=bin_dir, stdin="{}")
+    assert result.returncode == 0
+    recorded = json.loads((tmp_path / "data" / python_floor.OBSERVED_FILE).read_text())
+    assert recorded["executable"] == sys.executable
+    assert recorded["version"] == list(tuple(sys.version_info)[:3])
+    assert recorded["reexec_from"] == {"executable": sys.executable, "version": [3, 9, 6]}
+
+
+def test_read_observed_accepts_records_without_and_with_reexec_from():
+    _record((3, 12, 1))
+    assert python_floor.read_observed()["reexec_from"] is None
+    path = Path(python_floor.data_dir()) / python_floor.OBSERVED_FILE
+    data = json.loads(path.read_text())
+    data["reexec_from"] = {"executable": "/old/python3", "version": [3, 9, 6]}
+    path.write_text(json.dumps(data))
+    assert python_floor.read_observed()["reexec_from"] == {
+        "executable": "/old/python3", "version": (3, 9, 6)}
+    data["reexec_from"] = {"executable": 1, "version": "x"}
+    path.write_text(json.dumps(data))
+    assert python_floor.read_observed()["reexec_from"] is None
+
+
+def test_doctor_shows_where_the_hook_was_re_executed_from():
+    _record((3, 12, 1))
+    assert "re-executed" not in doctor.hook_python_diagnostic()["detail"]
+    path = Path(python_floor.data_dir()) / python_floor.OBSERVED_FILE
+    data = json.loads(path.read_text())
+    data["reexec_from"] = {"executable": "/old/python3", "version": [3, 9, 6]}
+    path.write_text(json.dumps(data))
+    result = doctor.hook_python_diagnostic()
+    assert result["ok"] is True
+    assert "re-executed from /old/python3 Python 3.9.6" in result["detail"]
