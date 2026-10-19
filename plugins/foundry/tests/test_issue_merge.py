@@ -460,6 +460,7 @@ def _merge_with_failing_pull(monkeypatch, tmp_path):
     for cmd in (
         ("git", "init", "-q", "-b", "main"),
         ("git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false",
          "commit", "-q", "--allow-empty", "-m", "init"),
         ("git", "branch", "chore/demo-7-release"),
     ):
