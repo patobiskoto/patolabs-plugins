@@ -148,4 +148,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    _rc = main(sys.argv[1:])
+    if _rc:
+        raise SystemExit(_rc)
