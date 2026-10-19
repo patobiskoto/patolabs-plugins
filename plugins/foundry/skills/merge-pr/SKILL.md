@@ -280,8 +280,8 @@ and returns a verdict on all criteria for the exact diff. The previous round's v
 and remarks are declarations of the coordinator that the reviewer cannot confront with
 any byte. The commit range is read from the bytes: pass `--previous-head <PREVIOUS-HEAD-SHA>`
 to `routing prepare-review` (the head the previous round saw, 40 lowercase hex characters);
-`reviewer-send.txt` then says that the review is partial and gives the exact
-`routing read-review ... --since <PREVIOUS-HEAD-SHA>` command (`foundry:review-pr`). When AC are unchecked (step 1 above), and also when they are all checked on a
+`reviewer-send.txt` then says that the review is partial and gives the `--since <PREVIOUS-HEAD-SHA>`
+argument to add to the `routing read-review` command of the reviewer's role contract (`foundry:review-pr`). When AC are unchecked (step 1 above), and also when they are all checked on a
 tracker whose adapter sets `delivery_receipt_supported` if the issue has a binding
 (`valid_for_merge`, called twice by `merge` in `<foundry-root>/tooling/foundry/issue.py`),
 the merge gate asks for a review proof covering all criteria for the exact diff, so

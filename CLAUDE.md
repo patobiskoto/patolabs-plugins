@@ -291,8 +291,8 @@ and returns a verdict on all criteria for the exact diff. The previous
 round's verdict and remarks are declarations of the coordinator that the reviewer cannot
 confront with any byte. The commit range is read from the bytes (PAT-283):
 `routing prepare-review --previous-head <SHA>` records the head the previous round saw and
-makes `reviewer-send.txt` say that the review is partial and give the exact `routing
-read-review ... --since <SHA>` command, which emits `git diff <SHA>..HEAD` under the claim
+makes `reviewer-send.txt` say that the review is partial and give the `--since <SHA>`
+argument to add to the `routing read-review` command of the reviewer's role contract, which emits `git diff <SHA>..HEAD` under the claim
 checks of the full read (`claimed_review_diff` and `git_range_diff`,
 `plugins/foundry/tooling/foundry/routing.py`) and refuses a `--since` that is not a full
 40-hex ancestor of HEAD (after a rebase the review is full). The coordinator still chooses

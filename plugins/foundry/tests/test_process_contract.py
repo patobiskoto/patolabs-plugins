@@ -335,7 +335,8 @@ def test_r9_defers_an_issue_with_no_origin_epic_to_nits_and_reads_the_partial_ra
         _repo_text("AGENTS.md").split())
     assert ("`routing prepare-review --previous-head <SHA>` records the head the previous "
             "round saw") in rule
-    assert "`routing read-review ... --since <SHA>` command" in rule
+    assert ("argument to add to the `routing read-review` command of the reviewer's role contract"
+            in " ".join(rule.split()))
     assert "the shared verifier supplies only" not in rule
     assert "does not say that the review is partial" not in rule
 

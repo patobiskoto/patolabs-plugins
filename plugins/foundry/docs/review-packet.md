@@ -22,8 +22,8 @@ python3 <foundry-root>/tooling/foundry_cli.py routing prepare-review \
 full 40-hex SHA that must be an ancestor of the local HEAD (`routing.py::validate_since`;
 otherwise `Préparation du paquet de review refusée : --since ...`, exit 2). It makes the
 packet a partial one (PAT-ADR-0022): `coordinates.json` gains a `previous_head` key and
-`reviewer-send.txt` says that the review is partial and gives the exact
-`routing read-review ... --since <SHA>` command. Without it, neither carries a trace of a
+`reviewer-send.txt` says that the review is partial and gives the `--since <SHA>`
+argument to add to the `routing read-review` command of the reviewer's role contract. Without it, neither carries a trace of a
 partial review. The tool checks the ancestry of the SHA, not that it is the head of the
 previous round: that stays the coordinator's choice.
 

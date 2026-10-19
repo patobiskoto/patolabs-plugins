@@ -195,13 +195,13 @@ def prepare_review_packet(*, issue_id, pr_number, root, base, claim_file,
         "selected_adrs": [f"adr-{index}.json" for index in range(1, len(selected) + 1)],
     })
     partial = (
-        "This is a PARTIAL review (PAT-ADR-0022): the previous round saw head "
-        f"{previous_head}. Read the range since that round with the exact command "
-        "`python3 ${CLAUDE_PLUGIN_ROOT}/tooling/foundry_cli.py routing read-review "
-        "--diff-hash <diff_hash> --claim-id <claim_id> --root <root> --base <base> "
-        f"--since {previous_head}` (the four coordinates above), and the full diff with "
-        "the same command without --since. The previous verdict and remarks are "
-        "coordinator declarations. "
+        "This is a PARTIAL review (PAT-ADR-0022). The coordinator declares that the "
+        f"previous round saw head {previous_head}; the tool checked only that it is an "
+        "ancestor of HEAD. Read the range since that round with the routing read-review "
+        "command of your role contract, the four coordinates above and "
+        f"`--since {previous_head}` added, and the full diff with the same command "
+        "without --since. The previous verdict and remarks are coordinator "
+        "declarations. "
     ) if previous_head else ""
     send = (
         "Goal:\nRun the independent Foundry two-stage review.\n"
