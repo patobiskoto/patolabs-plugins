@@ -119,6 +119,9 @@ The command checks the PR's immutable base/head SHAs and the active claim before
 summary. Send `reviewer-send.txt` only to the designated reviewer. That file supplies
 `diff_hash`, `claim_id`, `root`, and `base` and references the packet files. Keep the
 whole directory private; never paste its contents into a public PR, tracker note or log.
+To wait for the CI of the PR before or after the review, use the read-only
+`issue wait-ci <PR-NUMBER>` (exit 0 green, 2 red, 3 timeout; `docs/ci-wait.md`), never
+`gh pr checks` or `gh run watch`.
 The provenance, bounds, file permissions and error output are documented in
 `docs/review-packet.md`. Packet generation makes no tracker or PR writes and grants no
 authority to bypass the independent review or the merge gates.

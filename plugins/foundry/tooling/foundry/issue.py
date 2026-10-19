@@ -3,12 +3,14 @@
 Thin, predictable wrappers over the tracker + code-host adapters. The one piece
 of judgment-free enforcement: `merge` calls the CI gate and REFUSES on non-green.
 
-CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept> [ISSUE-ID] [pr#] [flags]
+CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept|wait-ci> [ISSUE-ID] [pr#] [flags]
      openpr: the issue id is derived from the branch name when omitted;
              --summary-stdin reads the PR summary from stdin (use `< file`).
      merge:  --allow-no-ci asks to waive the gate; granted ONLY when both CI
              sources (check-runs + legacy statuses) are empty AND no active
              check-suite signals CI for the commit (see write.ci_gate/ADR-0002).
+     wait-ci: `wait-ci <PR#> [--timeout=S] [--interval=S]` read-only wait for the
+             ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red, 3 timeout.
      accept: `accept <ID> --human-verdict=accepted --decision-file=<path>` accepts a
              non-code issue without a PR (Linear only, PAT-ADR-0025); `accept <ID>
              --status` reads its state and takes no other flag.
@@ -1370,18 +1372,75 @@ def accept(issue_id, flags=()):
     print(f"✅ {issue_id} → done · acceptation humaine · {issue.acceptance_source}")
 
 
+WAIT_CI_EXIT_GREEN, WAIT_CI_EXIT_RED, WAIT_CI_EXIT_TIMEOUT = 0, 2, 3
+WAIT_CI_DEFAULT_TIMEOUT, WAIT_CI_DEFAULT_INTERVAL = 900, 15
+
+
+def _wait_ci_seconds(flags, name, default):
+    values = [f.split("=", 1)[1] for f in flags if f.startswith(f"--{name}=")]
+    if len(values) > 1:
+        raise SystemExit(f"⛔ --{name} répété.")
+    if not values:
+        return default
+    try:
+        value = float(values[0])
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise SystemExit(f"⛔ --{name}=<secondes> doit être un nombre > 0.")
+    return value
+
+
+def wait_ci(pr_number, flags=(), *, codehost=None, sleep=None, clock=None, now=None):
+    """Read-only: poll `write.ci_gate` on the PR head sha (PAT-274, ADR-0002).
+
+    Never merges nor writes. Returns WAIT_CI_EXIT_GREEN when the gate passes,
+    WAIT_CI_EXIT_RED as soon as a check fails, WAIT_CI_EXIT_TIMEOUT when the
+    delay elapses with checks still pending or absent. The gate is unchanged
+    and the `--allow-no-ci` waiver is never applied here.
+    """
+    import datetime
+    import time
+    timeout = _wait_ci_seconds(flags, "timeout", WAIT_CI_DEFAULT_TIMEOUT)
+    interval = _wait_ci_seconds(flags, "interval", WAIT_CI_DEFAULT_INTERVAL)
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    now = now or (lambda: datetime.datetime.now(datetime.timezone.utc))
+    ch = codehost or foundry.codehost()
+    repo = ch.resolve_repo()
+    pr = ch.get_pr(repo, int(pr_number))
+    deadline = clock() + timeout
+    while True:
+        gate = write.ci_gate(ch, repo, pr.sha, allow_no_ci=False)
+        observed = now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        if gate["passed"]:
+            verdict, code = "green", WAIT_CI_EXIT_GREEN
+        elif gate["failing"]:
+            verdict, code = "red", WAIT_CI_EXIT_RED
+        elif clock() + interval > deadline:
+            verdict, code = "timeout", WAIT_CI_EXIT_TIMEOUT
+        else:
+            sleep(interval)
+            continue
+        print(f"verdict={verdict} pr={pr_number} sha={pr.sha} observed_at={observed}")
+        print(f"reason={gate['reason']}")
+        print(f"in_progress={gate['pending']}")
+        print(f"failed={gate['failing']}")
+        return code
+
+
 def _default_branch():
     return registry.default_branch() or "main"
 
 
 _KNOWN_FLAGS = {"start": set(), "openpr": {"--summary-stdin"},
                 "merge": {"--allow-no-ci", "--allow-incomplete-ac"},
-                "close-epic": set(), "accept": set()}
+                "close-epic": set(), "accept": set(), "wait-ci": set()}
 _ACCEPT_ALLOWED = "--decision-file=<chemin>, --human-verdict=<verdict>, --status"
 _CLOSE_EPIC_FLAG_PREFIXES = ("--human-verdict=", "--accept-override=", "--accept-dropped=")
 _CLOSE_EPIC_ALLOWED = ("--accept-dropped=ID[,ID...], --accept-override=ID[,ID...], "
                        "--human-verdict=<verdict>, --status")
-_ALLOWED_TEXT = {"accept": _ACCEPT_ALLOWED, "close-epic": _CLOSE_EPIC_ALLOWED}
+_ALLOWED_TEXT = {"wait-ci": "--timeout=<secondes>, --interval=<secondes>", "accept": _ACCEPT_ALLOWED, "close-epic": _CLOSE_EPIC_ALLOWED}
 
 if __name__ == "__main__":
     cmd, rest = sys.argv[1], sys.argv[2:]
@@ -1398,8 +1457,12 @@ if __name__ == "__main__":
          if flag == "--status" or flag.startswith(_ACCEPT_FLAG_PREFIXES)}
         if cmd == "accept" else set()
     )
+    wait_ci_flags = (
+        {flag for flag in flags if flag.startswith(("--timeout=", "--interval="))}
+        if cmd == "wait-ci" else set()
+    )
     unknown = (
-        flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
+        flags - wait_ci_flags - _KNOWN_FLAGS.get(cmd, set()) - reason_flags - epic_verdict_flags
         - accept_flags
     )
     if unknown:  # a misspelled flag must fail loudly, not run as a normal gated call
@@ -1408,5 +1471,7 @@ if __name__ == "__main__":
     args = [a for a in rest if not a.startswith("--")]
     if cmd == "accept":  # keep repeated flags: a repeated verdict or file is refused
         flags = [a for a in rest if a.startswith("--")]
+    if cmd == "wait-ci":
+        sys.exit(wait_ci(*args, flags=flags))
     {"start": start, "openpr": openpr, "merge": merge,
      "close-epic": close_epic, "accept": accept}[cmd](*args, flags=flags)
