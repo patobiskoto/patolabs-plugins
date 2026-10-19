@@ -11,9 +11,11 @@ a production-looking target and an instance that holds a project it did not crea
 reads the user's configuration or registry.  Without the URL every test is skipped.
 
 A need DevHub (or the adapter) does not cover yet is a ``@gap`` test: strict ``xfail``
-carrying the need id.  It is never a pass; when the gap closes the test XPASSes, which
-strict mode reports as a failure, so the owner must turn it into a plain ``@need`` test and
-update the page.  Run it with the command in ``docs/devhub-requirements.md``.
+carrying the need id and ``raises=`` the exact exception of the current gap, so a setup
+failure or another exception is reported as a failure or an error, never ``xfailed``.  It
+is never a pass; when the gap closes the test XPASSes, which strict mode reports as a
+failure, so the owner must turn it into a plain ``@need`` test and update the page.  Run
+it with the command in ``docs/devhub-requirements.md``.
 """
 from __future__ import annotations
 
@@ -34,7 +36,13 @@ from foundry.models import (
     Project,
     TransitionContext,
 )
-from foundry.trackers.base import TrackerConflictError
+from foundry.trackers.base import (
+    BodyUpdateUnavailableError,
+    ProjectProvisioningUnavailableError,
+    ReleaseScopeUnavailableError,
+    TrackerCapabilityUnavailableError,
+    TrackerConflictError,
+)
 from foundry.trackers.devhub import DevHubTracker, DevHubTrackerError
 
 pytestmark = [pytest.mark.integration, pytest.mark.devhub_live]
@@ -48,12 +56,17 @@ def need(need_id: str):
     return decorate
 
 
-def gap(need_id: str, owner: str, reason: str):
-    """Mark a test as the expected-red proof of one need (strict xfail, never a pass)."""
+def gap(need_id: str, owner: str, reason: str, *, raises):
+    """Mark a test as the expected-red proof of one need (strict xfail, never a pass).
+
+    ``raises`` is the exact exception the current adapter or server answer produces, so
+    an unrelated failure (gate refusal at setup, signature bug) is a failure or an error,
+    never xfailed.
+    """
     def decorate(function):
         function.devhub_need = need_id
         return pytest.mark.xfail(
-            strict=True, reason=f"{need_id} [{owner}] {reason}",
+            strict=True, raises=raises, reason=f"{need_id} [{owner}] {reason}",
         )(function)
     return decorate
 
@@ -81,7 +94,10 @@ def suite() -> Suite:
         pytest.fail(f"live DevHub suite refused: {refusal}", pytrace=False)
     key = gate.new_project_key()
     repository = f"github.com/foundry-live/{key.lower()}"
-    project = tracker.provision_project("Foundry live conformance", key, repository)
+    try:
+        project = tracker.provision_project("Foundry live conformance", key, repository)
+    except DevHubTrackerError as error:  # never let a setup failure look like a gap
+        pytest.fail(f"live DevHub suite setup failed ({error.code})", pytrace=False)
     return Suite(tracker=tracker, project=project, repository=repository, config=config)
 
 
@@ -461,7 +477,7 @@ def test_dhn_20_acceptance_sync_patches_only_with_the_expected_body(suite):
         )
 
 
-@gap("DHN-21", "adapter", "devhub.py defines no update_body: BodyUpdateUnavailableError")
+@gap("DHN-21", "adapter", "devhub.py defines no update_body: BodyUpdateUnavailableError", raises=BodyUpdateUnavailableError)
 def test_dhn_21_arbitrary_body_update_is_checked_against_the_expected_body(suite):
     tracker = suite.tracker
     body, replacement = "before\n", "after\n"
@@ -501,7 +517,7 @@ def test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt(suite
     assert tracker.get_epic_closure(suite.project, epic.id) is None
 
 
-@gap("DHN-24", "adapter", "write.py refuses --accept-dropped unless the adapter sets epic_dropped_closure_supported (PAT-ADR-0017); devhub.py does not")
+@gap("DHN-24", "adapter", "write.py refuses --accept-dropped unless the adapter sets epic_dropped_closure_supported (PAT-ADR-0017); devhub.py does not", raises=AssertionError)
 def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
     tracker = suite.tracker
     epic = _create(suite, _unique("live dropped closure"), "", Type="Epic")
@@ -514,7 +530,7 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
     assert tracker.close_epic(suite.project, receipt).receipt == receipt
 
 
-@gap("DHN-25", "adapter", "no typed acceptance-override receipt: TrackerCapabilityUnavailableError")
+@gap("DHN-25", "adapter", "no typed acceptance-override receipt: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
     tracker = suite.tracker
     issue = _create(suite, _unique("live override"), "- [ ] unchecked")
@@ -526,7 +542,7 @@ def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
     assert tracker.acceptance_override_projection_supported is True
 
 
-@gap("DHN-26", "adapter", "no accept_issue (PAT-ADR-0025): TrackerCapabilityUnavailableError")
+@gap("DHN-26", "adapter", "no accept_issue (PAT-ADR-0025): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suite):
     issue = _create(suite, _unique("live human acceptance"), "- [ ] decided offline")
     accepted = suite.tracker.accept_issue(
@@ -535,7 +551,7 @@ def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suit
     assert accepted.state == "done"
 
 
-@gap("DHN-27", "server", "workflow.ts forbids dropped from in-progress and review")
+@gap("DHN-27", "server", "workflow.ts forbids dropped from in-progress and review", raises=DevHubTrackerError)
 def test_dhn_27_started_issue_can_be_abandoned(suite):
     issue = _create(suite, _unique("live abandon"), "")
     _start(suite, issue.id)
@@ -543,7 +559,7 @@ def test_dhn_27_started_issue_can_be_abandoned(suite):
     assert suite.tracker.get_issue(issue.id).state == "dropped"
 
 
-@gap("DHN-28", "server", "workflow.ts has no in-progress or review to backlog edge")
+@gap("DHN-28", "server", "workflow.ts has no in-progress or review to backlog edge", raises=DevHubTrackerError)
 def test_dhn_28_started_issue_can_return_to_backlog(suite):
     issue = _create(suite, _unique("live return"), "")
     _start(suite, issue.id)
@@ -591,7 +607,7 @@ def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(s
     assert statuses[adr.id] == "superseded"
 
 
-@gap("DHN-32", "adapter", "devhub.py defines no supersede_adr: TrackerCapabilityUnavailableError")
+@gap("DHN-32", "adapter", "devhub.py defines no supersede_adr: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
     old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
@@ -601,7 +617,7 @@ def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     assert statuses[old.id] == "superseded"
 
 
-@gap("DHN-33", "adapter+server", "no link_adr_issue; server freezes linked_issue_ids once decided (DEVHUB-73)")
+@gap("DHN-33", "adapter+server", "no link_adr_issue; server freezes linked_issue_ids once decided (DEVHUB-73)", raises=TrackerCapabilityUnavailableError)
 def test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation(suite):
     tracker = suite.tracker
     adr = _new_adr(suite, "live adr link")
@@ -623,7 +639,7 @@ def _issue_snapshot(source_ref: str, title: str, body: str) -> dict:
     }
 
 
-@gap("DHN-34", "adapter+server", "no migration_* port and no source_ref coordinate on issues")
+@gap("DHN-34", "adapter+server", "no migration_* port and no source_ref coordinate on issues", raises=TrackerCapabilityUnavailableError)
 def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     tracker = suite.tracker
     ref = f"linear:issue:PAT-{secrets.randbelow(10**6) + 1000}"
@@ -638,7 +654,7 @@ def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     assert [item.id for item in tracker.search(suite.project, title)] == [first.id]
 
 
-@gap("DHN-35", "adapter", "no migration_link_issue: TrackerCapabilityUnavailableError")
+@gap("DHN-35", "adapter", "no migration_link_issue: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
     tracker = suite.tracker
     refs = [f"linear:issue:PAT-{secrets.randbelow(10**6) + 2000}" for _ in range(2)]
@@ -652,7 +668,7 @@ def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
     assert _has_link(tracker.get_issue(imported[0].id), "depends-on", imported[1].id)
 
 
-@gap("DHN-36", "adapter+server", "no ADR import; server forces <KEY>-ADR-NNNN ids")
+@gap("DHN-36", "adapter+server", "no ADR import; server forces <KEY>-ADR-NNNN ids", raises=TrackerCapabilityUnavailableError)
 def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite):
     tracker = suite.tracker
     adr_id = "FOUNDRY-ADR-0026"
@@ -670,7 +686,7 @@ def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite)
 
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
 
-@gap("DHN-37", "adapter", "no reconcile_issue_creation: TrackerCapabilityUnavailableError")
+@gap("DHN-37", "adapter", "no reconcile_issue_creation: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite):
     title, body = _unique("live reconcile"), "body"
     issue = _create(suite, title, body)
@@ -682,7 +698,7 @@ def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite)
     assert len(suite.tracker.search(suite.project, title)) == before
 
 
-@gap("DHN-38", "adapter+server", "append_only_lifecycle_supported is False")
+@gap("DHN-38", "adapter+server", "append_only_lifecycle_supported is False", raises=AssertionError)
 def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     assert suite.tracker.append_only_lifecycle_supported is True
     assert "append_only_lifecycle_supported" not in campaign_cadence.missing_capabilities(
@@ -690,7 +706,7 @@ def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     )
 
 
-@gap("DHN-39", "adapter+server", "no read_release_scope: ReleaseScopeUnavailableError")
+@gap("DHN-39", "adapter+server", "no read_release_scope: ReleaseScopeUnavailableError", raises=ReleaseScopeUnavailableError)
 def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(suite):
     scope = suite.tracker.read_release_scope(suite.project, "live-release")
     assert scope.release == "live-release" and scope.project_key == suite.project.key
@@ -698,6 +714,11 @@ def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(sui
 
 # --- Foundry-side prerequisite --------------------------------------------------------
 
-@gap("DHN-40", "foundry", "registry._V1_TRACKERS excludes devhub; the V1 contract lists it for contrast only")
+@gap("DHN-40", "foundry+adapter", "registry._V1_TRACKERS excludes devhub (registry.py); the V1 contract lists it for contrast only", raises=AssertionError)
 def test_dhn_40_devhub_is_a_v1_tracker_of_the_repository(suite):
     assert "devhub" in registry._V1_TRACKERS
+
+
+@gap("DHN-41", "adapter", "devhub.py inherits verify_project_identity: ProjectProvisioningUnavailableError; resolve_checkout_project stays on the basename pilot path", raises=ProjectProvisioningUnavailableError)
+def test_dhn_41_repository_bootstrap_reads_back_the_project_identity(suite):
+    assert suite.tracker.verify_project_identity(suite.project) is True
