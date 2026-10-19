@@ -37,8 +37,8 @@ Consequences for an upgrade:
   R1 deny and the PAT-215 `campaign-approval approve` deny, and every hook call prints
   a visible `systemMessage` instead (README "Python" paragraph). This is the risk of the
   release: on a host whose `python3` is older, those denials are inactive until the
-  interpreter is fixed. Whether the hooks worked under 3.10 before this change is unknown (changelog
-  entry of PAT-265).
+  interpreter is fixed. Whether the hooks worked under 3.10 before this change is
+  unknown (changelog entry of PAT-265).
 - `tooling/foundry_cli.py` exits non-zero under an older interpreter, so a script that
   runs it with a `python3` below 3.11 now fails where it may have run before. Whether it
   ran correctly under 3.10 is unknown.
@@ -96,8 +96,7 @@ version, which this release does not change.
 - **Rollback to an earlier plugin version is an untried procedure** (PAT-162); see
   [migration-2.1.0.md](migration-2.1.0.md).
 - **Sandbox of campaign sessions, campaign cost, Codex not wired into campaign
-  effects:** unchanged from the 2.0.0 note
-  ([release-2.0.0.md](release-2.0.0.md), "What this release does not claim" and "Known
+  effects:** unchanged from the 2.0.0 note ([release-2.0.0.md](release-2.0.0.md), "Known
   limits"); this release does not change them.
 
 ## Release phases and evidence

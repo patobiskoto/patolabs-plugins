@@ -7,7 +7,7 @@
       "changelog_sha256": "91f95e54e11ac89f212fd7205173715ad129692f64c12894c252e1f01a4b2787",
       "documents": {
         "docs/migration-2.1.0.md": "6af918f4f050db988f2bf7370285d7adb769128efbf75fd49beeb2b8a724344b",
-        "docs/release-2.1.0.md": "cba03b183df5458be2659d4a22c61c37b1b16d17750a1f53642a74ff099cbb18"
+        "docs/release-2.1.0.md": "1f7de10ac7f1af3e36ac651ffcd77881724086e6dd2709bd4b836b05b6ff3aef"
       }
     },
     "2.0.0": {
