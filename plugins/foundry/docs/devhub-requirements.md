@@ -38,9 +38,8 @@ exclude it, and the runs without `-m` keep the `pytest.ini` default
 `not integration` (for example `-m "not historical_fixture"`) replaces the `pytest.ini`
 default and collects it: skipped when `DEVHUB_LIVE_URL` is unset, but run against that URL
 (writes included) when the four `DEVHUB_LIVE_*` variables are exported, so unset them for
-such a run. The suite is
-not part of `-m tracker_conformance` (`docs/tracker-conformance.md`): that suite is
-deterministic over fake transports, this one needs a server.
+such a run. The suite is not part of `-m tracker_conformance` (`docs/tracker-conformance.md`):
+that suite is deterministic over fake transports, this one needs a server.
 
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
 expected red, listed below with its owner) that raised the exception its `gap` declares in

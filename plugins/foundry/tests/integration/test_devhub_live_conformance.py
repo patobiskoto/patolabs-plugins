@@ -12,9 +12,9 @@ reads the user's configuration or registry.  Without the URL every test is skipp
 
 A need DevHub (or the adapter) does not cover yet is a ``@gap`` test: strict ``xfail``
 carrying the need id and ``raises=`` the exact exception of the current gap, so a setup
-failure or another exception is reported as a failure.  It is never a pass; when the gap closes the test XPASSes, which
-strict mode reports as a failure, so the owner must turn it into a plain ``@need`` test and
-update the page.  Run it with the command in ``docs/devhub-requirements.md``.
+failure or another exception is reported as a failure or an error, never ``xfailed``.  It
+is never a pass; when the gap closes the test XPASSes, which strict mode reports as a
+failure, so the owner must turn it into a plain ``@need`` test and update the page.  Run it with the command in ``docs/devhub-requirements.md``.
 """
 from __future__ import annotations
 
