@@ -1158,7 +1158,8 @@ def _linear_pat_201_readback_body(body: str, **model: bool) -> str | None:
         if source.count(before) != 1:
             raise ValueError("pat-201 rendering source is invalid")
         source = source.replace(before, after, 1)
-    rendered = _linear_markdown_readback_body(source, **model)
+    # The pinned source holds a domain-like name the profile itself models (PAT-284).
+    rendered = _linear_markdown_readback_body(source, domain_check=False, **model)
     for before, after in post:
         if rendered.count(before) != 1:
             raise ValueError("pat-201 rendering source is invalid")
@@ -1580,7 +1581,105 @@ def _linear_nonfenced_markdown_readback(fragment: str) -> str:
     if _MULTILINE_LINK_DESTINATION.search(masked) is not None:
         raise ValueError("unsupported multiline inline Markdown in ADR body")
     _reject_multiline_link_labels(masked)
-    return rendered
+    return _linear_autolinked_agents_references(rendered)
+
+
+# PAT-284: Linear autolinks the reference `AGENTS.md#R<n>` as a domain.  Observed on
+# the orphan PAT-ADR-0029 Document (docs/linear-adr-body-guide.md): the bare token
+# before a space became `[AGENTS.md#R9](<http://AGENTS.md#R9>)`; the parenthesised
+# form is the PAT-209 issue observation (`_issue_creation_rendering`).  Nothing else
+# is modelled: the token must end the line or precede a space, or sit alone in
+# parentheses.
+_AGENTS_REFERENCE = re.compile(
+    r"(?<!\S)AGENTS\.md#R[0-9]+(?=[ ]|\r?$)"
+    r"|(?<![\w\\\]])\(AGENTS\.md#R[0-9]+\)",
+    re.MULTILINE,
+)
+_DOMAIN_LIKE_REFERENCE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\.md(?![A-Za-z0-9_])")
+
+
+def _modelled_agents_references(masked: str):
+    """Yield the `_AGENTS_REFERENCE` matches in an observed context only.
+
+    Not observed, hence left unmodelled (and refused by the domain check): a
+    token inside a link label, on a link reference definition line, or on a line
+    indented by 4 or more columns (possible indented code).
+    """
+    for match in _AGENTS_REFERENCE.finditer(masked):
+        start = masked.rfind("\n", 0, match.start()) + 1
+        end = masked.find("\n", match.end())
+        end = len(masked) if end < 0 else end
+        line = masked[start:end]
+        before = masked[start : match.start()]
+        after = masked[match.end() : end]
+        # Look past list-item and blockquote prefixes: the content they carry
+        # can still be a reference definition or indented code.
+        while True:
+            container = re.match(r" {0,3}(?:>[ ]?|(?:[*+-]|[0-9]{1,9}[.)])[ \t])", line)
+            if container is None:
+                break
+            line = line[container.end() :]
+        indentation = line[: len(line) - len(line.lstrip(" \t"))]
+        if (
+            len(indentation.expandtabs(4)) >= 4
+            or re.match(r" {0,3}\[[^\]]*\]:", line)
+            or ("[" in before and "]" in after)
+        ):
+            continue
+        yield match
+
+
+def _linear_autolinked_agents_references(fragment: str) -> str:
+    """Wrap each modelled `AGENTS.md#R<n>` outside code spans, as Linear stores it."""
+    masked = _masked_backtick_spans(fragment, preserve_newlines=True)
+    out = []
+    last = 0
+    for match in _modelled_agents_references(masked):
+        token = match[0]
+        inner = token[1:-1] if token.startswith("(") else token
+        link = f"[{inner}](<http://{inner}>)"
+        out.append(fragment[last : match.start()])
+        out.append(f"({link})" if token.startswith("(") else link)
+        last = match.end()
+    out.append(fragment[last:])
+    return "".join(out)
+
+
+def _refuse_unmodelled_domain_references(body: str) -> None:
+    """PAT-284: refuse a `*.md` reference whose Linear rendering is not modelled.
+
+    Fenced blocks and code spans are left alone; the modelled `AGENTS.md#R<n>`
+    forms are removed before the scan.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    fence = None
+    for source_line in body.splitlines(keepends=True):
+        line = source_line.removesuffix("\n").removesuffix("\r")
+        if fence is not None:
+            if _markdown_fence_closing(line, *fence):
+                fence = None
+            continue
+        opening = _markdown_fence_opening(line)
+        if opening is not None:
+            fence = opening
+            chunks.append("".join(current))
+            current = []
+            continue
+        current.append(source_line)
+    chunks.append("".join(current))
+    for chunk in chunks:
+        masked = _masked_backtick_spans(chunk, preserve_newlines=True)
+        for match in reversed(list(_modelled_agents_references(masked))):
+            masked = (
+                masked[: match.start()] + "x" * len(match[0]) + masked[match.end() :]
+            )
+        found = _DOMAIN_LIKE_REFERENCE.search(masked)
+        if found is not None:
+            raise ValueError(
+                f"unsupported domain-like reference {found[0]!r} in ADR body; "
+                "put it in a code span"
+            )
 
 
 # PAT-94: Linear re-serializes a loose list.  One form is observed; see
@@ -2168,6 +2267,7 @@ def _linear_markdown_readback_body(
     strict: bool = False,
     observed_lists: bool = True,
     observed_paragraph_lists: bool = True,
+    domain_check: bool = True,
 ) -> str:
     """Model only closed, observed Linear Markdown serializations.
 
@@ -2267,6 +2367,8 @@ def _linear_markdown_readback_body(
             return qualified
     if strict:
         _linear_observed_list_blank_lines(body, strict=True)
+        if domain_check:
+            _refuse_unmodelled_domain_references(body)
     if observed_lists or strict:
         # The pre-PAT-94 model stays as it was, so a Document stored under it is
         # still read (`_linear_markdown_readback_bodies` is additive).
@@ -2330,9 +2432,10 @@ def _preflight_adr_body_readback(
                 body, allow_foundry_adr_0001=allow_foundry_adr_0001, strict=True
             )
     except ValueError as exc:
-        raise TrackerConflictError(
-            "Linear ADR body has unsupported Markdown serialization"
-        ) from exc
+        message = "Linear ADR body has unsupported Markdown serialization"
+        if str(exc).startswith("unsupported domain-like reference"):
+            message = f"{message}: {exc}"
+        raise TrackerConflictError(message) from exc
 
 
 def _is_stored_adr_body(previous: tuple[dict, dict], body: str) -> bool:
