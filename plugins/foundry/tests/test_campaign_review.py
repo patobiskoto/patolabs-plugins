@@ -580,6 +580,39 @@ def test_a_refused_carry_means_a_full_review(env):
     assert len(reviewer_calls(env.world)) == 2 and "FULL review" in reviewer_calls(env.world)[-1][3]
 
 
+def test_an_unchanged_base_with_a_new_head_tries_the_carry_first(env):
+    """PAT-294 (the PAT-288 case): the base did not move, the head did."""
+    to_review(env)
+    roomy(env)
+    env.world.reviews += [result_text(), result_text()]
+    step(env)
+    sessions = len([c for c in env.world.calls if c[0][0] == "claude"])
+    pr = env.world.prs[-1]
+    pr.sha = "7" * 40  # same base
+    env.world.heads["APP-2"] = "7" * 40
+    env.world.proof, env.world.carry_ok = "none", True
+    result = step(env)
+    carry, = env.world.carried
+    assert carry[carry.index("--base") + 1] == carry[carry.index("--from-base") + 1] == "b" * 40
+    assert result.effect["review"]["carried"] is True
+    assert len([c for c in env.world.calls if c[0][0] == "claude"]) == sessions
+
+
+def test_a_refused_carry_on_an_unchanged_base_means_a_full_review(env):
+    to_review(env)
+    roomy(env)
+    env.world.reviews += [result_text(), result_text()]
+    step(env)
+    pr = env.world.prs[-1]
+    pr.sha = "7" * 40
+    env.world.heads["APP-2"] = "7" * 40
+    env.world.proof = "none"  # carry_ok stays False
+    result = step(env)
+    assert len(env.world.carried) == 1
+    assert result.effect["review"]["carried"] is False
+    assert len(reviewer_calls(env.world)) == 2 and "FULL review" in reviewer_calls(env.world)[-1][3]
+
+
 def test_no_carry_is_tried_after_a_correction_or_with_remarks_to_fix():
     def done(kind, head, **review):
         review = {"verdict": "validated", **review} if kind == "review" else review
@@ -593,7 +626,8 @@ def test_no_carry_is_tried_after_a_correction_or_with_remarks_to_fix():
 
     clean = [done("review", "1" * 40)]
     assert cr.review_mode(clean, "E", "T-1", "2" * 40, "c" * 40)["mode"] == "carry"
-    assert cr.review_mode(clean, "E", "T-1", "2" * 40, "b" * 40)["mode"] == "full"  # same base
+    assert cr.review_mode(clean, "E", "T-1", "2" * 40, "b" * 40)["mode"] == "carry"  # PAT-294: same base
+    assert cr.review_mode(clean, "E", "T-1", "1" * 40, "c" * 40)["mode"] == "full"  # same head
     marked = [done("review", "1" * 40, fix_before_merge=1)]
     assert cr.review_mode(marked, "E", "T-1", "2" * 40, "c" * 40)["mode"] == "full"
     corrected = clean + [done("correct", "2" * 40)]
