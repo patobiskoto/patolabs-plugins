@@ -2365,7 +2365,10 @@ class AcceptanceProofStore:
                 # branch, nothing for PAT-ADR-0021 to carry, even when the head moved to the
                 # same tree.  With an unchanged base the reviewed head did not contain
                 # (PAT-288), the checks below apply as usual; the "shared paths" set is then
-                # empty by construction (``from_base`` to ``base`` changes nothing).
+                # empty by construction (``from_base`` to ``base`` changes nothing), so a
+                # main change to a PR file in that base is refused by the diff-hash identity
+                # check, not by that set (observed: ``tests/test_review_carry.py``,
+                # ``test_an_unmerged_base_changing_a_file_of_the_pr_is_refused``).
                 raise RoutingConfigError("report de preuve AC : rien à reporter.")
             if not _git_is_ancestor(project_root, from_base, base):
                 raise RoutingConfigError(
