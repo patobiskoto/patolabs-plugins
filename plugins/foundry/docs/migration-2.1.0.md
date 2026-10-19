@@ -49,8 +49,9 @@ It must report 3.11 or later. If it does not:
 After upgrading, `foundry_cli.py doctor` prints a `Hook Python` line (path, version,
 source, minimum), read from the record that a `SessionStart` hook wrote, else from
 `python3` on doctor's own `PATH`; the second source is not proof of the host's own
-`PATH` (`hook_python_diagnostic`, `tooling/foundry/doctor.py`). Only a line whose source
-says it was observed by a hook shows the interpreter the host actually used. How Codex
+`PATH` (`hook_python_diagnostic`, `tooling/foundry/doctor.py`). A line whose source says
+it was observed by a hook shows the interpreter of the last `SessionStart` hook of any
+host and repository (README "Python" paragraph), not necessarily this host's. How Codex
 displays the hook `systemMessage` has not been observed.
 
 No project data, routing policy, credential or configuration key needs to change.
@@ -188,7 +189,7 @@ bindings.
 ## Known unknowns carried by this release
 
 - **PAT-162:** plugin rollback: untried, see above.
-- **Hook behaviour under Python 3.10 or older before this release:** unknown (changelog
-  entry of PAT-265).
+- **Hook behaviour under Python 3.10 before this release:** unknown (changelog entry of
+  PAT-265).
 - **Codex display of the hook `systemMessage`:** not observed (README "Python"
   paragraph).
