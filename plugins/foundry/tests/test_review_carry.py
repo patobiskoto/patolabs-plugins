@@ -55,7 +55,8 @@ def _commit(root: Path, name: str, text: str, message: str) -> str:
 
 class Scenario:
     def __init__(self, tmp_path: Path, *, quality: str = "mergeable", verdict: str = "pass",
-                 pr_change=None, unmerged_base: bool = False):
+                 pr_change=None, unmerged_base: bool = False,
+                 unmerged_edit: tuple[str, str] = ("b.txt", "b changed on main\n")):
         self.root = tmp_path / "repo"
         self.root.mkdir(parents=True)
         self.state = tmp_path / "state"
@@ -76,7 +77,7 @@ class Scenario:
         self.old_head = git_head(self.root)
         if unmerged_base:
             _git(self.root, "checkout", "main")
-            self.old_base = _commit(self.root, "b.txt", "b changed on main\n", "main b")
+            self.old_base = _commit(self.root, *unmerged_edit, "main unmerged edit")
             _git(self.root, "checkout", "feature")
         diff = git_diff(self.root, self.old_base)
         self.old_hash = review_diff_hash(diff)
@@ -478,6 +479,7 @@ def _scenario_with_unmerged_base(tmp_path: Path) -> Scenario:
     # PAT-288: the PR is reviewed against a base the branch does not contain yet.
     return Scenario(tmp_path, unmerged_base=True)
 
+
 def test_an_unchanged_base_not_contained_in_the_reviewed_head_is_carried(tmp_path):
     scenario = _scenario_with_unmerged_base(tmp_path)
     assert subprocess.run(
@@ -505,4 +507,34 @@ def test_an_unchanged_base_not_contained_is_refused_when_head_is_not_the_clean_m
     _git(scenario.root, "add", "e.txt")
     _git(scenario.root, "commit", "-m", "extra after merge")
     with pytest.raises(RoutingConfigError, match="arbre de HEAD"):
+        scenario.carry()
+
+
+def test_an_unmerged_base_changing_a_file_of_the_pr_is_refused(tmp_path):
+    # PAT-290: main changes a file of the PR (clean hunk, no conflict) in the unchanged base.
+    text = "".join(f"line {n}\n" for n in range(1, 21)).replace("line 20\n", "line 20 main\n")
+    scenario = Scenario(tmp_path, unmerged_base=True, unmerged_edit=("a.txt", text))
+    scenario.merge_main()
+    # Observed: refused by the diff-hash identity check (the diff of the merged head against
+    # the unchanged base now carries main's hunk), not by the "shared paths" check.
+    with pytest.raises(RoutingConfigError, match="le diff a changé"):
+        scenario.carry()
+
+
+def test_replaying_a_carry_of_an_unmerged_base_returns_carried_false(tmp_path):
+    scenario = _scenario_with_unmerged_base(tmp_path)
+    scenario.merge_main()
+    first = scenario.carry()
+    assert first["carried"] is True
+    after_first = scenario.snapshot()
+    second = scenario.carry()
+    assert second["carried"] is False
+    assert second["proof_id"] == first["proof_id"]
+    assert scenario.snapshot() == after_first
+
+
+def test_an_unmerged_base_with_an_unchanged_head_is_refused(tmp_path):
+    scenario = _scenario_with_unmerged_base(tmp_path)
+    # No integration happened: head is the reviewed head and still lacks the base.
+    with pytest.raises(RoutingConfigError, match="n'est pas ancêtre de HEAD"):
         scenario.carry()
