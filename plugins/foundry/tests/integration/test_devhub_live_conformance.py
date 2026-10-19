@@ -1,0 +1,703 @@
+"""PAT-296: live DevHub conformance suite against a disposable instance.
+
+Foundry owns the need as executable tests; ``docs/devhub-requirements.md`` is the single
+exchange page (need, test, status, questions).  Every test below carries one need id
+(``@need`` or ``@gap``) and the page lists the same ids: ``tests/test_devhub_requirements.py``
+checks that the two stay equal.
+
+Safety (``tests/devhub_live_gate.py``): the suite is skipped unless ``DEVHUB_LIVE_URL``,
+the exact ``DEVHUB_LIVE_CONFIRM`` phrase and dedicated credentials are exported; it refuses
+a production-looking target and an instance that holds a project it did not create; it never
+reads the user's configuration or registry.  Without the URL every test is skipped.
+
+A need DevHub (or the adapter) does not cover yet is a ``@gap`` test: strict ``xfail``
+carrying the need id.  It is never a pass; when the gap closes the test XPASSes, which
+strict mode reports as a failure, so the owner must turn it into a plain ``@need`` test and
+update the page.  Run it with the command in ``docs/devhub-requirements.md``.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import secrets
+import time
+from dataclasses import dataclass
+
+import pytest
+
+import devhub_live_gate as gate
+from foundry import campaign_cadence, registry
+from foundry.models import (
+    EpicClosureChild,
+    EpicClosureReceipt,
+    Project,
+    TransitionContext,
+)
+from foundry.trackers.base import TrackerConflictError
+from foundry.trackers.devhub import DevHubTracker, DevHubTrackerError
+
+pytestmark = [pytest.mark.integration, pytest.mark.devhub_live]
+
+
+def need(need_id: str):
+    """Mark a test as the proof of one need expected green."""
+    def decorate(function):
+        function.devhub_need = need_id
+        return function
+    return decorate
+
+
+def gap(need_id: str, owner: str, reason: str):
+    """Mark a test as the expected-red proof of one need (strict xfail, never a pass)."""
+    def decorate(function):
+        function.devhub_need = need_id
+        return pytest.mark.xfail(
+            strict=True, reason=f"{need_id} [{owner}] {reason}",
+        )(function)
+    return decorate
+
+
+@dataclass(frozen=True)
+class Suite:
+    tracker: DevHubTracker
+    project: Project
+    repository: str
+    config: gate.LiveConfig
+
+
+@pytest.fixture(scope="session")
+def suite() -> Suite:
+    try:
+        config, reason = gate.read_environment()
+    except gate.GateRefusal as refusal:
+        pytest.fail(f"live DevHub suite refused: {refusal}", pytrace=False)
+    if config is None:
+        pytest.skip(reason)
+    tracker = gate.build_tracker(config)
+    try:
+        gate.assert_disposable_instance(tracker)
+    except gate.GateRefusal as refusal:
+        pytest.fail(f"live DevHub suite refused: {refusal}", pytrace=False)
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live conformance", key, repository)
+    return Suite(tracker=tracker, project=project, repository=repository, config=config)
+
+
+# --- helpers -------------------------------------------------------------------------
+
+def _unique(label: str) -> str:
+    return f"{label} {secrets.token_hex(6)}"
+
+
+def _create(suite: Suite, title: str, body: str = "", *, parent=None, **fields):
+    base = {"State": "backlog", "Priority": "P3", "Type": "Task"}
+    base.update(fields)
+    return suite.tracker.create_issue(
+        suite.project, title, body, fields=base, parent=parent,
+    )
+
+
+def _digests(issue_id: str) -> dict:
+    def part(tag):
+        return hashlib.sha256(f"{issue_id}:{tag}".encode()).hexdigest()
+    return {
+        "head": part("head")[:40], "base": part("base")[:40],
+        "digest": part("diff"), "merge": part("merge")[:40],
+    }
+
+
+def _pr_url(suite: Suite) -> str:
+    return f"https://github.com/foundry-live/{suite.project.key.lower()}/pull/1"
+
+
+def _review_context(suite: Suite, issue_id: str) -> TransitionContext:
+    d = _digests(issue_id)
+    return TransitionContext(
+        pr_url=_pr_url(suite), head_sha=d["head"], base_sha=d["base"],
+        review_digest=d["digest"],
+    )
+
+
+def _done_context(suite: Suite, issue_id: str) -> TransitionContext:
+    d = _digests(issue_id)
+    return TransitionContext(
+        pr_url=_pr_url(suite), head_sha=d["head"], base_sha=d["base"],
+        review_digest=d["digest"], merge_sha=d["merge"],
+    )
+
+
+def _start(suite: Suite, issue_id: str, from_state: str = "backlog") -> None:
+    for state in suite.tracker.start_transition_path(from_state):
+        suite.tracker.set_state(issue_id, state, project=suite.project)
+
+
+def _to_review(suite: Suite, issue_id: str) -> None:
+    _start(suite, issue_id)
+    suite.tracker.update_fields(issue_id, {"GitHub PR": _pr_url(suite)}, project=suite.project)
+    suite.tracker.set_state(
+        issue_id, "review", context=_review_context(suite, issue_id), project=suite.project,
+    )
+
+
+def _to_done(suite: Suite, issue_id: str) -> None:
+    _to_review(suite, issue_id)
+    suite.tracker.set_state(
+        issue_id, "done", context=_done_context(suite, issue_id), project=suite.project,
+    )
+
+
+def _refused(call, *, statuses=range(400, 500), code: str | None = None) -> DevHubTrackerError:
+    with pytest.raises(DevHubTrackerError) as caught:
+        call()
+    assert caught.value.status in statuses, (caught.value.status, caught.value.code)
+    if code is not None:
+        assert caught.value.code == code
+    return caught.value
+
+
+def _has_link(issue, link_type: str, target: str) -> bool:
+    return any(item.type == link_type and item.target == target for item in issue.links)
+
+
+def _closure_receipt(suite: Suite, epic_id: str, child_ids, states=None) -> EpicClosureReceipt:
+    tracker = suite.tracker
+    epic = tracker._issue_raw(epic_id)
+    children = []
+    for child_id in sorted(child_ids):
+        raw = tracker._issue_raw(child_id)
+        children.append(EpicClosureChild(
+            id=child_id, version=raw["version"],
+            state=(states or {}).get(child_id, raw["state"]),
+        ))
+    return EpicClosureReceipt(
+        project_key=suite.project.key, project_id=suite.project.id, parent_id=epic_id,
+        parent_version=epic["version"], parent_type=epic.get("type") or "Epic",
+        parent_ac_done=epic["ac_done"], parent_ac_total=epic["ac_total"],
+        children=tuple(children), issued_at=int(time.time() * 1000),
+        nonce=secrets.token_urlsafe(24),
+    )
+
+
+# --- project and identity -------------------------------------------------------------
+
+@need("DHN-01")
+def test_dhn_01_provision_project_is_repository_bound_and_idempotent(suite):
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    first = suite.tracker.provision_project("Foundry live provisioning", key, repository)
+    again = suite.tracker.provision_project("Foundry live provisioning", key, repository)
+    assert (first.key, first.id) == (again.key, again.id) and first.key == key
+    assert first.extra == {"canonical_repo": repository}
+
+
+@need("DHN-02")
+def test_dhn_02_resolve_project_by_canonical_repository(suite, monkeypatch):
+    registered = Project(
+        key=suite.project.key, id=suite.project.id,
+        extra={"canonical_repo": suite.repository},
+    )
+    monkeypatch.setattr(registry, "resolve", lambda tracker, repo, cwd=None: registered)
+    resolved = suite.tracker.resolve_project("live")
+    assert (resolved.key, resolved.id) == (suite.project.key, suite.project.id)
+    contradicting = Project(
+        key=suite.project.key, id="999999999", extra={"canonical_repo": suite.repository},
+    )
+    monkeypatch.setattr(registry, "resolve", lambda tracker, repo, cwd=None: contradicting)
+    with pytest.raises(SystemExit):
+        suite.tracker.resolve_project("live")
+
+
+@need("DHN-03")
+def test_dhn_03_unauthenticated_request_is_refused(suite):
+    stranger = DevHubTracker(
+        url=suite.config.url, token=secrets.token_urlsafe(32),
+        proof_secret=secrets.token_urlsafe(32),
+    )
+    _refused(stranger.list_project_catalog, statuses={401, 403})
+
+
+# --- issues ---------------------------------------------------------------------------
+
+@need("DHN-04")
+def test_dhn_04_create_issue_reads_back_fields_body_and_acceptance_counts(suite):
+    body = "Context\n\n- [ ] first criterion\n- [x] second criterion\n"
+    title = _unique("live create")
+    created = _create(
+        suite, title, body, Priority="P2", Estimate=3, Type="Task", Labels=["foundry-live"],
+    )
+    assert re.fullmatch(rf"{suite.project.key}-[0-9]+", created.id)
+    read = suite.tracker.get_issue(created.id)
+    assert (read.title, read.body, read.state) == (title, body, "backlog")
+    assert (read.priority, read.estimate, read.type) == ("P2", 3, "Task")
+    assert "foundry-live" in read.labels
+    assert (read.ac_done, read.ac_total) == (1, 2)
+    assert isinstance(read.version, int) and read.version >= 1
+
+
+@need("DHN-05")
+def test_dhn_05_update_fields_changes_only_the_named_fields(suite):
+    issue = _create(suite, _unique("live update"), "body", Priority="P3", Estimate=2)
+    before = suite.tracker.get_issue(issue.id)
+    updated = suite.tracker.update_fields(
+        issue.id, {"Priority": "P1", "Estimate": 5}, project=suite.project,
+    )
+    assert (updated.priority, updated.estimate) == ("P1", 5)
+    assert (updated.title, updated.body, updated.type) == (before.title, before.body, before.type)
+    assert updated.version > before.version
+
+
+@need("DHN-06")
+def test_dhn_06_stale_version_is_refused_and_leaves_no_write(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live stale"), "body")
+    version = tracker._issue_raw(issue.id)["version"]
+    tracker.add_comment(issue.id, "advance the version", project=suite.project)
+    _refused(
+        lambda: tracker._application_req(
+            "POST", f"/issues/{issue.id}/comments", {"text": "stale must not persist"},
+            version=version, idempotent=True, idempotency_key=f"live-stale-{secrets.token_hex(6)}",
+        ),
+        statuses={409}, code="version_conflict",
+    )
+    texts = [item["text"] for item in tracker.get_issue(issue.id).comments]
+    assert "stale must not persist" not in texts
+
+
+@need("DHN-07")
+def test_dhn_07_idempotent_replay_returns_one_effect_and_divergence_conflicts(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live replay"), "body")
+    version = tracker._issue_raw(issue.id)["version"]
+    key = f"live-replay-{secrets.token_hex(6)}"
+    path = f"/issues/{issue.id}/comments"
+    first = tracker._application_req(
+        "POST", path, {"text": "once"}, version=version, idempotent=True, idempotency_key=key,
+    )
+    replay = tracker._application_req(
+        "POST", path, {"text": "once"}, version=version, idempotent=True, idempotency_key=key,
+    )
+    assert replay == first
+    _refused(
+        lambda: tracker._application_req(
+            "POST", path, {"text": "different"}, version=version, idempotent=True,
+            idempotency_key=key,
+        ),
+        statuses={409}, code="idempotency_conflict",
+    )
+    texts = [item["text"] for item in tracker.get_issue(issue.id).comments]
+    assert texts.count("once") == 1 and "different" not in texts
+
+
+@need("DHN-08")
+def test_dhn_08_search_lists_issues_and_narrows_by_query(suite):
+    marker = f"needle{secrets.token_hex(5)}"
+    wanted = _create(suite, f"live search {marker}", "body")
+    other = _create(suite, _unique("live search other"), "body")
+    listed = {item.id for item in suite.tracker.search(suite.project)}
+    assert {wanted.id, other.id} <= listed
+    narrowed = {item.id for item in suite.tracker.search(suite.project, marker)}
+    assert narrowed == {wanted.id}
+
+
+@need("DHN-09")
+def test_dhn_09_search_paginates_past_one_hundred_issues(suite):
+    for index in range(105):
+        _create(suite, f"live page {index} {secrets.token_hex(3)}", "")
+    listed = suite.tracker.search(suite.project)
+    ids = [item.id for item in listed]
+    assert len(ids) == len(set(ids)) and len(ids) >= 105
+
+
+@need("DHN-10")
+def test_dhn_10_child_creation_links_both_ends(suite):
+    epic = _create(suite, _unique("live epic"), "", Type="Epic")
+    child = _create(suite, _unique("live child"), "- [ ] done", parent=epic.id)
+    assert _has_link(suite.tracker.get_issue(child.id), "subtask-of", epic.id)
+    assert _has_link(suite.tracker.get_issue(epic.id), "parent-of", child.id)
+
+
+@need("DHN-11")
+def test_dhn_11_dependency_links_round_trip_with_inverse(suite):
+    inverse = {"depends-on": "blocks", "blocks": "depends-on", "relates": "relates"}
+    for link_type, back in inverse.items():
+        source = _create(suite, _unique(f"live {link_type} src"), "")
+        target = _create(suite, _unique(f"live {link_type} dst"), "")
+        suite.tracker.link(source.id, link_type, target.id, project=suite.project)
+        assert _has_link(suite.tracker.get_issue(source.id), link_type, target.id), link_type
+        assert _has_link(suite.tracker.get_issue(target.id), back, source.id), link_type
+
+
+@need("DHN-12")
+def test_dhn_12_existing_issue_can_be_reparented_in_both_directions(suite):
+    epic = _create(suite, _unique("live reparent epic"), "", Type="Epic")
+    by_child = _create(suite, _unique("live reparent child"), "")
+    by_parent = _create(suite, _unique("live reparent child 2"), "")
+    suite.tracker.link(by_child.id, "subtask-of", epic.id, project=suite.project)
+    suite.tracker.link(epic.id, "parent-of", by_parent.id, project=suite.project)
+    epic_read = suite.tracker.get_issue(epic.id)
+    assert _has_link(epic_read, "parent-of", by_child.id)
+    assert _has_link(epic_read, "parent-of", by_parent.id)
+    assert _has_link(suite.tracker.get_issue(by_child.id), "subtask-of", epic.id)
+    assert _has_link(suite.tracker.get_issue(by_parent.id), "subtask-of", epic.id)
+
+
+@need("DHN-13")
+def test_dhn_13_comments_round_trip_in_order(suite):
+    issue = _create(suite, _unique("live comments"), "")
+    for text in ("first note", "second note"):
+        suite.tracker.add_comment(issue.id, text, project=suite.project)
+    comments = suite.tracker.get_issue(issue.id).comments
+    assert [item["text"] for item in comments] == ["first note", "second note"]
+    assert all(type(item["created"]) is int for item in comments)
+
+
+@need("DHN-14")
+def test_dhn_14_every_comment_is_returned_past_one_hundred(suite):
+    issue = _create(suite, _unique("live many comments"), "")
+    for index in range(105):
+        suite.tracker.add_comment(issue.id, f"note {index}", project=suite.project)
+    comments = suite.tracker.get_issue(issue.id).comments
+    assert [item["text"] for item in comments] == [f"note {index}" for index in range(105)]
+
+
+@need("DHN-15")
+def test_dhn_15_epic_subgraph_projection_is_bounded_and_complete(suite):
+    epic = _create(suite, _unique("live subgraph"), "", Type="Epic")
+    children = [_create(suite, _unique("live node"), "", parent=epic.id) for _ in range(2)]
+    graph = suite.tracker.get_epic_subgraph(suite.project, epic.id, depth=2, nodes=10)
+    text = json.dumps(graph)
+    assert epic.id in text and all(child.id in text for child in children)
+
+
+@need("DHN-16")
+def test_dhn_16_audit_projection_holds_one_receipt_per_operation(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live audit"), "")
+    other = _create(suite, _unique("live audit other"), "")
+    tracker.update_fields(issue.id, {"Priority": "P2"}, project=suite.project)
+    tracker.set_state(issue.id, "ready", project=suite.project)
+    tracker.link(issue.id, "relates", other.id, project=suite.project)
+    tracker.add_comment(issue.id, "audited", project=suite.project)
+    events = tracker.audit(suite.project, resource=f"issue:{issue.id}")
+    seen = {event["operation"] for event in events if event["result"] == "success"}
+    assert {
+        "issue.create", "issue.update", "issue.transition", "issue.link", "issue.comment",
+    } <= seen
+
+
+# --- lifecycle ------------------------------------------------------------------------
+
+@need("DHN-17")
+def test_dhn_17_start_path_and_resume_from_blocked(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live start"), "")
+    _start(suite, issue.id)
+    assert tracker.get_issue(issue.id).state == "in-progress"
+    tracker.set_state(issue.id, "blocked", project=suite.project)
+    assert tracker.get_issue(issue.id).state == "blocked"
+    _start(suite, issue.id, "blocked")
+    assert tracker.get_issue(issue.id).state == "in-progress"
+
+
+@need("DHN-18")
+def test_dhn_18_review_needs_a_valid_proof_and_can_return_to_in_progress(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live review"), "")
+    _to_review(suite, issue.id)
+    assert tracker.get_issue(issue.id).state == "review"
+    tracker.set_state(issue.id, "in-progress", project=suite.project)
+    assert tracker.get_issue(issue.id).state == "in-progress"
+
+    forged = DevHubTracker(
+        url=suite.config.url, token=suite.config.token,
+        proof_secret=secrets.token_urlsafe(32),
+    )
+    victim = _create(suite, _unique("live forged review"), "")
+    _start(suite, victim.id)
+    tracker.update_fields(victim.id, {"GitHub PR": _pr_url(suite)}, project=suite.project)
+    _refused(lambda: forged.set_state(
+        victim.id, "review", context=_review_context(suite, victim.id), project=suite.project,
+    ))
+    assert tracker.get_issue(victim.id).state == "in-progress"
+
+
+@need("DHN-19")
+def test_dhn_19_done_is_terminal_and_unproven_jumps_are_refused(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live done"), "")
+    _to_done(suite, issue.id)
+    assert tracker.get_issue(issue.id).state == "done"
+    _refused(
+        lambda: tracker.set_state(issue.id, "in-progress", project=suite.project),
+        statuses={409},
+    )
+    jumper = _create(suite, _unique("live jump"), "")
+    _refused(lambda: tracker.set_state(
+        jumper.id, "review", context=_review_context(suite, jumper.id), project=suite.project,
+    ), statuses={409})
+
+
+@need("DHN-20")
+def test_dhn_20_acceptance_sync_patches_only_with_the_expected_body(suite):
+    tracker = suite.tracker
+    body = "Goal\n\n- [ ] one\n- [ ] two\n"
+    updated = body.replace("[ ]", "[x]")
+    issue = _create(suite, _unique("live ac sync"), body)
+    proof_id = hashlib.sha256(issue.id.encode()).hexdigest()
+    assert tracker.sync_acceptance_body(
+        issue.id, body, updated, proof_id, project=suite.project,
+    ) is True
+    read = tracker.get_issue(issue.id)
+    assert (read.body, read.ac_done, read.ac_total) == (updated, 2, 2)
+    assert tracker.sync_acceptance_body(
+        issue.id, body, updated, proof_id, project=suite.project,
+    ) is False
+    stale_proof = hashlib.sha256(f"{issue.id}:stale".encode()).hexdigest()
+    with pytest.raises(TrackerConflictError):
+        tracker.sync_acceptance_body(
+            issue.id, body, updated + "x", stale_proof, project=suite.project,
+        )
+
+
+@gap("DHN-21", "adapter", "devhub.py defines no update_body: BodyUpdateUnavailableError")
+def test_dhn_21_arbitrary_body_update_is_checked_against_the_expected_body(suite):
+    tracker = suite.tracker
+    body, replacement = "before\n", "after\n"
+    issue = _create(suite, _unique("live update body"), body)
+    assert tracker.update_body(issue, body, replacement, project=suite.project) is True
+    assert tracker.get_issue(issue.id).body == replacement
+    assert tracker.update_body(issue, body, replacement, project=suite.project) is False
+
+
+# --- Epic closure ---------------------------------------------------------------------
+
+@need("DHN-22")
+def test_dhn_22_epic_closure_is_atomic_audited_and_replayable(suite):
+    tracker = suite.tracker
+    epic = _create(suite, _unique("live closure"), "", Type="Epic")
+    child = _create(suite, _unique("live closure child"), "", parent=epic.id)
+    _to_done(suite, child.id)
+    receipt = _closure_receipt(suite, epic.id, [child.id])
+    outcome = tracker.close_epic(suite.project, receipt)
+    assert outcome.receipt == receipt and outcome.replayed is False
+    assert outcome.closed_parent_version == receipt.parent_version + 1
+    assert tracker.get_issue(epic.id).state == "done"
+    replay = tracker.close_epic(suite.project, receipt)
+    assert replay.replayed is True and replay.audit_id == outcome.audit_id
+    recovered = tracker.get_epic_closure(suite.project, epic.id)
+    assert recovered is not None and recovered.audit_id == outcome.audit_id
+
+
+@need("DHN-23")
+def test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt(suite):
+    tracker = suite.tracker
+    epic = _create(suite, _unique("live closure refuse"), "", Type="Epic")
+    child = _create(suite, _unique("live open child"), "", parent=epic.id)
+    lying = _closure_receipt(suite, epic.id, [child.id], states={child.id: "done"})
+    _refused(lambda: tracker.close_epic(suite.project, lying), statuses={409})
+    assert tracker.get_issue(epic.id).state != "done"
+    assert tracker.get_epic_closure(suite.project, epic.id) is None
+
+
+@gap("DHN-24", "adapter", "write.py refuses --accept-dropped unless the adapter sets epic_dropped_closure_supported (PAT-ADR-0017); devhub.py does not")
+def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
+    tracker = suite.tracker
+    epic = _create(suite, _unique("live dropped closure"), "", Type="Epic")
+    done_child = _create(suite, _unique("live done child"), "", parent=epic.id)
+    dropped_child = _create(suite, _unique("live dropped child"), "", parent=epic.id)
+    _to_done(suite, done_child.id)
+    tracker.set_state(dropped_child.id, "dropped", project=suite.project)
+    assert tracker.epic_dropped_closure_supported is True
+    receipt = _closure_receipt(suite, epic.id, [done_child.id, dropped_child.id])
+    assert tracker.close_epic(suite.project, receipt).receipt == receipt
+
+
+@gap("DHN-25", "adapter", "no typed acceptance-override receipt: TrackerCapabilityUnavailableError")
+def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
+    tracker = suite.tracker
+    issue = _create(suite, _unique("live override"), "- [ ] unchecked")
+    _to_review(suite, issue.id)
+    assert tracker.project_acceptance_override(
+        issue.id, "maintainer-override", _review_context(suite, issue.id),
+        project=suite.project,
+    ) is True
+    assert tracker.acceptance_override_projection_supported is True
+
+
+@gap("DHN-26", "adapter", "no accept_issue (PAT-ADR-0025): TrackerCapabilityUnavailableError")
+def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suite):
+    issue = _create(suite, _unique("live human acceptance"), "- [ ] decided offline")
+    accepted = suite.tracker.accept_issue(
+        issue.id, {"schema": "foundry.issue-acceptance-decision.v1"}, project=suite.project,
+    )
+    assert accepted.state == "done"
+
+
+@gap("DHN-27", "server", "workflow.ts forbids dropped from in-progress and review")
+def test_dhn_27_started_issue_can_be_abandoned(suite):
+    issue = _create(suite, _unique("live abandon"), "")
+    _start(suite, issue.id)
+    suite.tracker.set_state(issue.id, "dropped", project=suite.project)
+    assert suite.tracker.get_issue(issue.id).state == "dropped"
+
+
+@gap("DHN-28", "server", "workflow.ts has no in-progress or review to backlog edge")
+def test_dhn_28_started_issue_can_return_to_backlog(suite):
+    issue = _create(suite, _unique("live return"), "")
+    _start(suite, issue.id)
+    suite.tracker.set_state(issue.id, "backlog", project=suite.project)
+    assert suite.tracker.get_issue(issue.id).state == "backlog"
+
+
+# --- ADR ------------------------------------------------------------------------------
+
+def _new_adr(suite: Suite, label: str):
+    return suite.tracker.create_adr(
+        suite.project, _unique(label), f"## Context\n\n{label}\n", "proposed",
+    )
+
+
+@need("DHN-29")
+def test_dhn_29_adr_is_created_proposed_and_listed_with_its_exact_body(suite):
+    adr = _new_adr(suite, "live adr create")
+    assert re.fullmatch(rf"{suite.project.key}-ADR-[0-9]{{4,}}", adr.id)
+    assert adr.status == "proposed"
+    listed = {item.id: item for item in suite.tracker.list_adrs(suite.project)}
+    assert listed[adr.id].title == adr.title
+    assert listed[adr.id].body == "## Context\n\nlive adr create\n"
+
+
+@need("DHN-30")
+def test_dhn_30_adr_status_moves_proposed_to_accepted_to_deprecated(suite):
+    tracker = suite.tracker
+    adr = _new_adr(suite, "live adr status")
+    tracker.set_adr_status(adr, "accepted", project=suite.project)
+    statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
+    assert statuses[adr.id] == "accepted"
+    tracker.set_adr_status(adr, "deprecated", project=suite.project)
+    statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
+    assert statuses[adr.id] == "deprecated"
+
+
+@need("DHN-31")
+def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(suite):
+    tracker = suite.tracker
+    adr = _new_adr(suite, "live adr superseded")
+    tracker.set_adr_status(adr, "accepted", project=suite.project)
+    tracker.set_adr_status(adr, "superseded", project=suite.project)
+    statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
+    assert statuses[adr.id] == "superseded"
+
+
+@gap("DHN-32", "adapter", "devhub.py defines no supersede_adr: TrackerCapabilityUnavailableError")
+def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
+    tracker = suite.tracker
+    old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
+    tracker.set_adr_status(old, "accepted", project=suite.project)
+    tracker.supersede_adr(old, new.id, project=suite.project)
+    statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
+    assert statuses[old.id] == "superseded"
+
+
+@gap("DHN-33", "adapter+server", "no link_adr_issue; server freezes linked_issue_ids once decided (DEVHUB-73)")
+def test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation(suite):
+    tracker = suite.tracker
+    adr = _new_adr(suite, "live adr link")
+    issue = _create(suite, _unique("live adr linked issue"), "")
+    tracker.set_adr_status(adr, "accepted", project=suite.project)
+    linked = tracker.link_adr_issue(adr, issue.id, project=suite.project)
+    assert linked.id == adr.id
+
+
+# --- selective import (FOUNDRY-ADR-0026) ----------------------------------------------
+
+def _issue_snapshot(source_ref: str, title: str, body: str) -> dict:
+    return {
+        "kind": "issue", "source_ref": source_ref, "id": source_ref.rsplit(":", 1)[1],
+        "title": title, "body": body,
+        "attributes": {"type": "Task", "priority": "P2", "estimate": None, "state": "backlog"},
+        "links": [], "acceptance": {"checkboxes": [" "], "projection": {}},
+        "digest": "", "target_id": None, "status": "pending", "exceptions": [],
+    }
+
+
+@gap("DHN-34", "adapter+server", "no migration_* port and no source_ref coordinate on issues")
+def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
+    tracker = suite.tracker
+    ref = f"linear:issue:PAT-{secrets.randbelow(10**6) + 1000}"
+    title, body = _unique("live imported"), "- [ ] imported criterion\n"
+    assert tracker.migration_find_issue(suite.project, ref) is None
+    snapshot = _issue_snapshot(ref, title, body)
+    first = tracker.migration_import_issue(suite.project, snapshot, source_ref=ref)
+    again = tracker.migration_import_issue(suite.project, snapshot, source_ref=ref)
+    assert again.id == first.id
+    found = tracker.migration_find_issue(suite.project, ref)
+    assert found is not None and (found.id, found.title, found.body) == (first.id, title, body)
+    assert [item.id for item in tracker.search(suite.project, title)] == [first.id]
+
+
+@gap("DHN-35", "adapter", "no migration_link_issue: TrackerCapabilityUnavailableError")
+def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
+    tracker = suite.tracker
+    refs = [f"linear:issue:PAT-{secrets.randbelow(10**6) + 2000}" for _ in range(2)]
+    imported = [
+        tracker.migration_import_issue(
+            suite.project, _issue_snapshot(ref, _unique("live link import"), ""), source_ref=ref,
+        )
+        for ref in refs
+    ]
+    tracker.migration_link_issue(suite.project, imported[0].id, "depends-on", imported[1].id)
+    assert _has_link(tracker.get_issue(imported[0].id), "depends-on", imported[1].id)
+
+
+@gap("DHN-36", "adapter+server", "no ADR import; server forces <KEY>-ADR-NNNN ids")
+def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite):
+    tracker = suite.tracker
+    adr_id = "FOUNDRY-ADR-0026"
+    body = "## Decision\n\nOne tracker per repository.\n"
+    tracker.import_adr(
+        suite.project, adr_id=adr_id, title=f"{adr_id} - single tracker", body=body,
+        historical_status="accepted", source_ref=f"linear:adr:{adr_id}",
+        source_created=1_700_000_000_000, source_updated=1_700_000_000_001,
+        expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        supersedes=(), superseded_by=None, issue_refs=(),
+    )
+    listed = {item.id: item for item in tracker.list_adrs(suite.project)}
+    assert listed[adr_id].status == "accepted" and listed[adr_id].body == body
+
+
+# --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
+
+@gap("DHN-37", "adapter", "no reconcile_issue_creation: TrackerCapabilityUnavailableError")
+def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite):
+    title, body = _unique("live reconcile"), "body"
+    issue = _create(suite, title, body)
+    before = len(suite.tracker.search(suite.project, title))
+    result = suite.tracker.reconcile_issue_creation(
+        suite.project, issue.id, title, body, {"Type": "Task"}, None,
+    )
+    assert isinstance(result, dict)
+    assert len(suite.tracker.search(suite.project, title)) == before
+
+
+@gap("DHN-38", "adapter+server", "append_only_lifecycle_supported is False")
+def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
+    assert suite.tracker.append_only_lifecycle_supported is True
+    assert "append_only_lifecycle_supported" not in campaign_cadence.missing_capabilities(
+        suite.tracker,
+    )
+
+
+@gap("DHN-39", "adapter+server", "no read_release_scope: ReleaseScopeUnavailableError")
+def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(suite):
+    scope = suite.tracker.read_release_scope(suite.project, "live-release")
+    assert scope.release == "live-release" and scope.project_key == suite.project.key
+
+
+# --- Foundry-side prerequisite --------------------------------------------------------
+
+@gap("DHN-40", "foundry", "registry._V1_TRACKERS excludes devhub; the V1 contract lists it for contrast only")
+def test_dhn_40_devhub_is_a_v1_tracker_of_the_repository(suite):
+    assert "devhub" in registry._V1_TRACKERS
