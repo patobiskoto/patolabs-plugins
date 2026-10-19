@@ -829,8 +829,8 @@ Decided from the journal by `campaign_review.review_mode`, for the review attemp
   `AcceptanceProofStore.carry` checks the conditions (ancestry, clean merge tree, no path
   changed by both, identical diff bytes) and a refusal makes the same attempt go on with a
   full review (also when the base did not change and the reviewed head already contained it:
-  `AcceptanceProofStore.carry` refuses it as nothing to carry). A carried review is recorded with `carried: true`, is not a review round and launches
-  no session.
+  `AcceptanceProofStore.carry` refuses it as nothing to carry). A carried review is recorded
+  with `carried: true`, is not a review round and launches no session.
 - Anything else is `full`.
 
 ## Not executed yet
