@@ -105,14 +105,40 @@ def _prepare_branch(branch: str) -> str:
     return "main-checkout"
 
 
+# Exit code of ``issue merge`` when the merge and the ``done`` transition are durable
+# but the local cleanup failed (PAT-272). A refused merge exits 1 (message in SystemExit).
+EXIT_LOCAL_CLEANUP_FAILED = 3
+
+
 def _cleanup_branch(branch: str) -> str:
-    """Clean a merged branch when this checkout owns it; Codex owns its worktrees."""
+    """Clean a merged branch when this checkout owns it; Codex owns its worktrees.
+
+    Returns "cleanup-failed" when the checkout or the fast-forward pull fails: the
+    merge is already done then, so the caller reports it separately (PAT-272).
+    """
     if _is_linked_worktree():
         return "linked-worktree"
-    _sh("git", "checkout", _default_branch())
-    _sh("git", "pull", "--ff-only")
+    try:
+        _sh("git", "checkout", _default_branch())
+        _sh("git", "pull", "--ff-only")
+    except SystemExit as exc:
+        print(f"⚠️ nettoyage local échoué : {_redact(exc.code)}", file=sys.stderr)
+        return "cleanup-failed"
     _sh("git", "branch", "-D", branch, check=False)
     return "main-checkout"
+
+
+def _report_local_cleanup(cleanup_mode: str, branch: str) -> None:
+    """Exit EXIT_LOCAL_CLEANUP_FAILED after the success line when cleanup failed."""
+    if cleanup_mode != "cleanup-failed":
+        return
+    print(
+        "⚠️ Merge et transition done effectués ; seul le nettoyage local a échoué. "
+        f"À lancer : git checkout {_default_branch()} && git pull --ff-only "
+        f"&& git branch -D {branch}",
+        file=sys.stderr,
+    )
+    raise SystemExit(EXIT_LOCAL_CLEANUP_FAILED)
 
 
 def _require_pr_base_sha(pr) -> str:
@@ -577,6 +603,7 @@ def merge(issue_id, pr_number, flags=()):
                 f"✅ Reprise PR #{pr_number} · reçu déjà durable {pr.merge_sha} · "
                 f"{issue_id} déjà done{recovered}{cleanup}"
             )
+            _report_local_cleanup(cleanup_mode, pr.head)
             return
         head = git_head()
         if head != pr.sha:
@@ -937,6 +964,7 @@ def merge(issue_id, pr_number, flags=()):
     # tags exactly this commit; origin/<default> would be racy if another PR lands
     print(f"✅ PR #{pr_number} mergée ({ci_note}) · {ac_note} · sha mergé {merged_sha} · "
           f"{issue_id} → done{cleanup}")
+    _report_local_cleanup(cleanup_mode, branch)
 
 
 _SECRET = re.compile(
