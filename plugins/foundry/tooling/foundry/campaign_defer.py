@@ -58,7 +58,8 @@ _CLIENT = re.compile(r"client_id=([0-9A-Fa-f-]{36})")
 # (capability absent, Epic type refused, binding refused); anything else is transient.
 _DURABLE = re.compile(
     r"CapabilityUnavailable|capability unavailable|BindingError|ValueError|SystemExit|"
-    r"type_unmapped|invalid_field_options|unknown type", re.I)
+    r"type_unmapped|invalid_field_options|unknown type|"
+    r"LinearUsageLimitError|usage_limit_exceeded", re.I)
 # What `edit reconcile-create` prints when the adapter refuses to validate the creation
 # (`TrackerConflictError`, "validation refused; no retry") or finds no such issue
 # (`IssueUnavailableError`, "issue unavailable"); anything else leaves the effect unknown.

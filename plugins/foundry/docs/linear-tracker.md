@@ -212,6 +212,17 @@ Source bytes remain caller-owned; this comparator stores no source and changes n
 ADR source, witness, acceptance proof or lifecycle authority (`create_issue`,
 `reconcile_issue_creation`).
 
+- **Workspace usage limit (PAT-310)**: a GraphQL error whose `extensions.code` is
+  `USAGE_LIMIT_EXCEEDED` (`_USAGE_LIMIT_CODE`, `trackers/linear.py`; observed 2026-10-20 on `issueCreate`
+  once the free-plan issue limit was reached; the HTTP-error body path reads the same code) raises
+  `LinearUsageLimitError` (code `usage_limit_exceeded`, a `LinearTrackerError`), never `graphql_error`.
+  The message names the workspace usage limit and copies nothing from the response. On `issue.create`
+  the effect is known, not created: no read-back follows, the message ends
+  `client_id=<UUID> creation=not_created`, and `edit create-issue` does not report `creation: unknown`.
+  It is never retried, and `campaign_defer.py::_DURABLE` classes it durable (refused, remarks corrected
+  before the merge, R9 (b)). The remaining headroom is not read ahead: Linear does not expose it (unknown).
+  Documentation status (R5): this entry updated; no CLI verb or configuration key changed.
+
 After an unvalidated creation, `edit create-issue` exits nonzero and emits the typed
 `IssueCreationValidationError.details` JSON on stderr: `creation` is `created` or
 `unknown`, `validation` is `refused` or `unknown`, and `reconciliation` is `required`.

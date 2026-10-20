@@ -394,6 +394,9 @@ _READ_RETRY_DELAYS = (1.0, 2.0, 4.0)
 # 429 is not listed: it is always a quota (typed error, never retried).
 _RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 _RATE_LIMIT_CODES = frozenset({"RATELIMITED", "RATE_LIMITED"})
+# GraphQL `extensions.code` Linear returns when the workspace usage limit (free-plan issue
+# count) refuses a write (observed 2026-10-20, PAT-310); not a request-rate condition.
+_USAGE_LIMIT_CODE = "USAGE_LIMIT_EXCEEDED"
 _QUERY_DOCUMENT = re.compile(r"\s*query\b")
 _WRITE_OR_STREAM_WORD = re.compile(r"\b(mutation|subscription)\b")
 
@@ -572,6 +575,23 @@ class LinearQuotaExhaustedError(LinearTrackerError):
         return (
             f"Linear {self.scope} quota exhausted: {super()._render()}"
             f" remaining={remaining} reset_at={reset}"
+        )
+
+
+class LinearUsageLimitError(LinearTrackerError):
+    """Linear refused a write because the workspace usage limit is reached (PAT-310).
+
+    A durable refusal with a known effect: the provider rejected the mutation, nothing was
+    created. Never retried; the message names the limit and copies nothing from the response.
+    """
+
+    def __init__(self, operation: str, status: int | None = None):
+        super().__init__(operation, status, "usage_limit_exceeded")
+
+    def _render(self) -> str:
+        return (
+            f"Linear workspace usage limit reached: {super()._render()}"
+            " (nothing was written; free space or change plan, then retry by hand)"
         )
 
 
@@ -3444,7 +3464,7 @@ class LinearTracker(Tracker):
                 if retries:
                     self.retry_stats["recovered"] += 1
                 return result
-            except LinearQuotaExhaustedError as error:
+            except (LinearQuotaExhaustedError, LinearUsageLimitError) as error:
                 raise error._with_retries(retries) from None
             except LinearTrackerError as error:
                 retryable = (
@@ -3560,6 +3580,8 @@ class LinearTracker(Tracker):
                 quota = self._quota_error(operation, error.code, error.headers, codes)
                 if quota is not None:
                     raise quota from None
+                if _USAGE_LIMIT_CODE in codes:
+                    raise LinearUsageLimitError(operation, error.code) from None
                 raise LinearTrackerError(operation, error.code, "http_error") from None
             except (OSError, urllib.error.URLError, TimeoutError):
                 raise LinearTrackerError(operation, None, "transport_error") from None
@@ -3576,6 +3598,8 @@ class LinearTracker(Tracker):
             quota = self._quota_error(operation, None, headers, self._error_codes(envelope))
             if quota is not None:
                 raise quota
+            if _USAGE_LIMIT_CODE in self._error_codes(envelope):
+                raise LinearUsageLimitError(operation)
             raise LinearTrackerError(operation, None, "graphql_error")
         payload = envelope.get("data")
         if not isinstance(payload, dict):
@@ -5794,6 +5818,11 @@ class LinearTracker(Tracker):
             # Quota is a typed, dated condition, not an unknown effect: no extra read.
             error.client_id = client_id
             error.args = (f"{error} client_id={client_id} creation=unknown",)
+            raise
+        except LinearUsageLimitError as error:
+            # Refused by the provider: a known effect (nothing created), no read-back (PAT-310).
+            error.client_id = client_id
+            error.args = (f"{error} client_id={client_id} creation=not_created",)
             raise
         except LinearTrackerError as error:
             causes["create"] = _creation_cause(error)
