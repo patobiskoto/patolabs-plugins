@@ -109,3 +109,10 @@ def test_new_project_keys_are_valid_prefixed_and_distinct():
     assert len(keys) == 20
     assert all(re.fullmatch(r"[A-Z][A-Z0-9]{1,15}", key) for key in keys)
     assert all(key.startswith(gate.KEY_PREFIX) for key in keys)
+
+
+def test_local_accounts_are_declared_only_by_the_exact_value_one():
+    assert gate.local_accounts_declared({gate.ENV_LOCAL_ACCOUNTS: "1"}) is True
+    for value in ("", "0", "true", "yes", "11"):
+        assert gate.local_accounts_declared({gate.ENV_LOCAL_ACCOUNTS: value}) is False
+    assert gate.local_accounts_declared({}) is False

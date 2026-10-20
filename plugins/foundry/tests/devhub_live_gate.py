@@ -12,6 +12,12 @@ Outcomes
 - opted in but unsafe (production-looking coordinates, malformed URL, instance that holds
   projects the suite did not create): :class:`GateRefusal`, the suite errors out and
   nothing is written.
+
+Limit of the instance marker: ``assert_disposable_instance`` only sees the projects the
+credential can see.  On an instance with local accounts (observed: ``authorizeProject`` of
+DevHub limits a service credential to the projects granted to it) it proves nothing: 0
+visible projects does not mean an empty instance.  Use a disposable instance without local
+accounts, and a credential created for it (``docs/devhub-requirements.md``, DHN-42).
 """
 from __future__ import annotations
 
@@ -30,6 +36,8 @@ ENV_URL = "DEVHUB_LIVE_URL"
 ENV_CONFIRM = "DEVHUB_LIVE_CONFIRM"
 ENV_TOKEN = "DEVHUB_LIVE_TOKEN"
 ENV_PROOF_SECRET = "DEVHUB_LIVE_PROOF_SECRET"
+# Declaration (never detection) that the target runs with local accounts: only DHN-42 reads it.
+ENV_LOCAL_ACCOUNTS = "DEVHUB_LIVE_LOCAL_ACCOUNTS"
 
 # Names of the variables the everyday adapter reads (``DevHubTracker.__init__``).  The
 # live suite compares against them, never the other way round, so that a production
@@ -89,6 +97,12 @@ def read_environment(environ: Mapping[str, str] | None = None):
     return LiveConfig(url=url.rstrip("/"), token=token, proof_secret=secret), None
 
 
+def local_accounts_declared(environ: Mapping[str, str] | None = None) -> bool:
+    """True only for the exact value ``1``: the suite cannot read the instance mode."""
+    env = os.environ if environ is None else environ
+    return env.get(ENV_LOCAL_ACCOUNTS) == "1"
+
+
 def build_tracker(config: LiveConfig) -> devhub.DevHubTracker:
     """Explicit coordinates only: ``DevHubTracker`` then reads no configuration."""
     return devhub.DevHubTracker(
@@ -102,7 +116,8 @@ def assert_disposable_instance(tracker) -> None:
     A populated production instance holds projects whose key does not start with
     :data:`KEY_PREFIX`; an unreadable catalogue cannot establish the marker.  Both
     refuse.  Only what the token can see is checked: the credentials must be dedicated
-    to the disposable instance (see ``docs/devhub-requirements.md``).
+    to the disposable instance (see ``docs/devhub-requirements.md``).  With a credential
+    that only sees the projects granted to it (local accounts), this check proves nothing.
     """
     try:
         catalog = tracker.list_project_catalog()

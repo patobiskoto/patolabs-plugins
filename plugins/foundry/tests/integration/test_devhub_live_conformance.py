@@ -101,6 +101,38 @@ def suite() -> Suite:
     return Suite(tracker=tracker, project=project, repository=repository, config=config)
 
 
+@pytest.fixture(scope="session")
+def local_accounts_suite() -> Suite:
+    """DHN-42 only: the target is declared to run with local accounts.
+
+    Same gate as ``suite`` (a refusal is an error before the declaration is read), but no
+    project is created here: on such an instance that creation is the need under test.
+    """
+    try:
+        config, reason = gate.read_environment()
+    except gate.GateRefusal as refusal:
+        pytest.fail(f"live DevHub suite refused: {refusal}", pytrace=False)
+    if config is None:
+        pytest.skip(reason)
+    if not gate.local_accounts_declared():
+        pytest.skip(
+            f"{gate.ENV_LOCAL_ACCOUNTS}=1 not set: DHN-42 is only checked on an instance "
+            "with local accounts"
+        )
+    tracker = gate.build_tracker(config)
+    try:
+        gate.assert_disposable_instance(tracker)
+    except gate.GateRefusal as refusal:
+        pytest.fail(f"live DevHub suite refused: {refusal}", pytrace=False)
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    # Placeholder project (nothing is created): the test provisions the real one.
+    return Suite(
+        tracker=tracker, project=Project(key=key, id=""), repository=repository,
+        config=config,
+    )
+
+
 # --- helpers -------------------------------------------------------------------------
 
 def _unique(label: str) -> str:
@@ -722,3 +754,22 @@ def test_dhn_40_devhub_is_a_v1_tracker_of_the_repository(suite):
 @gap("DHN-41", "adapter", "devhub.py inherits verify_project_identity: ProjectProvisioningUnavailableError; resolve_checkout_project stays on the basename pilot path", raises=ProjectProvisioningUnavailableError)
 def test_dhn_41_repository_bootstrap_reads_back_the_project_identity(suite):
     assert suite.tracker.verify_project_identity(suite.project) is True
+
+
+@gap(
+    "DHN-42", "server",
+    "under local accounts a service credential cannot create a project: 403 insufficient_scope",
+    raises=DevHubTrackerError,
+)
+def test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts(
+    local_accounts_suite,
+):
+    suite = local_accounts_suite
+    project = suite.tracker.provision_project(
+        "Foundry live conformance", suite.project.key, suite.repository,
+    )
+    created = _create(
+        Suite(suite.tracker, project, suite.repository, suite.config),
+        _unique("live local accounts"),
+    )
+    assert suite.tracker.get_issue(created.id).id == created.id

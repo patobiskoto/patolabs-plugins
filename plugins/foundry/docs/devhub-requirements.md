@@ -44,9 +44,9 @@ that suite is deterministic over fake transports, this one needs a server.
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
 expected red, listed below with its owner) that raised the exception its `gap` declares in
 `raises=`, any other exception, a setup error included, is a failure or an error, not an
-`xfailed` (limit: DHN-27 and DHN-28 declare `DevHubTrackerError`, which a transport error,
-an invalid response or a refusal of the issue creation or start also raises, so their
-`xfailed` alone does not show the refused transition); `XPASS(strict)` reported as a failure
+`xfailed` (limit: DHN-27, DHN-28 and DHN-42 declare `DevHubTrackerError`, which a transport
+error, an invalid response or another refused request also raises, so their `xfailed` alone
+does not show the refusal the need is about); `XPASS(strict)` reported as a failure
 means a gap closed and its test must be turned into a plain need (see "Closing a gap");
 `failed` on a need expected green is a regression or a wrong expectation to discuss on this
 page.
@@ -59,6 +59,7 @@ page.
 | `DEVHUB_LIVE_CONFIRM` | Must be exactly `I_UNDERSTAND_DEVHUB_LIVE_SUITE_WRITES_TO_A_DISPOSABLE_INSTANCE`; anything else skips. |
 | `DEVHUB_LIVE_TOKEN` | Bearer token (at least 24 characters, adapter rule). Never printed. |
 | `DEVHUB_LIVE_PROOF_SECRET` | HMAC proof secret (at least 32 characters, adapter rule). Never printed. |
+| `DEVHUB_LIVE_LOCAL_ACCOUNTS` | Optional. Exactly `1` declares that the target runs with local accounts; only DHN-42 reads it (otherwise it skips). The suite cannot read the instance mode, so this is a declaration, never a detection (`devhub_live_gate.local_accounts_declared`). |
 
 These names are deliberately distinct from the everyday ones (`DEVHUB_URL`,
 `DEVHUB_TRACKER_TOKEN`, `DEVHUB_TRACKER_PROOF_SECRET`, `DEVHUB_SMOKE_*`).
@@ -82,62 +83,131 @@ Implemented in `tests/devhub_live_gate.py`, covered offline by
    with `LV` followed by eight random characters.
 
 Limits, stated plainly: check 3 only knows what the environment holds, and check 4 only
-sees what the token can see. Use credentials created for the disposable instance. The suite
+sees what the token can see. On an instance with local accounts, check 4 proves nothing:
+the credential only sees the projects granted to it (observed 2026-10-20 in the source:
+`authorizeProject`, `src/access/domain.ts:74-119`, limits a service actor to its granted
+projects), so 0 visible projects does not mean an empty instance. The marker is meaningful
+only on an instance without local accounts, which is why the procedure below brings one up
+and why the run of 2026-10-20 used it. Use credentials created for the disposable
+instance. The suite
 deletes nothing: every run leaves `LV*` projects behind, so use a throwaway database. DevHub
 at the commit read above has a project deletion route under `admin/projects`, with its own
 `DEVHUB_TRACKER_ADMIN_TOKEN` (DevHub `docs/TRACKER_API.md`, "Authentication and version");
 `docs/devhub-tracker.md`, "Destructive smoke", predates it, and the suite does not use it.
 
+## Bring up a disposable instance
+
+Run once on 2026-10-20 (DevHub revision `ff22b3a821fb031b49d1fdb78c43ecb481431c7f`), on
+the machine of the maintainer, never against the production URL. It yields an instance
+without local accounts, which the suite needs (DHN-42 explains why). Sources: DevHub
+`deploy/qa/up.sh` (image and `app.env` generation) and `deploy/dogfood/validate-app-env.sh`
+(validation), read-only; both are DevHub files, not Foundry ones.
+
+1. Reuse a DevHub image built by `deploy/qa/up.sh`, tagged `devhub-qa:<revision>`.
+2. Use a separate compose project `devhub-lv`, published on `127.0.0.1:3305` only, with its
+   own named volume `devhub-lv-db-data`. The compose file used:
+
+```yaml
+name: devhub-lv
+services:
+  db:
+    image: postgres:16-alpine
+    env_file: [ ./env/database.env ]
+    volumes: [ "devhub-lv-db-data:/var/lib/postgresql/data" ]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U devhub -d devhub_lv"], interval: 5s, timeout: 3s, retries: 20 }
+  app:
+    image: devhub-qa:<revision>
+    init: true
+    env_file: [ ./env/app.env ]
+    environment: { NODE_ENV: production, TRACKER_ONLY_MODE: "true", DEVHUB_DEPLOY_REVISION: "<revision>" }
+    depends_on: { db: { condition: service_healthy } }
+    ports: [ "127.0.0.1:3305:3000" ]
+    read_only: true
+    tmpfs: [ "/tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001" ]
+volumes:
+  devhub-lv-db-data: { name: devhub-lv-db-data }
+```
+
+3. Put `env/` next to it with mode 700 and keep it out of any repository. It holds
+   `database.env` (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, here `devhub` and
+   `devhub_lv`) and `app.env`, generated the way `deploy/qa/up.sh` does: `DATABASE_URL`,
+   `AUTH_PASSWORD_HASH` (bcrypt of a random password that is discarded), `SESSION_SECRET`,
+   `COOKIE_SECURE=true`, `TRACKER_ONLY_MODE=true`, `ALLOW_MOCK_AGENT=false`,
+   `DEVHUB_TRACKER_TOKEN`, `DEVHUB_TRACKER_ADMIN_TOKEN`, `DEVHUB_TRACKER_PROOF_SECRET`,
+   `PORT=3000`, `HOSTNAME=0.0.0.0`. Validate it with `deploy/dogfood/validate-app-env.sh`.
+4. Do no account bootstrap, so `local_accounts` stays false. Check it:
+   `select local_accounts from account_workspace` must answer false.
+5. Export the suite variables from `app.env` in a subshell, never in your interactive
+   shell: `DEVHUB_LIVE_URL=http://127.0.0.1:3305`, the confirmation phrase,
+   `DEVHUB_LIVE_TOKEN` = `DEVHUB_TRACKER_TOKEN`, `DEVHUB_LIVE_PROOF_SECRET` =
+   `DEVHUB_TRACKER_PROOF_SECRET`; then run the command of "Run the suite". Never print
+   those values.
+
+Reset: remove the compose project and the volume `devhub-lv-db-data`; the suite deletes
+nothing. Question 2 asks DevHub for a supported way.
+
 ## Needs
 
 Status vocabulary: **green** = the test passed against a DevHub instance; **red** = the need
 is not met (a strict `xfail` test that names the exact exception of the gap in `raises=`,
-never a pass); **unknown** = the test exists and has not been run against a DevHub instance.
+never a pass); **unknown** = the test exists and has not been run against a DevHub
+instance (no row is unknown since the run of 2026-10-20).
 The owner column names who must act when the need is red. Basis: *adapter* = observed in
 `trackers/devhub.py` / `trackers/base.py` (the method is inherited from the `Tracker`
 default, checked by script on 2026-10-19); *server* = deduced from the DevHub source
-(repository `dev-hub`, paths relative to its root), read-only, not run. Read at commit
-`68c7ef0` (2026-10-19), the `HEAD` of that checkout at reading time; the files cited here
-are identical at the earlier `3fedc57` (`git diff 3fedc57 68c7ef0` on them was empty that
-day).
+(repository `dev-hub`, paths relative to its root), read-only. Read at commit `68c7ef0`
+(2026-10-19), the `HEAD` of that checkout at reading time; the files cited here are
+identical at the earlier `3fedc57` (`git diff 3fedc57 68c7ef0` on them was empty that day).
+DHN-42 was read at `ff22b3a` (2026-10-20).
 
-No test has been run against a DevHub instance when this page was written: every
-`unknown` is unknown for that reason, and every `red` is deduced from code, not observed on
-a server. Test names are in `tests/integration/test_devhub_live_conformance.py`.
+First live run (2026-10-20, observed): DevHub revision
+`ff22b3a821fb031b49d1fdb78c43ecb481431c7f`, a disposable instance without local accounts
+(`select local_accounts from account_workspace` answered false; procedure in "Bring up a
+disposable instance"), result 25 passed and 16 xfailed (41 tests, before DHN-42 existed).
+Every `green` below is a test that passed in that run; every `red` of DHN-01 to DHN-41
+raised the exception its `gap` declares in `raises=` (the `xfailed` limit of "Reading the
+result" applies to DHN-27 and DHN-28). The cause of each red is still the one in its Basis
+column (adapter: observed in the source; server: deduced from the source, not from the
+answers of the instance). DHN-42 was run alone on an instance with local accounts the same
+day (`DEVHUB_LIVE_LOCAL_ACCOUNTS=1`): `xfailed`. That `xfailed` alone does not show the
+refused creation (limit in "Reading the result"); the refusal is the 403 of `POST /projects`
+observed at the setup of an earlier attempt on an instance with local accounts (row DHN-42).
+Test names are in
+`tests/integration/test_devhub_live_conformance.py`.
 
 | ID | Need | Test | Status | Owner of the gap | Basis |
 | --- | --- | --- | --- | --- | --- |
-| DHN-01 | Create or recover a repository-bound project, idempotently | `test_dhn_01_provision_project_is_repository_bound_and_idempotent` | unknown | - | not run |
-| DHN-02 | Resolve the project from the canonical repository and refuse a contradicting registry binding | `test_dhn_02_resolve_project_by_canonical_repository` | unknown | - | not run |
-| DHN-03 | Refuse an unauthenticated request | `test_dhn_03_unauthenticated_request_is_refused` | unknown | - | not run |
-| DHN-04 | Create an issue; read back title, byte-exact body, fields, labels, AC counts, version | `test_dhn_04_create_issue_reads_back_fields_body_and_acceptance_counts` | unknown | - | not run |
-| DHN-05 | Update only the named fields under the version check | `test_dhn_05_update_fields_changes_only_the_named_fields` | unknown | - | not run |
-| DHN-06 | Refuse a stale version (409 `version_conflict`) without writing | `test_dhn_06_stale_version_is_refused_and_leaves_no_write` | unknown | - | not run |
-| DHN-07 | Replay an idempotent write once; conflict (409 `idempotency_conflict`) on a divergent replay | `test_dhn_07_idempotent_replay_returns_one_effect_and_divergence_conflicts` | unknown | - | not run |
-| DHN-08 | List a project's issues and narrow them by a free-text query | `test_dhn_08_search_lists_issues_and_narrows_by_query` | unknown | - | not run |
-| DHN-09 | Paginate a project listing past 100 issues without loss or repeat | `test_dhn_09_search_paginates_past_one_hundred_issues` | unknown | - | not run |
-| DHN-10 | Create a child under a parent; both ends show the link | `test_dhn_10_child_creation_links_both_ends` | unknown | - | not run |
-| DHN-11 | `depends-on`, `blocks`, `relates` links round-trip with the inverse on the target | `test_dhn_11_dependency_links_round_trip_with_inverse` | unknown | - | not run |
-| DHN-12 | Reparent an existing issue with `subtask-of` and `parent-of` | `test_dhn_12_existing_issue_can_be_reparented_in_both_directions` | unknown | - | not run |
-| DHN-13 | Add comments; read them back in order with a creation time | `test_dhn_13_comments_round_trip_in_order` | unknown | - | not run |
-| DHN-14 | Return every comment of an issue past 100 | `test_dhn_14_every_comment_is_returned_past_one_hundred` | unknown | - | not run; the issue read has no row limit in `src/tracker/store.ts:457` (server, observed) |
-| DHN-15 | Bounded Epic subgraph projection holding the Epic and its children | `test_dhn_15_epic_subgraph_projection_is_bounded_and_complete` | unknown | - | not run |
-| DHN-16 | One public audit receipt per create, update, transition, link, comment | `test_dhn_16_audit_projection_holds_one_receipt_per_operation` | unknown | - | not run |
-| DHN-17 | Start path `backlog` to `in-progress`; resume from `blocked` | `test_dhn_17_start_path_and_resume_from_blocked` | unknown | - | not run |
-| DHN-18 | `review` only with a valid signed proof (forged secret refused); return to `in-progress` | `test_dhn_18_review_needs_a_valid_proof_and_can_return_to_in_progress` | unknown | - | not run |
-| DHN-19 | `done` with merge proof; `done` is terminal; a jump without a valid path is refused (409) | `test_dhn_19_done_is_terminal_and_unproven_jumps_are_refused` | unknown | - | not run |
-| DHN-20 | Acceptance-checkbox sync patches only against the expected body; replay is a no-op; stale body conflicts | `test_dhn_20_acceptance_sync_patches_only_with_the_expected_body` | unknown | - | not run |
+| DHN-01 | Create or recover a repository-bound project, idempotently | `test_dhn_01_provision_project_is_repository_bound_and_idempotent` | green | - | observed, run of 2026-10-20 |
+| DHN-02 | Resolve the project from the canonical repository and refuse a contradicting registry binding | `test_dhn_02_resolve_project_by_canonical_repository` | green | - | observed, run of 2026-10-20 |
+| DHN-03 | Refuse an unauthenticated request | `test_dhn_03_unauthenticated_request_is_refused` | green | - | observed, run of 2026-10-20 |
+| DHN-04 | Create an issue; read back title, byte-exact body, fields, labels, AC counts, version | `test_dhn_04_create_issue_reads_back_fields_body_and_acceptance_counts` | green | - | observed, run of 2026-10-20 |
+| DHN-05 | Update only the named fields under the version check | `test_dhn_05_update_fields_changes_only_the_named_fields` | green | - | observed, run of 2026-10-20 |
+| DHN-06 | Refuse a stale version (409 `version_conflict`) without writing | `test_dhn_06_stale_version_is_refused_and_leaves_no_write` | green | - | observed, run of 2026-10-20 |
+| DHN-07 | Replay an idempotent write once; conflict (409 `idempotency_conflict`) on a divergent replay | `test_dhn_07_idempotent_replay_returns_one_effect_and_divergence_conflicts` | green | - | observed, run of 2026-10-20 |
+| DHN-08 | List a project's issues and narrow them by a free-text query | `test_dhn_08_search_lists_issues_and_narrows_by_query` | green | - | observed, run of 2026-10-20 |
+| DHN-09 | Paginate a project listing past 100 issues without loss or repeat | `test_dhn_09_search_paginates_past_one_hundred_issues` | green | - | observed, run of 2026-10-20 |
+| DHN-10 | Create a child under a parent; both ends show the link | `test_dhn_10_child_creation_links_both_ends` | green | - | observed, run of 2026-10-20 |
+| DHN-11 | `depends-on`, `blocks`, `relates` links round-trip with the inverse on the target | `test_dhn_11_dependency_links_round_trip_with_inverse` | green | - | observed, run of 2026-10-20 |
+| DHN-12 | Reparent an existing issue with `subtask-of` and `parent-of` | `test_dhn_12_existing_issue_can_be_reparented_in_both_directions` | green | - | observed, run of 2026-10-20 |
+| DHN-13 | Add comments; read them back in order with a creation time | `test_dhn_13_comments_round_trip_in_order` | green | - | observed, run of 2026-10-20 |
+| DHN-14 | Return every comment of an issue past 100 | `test_dhn_14_every_comment_is_returned_past_one_hundred` | green | - | observed, run of 2026-10-20; the issue read has no row limit in `src/tracker/store.ts:457` (server, observed) |
+| DHN-15 | Bounded Epic subgraph projection holding the Epic and its children | `test_dhn_15_epic_subgraph_projection_is_bounded_and_complete` | green | - | observed, run of 2026-10-20 |
+| DHN-16 | One public audit receipt per create, update, transition, link, comment | `test_dhn_16_audit_projection_holds_one_receipt_per_operation` | green | - | observed, run of 2026-10-20 |
+| DHN-17 | Start path `backlog` to `in-progress`; resume from `blocked` | `test_dhn_17_start_path_and_resume_from_blocked` | green | - | observed, run of 2026-10-20 |
+| DHN-18 | `review` only with a valid signed proof (forged secret refused); return to `in-progress` | `test_dhn_18_review_needs_a_valid_proof_and_can_return_to_in_progress` | green | - | observed, run of 2026-10-20 |
+| DHN-19 | `done` with merge proof; `done` is terminal; a jump without a valid path is refused (409) | `test_dhn_19_done_is_terminal_and_unproven_jumps_are_refused` | green | - | observed, run of 2026-10-20 |
+| DHN-20 | Acceptance-checkbox sync patches only against the expected body; replay is a no-op; stale body conflicts | `test_dhn_20_acceptance_sync_patches_only_with_the_expected_body` | green | - | observed, run of 2026-10-20 |
 | DHN-21 | Update an issue body (frame/groom) checked against the expected body | `test_dhn_21_arbitrary_body_update_is_checked_against_the_expected_body` | red | adapter | adapter: `update_body` inherited, `BodyUpdateUnavailableError`; the body `PATCH` route exists (used by DHN-20) |
-| DHN-22 | Close an Epic atomically from a receipt; replay; recover the original closure | `test_dhn_22_epic_closure_is_atomic_audited_and_replayable` | unknown | - | not run |
-| DHN-23 | Refuse a closure whose graph differs from the receipt | `test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt` | unknown | - | not run |
+| DHN-22 | Close an Epic atomically from a receipt; replay; recover the original closure | `test_dhn_22_epic_closure_is_atomic_audited_and_replayable` | green | - | observed, run of 2026-10-20 |
+| DHN-23 | Refuse a closure whose graph differs from the receipt | `test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt` | green | - | observed, run of 2026-10-20 |
 | DHN-24 | Close an Epic over a dropped child by explicit acceptance (`--accept-dropped`, PAT-ADR-0017) | `test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance` | red | adapter | adapter: `epic_dropped_closure_supported` is `False` and `write.py` refuses the flag without it; the DevHub closure itself already admits `dropped` children (`src/tracker/epic-closure-store.ts:182`, server, observed) |
-| DHN-25 | Typed acceptance-override receipt before merge | `test_dhn_25_acceptance_override_leaves_a_typed_receipt` | red | adapter | adapter: `project_acceptance_override` inherited, `TrackerCapabilityUnavailableError`; the end-to-end `issue merge` with an AC override on DevHub has never been run (unknown) |
+| DHN-25 | Typed acceptance-override receipt before merge | `test_dhn_25_acceptance_override_leaves_a_typed_receipt` | red | adapter | adapter: `project_acceptance_override` inherited, `TrackerCapabilityUnavailableError`; the end-to-end `issue merge` with an AC override on DevHub has not been run (unknown) |
 | DHN-26 | Accept a non-code issue by a human decision without a PR (PAT-ADR-0025) | `test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr` | red | adapter | adapter: `accept_issue` inherited. The test passes a minimal decision document; the first implementation must complete it |
 | DHN-27 | Abandon a started issue (`dropped` from `in-progress` or `review`) | `test_dhn_27_started_issue_can_be_abandoned` | red | server | server, deduced: `src/tracker/workflow.ts:3-10` transitions give `in-progress` only `review`, `blocked`, and `review` only `in-progress`, `blocked`, `done` |
 | DHN-28 | Return a started issue to `backlog` | `test_dhn_28_started_issue_can_return_to_backlog` | red | server | server, deduced: same table, no edge to `backlog` from `in-progress` or `review` |
-| DHN-29 | Create an ADR as `proposed` with an id `<KEY>-ADR-NNNN`; list it with its exact body | `test_dhn_29_adr_is_created_proposed_and_listed_with_its_exact_body` | unknown | - | not run |
-| DHN-30 | ADR status `proposed` to `accepted` to `deprecated` with a signed proof | `test_dhn_30_adr_status_moves_proposed_to_accepted_to_deprecated` | unknown | - | not run |
-| DHN-31 | `accepted` to `superseded` through the status route in Foundry mode | `test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route` | unknown | - | not run; `assertAdrTransition` allows it (`src/tracker/contract.ts:268-277`, server, observed) but `docs/DEVHUB-73-ADR-DECISIONS.md` limits Foundry projects to recorded intents for decisions (unknown which applies to the status route) |
+| DHN-29 | Create an ADR as `proposed` with an id `<KEY>-ADR-NNNN`; list it with its exact body | `test_dhn_29_adr_is_created_proposed_and_listed_with_its_exact_body` | green | - | observed, run of 2026-10-20 |
+| DHN-30 | ADR status `proposed` to `accepted` to `deprecated` with a signed proof | `test_dhn_30_adr_status_moves_proposed_to_accepted_to_deprecated` | green | - | observed, run of 2026-10-20 |
+| DHN-31 | `accepted` to `superseded` through the status route in Foundry mode | `test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route` | green | - | observed, run of 2026-10-20: it passed; `assertAdrTransition` allows it (`src/tracker/contract.ts:268-277`, server, observed) but `docs/DEVHUB-73-ADR-DECISIONS.md` limits Foundry projects to recorded intents for decisions (which applies to the status route stays unknown) |
 | DHN-32 | Supersede an ADR by a named replacement | `test_dhn_32_adr_is_superseded_by_a_named_replacement` | red | adapter | adapter: `supersede_adr` inherited, `TrackerCapabilityUnavailableError` |
 | DHN-33 | Append a reciprocal ADR-to-issue relation to a decided ADR | `test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation` | red | adapter + server | adapter: `link_adr_issue` inherited; server: decided ADR links are frozen (`docs/DEVHUB-73-ADR-DECISIONS.md`, observed in the document, not run) |
 | DHN-34 | Selective import: a living issue is imported once, found by exact source coordinate, replay-safe | `test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate` | red | adapter + server | adapter: `migration_find_issue`, `migration_import_issue` inherited; server: no source coordinate on issues known (unknown) |
@@ -148,9 +218,10 @@ a server. Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-39 | Read a mapped release scope without approximate discovery | `test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery` | red | adapter + server | adapter: `read_release_scope` inherited, `ReleaseScopeUnavailableError`; how a release is mapped on DevHub is a question below |
 | DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), with no live test (DHN-41 covers `verify_project_identity` only); the Epic cadencer also needs DHN-37 and DHN-38 |
 | DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | red | adapter | adapter: `verify_project_identity` inherited from `trackers/base.py`, `ProjectProvisioningUnavailableError`; the test covers it only, the `resolve_checkout_project` pilot path of DHN-40 has no live test |
+| DHN-42 | Under local accounts the Foundry service credential can create its project and use it (issue create and read) | `test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts` | red | server | server: `authorizeProjectCreation` refuses any non-human actor when `account_workspace.local_accounts` is true (`src/access/domain.ts:139-147`, observed in source); `authorizeProject` (`src/access/domain.ts:74-119`) limits a service actor to the projects of `access_credentials.project_ids` or `access_legacy_service_projects`. Observed 2026-10-20 on an instance with local accounts: `POST /projects` answered 403 `insufficient_scope` and all 41 tests errored at setup, nothing written; question 14 |
 
-Counts (equal to the table): 41 needs; 16 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-41);
-25 unknown, DHN-31 among them (its expectation is doubtful); 0 green.
+Counts (equal to the table): 42 needs; 17 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-42);
+0 unknown; 25 green (DHN-01 to DHN-20, DHN-22, DHN-23, DHN-29 to DHN-31).
 
 ### Not covered, on purpose
 
@@ -173,8 +244,8 @@ above. `tests/test_devhub_requirements.py` keeps the page and the decorators equ
 Numbered so an answer can cite them. "Unknown" means Foundry has no evidence either way.
 
 1. **Deployed version**: how can a client read which DevHub build it talks to? Foundry
-   knows of no version endpoint (unknown); the page cannot say which commit the first live
-   run covers.
+   knows of no version endpoint (unknown); the run of 2026-10-20 knew its revision only
+   because Foundry built the image and set `DEVHUB_DEPLOY_REVISION` itself.
 2. **Disposable instance**: what is the supported way to get a throwaway instance
    (database reset, compose profile)? What scopes must `DEVHUB_LIVE_TOKEN` carry for the
    tests above? Is there a way to delete or archive the `LV*` projects a run leaves?
@@ -209,6 +280,13 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
     the one DevHub instance (deduced: a single tracker per repository, FOUNDRY-ADR-0026).
     What is the backup and restore procedure, and how does a client tell a redeployment
     from an outage? No test of this page covers it.
+14. **DHN-42**: on an instance with local accounts, `authorizeProjectCreation` refuses
+    any actor that is not a human owner or admin, and `authorizeProject` limits a service
+    credential to the projects granted to it (`src/access/domain.ts`, read at `ff22b3a`).
+    How does the Foundry service credential obtain the right to create its repository's
+    project and then use it: a grant to the service credential, or a documented procedure
+    (for example an owner creating the project and granting it)? Without one, a
+    repository cannot be bootstrapped under local accounts.
 
 ## Documentation status (AGENTS.md#R5, FOUNDRY-ADR-0018)
 
@@ -217,8 +295,9 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
 | This page (needs, tests, statuses, questions) | Added by PAT-296. |
 | Command `pytest -m devhub_live tests/integration/test_devhub_live_conformance.py` and the `devhub_live` marker (`pytest.ini`) | Documented in "Run the suite". |
 | Environment variables `DEVHUB_LIVE_URL`, `DEVHUB_LIVE_CONFIRM`, `DEVHUB_LIVE_TOKEN`, `DEVHUB_LIVE_PROOF_SECRET` | Documented in "Environment variables". |
-| Safety checks of `tests/devhub_live_gate.py` | Documented in "Production safety". |
+| Safety checks of `tests/devhub_live_gate.py` | Documented in "Production safety"; its module docstring states the local-accounts limit (PAT-300). |
 | `docs/devhub-tracker.md`, `docs/tracker-conformance.md` | One pointer line each to this page; no other change. |
+| Statuses of DHN-01 to DHN-31 (25 green, first live run of 2026-10-20), new need DHN-42 (red, `server`), `DEVHUB_LIVE_LOCAL_ACCOUNTS`, limit of the instance marker under local accounts, procedure "Bring up a disposable instance" (PAT-300) | Updated in "Needs", "Environment variables", "Production safety", "Bring up a disposable instance" and question 14. |
 | Counts, DHN-40 owner and the new need DHN-41, `raises=` of each gap, server citations by repository path (PAT-299) | Updated in "Needs" and "Reading the result". |
 | `trackers/devhub.py`, `tracker-contract.md`, `tracker-contract.v1.json` | Not changed: no adapter behaviour, CLI verb or contract cell changed. |
 
