@@ -1948,12 +1948,14 @@ def close_epic(
                 raise SystemExit(
                     f"Clôture Epic refusée : l'enfant {child_id} n'est pas terminal."
                 )
+            _exact_nonnegative_int(child.ac_done, "AC enfant satisfaites")
+            _exact_nonnegative_int(child.ac_total, "AC enfant totales")
+            # PAT-316: the atomic receipt binds only what the provider checks in its
+            # transaction (id, version, state); the AC are checked on this read.
             atomic_children.append(EpicClosureChild(
                 id=child_id,
                 version=_exact_positive_version(child.version, "version enfant"),
                 state=child.state,
-                ac_done=_exact_nonnegative_int(child.ac_done, "AC enfant satisfaites"),
-                ac_total=_exact_nonnegative_int(child.ac_total, "AC enfant totales"),
             ))
             if child.ac_done != child.ac_total and not (named and child.state == "dropped"):
                 raise SystemExit(

@@ -560,8 +560,11 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite, m
     tracker = suite.tracker
     assert tracker.epic_dropped_closure_supported is True
     epic = _create(suite, _unique("live dropped closure"), "", Type="Epic")
-    done_child = _create(suite, _unique("live done child"), "", parent=epic.id)
-    dropped_child = _create(suite, _unique("live dropped child"), "", parent=epic.id)
+    # PAT-316: both children carry criteria; the dropped one keeps them open.
+    done_child = _create(suite, _unique("live done child"), "- [x] met", parent=epic.id)
+    dropped_child = _create(
+        suite, _unique("live dropped child"), "- [ ] abandoned", parent=epic.id,
+    )
     _to_done(suite, done_child.id)
     tracker.set_state(dropped_child.id, "dropped", project=suite.project)
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: suite.project)

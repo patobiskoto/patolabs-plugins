@@ -267,11 +267,13 @@ by another client. Unlike PAT-ADR-0017 on Linear, PAT-ADR-0030 requires no `done
 child: an Epic whose direct children are all `dropped` and named closes
 (`test_named_atomic_closure_needs_no_done_child`, fixture only). Behaviour change: a closure over a dropped child without the
 flag, accepted before PAT-313, is now refused, including the `close-epic` step of the
-frozen DevHub coordinator (`campaign_runtime.py`), which passes no flag. Known defect
-(PAT-316, observed offline, not live): a child with nonzero AC counters, `done` or named
-`dropped`, makes `DevHubTracker.close_epic` fail before the POST (`invalid_response`), because
-the adapter renormalizes the receipt without those counters; the live run of PAT-313 used
-children without criteria. Row DHN-24 of `devhub-requirements.md`.
+frozen DevHub coordinator (`campaign_runtime.py`), which passes no flag. The atomic receipt
+binds each child by id, version and state only, the coordinates the server checks; the AC
+of a child are checked on Foundry's read, before the call, and are not in the receipt
+(PAT-316, `write.close_epic`). Before PAT-316 the receipt carried the AC counters, which
+`DevHubTracker.close_epic` drops when it rebuilds the wire receipt, so a closure with a child
+that had criteria failed before the POST (`invalid_response`; observed live on `1227841`).
+Row DHN-24 of `devhub-requirements.md`.
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
