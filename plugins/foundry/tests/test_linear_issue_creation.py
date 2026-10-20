@@ -276,6 +276,68 @@ def test_quota_exhaustion_propagates_typed_without_extra_read(tracker, monkeypat
     assert len(wire.issues) == 2
 
 
+def _refuse_create(instance, wire, monkeypatch, code):
+    original = wire.__call__
+    sent = []
+
+    def transport(document, variables):
+        if 'FoundryLinearIssueCreate' in document:
+            sent.append(document)
+            return {'errors': [{'message': 'secret body text', 'extensions': {'code': code}}]}
+        return original(document, variables)
+
+    monkeypatch.setattr(instance, '_transport', transport)
+    return sent
+
+
+def test_usage_limit_refusal_is_typed_known_and_not_retried(tracker, monkeypatch):
+    instance, wire = tracker
+    sent = _refuse_create(instance, wire, monkeypatch, 'USAGE_LIMIT_EXCEEDED')
+    count = len(wire.calls)
+    with pytest.raises(linear.LinearUsageLimitError) as caught:
+        instance.create_issue(PROJECT, 'Task', 'source')
+    text = str(caught.value)
+    assert caught.value.code == 'usage_limit_exceeded'
+    assert 'usage limit' in text and 'creation=not_created' in text
+    assert 'graphql_error' not in text and 'unknown' not in text and 'secret body' not in text
+    assert caught.value.client_id in text
+    assert len(sent) == 1
+    assert not any('mutation ' in d and 'IssueCreate' not in d for d, _ in wire.calls[count:])
+    assert len(wire.issues) == 2
+
+
+def test_another_unknown_graphql_code_stays_graphql_error(tracker, monkeypatch):
+    instance, wire = tracker
+    _refuse_create(instance, wire, monkeypatch, 'SOMETHING_ELSE')
+    with pytest.raises(base.IssueCreationValidationError) as caught:
+        instance.create_issue(PROJECT, 'Task', 'source')
+    assert not isinstance(caught.value, linear.LinearUsageLimitError)
+    assert caught.value.details['creation'] == 'unknown'
+    assert caught.value.details['causes']['create']['code'] == 'graphql_error'
+
+
+def test_usage_limit_code_in_an_http_error_body_is_the_same_typed_refusal():
+    import io
+    import urllib.error
+
+    body = json.dumps({'errors': [{'extensions': {'code': 'USAGE_LIMIT_EXCEEDED'}}]}).encode()
+    error = urllib.error.HTTPError('https://x', 400, 'Bad', {}, io.BytesIO(body))
+
+    class Opener:
+        def open(self, *a, **k):
+            raise error
+
+    instance = linear.LinearTracker(token='linear-test-secret')
+    import urllib.request
+    original = urllib.request.build_opener
+    urllib.request.build_opener = lambda *a, **k: Opener()
+    try:
+        with pytest.raises(linear.LinearUsageLimitError):
+            instance._graphql_once('mutation {}', {}, 'issue.create')
+    finally:
+        urllib.request.build_opener = original
+
+
 def test_reconciliation_checks_requested_fields_and_parent(tracker):
     instance, wire = tracker
     fields = {'State': 'ready', 'Priority': 'P1', 'Estimate': 5,
