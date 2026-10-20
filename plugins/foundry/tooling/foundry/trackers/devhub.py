@@ -797,6 +797,36 @@ class DevHubTracker(Tracker):
             raise SystemExit(f"Binding DevHub contradictoire pour '{repo}' ; mutation refusée.")
         return remote
 
+    def verify_project_identity(self, project: Project) -> bool:
+        """Read back the exact project before a binding is published (DHN-41, PAT-314).
+
+        One ``GET /projects/resolve`` on the project's canonical repository; ``True`` only
+        when the server answers the same key, id and canonical repository.  An absent
+        or non-canonical ``canonical_repo``, or a 404, is ``False``; other errors raise.
+        """
+        canonical = project.extra.get("canonical_repo")
+        try:
+            canonical = registry.canonical_repository_identity(canonical)
+        except (TypeError, ValueError):
+            return False
+        try:
+            raw = self._application_req(
+                "GET", "/projects/resolve?" + urllib.parse.urlencode({"repo": canonical}),
+            )
+        except DevHubTrackerError as error:
+            if error.status == 404:
+                return False
+            raise
+        remote = self._to_project(raw)
+        try:
+            remote_repository = registry.canonical_repository_identity(
+                remote.extra.get("canonical_repo"),
+            )
+        except (TypeError, ValueError):
+            return False
+        return (remote.key == project.key and remote.id == project.id
+                and remote_repository == canonical)
+
     def resolve_checkout_project(
         self,
         cwd: str | None = None,
@@ -1420,6 +1450,26 @@ class DevHubTracker(Tracker):
             version=source["version"],
             idempotent=True,
         )
+
+    def migration_link_issue(
+        self, project: Project, src_id: str, link_type: str, dst_id: str,
+    ) -> None:
+        """Link two issues of a staged migration target (DHN-35, PAT-314).
+
+        Refused on an archived project (``registry.require_writable_project``).  A
+        replay is a no-op: the link is not posted again when the source already
+        carries it, in either stored direction.
+        """
+        project = self._require_project(project)
+        registry.require_writable_project(self.name, project)
+        if link_type not in _LINK_TYPES:
+            raise ValueError("type de lien Tracker non supporté par DevHub")
+        self._require_issue_binding(src_id, project)
+        self._require_issue_binding(dst_id, project)
+        source = self._to_issue(self._issue_raw(src_id))
+        if any(link.type == link_type and link.target == dst_id for link in source.links):
+            return
+        self.link(src_id, link_type, dst_id, project)
 
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,

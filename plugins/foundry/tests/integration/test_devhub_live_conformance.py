@@ -27,7 +27,7 @@ import json
 import re
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -41,7 +41,6 @@ from foundry.models import (
 )
 from foundry.trackers.base import (
     IssueUnavailableError,
-    ProjectProvisioningUnavailableError,
     ReleaseScopeUnavailableError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
@@ -696,7 +695,7 @@ def _issue_snapshot(source_ref: str, title: str, body: str) -> dict:
     }
 
 
-@gap("DHN-34", "adapter+server", "no migration_* port; server source_ref planned as DEVHUB-105", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-34", "adapter+server", "no migration_find_issue or migration_import_issue; server source_ref planned as DEVHUB-105", raises=TrackerCapabilityUnavailableError)
 def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     tracker = suite.tracker
     ref = f"linear:issue:PAT-{secrets.randbelow(10**6) + 1000}"
@@ -711,18 +710,21 @@ def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     assert [item.id for item in tracker.search(suite.project, title)] == [first.id]
 
 
-@gap("DHN-35", "adapter", "no migration_link_issue: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@need("DHN-35")
 def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
+    # The import itself is DHN-34 (server source_ref, DEVHUB-105); the two issues are
+    # created normally, as decided for PAT-314.
     tracker = suite.tracker
-    refs = [f"linear:issue:PAT-{secrets.randbelow(10**6) + 2000}" for _ in range(2)]
-    imported = [
-        tracker.migration_import_issue(
-            suite.project, _issue_snapshot(ref, _unique("live link import"), ""), source_ref=ref,
-        )
-        for ref in refs
-    ]
-    tracker.migration_link_issue(suite.project, imported[0].id, "depends-on", imported[1].id)
-    assert _has_link(tracker.get_issue(imported[0].id), "depends-on", imported[1].id)
+    source = _create(suite, _unique("live link source"))
+    target = _create(suite, _unique("live link target"))
+    tracker.migration_link_issue(suite.project, source.id, "depends-on", target.id)
+    linked = tracker.get_issue(source.id)
+    assert _has_link(linked, "depends-on", target.id)
+    # Replay, and the inverse end the migration also links: no second relation.
+    tracker.migration_link_issue(suite.project, source.id, "depends-on", target.id)
+    tracker.migration_link_issue(suite.project, target.id, "blocks", source.id)
+    assert tracker.get_issue(source.id).links == linked.links
+    assert _has_link(tracker.get_issue(target.id), "blocks", source.id)
 
 
 @gap("DHN-36", "adapter+server", "no ADR import; server import route planned as DEVHUB-105, foreign id kept as an alias the adapter must expose as id", raises=TrackerCapabilityUnavailableError)
@@ -893,9 +895,11 @@ def test_dhn_40_devhub_is_a_v1_tracker_of_the_repository(suite):
     assert "devhub" in registry._V1_TRACKERS
 
 
-@gap("DHN-41", "adapter", "devhub.py inherits verify_project_identity: ProjectProvisioningUnavailableError; resolve_checkout_project stays on the basename pilot path", raises=ProjectProvisioningUnavailableError)
+@need("DHN-41")
 def test_dhn_41_repository_bootstrap_reads_back_the_project_identity(suite):
     assert suite.tracker.verify_project_identity(suite.project) is True
+    foreign = replace(suite.project, id=suite.project.id + "0")
+    assert suite.tracker.verify_project_identity(foreign) is False
 
 
 @need("DHN-42")

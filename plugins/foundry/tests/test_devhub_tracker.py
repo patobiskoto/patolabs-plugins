@@ -1782,3 +1782,73 @@ def test_reconcile_issue_creation_reports_an_absent_issue_and_refuses_a_foreign_
             PROJECT, "3f2c1d4e-0000-4000-8000-000000000000", "Created", "body",
         )
     assert foreign.calls == []
+
+
+# --- PAT-314: DHN-41 project identity read-back, DHN-35 staged migration link ---
+
+BOUND = Project(key="TRAME", id="42", extra={"canonical_repo": "github.com/acme/trame"})
+
+
+@pytest.mark.parametrize(("remote", "expected"), (
+    ({"key": "TRAME", "id": "42", "canonical_repo": "github.com/acme/trame"}, True),
+    ({"key": "TRAME", "id": "43", "canonical_repo": "github.com/acme/trame"}, False),
+    ({"key": "OTHER", "id": "42", "canonical_repo": "github.com/acme/trame"}, False),
+    ({"key": "TRAME", "id": "42", "canonical_repo": "github.com/acme/other"}, False),
+    ({"key": "TRAME", "id": "42"}, False),
+))
+def test_verify_project_identity_reads_back_key_id_and_repository(remote, expected):
+    tracker = ScriptedTracker([remote])
+    assert tracker.verify_project_identity(BOUND) is expected
+    assert [call[:2] for call in tracker.calls] == [
+        ("GET", "/projects/resolve?repo=github.com%2Facme%2Ftrame")]
+
+
+def test_verify_project_identity_is_false_without_a_repository_or_on_404():
+    tracker = ScriptedTracker([])
+    assert tracker.verify_project_identity(PROJECT) is False
+    assert tracker.calls == []
+    absent = ScriptedTracker([DevHubTrackerError("GET", "/projects/resolve", 404, "not_found")])
+    assert absent.verify_project_identity(BOUND) is False
+
+
+def test_verify_project_identity_raises_other_errors():
+    tracker = ScriptedTracker([DevHubTrackerError("GET", "/projects/resolve", 503, "unavailable")])
+    with pytest.raises(DevHubTrackerError):
+        tracker.verify_project_identity(BOUND)
+
+
+def test_migration_link_issue_posts_one_link_then_replays_without_write(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    source = issue_raw(id="TRAME-1", version=3)
+    target = issue_raw(id="TRAME-2", version=5)
+    tracker = ScriptedTracker([source, source, target, {"ok": True}])
+    tracker.migration_link_issue(PROJECT, "TRAME-1", "depends-on", "TRAME-2")
+    method, path, body, kwargs = tracker.calls[-1]
+    assert (method, path) == ("POST", "/issues/TRAME-1/links")
+    assert body == {"type": "depends-on", "target": "TRAME-2", "target_version": 5}
+    assert kwargs["version"] == 3
+
+    linked = issue_raw(id="TRAME-1", version=4, links=[
+        {"type": "depends-on", "direction": "outward", "target": "TRAME-2"}])
+    replay = ScriptedTracker([linked])
+    replay.migration_link_issue(PROJECT, "TRAME-1", "depends-on", "TRAME-2")
+    assert [call[0] for call in replay.calls] == ["GET"]
+
+
+def test_migration_link_issue_sees_the_inverse_stored_link_as_present(monkeypatch):
+    # The migration links both ends of a relation; the second call must not post.
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    inverse = issue_raw(id="TRAME-2", links=[
+        {"type": "depends-on", "direction": "inward", "target": "TRAME-1"}])
+    tracker = ScriptedTracker([inverse])
+    tracker.migration_link_issue(PROJECT, "TRAME-2", "blocks", "TRAME-1")
+    assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+def test_migration_link_issue_refuses_an_archived_project_before_any_request(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {
+        "devhub": {"old": {"archive": True, "key": "TRAME", "id": "42"}}})
+    tracker = ScriptedTracker([])
+    with pytest.raises(SystemExit, match="archive"):
+        tracker.migration_link_issue(PROJECT, "TRAME-1", "depends-on", "TRAME-2")
+    assert tracker.calls == []

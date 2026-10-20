@@ -275,6 +275,30 @@ of a child are checked on Foundry's read, before the call, and are not in the re
 that had criteria failed before the POST (`invalid_response`; observed live on `1227841`).
 Row DHN-24 of `devhub-requirements.md`.
 
+## Project identity read-back (PAT-314, DHN-41)
+
+`verify_project_identity(project)` makes one `GET /projects/resolve` on the project's
+`canonical_repo` and returns `True` only when the server answers the same key, id and
+canonical repository. A missing or non-canonical `canonical_repo` and a 404 return `False`
+without guessing; any other error is raised. It is the read-back that the
+`repository-bootstrap` journey of `tracker-contract.v1.json` asks for before a binding is
+published. `registry bootstrap` does not reach it on DevHub yet: it refuses a tracker
+outside `registry._V1_TRACKERS` first (`registry._validated_binding_entry`, DHN-40).
+Row DHN-41 of `devhub-requirements.md`.
+
+## Staged migration links (PAT-314, DHN-35)
+
+`migration_link_issue(project, src, type, dst)` is the link primitive of a migration
+target (`migration.copy_and_verify`). It refuses an archived project before any request
+(`registry.require_writable_project`), checks both ids against the project, reads the
+source and posts the link through `link` only when the source does not already carry it.
+DevHub stores one relation and shows its inverse on the other end (`depends-on` on one
+side, `blocks` on the other), so a replay, or the migration linking the other end, makes
+no second write. The other migration primitives (`migration_find_issue`,
+`migration_import_issue`) stay unavailable until DevHub stores a source coordinate
+(DHN-34, DEVHUB-105). The live test therefore links two issues created normally, by
+decision for PAT-314. Row DHN-35 of `devhub-requirements.md`.
+
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
 `update_body(issue, expected_body, updated_body)` reads the issue, raises
