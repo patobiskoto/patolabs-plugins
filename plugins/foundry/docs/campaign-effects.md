@@ -757,8 +757,9 @@ names neither an issue nor a client id is a durable refusal
 
 Classification of a failure (`classify`, `_DURABLE`): an error text that names a capability
 unavailable, a binding refusal, a `ValueError`, `SystemExit`, `type_unmapped`,
-`invalid_field_options` or an unknown type is a durable refusal; any other error (quota,
-network, an unknown cause) is transient. The recorded `reason` is the last line of the error
+`invalid_field_options`, an unknown type or the Linear workspace usage limit
+(`LinearUsageLimitError`, `usage_limit_exceeded`, PAT-310) is a durable refusal; any other error
+(quota, network, an unknown cause) is transient. The recorded `reason` is the last line of the error
 (at most 200 characters, 64-hex runs and credential shapes masked with `mask_credentials`,
 PAT-238, because the reason is journaled and told in the PR description; `deferral_lines`
 masks it again). A quota error whose message carries `reset_at=<UTC time>`
