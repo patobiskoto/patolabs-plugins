@@ -565,7 +565,7 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
     assert tracker.close_epic(suite.project, receipt).receipt == receipt
 
 
-@gap("DHN-25", "adapter", "no typed acceptance-override receipt: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-25", "adapter+server", "no typed acceptance-override receipt, server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
     tracker = suite.tracker
     issue = _create(suite, _unique("live override"), "- [ ] unchecked")
@@ -577,7 +577,7 @@ def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
     assert tracker.acceptance_override_projection_supported is True
 
 
-@gap("DHN-26", "adapter", "no accept_issue (PAT-ADR-0025): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-26", "adapter+server", "no accept_issue (PAT-ADR-0025), server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suite):
     issue = _create(suite, _unique("live human acceptance"), "- [ ] decided offline")
     accepted = suite.tracker.accept_issue(
@@ -652,14 +652,17 @@ def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     assert statuses[old.id] == "superseded"
 
 
-@gap("DHN-33", "adapter+server", "no link_adr_issue; server freezes linked_issue_ids once decided (DEVHUB-73)", raises=TrackerCapabilityUnavailableError)
-def test_dhn_33_decided_adr_gains_a_reciprocal_issue_relation(suite):
+@gap("DHN-33", "adapter", "no link_adr_issue on a proposed ADR (DevHub supports it before acceptance, DEVHUB-73 freezes it after): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+def test_dhn_33_adr_issue_relation_set_before_acceptance_survives_it(suite):
     tracker = suite.tracker
     adr = _new_adr(suite, "live adr link")
     issue = _create(suite, _unique("live adr linked issue"), "")
+    tracker.link_adr_issue(adr, issue.id, project=suite.project)
     tracker.set_adr_status(adr, "accepted", project=suite.project)
-    linked = tracker.link_adr_issue(adr, issue.id, project=suite.project)
-    assert linked.id == adr.id
+    page = tracker._req(
+        "GET", f"/adrs/{adr.id}/relationships", response_contract="devhub-adr-relationships.v1",
+    )
+    assert [item["id"] for item in page["items"]] == [issue.id]
 
 
 # --- selective import (FOUNDRY-ADR-0026) ----------------------------------------------
@@ -674,7 +677,7 @@ def _issue_snapshot(source_ref: str, title: str, body: str) -> dict:
     }
 
 
-@gap("DHN-34", "adapter+server", "no migration_* port and no source_ref coordinate on issues", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-34", "adapter+server", "no migration_* port; server source_ref planned as DEVHUB-105", raises=TrackerCapabilityUnavailableError)
 def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     tracker = suite.tracker
     ref = f"linear:issue:PAT-{secrets.randbelow(10**6) + 1000}"
@@ -703,7 +706,7 @@ def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
     assert _has_link(tracker.get_issue(imported[0].id), "depends-on", imported[1].id)
 
 
-@gap("DHN-36", "adapter+server", "no ADR import; server forces <KEY>-ADR-NNNN ids", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-36", "adapter+server", "no ADR import; server import route planned as DEVHUB-105, foreign id kept as an alias the adapter must expose as id", raises=TrackerCapabilityUnavailableError)
 def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite):
     tracker = suite.tracker
     adr_id = "FOUNDRY-ADR-0026"
