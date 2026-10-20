@@ -659,14 +659,29 @@ def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(s
     assert statuses[adr.id] == "superseded"
 
 
-@gap("DHN-32", "adapter+server", "no service-reachable route names the replacement (adr-decisions supersede is limited to an interactive human administrator): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-32", "adapter+server", "no service-reachable route names the replacement (adr-decisions supersede is limited to an interactive human administrator): TrackerCapabilityUnavailableError; planned as DEVHUB-108", raises=TrackerCapabilityUnavailableError)
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
     old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
+    # Foundry's order is `adr accept` then `adr supersede`: both ADRs are accepted first,
+    # and the replacement keeps its status and body (the Linear and GitHub Projects
+    # adapters refuse a non-accepted replacement).
     tracker.set_adr_status(old, "accepted", project=suite.project)
+    tracker.set_adr_status(new, "accepted", project=suite.project)
+    before = {item.id: item for item in tracker.list_adrs(suite.project)}[new.id]
     tracker.supersede_adr(old, new.id, project=suite.project)
-    statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
-    assert statuses[old.id] == "superseded"
+    after = {item.id: item for item in tracker.list_adrs(suite.project)}
+    assert after[old.id].status == "superseded"
+    assert (after[new.id].status, after[new.id].body) == ("accepted", before.body)
+    # `Adr` carries no relation: the narrowest port read of the named link is
+    # `migration_export_adrs`, whose `relations` hold `superseded_by` / `supersedes`.
+    # The DevHub adapter must override its default ("unknown") when the route lands.
+    relations = {
+        entry["adr"].id: entry["relations"]
+        for entry in tracker.migration_export_adrs(suite.project)
+    }
+    assert relations[old.id]["superseded_by"] == new.id
+    assert relations[new.id]["supersedes"] == [old.id]
 
 
 @need("DHN-33")
