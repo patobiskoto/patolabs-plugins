@@ -1373,3 +1373,179 @@ def test_smoke_audit_verification_fails_on_missing_receipt():
         _require_audit_receipts(
             events, resource=resource, operations={"issue.comment", "issue.transition"},
         )
+
+
+# --- PAT-309: DHN-38 proof receipts and DHN-39 Version scope -----------------------------
+
+PAGE_V1 = "devhub-application.v1"
+
+
+def receipt_raw(receipt_id, action="review", **overrides):
+    value = {
+        "id": str(receipt_id), "issue": "TRAME-1", "project": "TRAME", "action": action,
+        "issue_version": 4, "pr_url": "https://github.com/acme/trame/pull/1",
+        "head_sha": "a" * 40, "base_sha": "d" * 40, "review_digest": "b" * 64,
+        "merge_sha": "c" * 40 if action == "done" else None,
+        "proof_nonce": f"nonce_{receipt_id:0>12}", "actor": "foundry", "created": 5,
+    }
+    value.update(overrides)
+    return value
+
+
+def receipt_page(items, *, cursor=None):
+    return {"items": items, "page": {
+        "schema_version": PAGE_V1, "returned_count": len(items),
+        "truncation": cursor is not None, "cursor": cursor,
+    }}
+
+
+def test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads():
+    from foundry import campaign_cadence
+    tracker = ScriptedTracker([])
+    assert tracker.append_only_lifecycle_supported is True
+    # The one capability still missing is DHN-37, not this flag.
+    assert campaign_cadence.missing_capabilities(tracker) == ("issue_creation_reconciliation",)
+
+
+def test_proof_receipts_are_read_oldest_first_across_pages_and_validated():
+    tracker = ScriptedTracker([
+        receipt_page([receipt_raw(1)], cursor="1"),
+        receipt_page([receipt_raw(2, "done")]),
+    ])
+    receipts = tracker.read_proof_receipts("TRAME-1", project=PROJECT)
+    assert [item["id"] for item in receipts] == ["1", "2"]
+    assert receipts[1]["merge_sha"] == "c" * 40
+    assert tracker.calls[0][1].endswith("/issues/TRAME-1/proof-receipts?cursor=0&limit=100")
+    assert "cursor=1" in tracker.calls[1][1]
+
+
+@pytest.mark.parametrize("pages, code", [
+    ([receipt_page([receipt_raw(1, project="OTHER")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, issue="TRAME-2")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, merge_sha="c" * 40)])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "done", merge_sha=None)])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, head_sha="A" * 40)])], "invalid_response"),
+    ([receipt_page([receipt_raw(2), receipt_raw(1, proof_nonce="nonce_other_000000")])],
+     "pagination_repeated"),
+    ([receipt_page([receipt_raw(1)], cursor="9")], "pagination_stalled"),
+    ([receipt_page([], cursor="1")], "pagination_empty_page"),
+    ([{"items": [], "page": {"schema_version": "x", "returned_count": 0,
+                             "truncation": False, "cursor": None}}], "invalid_response"),
+])
+def test_malformed_foreign_or_stalled_proof_receipts_fail_closed(pages, code):
+    tracker = ScriptedTracker(pages)
+    with pytest.raises(DevHubTrackerError, match=code):
+        tracker.read_proof_receipts("TRAME-1", project=PROJECT)
+
+
+def test_review_on_an_already_reviewed_issue_republishes_only_a_new_generation():
+    review = TransitionContext(
+        pr_url=issue_raw()["pr_url"], head_sha="a" * 40,
+        base_sha="d" * 40, review_digest="b" * 64,
+    )
+    same = ScriptedTracker([issue_raw(state="review", version=4),
+                            receipt_page([receipt_raw(1)])])
+    same.set_state("TRAME-1", "review", context=review, project=PROJECT)
+    assert [call[0] for call in same.calls] == ["GET", "GET"]  # no write, no new receipt
+
+    newer = TransitionContext(
+        pr_url=review.pr_url, head_sha="e" * 40, base_sha=review.base_sha,
+        review_digest=review.review_digest,
+    )
+    tracker = ScriptedTracker([
+        issue_raw(state="review", version=4), receipt_page([receipt_raw(1)]),
+        issue_raw(state="in-progress", version=5),
+        issue_raw(state="in-progress", version=5),
+        issue_raw(state="review", version=6),
+    ])
+    tracker.set_state("TRAME-1", "review", context=newer, project=PROJECT)
+    posts = [call for call in tracker.calls if call[0] == "POST"]
+    assert [call[2] for call in posts] == [{"state": "in-progress"}, {"state": "review"}]
+    assert posts[0][3]["version"] == 4 and "proof" not in posts[0][3]
+    assert posts[1][3]["version"] == 5
+    assert decode_proof(posts[1][3]["proof"])["head_sha"] == "e" * 40
+
+
+def test_done_projection_is_confirmed_only_by_the_exact_receipt_chain():
+    done = issue_raw(state="done", version=6)
+    coordinates = {
+        "pr_url": done["pr_url"], "head_sha": "a" * 40, "base_sha": "d" * 40,
+        "merge_sha": "c" * 40,
+    }
+    chain = receipt_page([receipt_raw(1), receipt_raw(2, "done")])
+    assert ScriptedTracker([done, chain]).recover_done_projection(
+        "TRAME-1", project=PROJECT, **coordinates) is True
+    # no project, other merge sha, not done, or no review receipt before the done one
+    assert ScriptedTracker([]).recover_done_projection(
+        "TRAME-1", project=None, **coordinates) is False
+    assert ScriptedTracker([done, chain]).recover_done_projection(
+        "TRAME-1", project=PROJECT, **{**coordinates, "merge_sha": "9" * 40}) is False
+    assert ScriptedTracker([issue_raw(state="review")]).recover_done_projection(
+        "TRAME-1", project=PROJECT, **coordinates) is False
+    assert ScriptedTracker([done, receipt_page([receipt_raw(2, "done")])]
+                           ).recover_done_projection(
+        "TRAME-1", project=PROJECT, **coordinates) is False
+
+
+def version_raw(**overrides):
+    value = {
+        "id": "TRAME-VERSION-3", "project": "TRAME", "name": "v1", "objective": "",
+        "kind": "code", "status": "active", "starts_at": None, "target_at": None,
+        "version": 2,
+        "scope": {"direct": ["TRAME-2", "TRAME-1", "TRAME-3"], "direct_count": 3,
+                  "total_count": 3, "complete": True},
+    }
+    value.update(overrides)
+    return value
+
+
+def release_project(mapping):
+    return Project(key="TRAME", id="42", extra={"release_ids": mapping})
+
+
+def test_release_scope_reads_the_mapped_version_id_and_classifies_each_issue():
+    tracker = ScriptedTracker([
+        version_raw(),
+        issue_raw(id="TRAME-1", state="done", ac_done=1, ac_total=1),
+        receipt_page([receipt_raw(1), receipt_raw(2, "done")]),
+        issue_raw(id="TRAME-2", state="review", pr_url=None),
+        issue_raw(id="TRAME-3", state="done", ac_done=0, ac_total=1),
+        receipt_page([receipt_raw(3, issue="TRAME-3"),
+                      receipt_raw(4, "done", issue="TRAME-3")]),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert tracker.calls[0][:2] == ("GET", "/versions/TRAME-VERSION-3")
+    assert [call[1] for call in tracker.calls if "/versions" in call[1]] == [
+        "/versions/TRAME-VERSION-3"]  # no listing by name
+    assert scope.release_id == "TRAME-VERSION-3" and scope.native_state == "active"
+    assert [(item.id, item.disposition) for item in scope.issues] == [
+        ("TRAME-1", "accepted"), ("TRAME-2", "unfinished"), ("TRAME-3", "unavailable")]
+    assert scope.issues[0].references["merge_sha"] == "c" * 40
+    assert scope.coordinates["version_id"] == "TRAME-VERSION-3"
+
+
+@pytest.mark.parametrize("mapping, responses, reason", [
+    ({}, [], "unmapped"),
+    ({"v1": "v1"}, [], "invalid_mapping"),
+    ({"v1": "OTHER-VERSION-3"}, [], "invalid_mapping"),
+    ({"v1": "TRAME-VERSION-3"}, [DevHubTrackerError("GET", "/versions/x", 404, "version_unavailable")],
+     "inaccessible_or_absent"),
+    ({"v1": "TRAME-VERSION-3"}, [version_raw(id="TRAME-VERSION-4")], "invalid_response"),
+    ({"v1": "TRAME-VERSION-3"}, [version_raw(project="OTHER")], "invalid_response"),
+    ({"v1": "TRAME-VERSION-3"}, [version_raw(name="other")], "mapping_mismatch"),
+    ({"v1": "TRAME-VERSION-3"},
+     [version_raw(scope={"direct": ["TRAME-1"], "direct_count": 1, "total_count": 4,
+                         "complete": True})], "indirect_scope_unlisted"),
+    ({"v1": "TRAME-VERSION-3"},
+     [version_raw(scope={"direct": ["TRAME-1"], "direct_count": 1, "total_count": 1,
+                         "complete": False})], "invalid_response"),
+    ({"v1": "TRAME-VERSION-3"},
+     [version_raw(scope={"direct": ["OTHER-1"], "direct_count": 1, "total_count": 1,
+                         "complete": True})], "invalid_response"),
+])
+def test_release_scope_refuses_unmapped_foreign_or_unlisted_scopes(mapping, responses, reason):
+    from foundry.trackers.base import ReleaseScopeUnavailableError
+    tracker = ScriptedTracker(responses)
+    with pytest.raises(ReleaseScopeUnavailableError) as caught:
+        tracker.read_release_scope(release_project(mapping), "v1")
+    assert caught.value.reason == reason

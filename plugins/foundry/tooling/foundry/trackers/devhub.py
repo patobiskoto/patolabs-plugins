@@ -23,9 +23,16 @@ from foundry.models import (
     Issue,
     Link,
     Project,
+    ReleaseIssue,
+    ReleaseScope,
     TransitionContext,
 )
-from foundry.trackers.base import IssueUnavailableError, Tracker, TrackerConflictError
+from foundry.trackers.base import (
+    IssueUnavailableError,
+    ReleaseScopeUnavailableError,
+    Tracker,
+    TrackerConflictError,
+)
 
 
 _CONTRACT = "devhub-tracker.v1"
@@ -41,6 +48,8 @@ _MAX_CATALOG_ITEMS = 1_000
 _MAX_CATALOG_PAGES = 100
 _MAX_ADR_ITEMS = 1_000
 _MAX_ADR_PAGES = 100
+_MAX_RECEIPT_ITEMS = 1_000
+_MAX_RECEIPT_PAGES = 100
 _STATES = {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
 _START_TRANSITION_PATHS = {
     "backlog": ("ready", "in-progress"),
@@ -64,6 +73,18 @@ _AUDIT_OPERATIONS = {
     "issue.link", "issue.comment", "adr.create", "adr.status",
 }
 _AUDIT_RESULTS = {"success", "refused", "unavailable"}
+# PAT-309: shape of one `GET /issues/:id/proof-receipts` item (DHN-38).
+_PROOF_RECEIPT_KEYS = {
+    "id", "issue", "project", "action", "issue_version", "pr_url", "head_sha",
+    "base_sha", "review_digest", "merge_sha", "proof_nonce", "actor", "created",
+}
+_RECEIPT_ID = re.compile(r"[1-9][0-9]*")
+_GIT_SHA = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_PROOF_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
+_RECEIPT_COORDINATES = ("pr_url", "head_sha", "base_sha", "review_digest")
+_VERSION_STATUSES = {"planned", "active", "release-pending", "released", "cancelled"}
+_UNFINISHED_STATES = {"backlog", "ready", "in-progress", "review", "blocked"}
 _AUDIT_KEYS = {"id", "operation", "resource", "resource_version", "result", "created"}
 _FIELD_MAP = {
     "Priority": "priority",
@@ -221,6 +242,9 @@ class DevHubTracker(Tracker):
     project_provisioning_supported = True
     project_provisioning_requires_repository = True
     epic_subgraph_supported = True
+    # PAT-309 / DHN-38: every proven review and done transition appends one
+    # receipt in the server transaction, read by `read_proof_receipts`.
+    append_only_lifecycle_supported = True
 
     def __init__(
         self,
@@ -1008,6 +1032,19 @@ class DevHubTracker(Tracker):
             raise ValueError("preuve de transition inattendue")
         project_key = self._require_issue_binding(issue_id, project)
         raw = self._bound_issue_raw(issue_id, project)
+        if state == "review" and raw.get("state") == "review":
+            # DevHub answers review -> review with the stored issue and no new
+            # receipt (`transitionTrackerIssue`: `row.state === state`). A new PR
+            # generation must therefore go back to in-progress first, as the
+            # refresh of `issue merge` does for adapters without this flag.
+            receipts = self.read_proof_receipts(issue_id, project=project)
+            if receipts and self._same_review(receipts[-1], context):
+                return
+            self._application_req(
+                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
+                {"state": "in-progress"}, version=raw["version"], idempotent=True,
+            )
+            raw = self._bound_issue_raw(issue_id, project)
         proof = None
         if state == "review":
             proof = self._proof(
@@ -1022,6 +1059,233 @@ class DevHubTracker(Tracker):
         self._application_req(
             "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
             {"state": state}, version=raw["version"], proof=proof, idempotent=True,
+        )
+
+    @staticmethod
+    def _same_review(receipt: dict, context: TransitionContext) -> bool:
+        return receipt["action"] == "review" and all(
+            receipt[key] == getattr(context, key) for key in _RECEIPT_COORDINATES
+        )
+
+    def read_proof_receipts(
+        self, issue_id: str, project: Project | None = None,
+    ) -> tuple[dict, ...]:
+        """Read the append-only review/done receipts of one issue, oldest first.
+
+        Route and fields: DevHub `docs/TRACKER_API.md`, "Issue proof receipts" (read at
+        `2edcea2`). Every item is validated; a malformed, foreign, repeated or
+        out-of-order item, or a stalled cursor, fails closed.
+        """
+        key = (self._require_issue_binding(issue_id, project) if project is not None
+               else self._project_key(issue_id))
+        base = f"/issues/{urllib.parse.quote(issue_id, safe='')}/proof-receipts"
+        receipts: list[dict] = []
+        seen_nonces: set[str] = set()
+        cursor = "0"
+        for _page_number in range(1, _MAX_RECEIPT_PAGES + 1):
+            params = urllib.parse.urlencode({"cursor": cursor, "limit": 100})
+            try:
+                raw = self._application_req("GET", f"{base}?{params}")
+            except DevHubTrackerError as error:
+                if error.status in {403, 404}:
+                    raise IssueUnavailableError(issue_id) from None
+                raise
+            if (not isinstance(raw, dict) or set(raw) != {"items", "page"}
+                    or not isinstance(raw["items"], list)
+                    or not isinstance(raw["page"], dict)):
+                raise DevHubTrackerError("GET", base, None, "invalid_response")
+            page = raw["page"]
+            if (page.get("schema_version") != _APPLICATION_CONTRACT
+                    or type(page.get("truncation")) is not bool
+                    or type(page.get("returned_count")) is not int
+                    or page["returned_count"] != len(raw["items"])):
+                raise DevHubTrackerError("GET", base, None, "invalid_response")
+            for item in raw["items"]:
+                receipt = self._to_proof_receipt(item, issue_id, key, base)
+                previous = receipts[-1]["id"] if receipts else cursor
+                if int(receipt["id"]) <= int(previous):
+                    raise DevHubTrackerError("GET", base, None, "pagination_repeated")
+                if receipt["proof_nonce"] in seen_nonces:
+                    raise DevHubTrackerError("GET", base, None, "pagination_repeated")
+                seen_nonces.add(receipt["proof_nonce"])
+                receipts.append(receipt)
+                if len(receipts) > _MAX_RECEIPT_ITEMS:
+                    raise DevHubTrackerError("GET", base, None, "pagination_limit")
+            if not page["truncation"]:
+                return tuple(receipts)
+            if not raw["items"]:
+                raise DevHubTrackerError("GET", base, None, "pagination_empty_page")
+            if page.get("cursor") != receipts[-1]["id"]:
+                raise DevHubTrackerError("GET", base, None, "pagination_stalled")
+            cursor = receipts[-1]["id"]
+        raise DevHubTrackerError("GET", base, None, "pagination_page_limit")
+
+    @staticmethod
+    def _to_proof_receipt(item, issue_id: str, project_key: str, path: str) -> dict:
+        if (not isinstance(item, dict) or set(item) != _PROOF_RECEIPT_KEYS
+                or not isinstance(item["id"], str) or not _RECEIPT_ID.fullmatch(item["id"])
+                or item["issue"] != issue_id or item["project"] != project_key
+                or item["action"] not in {"review", "done"}
+                or type(item["issue_version"]) is not int or item["issue_version"] < 1
+                or not isinstance(item["pr_url"], str) or not 1 <= len(item["pr_url"]) <= 500
+                or not isinstance(item["head_sha"], str) or not _GIT_SHA.fullmatch(item["head_sha"])
+                or not isinstance(item["base_sha"], str) or not _GIT_SHA.fullmatch(item["base_sha"])
+                or not isinstance(item["review_digest"], str)
+                or not _SHA256.fullmatch(item["review_digest"])
+                or (item["action"] == "done") != (item["merge_sha"] is not None)
+                or (item["merge_sha"] is not None
+                    and (not isinstance(item["merge_sha"], str)
+                         or not _GIT_SHA.fullmatch(item["merge_sha"])))
+                or not isinstance(item["proof_nonce"], str)
+                or not _PROOF_NONCE.fullmatch(item["proof_nonce"])
+                or not isinstance(item["actor"], str) or not 1 <= len(item["actor"]) <= 200
+                or type(item["created"]) is not int or item["created"] < 0):
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+        return dict(item)
+
+    def recover_done_projection(
+        self, issue_id: str, *, pr_url: str, head_sha: str, base_sha: str,
+        merge_sha: str, project: Project | None = None,
+    ) -> bool:
+        """Confirm, never write, that the done state is backed by the exact receipt.
+
+        DevHub appends the done receipt and sets the state in one transaction
+        (`2edcea2:src/tracker/store.ts:1714-1744`), so there is no native State left to
+        repair: this returns True only when the issue is `done` on this PR and exactly
+        one done receipt carries these coordinates after a review receipt of the same
+        head, base and diff digest.
+        """
+        if project is None:
+            return False
+        self._require_issue_binding(issue_id, project)
+        issue = self.get_issue(issue_id)
+        if issue.state != "done" or issue.pr_url != pr_url:
+            return False
+        receipts = self.read_proof_receipts(issue_id, project=project)
+        done = [
+            receipt for receipt in receipts
+            if receipt["action"] == "done"
+            and (receipt["pr_url"], receipt["head_sha"], receipt["base_sha"],
+                 receipt["merge_sha"]) == (pr_url, head_sha, base_sha, merge_sha)
+        ]
+        if len(done) != 1:
+            return False
+        return any(
+            receipt["action"] == "review" and int(receipt["id"]) < int(done[0]["id"])
+            and all(receipt[key] == done[0][key] for key in _RECEIPT_COORDINATES)
+            for receipt in receipts
+        )
+
+    def read_release_scope(self, project: Project, release: str) -> ReleaseScope:
+        """Read one mapped Version scope (DHN-39), never discovering it by name.
+
+        The mapping is `project.extra["release_ids"][release]`, the Version id
+        `<KEY>-VERSION-N` (names are not unique); the read is `GET /versions/:id`.
+        """
+        project = self._require_project(project)
+        mapping = project.extra.get("release_ids")
+        if not isinstance(mapping, dict) or release not in mapping:
+            raise ReleaseScopeUnavailableError(self.name, release, "unmapped")
+        version_id = mapping[release]
+        if (not isinstance(version_id, str) or not re.fullmatch(
+                rf"{re.escape(project.key)}-VERSION-[1-9][0-9]*", version_id)):
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_mapping")
+        path = f"/versions/{urllib.parse.quote(version_id, safe='')}"
+        try:
+            raw = self._application_req("GET", path)
+        except DevHubTrackerError as error:
+            if error.status in {403, 404}:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "inaccessible_or_absent",
+                ) from None
+            raise
+        scope = raw.get("scope") if isinstance(raw, dict) else None
+        direct = scope.get("direct") if isinstance(scope, dict) else None
+        if (not isinstance(raw, dict) or not isinstance(scope, dict)
+                or raw.get("id") != version_id or raw.get("project") != project.key
+                or raw.get("status") not in _VERSION_STATUSES
+                or type(raw.get("version")) is not int or raw["version"] < 1
+                or raw.get("kind") not in {"code", "non-code"}
+                or not isinstance(direct, list)
+                or scope.get("complete") is not True
+                or type(scope.get("direct_count")) is not int
+                or type(scope.get("total_count")) is not int
+                or scope["direct_count"] != len(direct)
+                or len(set(direct)) != len(direct)
+                or any(not isinstance(item, str) or not re.fullmatch(
+                    rf"{re.escape(project.key)}-[0-9]+", item) for item in direct)):
+            raise ReleaseScopeUnavailableError(self.name, release, "invalid_response")
+        if raw.get("name") != release:
+            raise ReleaseScopeUnavailableError(self.name, release, "mapping_mismatch")
+        if scope["total_count"] != scope["direct_count"]:
+            # The Version publishes only its direct issue ids; the Epic descendants it
+            # counts are not listed, and listing them would be approximate discovery.
+            raise ReleaseScopeUnavailableError(
+                self.name, release, "indirect_scope_unlisted",
+            )
+        issues = []
+        for issue_id in sorted(direct):
+            try:
+                issue = self._to_issue(self._issue_raw(issue_id))
+            except IssueUnavailableError:
+                raise ReleaseScopeUnavailableError(
+                    self.name, release, "issue_unavailable",
+                ) from None
+            issues.append(self._release_issue(issue, project))
+        return ReleaseScope(
+            provider=self.name,
+            project_key=project.key,
+            project_id=project.id,
+            release=release,
+            release_id=version_id,
+            native_state=raw["status"],
+            issues=tuple(issues),
+            closure={
+                "mode": "operator",
+                "native_capability": "unavailable",
+                "action": "record-scope-freeze",
+                "native_mutation": False,
+                "preconditions": ["unfinished=0", "unavailable=0"],
+                "verification": "read-release-scope",
+            },
+            coordinates={
+                "version_id": version_id,
+                "version": raw["version"],
+                "kind": raw["kind"],
+            },
+        )
+
+    def _release_issue(self, issue: Issue, project: Project) -> ReleaseIssue:
+        references: dict[str, object] = {}
+        if issue.pr_url:
+            references["pr_url"] = issue.pr_url
+        if issue.state in _UNFINISHED_STATES:
+            disposition = "unfinished"
+        elif issue.state == "done":
+            # Accepted only with the exact done receipt and all criteria checked; a
+            # done issue with unchecked criteria could be an audited override, which
+            # DevHub has no typed receipt for (DEVHUB-106): it stays unavailable.
+            disposition = "unavailable"
+            receipts = self.read_proof_receipts(issue.id, project=project)
+            done = [receipt for receipt in receipts if receipt["action"] == "done"]
+            if (len(done) == 1 and done[0]["pr_url"] == issue.pr_url
+                    and issue.ac_total >= 1 and issue.ac_done == issue.ac_total
+                    and any(
+                        receipt["action"] == "review"
+                        and int(receipt["id"]) < int(done[0]["id"])
+                        and all(receipt[key] == done[0][key]
+                                for key in _RECEIPT_COORDINATES)
+                        for receipt in receipts)):
+                disposition = "accepted"
+                references.update({
+                    key: done[0][key] for key in (*_RECEIPT_COORDINATES, "merge_sha")
+                })
+                references["proof_receipt_id"] = done[0]["id"]
+        else:
+            disposition = "unavailable"
+        return ReleaseIssue(
+            id=issue.id, title=issue.title, type=issue.type, state=issue.state,
+            labels=tuple(issue.labels), disposition=disposition, references=references,
         )
 
     def link(
