@@ -7,10 +7,10 @@ checks that the two stay equal.
 
 Safety (``tests/devhub_live_gate.py``): the suite is skipped unless ``DEVHUB_LIVE_URL``,
 the exact ``DEVHUB_LIVE_CONFIRM`` phrase and dedicated credentials are exported; it refuses
-a production-looking target and, for the 41 tests that use the ``suite`` fixture, an
-instance that holds a project it did not create.  That marker proves nothing on an instance
-with local accounts: DHN-42 alone targets one (``DEVHUB_LIVE_LOCAL_ACCOUNTS=1``, a declaration,
-never a detection) and its target must be disposable by construction.  The suite never reads
+a production-looking target and an instance that holds a project it did not create.  That
+refusal proves nothing on an instance with local accounts: DHN-42 alone targets one
+(``DEVHUB_LIVE_LOCAL_ACCOUNTS=1``, a declaration, never a detection) and its target must be
+disposable by construction.  The suite never reads
 the user's configuration or registry.  Without the URL every test is skipped.
 
 A need DevHub (or the adapter) does not cover yet is a ``@gap`` test: strict ``xfail``

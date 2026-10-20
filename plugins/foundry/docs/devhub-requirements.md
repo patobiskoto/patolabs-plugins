@@ -106,14 +106,15 @@ without local accounts, which the suite needs (DHN-42 explains why). Sources: De
 Prerequisites, stated because this page does not build the image:
 
 - A DevHub image `devhub-qa:<revision>` (full 40-hex revision) must already exist locally.
-  Line numbers of this procedure are those of DevHub at `ff22b3a`. Its documented source
-  is `deploy/qa/up.sh <revision>` (`compose build app`, `up.sh:62-63`). That script is not
-  an image-only step: it also brings up the separate compose project `devhub-qa` on
-  `127.0.0.1:3205` and `3206` with local accounts (`up.sh:80-103`), writes its env files
-  under `~/.config/devhub-qa` (`up.sh:10,26-50`), and stores a test-owner password in the
-  macOS keychain (`up.sh:96`). It needs `pnpm install` in the DevHub checkout and a clean
-  tracked tree (`up.sh:18,22`). Do not reuse that env directory or that database for the
-  suite. Docker and a Postgres image (`postgres:16-alpine`) must be available.
+  Its documented source is `deploy/qa/up.sh <revision>` (`compose build app`,
+  `up.sh:62-63`). That script is not an image-only step: it also brings up the separate
+  compose project `devhub-qa` on `127.0.0.1:3205` and `3206` with local accounts
+  (`up.sh:80-103`), writes its env files under `~/.config/devhub-qa` (`up.sh:10,26-50`), and
+  stores a test-owner password in the macOS keychain (`up.sh:96`). It needs `pnpm install`
+  in the DevHub checkout and a clean tracked tree (`up.sh:18,22`). Do not reuse that env
+  directory or that database for the suite. Docker and a Postgres image
+  (`postgres:16-alpine`) must be available. Line numbers of this procedure are those of
+  DevHub at `ff22b3a`.
 - The commands below are the ones of the 2026-10-20 run, except the hardening lines marked
   below, which were added afterwards from the QA compose file and have not been run.
 
@@ -275,10 +276,12 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
 1. **Deployed version**: how can a client read which DevHub build it talks to? DevHub's
    `/api/health` returns a `revision` (`src/app/api/health/route.ts:16-19,43` at `ff22b3a`,
    observed in source; `deploy/qa/up.sh:68-77` reads it), but that value is the
-   `DEVHUB_DEPLOY_REVISION` the operator set, not a measure of the build, and the adapter
-   does not read it (observed: no `api/health` in this repository's tools). Is it a stable
-   client contract? The run of 2026-10-20 knew its revision because the image came from
-   `deploy/qa/up.sh` at that revision and `DEVHUB_DEPLOY_REVISION` was set to it.
+   `DEVHUB_DEPLOY_REVISION` the operator set, or `unknown` when it does not match
+   `^[0-9a-f]{7,64}(?:-d[0-9a-f]{12})?$` (a tracker-only instance then reports `degraded`,
+   `route.ts:30-33`), not a measure of the build, and the adapter does not read it
+   (observed: no `api/health` in this repository's tools). Is it a stable client contract?
+   The run of 2026-10-20 knew its revision because the image came from `deploy/qa/up.sh` at
+   that revision and `DEVHUB_DEPLOY_REVISION` was set to it.
 2. **Disposable instance**: what is the supported way to get a throwaway instance
    (database reset, compose profile)? What scopes must `DEVHUB_LIVE_TOKEN` carry for the
    tests above? Is there a way to delete or archive the `LV*` projects a run leaves?

@@ -21,7 +21,7 @@ accounts, and a credential created for it (``docs/devhub-requirements.md``).  Th
 the 41 tests that use the ``suite`` fixture of the live suite.  DHN-42 is the exception: it
 needs a target with local accounts, where the marker proves nothing, so that target must be
 disposable by construction (an instance and a database made for this run), not by the check;
-the confirmation phrase is its only other safeguard.
+its other safeguards are the confirmation phrase and the refusals of ``read_environment``.
 """
 from __future__ import annotations
 
