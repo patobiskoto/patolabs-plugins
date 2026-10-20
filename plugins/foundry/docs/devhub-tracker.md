@@ -319,7 +319,7 @@ server answers that 403 after the read. The relation must be set before acceptan
 (`devhub-adr-relationships.v1`), also for a decided ADR.
 
 `supersede_adr` is not implemented: no route reachable by a service credential names the
-replacement of a supersession (`devhub-requirements.md`, DHN-32 and question 15).
+replacement of a supersession (`devhub-requirements.md`, DHN-32 and question 15). DevHub announced a proof-bound route for it as DEVHUB-108 (third in its order, no date; question 15 and item 18 of that page); the adapter waits for the server route.
 
 ## Acceptance checkbox synchronization
 
