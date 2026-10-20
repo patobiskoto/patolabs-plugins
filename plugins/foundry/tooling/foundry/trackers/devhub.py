@@ -78,7 +78,7 @@ _AUDIT_OPERATIONS = {
 }
 _AUDIT_RESULTS = {"success", "refused", "unavailable"}
 # PAT-309 / PAT-318: shape of one `GET /issues/:id/proof-receipts` item (DHN-38).  The
-# extended form (announced by DevHub on 2026-10-20, DEVHUB-106, not yet merged) adds
+# extended form (DEVHUB-106, DevHub merge `f347f38`) adds
 # `reason`, `decision_digest` and `decision`, null where the action does not use them.
 _PROOF_RECEIPT_KEYS = {
     "id", "issue", "project", "action", "issue_version", "pr_url", "head_sha",
@@ -271,7 +271,7 @@ class DevHubTracker(Tracker):
     append_only_lifecycle_supported = True
     # PAT-318 / DHN-25: `project_acceptance_override` appends the typed
     # `acceptance_override` receipt through the DEVHUB-106 route (announced by DevHub on
-    # 2026-10-20, not yet merged) before the merge.  `human_acceptance_supported` stays
+    # 2026-10-20, merged as `f347f38`) before the merge.  `human_acceptance_supported` stays
     # `False`: `issue accept` and `--status` are Linear-only (PAT-ADR-0025) and read
     # `linear-human-acceptance`; `accept_issue` below is the port-level operation.
     acceptance_override_projection_supported = True
@@ -1246,7 +1246,7 @@ class DevHubTracker(Tracker):
         """Append the typed `acceptance_override` receipt before the merge (DHN-25, PAT-318).
 
         Route and contract: ``POST /issues/:id/acceptance-override``, announced by DevHub
-        on 2026-10-20 (DEVHUB-106, not yet merged); see ``docs/devhub-tracker.md``.  The
+        on 2026-10-20 (DEVHUB-106, merged as `f347f38`); see ``docs/devhub-tracker.md``.  The
         issue must be in `review` and the coordinates must equal the latest review
         receipt.  Returns ``True`` when it wrote, ``False`` when the same override already
         follows that review (exact replay); another reason on the same generation raises
@@ -1323,7 +1323,7 @@ class DevHubTracker(Tracker):
         """Accept a non-code issue by one closed human decision (DHN-26, PAT-ADR-0025).
 
         Route and contract: ``POST /issues/:id/human-acceptance``, announced by DevHub on
-        2026-10-20 (DEVHUB-106, not yet merged); see ``docs/devhub-tracker.md``.  Local
+        2026-10-20 (DEVHUB-106, merged as `f347f38`); see ``docs/devhub-tracker.md``.  Local
         validation, then a fresh read and every refusal, then the cited-evidence check,
         then one POST (done, version + 1 and the receipt in one server transaction), then
         a read-back that recomputes the digest.  An exact replay converges without a

@@ -211,9 +211,9 @@ Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)`
 ## Acceptance override and human acceptance (PAT-318, DHN-25, DHN-26)
 
 Both operations use routes announced by DevHub on 2026-10-20 as DEVHUB-106 (DevHub pull
-request 95, reviewed on the DevHub side, not yet merged; `devhub-requirements.md`, question
-12). The adapter is written from that announcement and was not run against a server
-carrying them: the live result of DHN-25 and DHN-26 is pending.
+request 95, merged on DevHub `main` as `f347f38`; `devhub-requirements.md`, question 12).
+The adapter is written from that announcement; DHN-25 and DHN-26 passed against an instance
+at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
 
 - `project_acceptance_override(issue, reason, context)` (`DevHubTracker`, flag
   `acceptance_override_projection_supported = True`, which `issue.py` reads before the

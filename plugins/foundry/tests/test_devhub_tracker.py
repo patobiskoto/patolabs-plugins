@@ -1872,7 +1872,7 @@ def test_migration_link_issue_refuses_an_archived_project_before_any_request(mon
 
 
 # --- PAT-318: DHN-25 acceptance override and DHN-26 human acceptance -------------------
-# Contract announced by DevHub on 2026-10-20 (DEVHUB-106, not yet merged).
+# Contract announced by DevHub on 2026-10-20 (DEVHUB-106, merged as f347f38).
 
 REVIEW = TransitionContext(
     pr_url=issue_raw()["pr_url"], head_sha="a" * 40, base_sha="d" * 40,

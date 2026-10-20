@@ -584,7 +584,7 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite, m
 
 @need("DHN-25")
 def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
-    # PAT-318: route announced by DevHub on 2026-10-20 (DEVHUB-106); live result pending.
+    # PAT-318: route of DEVHUB-106 (DevHub merge f347f38).
     tracker = suite.tracker
     assert tracker.acceptance_override_projection_supported is True
     issue = _create(suite, _unique("live override"), "- [ ] unchecked")
@@ -631,7 +631,7 @@ def _human_decision(issue_id: str, body: str, evidence_id: str, from_state="back
 
 @need("DHN-26")
 def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suite):
-    # PAT-318 / PAT-ADR-0025: route announced by DevHub on 2026-10-20 (DEVHUB-106).
+    # PAT-318 / PAT-ADR-0025: route of DEVHUB-106 (DevHub merge f347f38).
     body = "- [ ] decided offline"
     issue = _create(suite, _unique("live human acceptance"), body)
     cited = _create(suite, _unique("live cited evidence"), "")
