@@ -571,3 +571,33 @@ def test_unnamed_atomic_tracker_keeps_its_closure_over_a_dropped_child(monkeypat
     outcome = write.close_epic(tracker, "DEMO-1")
     assert "dropped" in {child.state for child in outcome.receipt.children}
 
+
+
+def test_cli_advises_the_verdict_with_the_named_dropped_set_on_an_atomic_tracker(
+    monkeypatch,
+):
+    # The re-run advice must pass validate_epic_closure_request (PAT-ADR-0030).
+    tracker = NamedDroppedAtomicTracker()
+    tracker.interrupt_after_commit = True
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
+    flags = {"--human-verdict=accepted", "--accept-dropped=DEMO-3"}
+    expected = "issue close-epic DEMO-1 --human-verdict=accepted --accept-dropped=DEMO-3"
+
+    with pytest.raises(SystemExit, match=f"Relance exactement `{expected}`"):
+        issue.close_epic("DEMO-1", flags)
+    issue.close_epic("DEMO-1", flags)
+    with pytest.raises(SystemExit, match=f"relance avec `{expected}`"):
+        issue.close_epic("DEMO-1", set())
+    assert tracker.close_calls == 1
+
+
+def test_named_atomic_closure_needs_no_done_child(monkeypatch):
+    # PAT-ADR-0030 is silent where PAT-ADR-0017 requires a done direct child.
+    tracker = NamedDroppedAtomicTracker()
+    tracker.issues["DEMO-2"].state = "dropped"
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    outcome = write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-2", "DEMO-3"),
+    )
+    assert {child.state for child in outcome.receipt.children} == {"dropped"}

@@ -243,8 +243,8 @@ the bound project. DevHub has no read by `Idempotency-Key`; it recovers a lost a
 through an identical replay (same credential, key and payload, including the original
 `parent_version`), and the adapter keeps neither key nor payload after the call. `DevHubTracker.create_issue` therefore keeps a random
 per-call key and never raises `IssueCreationValidationError`; a client identifier handed to
-`reconcile-create` is refused at the binding check (`SystemExit`, read as a durable refusal
-by `campaign_defer.py::_DURABLE`). Unknown: what the campaign does after a creation whose
+`reconcile-create` is refused before any read (the binding check or the id parse,
+`DevHubTracker._project_key`). Unknown: what the campaign does after a creation whose
 answer is lost beyond the two same-key attempts of one call.
 
 ## Epic closure over a dropped child (PAT-313, DHN-24)
@@ -263,7 +263,15 @@ named set, read back from the dropped children of the server receipt
 (`write._closure_dropped`). Limits (PAT-ADR-0030): the named set and the verdict are
 checked by Foundry, not stored by the server, so a client that bypasses Foundry can still
 close over a dropped child, and the receipt does not tell a named child from one admitted
-by another client. Row DHN-24 of `devhub-requirements.md`.
+by another client. Unlike PAT-ADR-0017 on Linear, PAT-ADR-0030 requires no `done` direct
+child: an Epic whose direct children are all `dropped` and named closes
+(`test_named_atomic_closure_needs_no_done_child`, fixture only). Behaviour change: a closure over a dropped child without the
+flag, accepted before PAT-313, is now refused, including the `close-epic` step of the
+frozen DevHub coordinator (`campaign_runtime.py`), which passes no flag. Known defect
+(PAT-316, observed offline, not live): a child with nonzero AC counters, `done` or named
+`dropped`, makes `DevHubTracker.close_epic` fail before the POST (`invalid_response`), because
+the adapter renormalizes the receipt without those counters; the live run of PAT-313 used
+children without criteria. Row DHN-24 of `devhub-requirements.md`.
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
