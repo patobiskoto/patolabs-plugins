@@ -32,6 +32,7 @@ from foundry.trackers.base import (
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
     Tracker,
+    TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
 
@@ -76,11 +77,16 @@ _AUDIT_OPERATIONS = {
     "issue.link", "issue.comment", "adr.create", "adr.status",
 }
 _AUDIT_RESULTS = {"success", "refused", "unavailable"}
-# PAT-309: shape of one `GET /issues/:id/proof-receipts` item (DHN-38).
+# PAT-309 / PAT-318: shape of one `GET /issues/:id/proof-receipts` item (DHN-38).  The
+# extended form (DEVHUB-106, DevHub merge `f347f38`) adds
+# `reason`, `decision_digest` and `decision`, null where the action does not use them.
 _PROOF_RECEIPT_KEYS = {
     "id", "issue", "project", "action", "issue_version", "pr_url", "head_sha",
     "base_sha", "review_digest", "merge_sha", "proof_nonce", "actor", "created",
+    "reason", "decision_digest", "decision",
 }
+_PROOF_RECEIPT_ACTIONS = {"review", "done", "acceptance_override", "human_acceptance"}
+_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
 _RECEIPT_ID = re.compile(r"[1-9][0-9]*")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -263,6 +269,12 @@ class DevHubTracker(Tracker):
     # PAT-309 / DHN-38: every proven review and done transition appends one
     # receipt in the server transaction, read by `read_proof_receipts`.
     append_only_lifecycle_supported = True
+    # PAT-318 / DHN-25: `project_acceptance_override` appends the typed
+    # `acceptance_override` receipt through the DEVHUB-106 route (announced by DevHub on
+    # 2026-10-20, merged as `f347f38`) before the merge.  `human_acceptance_supported` stays
+    # `False`: `issue accept` and `--status` are Linear-only (PAT-ADR-0025) and read
+    # `linear-human-acceptance`; `accept_issue` below is the port-level operation.
+    acceptance_override_projection_supported = True
 
     def __init__(
         self,
@@ -688,7 +700,10 @@ class DevHubTracker(Tracker):
         self._require_issue_binding(issue_id, project)
         return self._issue_raw(issue_id)
 
-    def _proof(self, *, action, project_key, resource_id, version, context=None, target_status=None):
+    def _proof(
+        self, *, action, project_key, resource_id, version, context=None,
+        target_status=None, extra=None,
+    ):
         now = self._now_ms()
         payload = {
             "action": action,
@@ -706,6 +721,8 @@ class DevHubTracker(Tracker):
                     payload[key] = value
         if target_status is not None:
             payload["target_status"] = target_status
+        if extra:
+            payload.update(extra)
         encoded = _b64url(json.dumps(_stable(payload), ensure_ascii=False, separators=(",", ":")).encode())
         signature = hmac.new(self.proof_secret.encode(), encoded.encode("ascii"), hashlib.sha256).digest()
         return f"{encoded}.{_b64url(signature)}"
@@ -1180,7 +1197,10 @@ class DevHubTracker(Tracker):
             # generation must therefore go back to in-progress first, as the
             # refresh of `issue merge` does for adapters without this flag.
             receipts = self.read_proof_receipts(issue_id, project=project)
-            if receipts and self._same_review(receipts[-1], context):
+            # An override receipt belongs to the review generation it follows (PAT-318):
+            # it does not make that generation a different one.
+            reviews = [item for item in receipts if item["action"] != "acceptance_override"]
+            if reviews and self._same_review(reviews[-1], context):
                 return
             self._application_req(
                 "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
@@ -1202,6 +1222,177 @@ class DevHubTracker(Tracker):
             "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
             {"state": state}, version=raw["version"], proof=proof, idempotent=True,
         )
+
+    @staticmethod
+    def _stale_error(exc: DevHubTrackerError):
+        if exc.status == 409 and exc.code == "version_conflict":
+            return TrackerConflictError(
+                "version DevHub modifiée ; recharge l'issue puis relance l'écriture"
+            )
+        return None
+
+    @staticmethod
+    def _route_unavailable(exc: DevHubTrackerError, capability: str):
+        # A server older than DEVHUB-106 answers 404 `route_unavailable` (DevHub reply
+        # of 2026-10-20); nothing was written.
+        if exc.status == 404 and exc.code == "route_unavailable":
+            return TrackerCapabilityUnavailableError("devhub", capability)
+        return None
+
+    def project_acceptance_override(
+        self, issue_id: str, reason: str, context: TransitionContext,
+        project: Project | None = None,
+    ) -> bool:
+        """Append the typed `acceptance_override` receipt before the merge (DHN-25, PAT-318).
+
+        Route and contract: ``POST /issues/:id/acceptance-override``, announced by DevHub
+        on 2026-10-20 (DEVHUB-106, merged as `f347f38`); see ``docs/devhub-tracker.md``.  The
+        issue must be in `review` and the coordinates must equal the latest review
+        receipt.  Returns ``True`` when it wrote, ``False`` when the same override already
+        follows that review (exact replay); another reason on the same generation raises
+        ``TrackerConflictError``.  The receipt is read back.
+        """
+        if (not isinstance(reason, str) or _OVERRIDE_REASON.match(reason) is None
+                or not isinstance(context, TransitionContext)
+                or context.merge_sha is not None
+                or not all(getattr(context, key) for key in _RECEIPT_COORDINATES)):
+            raise ValueError("override AC DevHub invalide")
+        project_key = self._require_issue_binding(issue_id, project)
+        raw = self._bound_issue_raw(issue_id, project)
+        if raw.get("state") != "review":
+            raise TrackerConflictError("override AC DevHub : l'issue n'est pas en review")
+        receipts = self.read_proof_receipts(issue_id, project=project)
+        review_at = max(
+            (index for index, item in enumerate(receipts) if item["action"] == "review"),
+            default=None,
+        )
+        if review_at is None or not self._same_review(receipts[review_at], context):
+            raise TrackerConflictError(
+                "override AC DevHub : les coordonnées ne sont pas celles de la dernière review"
+            )
+        if any(item["action"] == "done" for item in receipts[review_at + 1:]):
+            raise TrackerConflictError("override AC DevHub : génération de review déjà close")
+        existing = [item for item in receipts[review_at + 1:]
+                    if item["action"] == "acceptance_override"]
+        if existing:
+            if existing[0]["reason"] != reason:
+                raise TrackerConflictError(
+                    "override AC DevHub : un autre motif est déjà enregistré pour cette review"
+                )
+            return False
+        body = {"reason": reason, **{key: getattr(context, key) for key in _RECEIPT_COORDINATES}}
+        proof = self._proof(
+            action="acceptance-override", project_key=project_key, resource_id=issue_id,
+            version=raw["version"], context=context, extra={"reason": reason},
+        )
+        try:
+            self._application_req(
+                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/acceptance-override",
+                body, version=raw["version"], proof=proof, idempotent=True,
+            )
+        except DevHubTrackerError as exc:
+            unavailable = self._route_unavailable(exc, "acceptance_override")
+            if unavailable is not None:
+                raise unavailable from None
+            conflict = self._stale_error(exc)
+            if conflict is not None:
+                raise conflict from None
+            raise
+        after = self.read_proof_receipts(issue_id, project=project)
+        if not (len(after) == len(receipts) + 1 and after[:-1] == receipts
+                and after[-1]["action"] == "acceptance_override"
+                and after[-1]["reason"] == reason
+                and all(after[-1][key] == getattr(context, key) for key in _RECEIPT_COORDINATES)):
+            raise TrackerConflictError("override AC DevHub : relecture du reçu divergente")
+        return True
+
+    def recover_acceptance_override(
+        self, issue_id: str, reason: str, *, pr_url: str, head_sha: str, base_sha: str,
+        merge_sha: str, project: Project | None = None,
+    ) -> bool:
+        """DevHub has no recovery: the route needs the `review` state (PAT-318)."""
+        del issue_id, reason, pr_url, head_sha, base_sha, merge_sha, project
+        raise TrackerConflictError(
+            "DevHub n'a pas de reprise d'override AC : le reçu s'écrit avant la fusion"
+        )
+
+    def accept_issue(
+        self, issue_id: str, decision: dict, *, project: Project | None = None,
+        verify_evidence=None,
+    ) -> Issue:
+        """Accept a non-code issue by one closed human decision (DHN-26, PAT-ADR-0025).
+
+        Route and contract: ``POST /issues/:id/human-acceptance``, announced by DevHub on
+        2026-10-20 (DEVHUB-106, merged as `f347f38`); see ``docs/devhub-tracker.md``.  Local
+        validation, then a fresh read and every refusal, then the cited-evidence check,
+        then one POST (done, version + 1 and the receipt in one server transaction), then
+        a read-back that recomputes the digest.  An exact replay converges without a
+        second POST; a different decision is refused.  No automatic retry.
+        """
+        from foundry import acceptance_decision as decisions
+
+        def refuse(why: str):
+            raise TrackerConflictError(f"DevHub acceptance refused: {why}")
+
+        try:
+            decisions.validate(decision, issue_id)
+        except decisions.AcceptanceDecisionError as exc:
+            refuse(str(exc))
+        digest = decisions.decision_digest(decision)
+        project_key = self._require_issue_binding(issue_id, project)
+        raw = self._bound_issue_raw(issue_id, project)
+        issue = self._to_issue(raw)
+        receipts = self.read_proof_receipts(issue_id, project=project)
+        recorded = [item for item in receipts if item["action"] == "human_acceptance"]
+        if recorded:
+            if recorded[0]["decision_digest"] != digest:
+                refuse("a different decision is already recorded for this issue")
+            if issue.state != "done" or recorded[0]["decision"] != decision:
+                raise TrackerConflictError("DevHub acceptance read-back divergent")
+            return issue
+        if raw.get("state") != decision["from_state"]:
+            refuse(f"native state is {raw.get('state')}, the decision was made from "
+                   f"{decision['from_state']}")
+        if receipts:
+            refuse("PR receipts present; use `issue merge`")
+        if issue.type == "Epic":
+            refuse("an Epic is closed by `issue close-epic`")
+        if any(link.type == "parent-of" for link in issue.links):
+            refuse("the issue has children")
+        if issue.pr_url:
+            refuse("the issue is linked to a PR; use `issue merge`")
+        if issue.ac_total < 1:
+            refuse("the issue has no acceptance criterion")
+        try:
+            decisions.check_against_body(decision, raw.get("body") or "")
+            if verify_evidence is not None:
+                verify_evidence()
+        except decisions.AcceptanceDecisionError as exc:
+            refuse(str(exc))
+        proof = self._proof(
+            action="human-acceptance", project_key=project_key, resource_id=issue_id,
+            version=raw["version"], extra={"decision_digest": digest},
+        )
+        try:
+            self._application_req(
+                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/human-acceptance",
+                {"decision": decision}, version=raw["version"], proof=proof, idempotent=True,
+            )
+        except DevHubTrackerError as exc:
+            unavailable = self._route_unavailable(exc, "human_acceptance")
+            if unavailable is not None:
+                raise unavailable from None
+            conflict = self._stale_error(exc)
+            if conflict is not None:
+                raise conflict from None
+            raise
+        fresh = self.get_issue(issue_id)
+        after = [item for item in self.read_proof_receipts(issue_id, project=project)
+                 if item["action"] == "human_acceptance"]
+        if (fresh.state != "done" or len(after) != 1
+                or after[0]["decision_digest"] != digest or after[0]["decision"] != decision):
+            raise TrackerConflictError("DevHub acceptance read-back divergent")
+        return fresh
 
     @staticmethod
     def _same_review(receipt: dict, context: TransitionContext) -> bool:
@@ -1264,24 +1455,52 @@ class DevHubTracker(Tracker):
 
     @staticmethod
     def _to_proof_receipt(item, issue_id: str, project_key: str, path: str) -> dict:
+        """Validate one receipt item against its action's exact null rules (PAT-318)."""
         if (not isinstance(item, dict) or set(item) != _PROOF_RECEIPT_KEYS
                 or not isinstance(item["id"], str) or not _RECEIPT_ID.fullmatch(item["id"])
                 or item["issue"] != issue_id or item["project"] != project_key
-                or item["action"] not in {"review", "done"}
+                or item["action"] not in _PROOF_RECEIPT_ACTIONS
                 or type(item["issue_version"]) is not int or item["issue_version"] < 1
-                or not isinstance(item["pr_url"], str) or not 1 <= len(item["pr_url"]) <= 500
-                or not isinstance(item["head_sha"], str) or not _GIT_SHA.fullmatch(item["head_sha"])
-                or not isinstance(item["base_sha"], str) or not _GIT_SHA.fullmatch(item["base_sha"])
-                or not isinstance(item["review_digest"], str)
-                or not _SHA256.fullmatch(item["review_digest"])
-                or (item["action"] == "done") != (item["merge_sha"] is not None)
-                or (item["merge_sha"] is not None
-                    and (not isinstance(item["merge_sha"], str)
-                         or not _GIT_SHA.fullmatch(item["merge_sha"])))
                 or not isinstance(item["proof_nonce"], str)
                 or not _PROOF_NONCE.fullmatch(item["proof_nonce"])
                 or not isinstance(item["actor"], str) or not 1 <= len(item["actor"]) <= 200
                 or type(item["created"]) is not int or item["created"] < 0):
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+        action = item["action"]
+        if action == "human_acceptance":
+            # No PR, commit or review coordinate: all four are null, and so is merge_sha.
+            if (any(item[key] is not None for key in _RECEIPT_COORDINATES)
+                    or item["merge_sha"] is not None or item["reason"] is not None
+                    or not isinstance(item["decision_digest"], str)
+                    or not _SHA256.fullmatch(item["decision_digest"])
+                    or not isinstance(item["decision"], dict)):
+                raise DevHubTrackerError("GET", path, None, "invalid_response")
+            # The decision is stored as jsonb: recompute the digest from the object read,
+            # never compare raw bytes.
+            from foundry import acceptance_decision as decisions
+            try:
+                decisions.validate(item["decision"], issue_id)
+                recomputed = decisions.decision_digest(item["decision"])
+            except (decisions.AcceptanceDecisionError, ValueError, TypeError):
+                raise DevHubTrackerError("GET", path, None, "invalid_response") from None
+            if recomputed != item["decision_digest"]:
+                raise DevHubTrackerError("GET", path, None, "invalid_response")
+            return dict(item)
+        if (not isinstance(item["pr_url"], str) or not 1 <= len(item["pr_url"]) <= 500
+                or not isinstance(item["head_sha"], str) or not _GIT_SHA.fullmatch(item["head_sha"])
+                or not isinstance(item["base_sha"], str) or not _GIT_SHA.fullmatch(item["base_sha"])
+                or not isinstance(item["review_digest"], str)
+                or not _SHA256.fullmatch(item["review_digest"])
+                or (action == "done") != (item["merge_sha"] is not None)
+                or (item["merge_sha"] is not None
+                    and (not isinstance(item["merge_sha"], str)
+                         or not _GIT_SHA.fullmatch(item["merge_sha"])))
+                or item["decision_digest"] is not None or item["decision"] is not None
+                or (action == "acceptance_override")
+                != (item["reason"] is not None)
+                or (item["reason"] is not None
+                    and (not isinstance(item["reason"], str)
+                         or not _OVERRIDE_REASON.match(item["reason"])))):
             raise DevHubTrackerError("GET", path, None, "invalid_response")
         return dict(item)
 
@@ -1406,7 +1625,8 @@ class DevHubTracker(Tracker):
         elif issue.state == "done":
             # Accepted only with the exact done receipt and all criteria checked; a
             # done issue with unchecked criteria could be an audited override, which
-            # DevHub has no typed receipt for (DEVHUB-106): it stays unavailable.
+            # DevHub's typed `acceptance_override` receipt (DEVHUB-106, PAT-318) is not read
+            # here: such an issue stays unavailable until a release rule reads it.
             disposition = "unavailable"
             receipts = self.read_proof_receipts(issue.id, project=project)
             done = [receipt for receipt in receipts if receipt["action"] == "done"]

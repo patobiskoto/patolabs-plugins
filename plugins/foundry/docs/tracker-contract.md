@@ -78,7 +78,9 @@ cell.
   at the time of writing; accepted at the merge that delivers it). Only Linear declares it
   (`human_acceptance_supported`, `human_acceptance_predecessors` in `trackers/base.py`,
   `trackers/linear.py`); YouTrack, `ghprojects` and DevHub keep the `base.py` default
-  (`False`, no admitted state) and `write.validate_acceptance_request` refuses with
+  (`False`, no admitted state; DevHub implements the `accept_issue` port method since
+  PAT-318, `docs/devhub-tracker.md`, but does not declare the flag) and
+  `write.validate_acceptance_request` refuses with
   `TrackerCapabilityUnavailableError` before any provider read. The operation, the receipt
   and its reading are described in `docs/linear-tracker.md`, "Human acceptance of a
   non-code issue (PAT-206)". The cell is bounded detection under PAT-ADR-0006 (named S1→S2
@@ -325,7 +327,9 @@ provisioning on Linear and `ghprojects`; `get_epic_subgraph` on YouTrack and
 (optional projection implemented by DevHub and, since PAT-178, Linear); `supersede_adr`/`link_adr_issue` on YouTrack
 (ADR evolution is served by `set_adr_status`); the typed acceptance-override receipt on
 YouTrack (free-text audit note fallback, `base.py`); the human acceptance of a non-code
-issue (`accept_issue`, PAT-206) on YouTrack, `ghprojects` and DevHub (`base.py`).
+issue (`accept_issue`, PAT-206) as a command on YouTrack, `ghprojects` and DevHub
+(`human_acceptance_supported` is `False`; DevHub has the port operation only, PAT-318,
+`docs/devhub-tracker.md`).
 
 **GitHub Projects read and ADR slices (PAT-57/PAT-58).** PAT-54 supplies
 the canonical checkout binding and read-only existing-project probe. PAT-65 then

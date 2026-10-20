@@ -13,7 +13,9 @@ import pytest
 from integration.test_real_terminal_reconciliation_smoke import _original_closure_wire
 import foundry
 import foundry.trackers.devhub as devhub_module
+from foundry import acceptance_decision as decisions
 from foundry import adr, edit, frame, query, write
+from foundry.routing import acceptance_criteria, acceptance_digest
 from foundry.devhub_smoke import _require_audit_receipts
 from foundry.models import (
     Adr,
@@ -28,7 +30,7 @@ from foundry.trackers.devhub import (
     DevHubTrackerError,
     _SameOriginRedirectHandler,
 )
-from foundry.trackers.base import TrackerConflictError
+from foundry.trackers.base import TrackerCapabilityUnavailableError, TrackerConflictError
 
 
 TOKEN = "tracker-token-at-least-twenty-four"
@@ -1387,6 +1389,7 @@ def receipt_raw(receipt_id, action="review", **overrides):
         "head_sha": "a" * 40, "base_sha": "d" * 40, "review_digest": "b" * 64,
         "merge_sha": "c" * 40 if action == "done" else None,
         "proof_nonce": f"nonce_{receipt_id:0>12}", "actor": "foundry", "created": 5,
+        "reason": None, "decision_digest": None, "decision": None,
     }
     value.update(overrides)
     return value
@@ -1425,6 +1428,20 @@ def test_proof_receipts_are_read_oldest_first_across_pages_and_validated():
     ([receipt_page([receipt_raw(1, merge_sha="c" * 40)])], "invalid_response"),
     ([receipt_page([receipt_raw(1, "done", merge_sha=None)])], "invalid_response"),
     ([receipt_page([receipt_raw(1, head_sha="A" * 40)])], "invalid_response"),
+    # PAT-318: the extended form refuses every other shape
+    ([receipt_page([{k: v for k, v in receipt_raw(1).items() if k != "reason"}])],
+     "invalid_response"),
+    ([receipt_page([receipt_raw(1, extra_key=None)])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "unknown_action")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, reason="maintainer-override")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, decision_digest="e" * 64)])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, decision={})])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "acceptance_override")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "acceptance_override", reason="No")])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "acceptance_override", reason="maintainer-override",
+                                review_digest=None)])], "invalid_response"),
+    ([receipt_page([receipt_raw(1, "acceptance_override", reason="maintainer-override",
+                                merge_sha="c" * 40)])], "invalid_response"),
     ([receipt_page([receipt_raw(2), receipt_raw(1, proof_nonce="nonce_other_000000")])],
      "pagination_repeated"),
     ([receipt_page([receipt_raw(1)], cursor="9")], "pagination_stalled"),
@@ -1852,3 +1869,282 @@ def test_migration_link_issue_refuses_an_archived_project_before_any_request(mon
     with pytest.raises(SystemExit, match="archive"):
         tracker.migration_link_issue(PROJECT, "TRAME-1", "depends-on", "TRAME-2")
     assert tracker.calls == []
+
+
+# --- PAT-318: DHN-25 acceptance override and DHN-26 human acceptance -------------------
+# Contract announced by DevHub on 2026-10-20 (DEVHUB-106, merged as f347f38).
+
+REVIEW = TransitionContext(
+    pr_url=issue_raw()["pr_url"], head_sha="a" * 40, base_sha="d" * 40,
+    review_digest="b" * 64,
+)
+OVERRIDE = "maintainer-override"
+
+
+def override_receipt(receipt_id, reason=OVERRIDE, **overrides):
+    return receipt_raw(receipt_id, "acceptance_override", reason=reason, **overrides)
+
+
+def test_override_receipt_and_human_acceptance_receipt_are_read_with_their_null_rules():
+    decision = human_decision()
+    digest = decisions.decision_digest(decision)
+    human = receipt_raw(
+        3, "human_acceptance", pr_url=None, head_sha=None, base_sha=None,
+        review_digest=None, decision_digest=digest, decision=decision,
+    )
+    # jsonb does not keep key order: the digest is recomputed from the object read
+    human["decision"] = dict(reversed(list(decision.items())))
+    tracker = ScriptedTracker([receipt_page([receipt_raw(1), override_receipt(2), human])])
+    receipts = tracker.read_proof_receipts("TRAME-1", project=PROJECT)
+    assert [item["action"] for item in receipts] == [
+        "review", "acceptance_override", "human_acceptance"]
+    assert receipts[1]["reason"] == OVERRIDE
+
+
+@pytest.mark.parametrize("change", [
+    {"pr_url": "https://github.com/acme/trame/pull/1"},   # coordinates null only here
+    {"merge_sha": "c" * 40},
+    {"reason": OVERRIDE},
+    {"decision_digest": "e" * 64},                         # digest differs from the object
+    {"decision": None},
+    {"decision": {"schema": "foundry.issue-acceptance-decision.v1"}},
+])
+def test_human_acceptance_receipt_fails_closed_on_any_other_shape(change):
+    decision = human_decision()
+    base = dict(
+        pr_url=None, head_sha=None, base_sha=None, review_digest=None,
+        decision_digest=decisions.decision_digest(decision), decision=decision,
+    )
+    item = receipt_raw(1, "human_acceptance", **{**base, **change})
+    tracker = ScriptedTracker([receipt_page([item])])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        tracker.read_proof_receipts("TRAME-1", project=PROJECT)
+
+
+def test_override_receipt_does_not_make_a_review_a_new_generation():
+    tracker = ScriptedTracker([
+        issue_raw(state="review", version=4),
+        receipt_page([receipt_raw(1), override_receipt(2)]),
+    ])
+    tracker.set_state("TRAME-1", "review", context=REVIEW, project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "GET"]
+
+
+def test_acceptance_override_posts_the_strict_body_with_a_bound_proof_and_reads_back():
+    tracker = ScriptedTracker([
+        issue_raw(state="review", version=4),
+        receipt_page([receipt_raw(1)]),
+        {"id": "2"},
+        receipt_page([receipt_raw(1), override_receipt(2)]),
+    ])
+    assert tracker.acceptance_override_projection_supported is True
+    assert tracker.project_acceptance_override(
+        "TRAME-1", OVERRIDE, REVIEW, project=PROJECT) is True
+    method, path, body, kwargs = tracker.calls[2]
+    assert (method, path) == ("POST", "/issues/TRAME-1/acceptance-override")
+    assert body == {
+        "reason": OVERRIDE, "pr_url": REVIEW.pr_url, "head_sha": "a" * 40,
+        "base_sha": "d" * 40, "review_digest": "b" * 64,
+    }
+    assert kwargs["version"] == 4 and kwargs["idempotent"] is True
+    assert decode_proof(kwargs["proof"]) == {
+        "action": "acceptance-override", "contract_version": "devhub-tracker.v1",
+        "expected_version": 4, "expires_at": 1_300_000, "nonce": "canonical_nonce_123456",
+        "project_key": "TRAME", "resource_id": "TRAME-1", "reason": OVERRIDE,
+        "pr_url": REVIEW.pr_url, "head_sha": "a" * 40, "base_sha": "d" * 40,
+        "review_digest": "b" * 64,
+    }
+
+
+def test_acceptance_override_replay_writes_nothing_and_another_reason_is_refused():
+    state = [issue_raw(state="review", version=4),
+             receipt_page([receipt_raw(1), override_receipt(2)])]
+    tracker = ScriptedTracker(list(state))
+    assert tracker.project_acceptance_override(
+        "TRAME-1", OVERRIDE, REVIEW, project=PROJECT) is False
+    assert all(call[0] == "GET" for call in tracker.calls)
+    other = ScriptedTracker(list(state))
+    with pytest.raises(TrackerConflictError, match="autre motif"):
+        other.project_acceptance_override("TRAME-1", "other-reason", REVIEW, project=PROJECT)
+    assert all(call[0] == "GET" for call in other.calls)
+
+
+@pytest.mark.parametrize("issue, receipts, match", [
+    (issue_raw(state="in-progress"), [receipt_raw(1)], "pas en review"),
+    (issue_raw(state="review"), [], "dernière review"),
+    (issue_raw(state="review"), [receipt_raw(1, head_sha="e" * 40)], "dernière review"),
+    (issue_raw(state="review"), [receipt_raw(1), receipt_raw(2, "done")], "déjà close"),
+])
+def test_acceptance_override_refuses_before_any_write(issue, receipts, match):
+    tracker = ScriptedTracker([issue, receipt_page(receipts)])
+    with pytest.raises(TrackerConflictError, match=match):
+        tracker.project_acceptance_override("TRAME-1", OVERRIDE, REVIEW, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def test_acceptance_override_refuses_invalid_input_without_a_request():
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError):
+        tracker.project_acceptance_override("TRAME-1", "No", REVIEW, project=PROJECT)
+    with pytest.raises(ValueError):
+        tracker.project_acceptance_override(
+            "TRAME-1", OVERRIDE,
+            TransitionContext(pr_url=REVIEW.pr_url, head_sha="a" * 40, base_sha="d" * 40,
+                              review_digest="b" * 64, merge_sha="c" * 40),
+            project=PROJECT)
+    assert tracker.calls == []
+
+
+def test_acceptance_override_maps_a_version_conflict_and_refuses_a_divergent_readback():
+    stale = DevHubTrackerError("POST", "/x", 409, "version_conflict")
+    tracker = ScriptedTracker([issue_raw(state="review", version=4),
+                               receipt_page([receipt_raw(1)]), stale])
+    with pytest.raises(TrackerConflictError, match="version DevHub"):
+        tracker.project_acceptance_override("TRAME-1", OVERRIDE, REVIEW, project=PROJECT)
+    other = DevHubTrackerError("POST", "/x", 409, "resource_conflict")
+    tracker = ScriptedTracker([issue_raw(state="review", version=4),
+                               receipt_page([receipt_raw(1)]), other])
+    with pytest.raises(DevHubTrackerError, match="resource_conflict"):
+        tracker.project_acceptance_override("TRAME-1", OVERRIDE, REVIEW, project=PROJECT)
+    tracker = ScriptedTracker([issue_raw(state="review", version=4),
+                               receipt_page([receipt_raw(1)]), {},
+                               receipt_page([receipt_raw(1)])])
+    with pytest.raises(TrackerConflictError, match="relecture"):
+        tracker.project_acceptance_override("TRAME-1", OVERRIDE, REVIEW, project=PROJECT)
+
+
+def test_acceptance_override_recovery_is_refused_because_devhub_has_none():
+    with pytest.raises(TrackerConflictError, match="pas de reprise"):
+        ScriptedTracker([]).recover_acceptance_override(
+            "TRAME-1", OVERRIDE, pr_url="u", head_sha="a" * 40, base_sha="d" * 40,
+            merge_sha="c" * 40, project=PROJECT)
+
+
+HUMAN_BODY = "- [ ] decided offline\n- [ ] second"
+
+
+def human_decision(body=HUMAN_BODY, **over):
+    criteria = acceptance_criteria(body)
+    document = {
+        "schema": decisions.SCHEMA, "issue": "TRAME-1",
+        "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "ac_digest": acceptance_digest(criteria), "from_state": "ready",
+        "authority": "maintainer-direct", "decided_on": "2026-10-20",
+        "verdict": "accepted", "delivery": "none",
+        "criteria": [
+            {**item, "verdict": "pass", "evidence": [{"type": "issue", "id": "TRAME-2"}],
+             "unknowns": []}
+            for item in criteria
+        ],
+    }
+    document.update(over)
+    return document
+
+
+def human_receipt(receipt_id, decision, **overrides):
+    return receipt_raw(
+        receipt_id, "human_acceptance", pr_url=None, head_sha=None, base_sha=None,
+        review_digest=None, decision_digest=decisions.decision_digest(decision),
+        decision=decision, **overrides,
+    )
+
+
+def ready_issue(**over):
+    value = dict(state="ready", pr_url=None, body=HUMAN_BODY, ac_total=2, version=7)
+    value.update(over)
+    return issue_raw(**value)
+
+
+def test_accept_issue_posts_the_decision_and_verifies_the_recomputed_digest():
+    decision = human_decision()
+    digest = decisions.decision_digest(decision)
+    stored = human_receipt(1, decision)
+    stored["decision"] = dict(reversed(list(decision.items())))  # jsonb order
+    seen = []
+    tracker = ScriptedTracker([
+        ready_issue(), receipt_page([]), {"ok": True},
+        ready_issue(state="done", version=8), receipt_page([stored]),
+    ])
+    accepted = tracker.accept_issue(
+        "TRAME-1", decision, project=PROJECT, verify_evidence=lambda: seen.append(1))
+    assert accepted.state == "done" and seen == [1]
+    method, path, body, kwargs = tracker.calls[2]
+    assert (method, path, body) == (
+        "POST", "/issues/TRAME-1/human-acceptance", {"decision": decision})
+    assert kwargs["version"] == 7 and kwargs["idempotent"] is True
+    assert decode_proof(kwargs["proof"]) == {
+        "action": "human-acceptance", "contract_version": "devhub-tracker.v1",
+        "expected_version": 7, "expires_at": 1_300_000, "nonce": "canonical_nonce_123456",
+        "project_key": "TRAME", "resource_id": "TRAME-1", "decision_digest": digest,
+    }
+    assert tracker.human_acceptance_supported is False  # `issue accept` stays Linear-only
+
+
+def test_accept_issue_exact_replay_converges_without_a_post_and_a_different_one_is_refused():
+    decision = human_decision()
+    done = ready_issue(state="done", version=8)
+    tracker = ScriptedTracker([done, receipt_page([human_receipt(1, decision)])])
+    assert tracker.accept_issue("TRAME-1", decision, project=PROJECT).state == "done"
+    assert all(call[0] == "GET" for call in tracker.calls)
+    different = human_decision(decided_on="2026-10-21")
+    tracker = ScriptedTracker([done, receipt_page([human_receipt(1, decision)])])
+    with pytest.raises(TrackerConflictError, match="different decision"):
+        tracker.accept_issue("TRAME-1", different, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+@pytest.mark.parametrize("issue, receipts, over, match", [
+    (ready_issue(state="in-progress"), [], {}, "native state is in-progress"),
+    (ready_issue(type="Epic"), [], {}, "Epic"),
+    (ready_issue(links=[{"type": "parent-of", "direction": "outward", "target": "TRAME-9"}]),
+     [], {}, "children"),
+    (ready_issue(pr_url="https://github.com/acme/trame/pull/1"), [], {}, "linked to a PR"),
+    (ready_issue(), [receipt_raw(1)], {}, "PR receipts"),
+    (ready_issue(ac_total=0, ac_done=0), [], {}, "no acceptance criterion"),
+    (ready_issue(body=HUMAN_BODY + "\n- [ ] drift"), [], {}, "body|criteria|corps"),
+    (ready_issue(), [], {"issue": "TRAME-9"}, "pas TRAME-1"),
+])
+def test_accept_issue_refuses_before_any_write(issue, receipts, over, match):
+    decision = human_decision(**over)
+    tracker = ScriptedTracker([issue, receipt_page(receipts)])
+    with pytest.raises(TrackerConflictError, match=match):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def test_accept_issue_refuses_on_failed_evidence_and_on_divergent_readback():
+    decision = human_decision()
+
+    def bad_evidence():
+        raise decisions.AcceptanceDecisionError("preuve introuvable")
+
+    tracker = ScriptedTracker([ready_issue(), receipt_page([])])
+    with pytest.raises(TrackerConflictError, match="preuve introuvable"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT,
+                             verify_evidence=bad_evidence)
+    assert all(call[0] == "GET" for call in tracker.calls)
+    other = human_decision(decided_on="2026-10-21")
+    tracker = ScriptedTracker([
+        ready_issue(), receipt_page([]), {},
+        ready_issue(state="done", version=8), receipt_page([human_receipt(1, other)]),
+    ])
+    with pytest.raises(TrackerConflictError, match="read-back divergent"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
+
+
+def test_accept_issue_maps_a_version_conflict_to_a_bounded_conflict():
+    stale = DevHubTrackerError("POST", "/x", 409, "version_conflict")
+    tracker = ScriptedTracker([ready_issue(), receipt_page([]), stale])
+    with pytest.raises(TrackerConflictError, match="version DevHub"):
+        tracker.accept_issue("TRAME-1", human_decision(), project=PROJECT)
+
+
+def test_a_server_older_than_devhub_106_is_a_named_unavailable_capability():
+    absent = DevHubTrackerError("POST", "/x", 404, "route_unavailable")
+    tracker = ScriptedTracker([issue_raw(state="review", version=4),
+                               receipt_page([receipt_raw(1)]), absent])
+    with pytest.raises(TrackerCapabilityUnavailableError, match="devhub.acceptance_override"):
+        tracker.project_acceptance_override("TRAME-1", OVERRIDE, REVIEW, project=PROJECT)
+    tracker = ScriptedTracker([ready_issue(), receipt_page([]), absent])
+    with pytest.raises(TrackerCapabilityUnavailableError, match="devhub.human_acceptance"):
+        tracker.accept_issue("TRAME-1", human_decision(), project=PROJECT)
