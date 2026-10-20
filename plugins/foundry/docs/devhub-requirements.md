@@ -44,9 +44,9 @@ that suite is deterministic over fake transports, this one needs a server.
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
 expected red, listed below with its owner) that raised the exception its `gap` declares in
 `raises=`, any other exception, a setup error included, is a failure or an error, not an
-`xfailed` (limit: DHN-27 and DHN-28 declare `DevHubTrackerError`, which a transport error,
-an invalid response or a refusal of the issue creation or start also raises, so their
-`xfailed` alone does not show the refused transition); `XPASS(strict)` reported as a failure
+`xfailed` (limit: DHN-27, DHN-28 and DHN-42 declare `DevHubTrackerError`, which a transport
+error, an invalid response or another refused request also raises, so their `xfailed` alone
+does not show the refusal the need is about); `XPASS(strict)` reported as a failure
 means a gap closed and its test must be turned into a plain need (see "Closing a gap");
 `failed` on a need expected green is a regression or a wrong expectation to discuss on this
 page.
@@ -169,8 +169,9 @@ raised the exception its `gap` declares in `raises=` (the `xfailed` limit of "Re
 result" applies to DHN-27 and DHN-28). The cause of each red is still the one in its Basis
 column (adapter: observed in the source; server: deduced from the source, not from the
 answers of the instance). DHN-42 was run alone on an instance with local accounts the same
-day (`DEVHUB_LIVE_LOCAL_ACCOUNTS=1`): `xfailed`, the project creation refused, nothing
-written. Test names are in
+day (`DEVHUB_LIVE_LOCAL_ACCOUNTS=1`): `xfailed`. That `xfailed` alone does not show the
+refused creation (limit in "Reading the result"); the refusal is the 403 of `POST /projects`
+observed at the setup of the first run (row DHN-42). Test names are in
 `tests/integration/test_devhub_live_conformance.py`.
 
 | ID | Need | Test | Status | Owner of the gap | Basis |
