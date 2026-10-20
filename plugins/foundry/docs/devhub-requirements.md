@@ -171,7 +171,8 @@ column (adapter: observed in the source; server: deduced from the source, not fr
 answers of the instance). DHN-42 was run alone on an instance with local accounts the same
 day (`DEVHUB_LIVE_LOCAL_ACCOUNTS=1`): `xfailed`. That `xfailed` alone does not show the
 refused creation (limit in "Reading the result"); the refusal is the 403 of `POST /projects`
-observed at the setup of the first run (row DHN-42). Test names are in
+observed at the setup of an earlier attempt on an instance with local accounts (row DHN-42).
+Test names are in
 `tests/integration/test_devhub_live_conformance.py`.
 
 | ID | Need | Test | Status | Owner of the gap | Basis |
@@ -217,7 +218,7 @@ observed at the setup of the first run (row DHN-42). Test names are in
 | DHN-39 | Read a mapped release scope without approximate discovery | `test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery` | red | adapter + server | adapter: `read_release_scope` inherited, `ReleaseScopeUnavailableError`; how a release is mapped on DevHub is a question below |
 | DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), with no live test (DHN-41 covers `verify_project_identity` only); the Epic cadencer also needs DHN-37 and DHN-38 |
 | DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | red | adapter | adapter: `verify_project_identity` inherited from `trackers/base.py`, `ProjectProvisioningUnavailableError`; the test covers it only, the `resolve_checkout_project` pilot path of DHN-40 has no live test |
-| DHN-42 | Under local accounts the Foundry service credential can create its project and use it (issue create and read) | `test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts` | red | server | server: `authorizeProjectCreation` refuses any non-human actor when `account_workspace.local_accounts` is true (`src/access/domain.ts:139-147`, observed in source); `authorizeProject` (`src/access/domain.ts:74-119`) limits a service actor to the projects of `access_credentials.project_ids` or `access_legacy_service_projects`. Observed 2026-10-20: `POST /projects` answered 403 `insufficient_scope` and all 41 tests errored at setup, nothing written; question 14 |
+| DHN-42 | Under local accounts the Foundry service credential can create its project and use it (issue create and read) | `test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts` | red | server | server: `authorizeProjectCreation` refuses any non-human actor when `account_workspace.local_accounts` is true (`src/access/domain.ts:139-147`, observed in source); `authorizeProject` (`src/access/domain.ts:74-119`) limits a service actor to the projects of `access_credentials.project_ids` or `access_legacy_service_projects`. Observed 2026-10-20 on an instance with local accounts: `POST /projects` answered 403 `insufficient_scope` and all 41 tests errored at setup, nothing written; question 14 |
 
 Counts (equal to the table): 42 needs; 17 red (DHN-21, DHN-24 to DHN-28, DHN-32 to DHN-42);
 0 unknown; 25 green (DHN-01 to DHN-20, DHN-22, DHN-23, DHN-29 to DHN-31).
