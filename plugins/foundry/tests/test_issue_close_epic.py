@@ -439,8 +439,8 @@ def test_unqualified_trackers_refuse_accept_dropped_before_any_read(monkeypatch,
     assert tracker.close_calls == 0
 
 
-@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker, DevHubTracker))
-def test_youtrack_ghprojects_and_devhub_refuse_accept_dropped_fail_closed(provider):
+@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker))
+def test_youtrack_and_ghprojects_refuse_accept_dropped_fail_closed(provider):
     # Built without __init__: any provider read or write would raise AttributeError.
     tracker = object.__new__(provider)
     assert provider.epic_dropped_closure_supported is False
@@ -473,3 +473,101 @@ def test_atomic_provider_keeps_accepting_a_dropped_child_without_the_flag(monkey
     # Its replay names no --accept-dropped set: the atomic receipt carries none.
     assert write.epic_receipt_dropped(outcome.receipt) == ()
     assert write.close_epic(tracker, "DEMO-1").replayed
+
+
+# --- PAT-ADR-0030 : DevHub requires the abandoned direct children to be named ---
+
+class NamedDroppedAtomicTracker(AtomicEpicTracker):
+    """Atomic fixture that declares the flag, as DevHub does (PAT-ADR-0030)."""
+
+    name = "named-dropped-fixture"
+    epic_dropped_closure_supported = True
+
+
+def test_devhub_declares_the_named_dropped_closure():
+    assert DevHubTracker.epic_dropped_closure_supported is True
+    assert DevHubTracker.epic_closure_supported is True
+
+
+def test_named_atomic_closure_refuses_an_unnamed_dropped_child(monkeypatch):
+    tracker = NamedDroppedAtomicTracker()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit) as refused:
+        write.close_epic(tracker, "DEMO-1")
+    message = str(refused.value)
+    assert "abandonnés : DEMO-3 ; nommés : aucun" in message
+    assert "--human-verdict=accepted --accept-dropped=DEMO-3" in message
+    assert tracker.close_calls == 0
+
+
+@pytest.mark.parametrize("named", (("DEMO-2",), ("DEMO-3", "DEMO-9")))
+def test_named_atomic_closure_refuses_an_inexact_named_set(monkeypatch, named):
+    tracker = NamedDroppedAtomicTracker()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit, match="doit nommer exactement"):
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=named,
+        )
+    assert tracker.close_calls == 0
+
+
+def test_named_atomic_closure_refuses_a_named_set_without_dropped_child(monkeypatch):
+    tracker = NamedDroppedAtomicTracker()
+    tracker.issues["DEMO-3"].state = "done"
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit, match="abandonnés : aucun ; nommés : DEMO-3"):
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+        )
+    assert tracker.close_calls == 0
+
+
+def test_named_atomic_closure_needs_the_human_verdict(monkeypatch):
+    tracker = NamedDroppedAtomicTracker()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit, match="--accept-dropped exige --human-verdict=accepted"):
+        write.close_epic(tracker, "DEMO-1", accept_dropped=("DEMO-3",))
+    assert tracker.get_calls == [] and tracker.close_calls == 0
+
+
+def test_named_atomic_closure_closes_and_replays_over_the_named_child(monkeypatch):
+    tracker = NamedDroppedAtomicTracker()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    outcome = write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+    )
+    assert tracker.close_calls == 1
+    assert [(child.id, child.state) for child in outcome.receipt.children] == [
+        ("DEMO-2", "done"), ("DEMO-3", "dropped")]
+    replay = write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+    )
+    assert replay.replayed is True and tracker.close_calls == 1
+    with pytest.raises(SystemExit, match="ensemble --accept-dropped différent du reçu"):
+        write.close_epic(tracker, "DEMO-1")
+
+
+def test_named_dropped_child_owes_no_acceptance_proof(monkeypatch):
+    # PAT-ADR-0017, PAT-ADR-0030: the AC check stops before the provider otherwise.
+    tracker = NamedDroppedAtomicTracker()
+    tracker.issues["DEMO-3"].ac_total = 2
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(TrackerConflictError):  # the fixture graph carries no AC counts
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+        )
+    assert tracker.close_calls == 1
+    unnamed = AtomicEpicTracker()
+    unnamed.issues["DEMO-3"].ac_total = 2
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: unnamed.project)
+    with pytest.raises(SystemExit, match="AC de l'enfant DEMO-3"):
+        write.close_epic(unnamed, "DEMO-1")
+    assert unnamed.close_calls == 0
+
+
+def test_unnamed_atomic_tracker_keeps_its_closure_over_a_dropped_child(monkeypatch):
+    tracker = AtomicEpicTracker()
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    outcome = write.close_epic(tracker, "DEMO-1")
+    assert "dropped" in {child.state for child in outcome.receipt.children}
+

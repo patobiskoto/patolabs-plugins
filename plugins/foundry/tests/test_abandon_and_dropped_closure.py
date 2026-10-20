@@ -993,11 +993,13 @@ def test_validator_admits_a_dropped_node_only_for_the_qualified_provider(
         write._validate_epic_outcome(as_dependency, tracker=provider, **check)
 
 
-# --- AC 6 : Linear only -------------------------------------------------------
+# --- AC 6 : Linear, and DevHub for its atomic closure (PAT-ADR-0030) ------------
 
-def test_only_linear_declares_the_dropped_closure_capability():
+def test_only_linear_and_devhub_declare_the_dropped_closure_capability():
     assert LinearTracker.epic_dropped_closure_supported is True
-    for provider in (Tracker, YouTrackTracker, GitHubProjectsTracker, DevHubTracker):
+    assert DevHubTracker.epic_dropped_closure_supported is True
+    assert DevHubTracker.bounded_epic_closure_supported is False
+    for provider in (Tracker, YouTrackTracker, GitHubProjectsTracker):
         assert provider.epic_dropped_closure_supported is False
 
 

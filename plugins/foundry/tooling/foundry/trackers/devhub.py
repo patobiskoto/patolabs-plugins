@@ -254,6 +254,9 @@ class DevHubTracker(Tracker):
     requires_mutation_binding = True
     acceptance_sync_supported = True
     epic_closure_supported = True
+    # PAT-ADR-0030 / DHN-24: `write.close_epic` requires every abandoned direct child
+    # to be named by `--accept-dropped` before the atomic closure.
+    epic_dropped_closure_supported = True
     project_provisioning_supported = True
     project_provisioning_requires_repository = True
     epic_subgraph_supported = True

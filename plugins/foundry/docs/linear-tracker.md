@@ -1527,8 +1527,9 @@ is refused; a pending audit resumes only with its exact set; `close-epic --statu
 prints the dropped nodes bound by the receipt. Limits: cancelling or reopening a node
 after the closure makes the replay of the closed Epic diverge (fail closed), and a
 pending audit whose graph changes stays blocked; no recovery path is added.
-YouTrack, GitHub Projects and DevHub refuse `--accept-dropped` before any read and
-keep their current handling of a dropped child.
+YouTrack and GitHub Projects refuse `--accept-dropped` before any read and keep their
+current handling of a dropped child. DevHub requires it for its dropped direct children
+(PAT-ADR-0030, `devhub-tracker.md`, "Epic closure over a dropped child").
 
 **Epic whose child is an Epic already closed (PAT-185; PAT-ADR-0014, PAT-ADR-0017).**
 A required child (or transitive prerequisite) that is itself an Epic, `done`, and

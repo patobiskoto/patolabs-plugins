@@ -32,7 +32,7 @@ from dataclasses import dataclass
 import pytest
 
 import devhub_live_gate as gate
-from foundry import campaign_cadence, registry
+from foundry import campaign_cadence, registry, write
 from foundry.models import (
     EpicClosureChild,
     EpicClosureReceipt,
@@ -555,19 +555,29 @@ def test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt(suite
     assert tracker.get_epic_closure(suite.project, epic.id) is None
 
 
-@gap("DHN-24", "foundry", "PAT-ADR-0017 qualifies --accept-dropped on Linear only and write.py also requires bounded_epic_closure_supported, which the DevHub atomic receipt cannot carry; supersession needs a new ADR (R2)", raises=AssertionError)
-def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
+@need("DHN-24")
+def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite, monkeypatch):
     tracker = suite.tracker
+    assert tracker.epic_dropped_closure_supported is True
     epic = _create(suite, _unique("live dropped closure"), "", Type="Epic")
     done_child = _create(suite, _unique("live done child"), "", parent=epic.id)
     dropped_child = _create(suite, _unique("live dropped child"), "", parent=epic.id)
     _to_done(suite, done_child.id)
     tracker.set_state(dropped_child.id, "dropped", project=suite.project)
-    receipt = _closure_receipt(suite, epic.id, [done_child.id, dropped_child.id])
-    # The server side (observed in source, `2edcea2:src/tracker/epic-closure-store.ts:182`)
-    # is exercised first; the gap is the flag, hence the ADR, asserted last.
-    assert tracker.close_epic(suite.project, receipt).receipt == receipt
-    assert tracker.epic_dropped_closure_supported is True
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: suite.project)
+    # PAT-ADR-0030: Foundry refuses before the atomic call until the child is named.
+    with pytest.raises(SystemExit, match="doit nommer exactement"):
+        write.close_epic(tracker, epic.id)
+    assert tracker.get_issue(epic.id).state != "done"
+    outcome = write.close_epic(
+        tracker, epic.id, human_verdict="accepted", accept_dropped=(dropped_child.id,),
+    )
+    assert {(child.id, child.state) for child in outcome.receipt.children} == {
+        (done_child.id, "done"), (dropped_child.id, "dropped")}
+    assert tracker.get_issue(epic.id).state == "done"
+    assert write.close_epic(
+        tracker, epic.id, human_verdict="accepted", accept_dropped=(dropped_child.id,),
+    ).replayed is True
 
 
 @gap("DHN-25", "adapter+server", "no typed acceptance-override receipt, server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)

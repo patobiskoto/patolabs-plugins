@@ -249,14 +249,21 @@ answer is lost beyond the two same-key attempts of one call.
 
 ## Epic closure over a dropped child (PAT-313, DHN-24)
 
-DevHub closes an Epic whose direct children are all `done` or `dropped`
-(`2edcea2:src/tracker/epic-closure-store.ts:182`, observed in source), through the atomic
-path of `write.close_epic`, with no `--accept-dropped`. The flag stays refused for DevHub
-(`write.py::validate_epic_closure_request`: it needs `bounded_epic_closure_supported` and
-`epic_dropped_closure_supported`), as PAT-ADR-0017 decides ("Portée": Linear only). The
-adapter therefore does not set `epic_dropped_closure_supported`; the receipt of a DevHub
-closure (`_to_epic_closure_receipt`) has no human verdict and no accepted-dropped set. Row
-DHN-24 of `devhub-requirements.md` stays red, owner `foundry`.
+The DevHub server closes an Epic whose direct children are all `done` or `dropped`, and
+checks in the same transaction that the children of the receipt (id, version, state) are
+exactly those it reads (`1227841:src/tracker/epic-closure-store.ts:182-183`, observed in
+source). PAT-ADR-0030 extends the nominative closure of PAT-ADR-0017 to DevHub: the
+adapter declares `epic_dropped_closure_supported`, and the atomic branch of
+`write.close_epic` refuses before the server call when the set named by `--accept-dropped`
+is not exactly the set of `dropped` direct children it read, with the exact command in
+the refusal. `write.validate_epic_closure_request` requires `--human-verdict=accepted`
+with the flag. A named dropped child owes no acceptance proof (its AC are not checked);
+a child that is not dropped keeps the AC check. Replaying a closed Epic needs the same
+named set, read back from the dropped children of the server receipt
+(`write._closure_dropped`). Limits (PAT-ADR-0030): the named set and the verdict are
+checked by Foundry, not stored by the server, so a client that bypasses Foundry can still
+close over a dropped child, and the receipt does not tell a named child from one admitted
+by another client. Row DHN-24 of `devhub-requirements.md`.
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
