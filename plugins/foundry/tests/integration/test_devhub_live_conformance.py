@@ -586,7 +586,7 @@ def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suit
     assert accepted.state == "done"
 
 
-@gap("DHN-27", "server", "workflow.ts forbids dropped from in-progress and review", raises=DevHubTrackerError)
+@need("DHN-27")
 def test_dhn_27_started_issue_can_be_abandoned(suite):
     issue = _create(suite, _unique("live abandon"), "")
     _start(suite, issue.id)
@@ -594,7 +594,7 @@ def test_dhn_27_started_issue_can_be_abandoned(suite):
     assert suite.tracker.get_issue(issue.id).state == "dropped"
 
 
-@gap("DHN-28", "server", "workflow.ts has no in-progress or review to backlog edge", raises=DevHubTrackerError)
+@need("DHN-28")
 def test_dhn_28_started_issue_can_return_to_backlog(suite):
     issue = _create(suite, _unique("live return"), "")
     _start(suite, issue.id)
@@ -733,7 +733,7 @@ def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite)
     assert len(suite.tracker.search(suite.project, title)) == before
 
 
-@gap("DHN-38", "adapter+server", "append_only_lifecycle_supported is False", raises=AssertionError)
+@gap("DHN-38", "adapter", "append_only_lifecycle_supported is False", raises=AssertionError)
 def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     assert suite.tracker.append_only_lifecycle_supported is True
     assert "append_only_lifecycle_supported" not in campaign_cadence.missing_capabilities(
@@ -741,7 +741,7 @@ def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     )
 
 
-@gap("DHN-39", "adapter+server", "no read_release_scope: ReleaseScopeUnavailableError", raises=ReleaseScopeUnavailableError)
+@gap("DHN-39", "adapter", "no read_release_scope: ReleaseScopeUnavailableError", raises=ReleaseScopeUnavailableError)
 def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(suite):
     scope = suite.tracker.read_release_scope(suite.project, "live-release")
     assert scope.release == "live-release" and scope.project_key == suite.project.key
@@ -759,11 +759,7 @@ def test_dhn_41_repository_bootstrap_reads_back_the_project_identity(suite):
     assert suite.tracker.verify_project_identity(suite.project) is True
 
 
-@gap(
-    "DHN-42", "server",
-    "under local accounts a service credential cannot create a project: 403 insufficient_scope",
-    raises=DevHubTrackerError,
-)
+@need("DHN-42")
 def test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts(
     local_accounts_suite,
 ):
