@@ -157,8 +157,9 @@ ticket, with no ambiguity signal (a limit, covered by
 `append_only_lifecycle_supported` (`trackers/base.py`) and an adapter that overrides
 `Tracker.reconcile_issue_creation`. There is no declarative flag for the third one: that is
 a gap, so the override is the test. Linear sets the two flags and overrides the method
-(`trackers/linear.py`); DevHub sets the two flags since PAT-309 but does not override the
-method, so it still reports `issue_creation_reconciliation` (DHN-37, `devhub-tracker.md`);
+(`trackers/linear.py`); DevHub sets the two flags since PAT-309 and overrides the method
+since PAT-313, so it reports nothing, with the limit of `devhub-tracker.md` ("Issue creation
+reconciliation", DHN-37);
 a tracker missing any of them is refused before any read of the Epic or
 resolution of the project: `main` calls `_context`, which first calls `foundry.tracker()`
 (without `--root`), then checks the flags.

@@ -40,6 +40,7 @@ from foundry.models import (
     TransitionContext,
 )
 from foundry.trackers.base import (
+    IssueUnavailableError,
     ProjectProvisioningUnavailableError,
     ReleaseScopeUnavailableError,
     TrackerCapabilityUnavailableError,
@@ -554,7 +555,7 @@ def test_dhn_23_epic_closure_refuses_a_graph_that_differs_from_the_receipt(suite
     assert tracker.get_epic_closure(suite.project, epic.id) is None
 
 
-@gap("DHN-24", "adapter", "write.py refuses --accept-dropped unless the adapter sets epic_dropped_closure_supported (PAT-ADR-0017); devhub.py does not", raises=AssertionError)
+@gap("DHN-24", "foundry", "PAT-ADR-0017 qualifies --accept-dropped on Linear only and write.py also requires bounded_epic_closure_supported, which the DevHub atomic receipt cannot carry; supersession needs a new ADR (R2)", raises=AssertionError)
 def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
     tracker = suite.tracker
     epic = _create(suite, _unique("live dropped closure"), "", Type="Epic")
@@ -562,9 +563,11 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite):
     dropped_child = _create(suite, _unique("live dropped child"), "", parent=epic.id)
     _to_done(suite, done_child.id)
     tracker.set_state(dropped_child.id, "dropped", project=suite.project)
-    assert tracker.epic_dropped_closure_supported is True
     receipt = _closure_receipt(suite, epic.id, [done_child.id, dropped_child.id])
+    # The server side (observed in source, `2edcea2:src/tracker/epic-closure-store.ts:182`)
+    # is exercised first; the gap is the flag, hence the ADR, asserted last.
     assert tracker.close_epic(suite.project, receipt).receipt == receipt
+    assert tracker.epic_dropped_closure_supported is True
 
 
 @gap("DHN-25", "adapter+server", "no typed acceptance-override receipt, server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
@@ -727,16 +730,50 @@ def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite)
 
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
 
-@gap("DHN-37", "adapter", "no reconcile_issue_creation: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@need("DHN-37")
 def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite):
-    title, body = _unique("live reconcile"), "body"
-    issue = _create(suite, title, body)
-    before = len(suite.tracker.search(suite.project, title))
-    result = suite.tracker.reconcile_issue_creation(
-        suite.project, issue.id, title, body, {"Type": "Task"}, None,
+    tracker = suite.tracker
+    assert "issue_creation_reconciliation" not in campaign_cadence.missing_capabilities(tracker)
+    epic = _create(suite, _unique("live reconcile epic"), "", Type="Epic")
+    title, body = _unique("live reconcile"), "body\n- [ ] one"
+    issue = _create(suite, title, body, parent=epic.id)
+    fields = {"Type": "Task", "Priority": "P3"}
+
+    def count():
+        return len(tracker.search(suite.project, title))
+
+    before, version = count(), tracker.get_issue(issue.id).version
+    result = tracker.reconcile_issue_creation(
+        suite.project, issue.id, title, body, fields, epic.id,
     )
-    assert isinstance(result, dict)
-    assert len(suite.tracker.search(suite.project, title)) == before
+    assert result["validation"] == "accepted" and result["issue_id"] == issue.id
+    assert result["automatic_retry"] is False
+    # read-only: no second issue, no write on the issue (version unchanged)
+    assert count() == before == 1
+    assert tracker.get_issue(issue.id).version == version
+    # a different creation is refused, an absent one is reported, never recreated
+    for args in ((title + " x", body, fields, epic.id), (title, body + "x", fields, epic.id),
+                 (title, body, fields, None), (title, body, {"Priority": "P0"}, epic.id)):
+        with pytest.raises(TrackerConflictError, match="validation refused"):
+            tracker.reconcile_issue_creation(suite.project, issue.id, *args)
+    with pytest.raises(IssueUnavailableError):
+        tracker.reconcile_issue_creation(
+            suite.project, f"{suite.project.key}-99999", title, body, fields, None,
+        )
+    assert count() == before
+    # basis of answer 9: replaying the same key and payload returns the stored issue
+    path = f"/projects/{suite.project.key}/issues"
+    request = {"title": _unique("live replay"), "body": "", "fields": {"type": "Task"},
+               "parent": None}
+    key = f"foundry-live-{secrets.token_hex(8)}"
+    first = tracker._application_req(
+        "POST", path, request, idempotent=True, idempotency_key=key,
+    )
+    again = tracker._application_req(
+        "POST", path, request, idempotent=True, idempotency_key=key,
+    )
+    assert first["id"] == again["id"]
+    assert len(tracker.search(suite.project, request["title"])) == 1
 
 
 @need("DHN-38")

@@ -958,6 +958,57 @@ class DevHubTracker(Tracker):
         )
         return self._to_issue(raw)
 
+    def reconcile_issue_creation(
+        self, project, issue_id, title, body, fields=None, parent=None,
+    ) -> dict:
+        """Read-only check that ``issue_id`` is the creation described (DHN-37, PAT-313).
+
+        Reads the issue once; never writes, replays or creates.  DevHub offers no read by
+        ``Idempotency-Key`` (``devhub-requirements.md``, question 9), so the reference must be
+        an issue id of the bound project, not a client identifier.  A divergence raises
+        ``TrackerConflictError`` (the "validation refused; no retry" text of the Linear
+        adapter); an absent issue raises ``IssueUnavailableError``.
+        """
+        project = self._require_project(project)
+        if not isinstance(title, str) or not title or not isinstance(body, str):
+            raise ValueError("titre/corps de création DevHubTracker invalides")
+        self._require_issue_binding(issue_id, project)
+        if parent:
+            self._require_issue_binding(parent, project)
+        wanted = self._normalize_fields(fields or {}, allow_state=True)
+        raw = self._issue_raw(issue_id)
+        issue = self._to_issue(raw)
+        parents = [
+            link.target for link in issue.links if link.type == "subtask-of"
+        ]
+        diverged = [
+            name for name, same in (
+                ("identity", issue.id == issue_id),
+                ("title", issue.title == title),
+                ("body", raw.get("body") == body),
+                ("parent", parents == ([parent] if parent else [])),
+            ) if not same
+        ] + [
+            key for key, value in sorted(wanted.items())
+            if (sorted(raw.get(key) or []) != sorted(value or [])
+                if key == "labels" else raw.get(key) != value)
+        ]
+        if diverged:
+            # Names the diverging properties, never their values.
+            raise TrackerConflictError(
+                "DevHub issue creation validation refused; no retry "
+                f"(diverged: {', '.join(diverged)})"
+            )
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        return {
+            "issue_id": issue.id, "native_id": issue.id,
+            "creation": "observed-existing", "validation": "accepted",
+            "reconciliation": "validated-read-only", "automatic_retry": False,
+            "comparison": "exact", "source_sha256": digest, "readback_sha256": digest,
+            "compared": ["project", "identity", "title", "body", "parent"]
+                        + sorted(fields or {}),
+        }
+
     @staticmethod
     def _normalize_fields(fields, *, allow_state=False):
         normalized = {}
