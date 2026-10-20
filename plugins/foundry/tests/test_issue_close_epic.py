@@ -548,21 +548,40 @@ def test_named_atomic_closure_closes_and_replays_over_the_named_child(monkeypatc
 
 
 def test_named_dropped_child_owes_no_acceptance_proof(monkeypatch):
-    # PAT-ADR-0017, PAT-ADR-0030: the AC check stops before the provider otherwise.
+    # PAT-ADR-0017, PAT-ADR-0030: a named dropped child with open AC closes, end to end.
     tracker = NamedDroppedAtomicTracker()
+    tracker.issues["DEMO-2"].ac_done = tracker.issues["DEMO-2"].ac_total = 1
     tracker.issues["DEMO-3"].ac_total = 2
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
-    with pytest.raises(TrackerConflictError):  # the fixture graph carries no AC counts
-        write.close_epic(
-            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
-        )
-    assert tracker.close_calls == 1
+    outcome = write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+    )
+    assert tracker.close_calls == 1 and tracker.issues["DEMO-1"].state == "done"
+    assert write.close_epic(
+        tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+    ).replayed is True
+    # PAT-316: the atomic receipt binds only the provider's coordinates.
+    assert outcome.receipt.children == (
+        EpicClosureChild("DEMO-2", 4, "done"), EpicClosureChild("DEMO-3", 9, "dropped"),
+    )
     unnamed = AtomicEpicTracker()
     unnamed.issues["DEMO-3"].ac_total = 2
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: unnamed.project)
     with pytest.raises(SystemExit, match="AC de l'enfant DEMO-3"):
         write.close_epic(unnamed, "DEMO-1")
     assert unnamed.close_calls == 0
+
+
+def test_atomic_closure_still_refuses_a_done_child_with_open_ac(monkeypatch):
+    # PAT-316 removes the counters from the receipt, not the check on the read.
+    tracker = NamedDroppedAtomicTracker()
+    tracker.issues["DEMO-2"].ac_total = 1
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
+    with pytest.raises(SystemExit, match="AC de l'enfant DEMO-2"):
+        write.close_epic(
+            tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
+        )
+    assert tracker.close_calls == 0
 
 
 def test_unnamed_atomic_tracker_keeps_its_closure_over_a_dropped_child(monkeypatch):
