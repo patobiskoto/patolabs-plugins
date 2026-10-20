@@ -5,10 +5,13 @@ exchange page (need, test, status, questions).  Every test below carries one nee
 (``@need`` or ``@gap``) and the page lists the same ids: ``tests/test_devhub_requirements.py``
 checks that the two stay equal.
 
-Safety (``tests/devhub_live_gate.py``): the suite is skipped unless ``DEVHUB_LIVE_URL``,
-the exact ``DEVHUB_LIVE_CONFIRM`` phrase and dedicated credentials are exported; it refuses
-a production-looking target and an instance that holds a project it did not create; it never
-reads the user's configuration or registry.  Without the URL every test is skipped.
+Safety (``tests/devhub_live_gate.py``): the suite is skipped unless ``DEVHUB_LIVE_URL``, the
+exact ``DEVHUB_LIVE_CONFIRM`` phrase and dedicated credentials are exported; it refuses a
+production-looking target and an instance that holds a project it did not create.  That
+refusal proves nothing on an instance with local accounts: DHN-42 alone targets one
+(``DEVHUB_LIVE_LOCAL_ACCOUNTS=1``, a declaration, never a detection) and its target must be
+disposable by construction.  The suite never reads the user's configuration or registry.
+Without the URL every test is skipped.
 
 A need DevHub (or the adapter) does not cover yet is a ``@gap`` test: strict ``xfail``
 carrying the need id and ``raises=`` the exact exception of the current gap, so a setup

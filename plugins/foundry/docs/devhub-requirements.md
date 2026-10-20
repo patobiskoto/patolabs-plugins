@@ -103,20 +103,46 @@ without local accounts, which the suite needs (DHN-42 explains why). Sources: De
 `deploy/qa/up.sh` (image and `app.env` generation) and `deploy/dogfood/validate-app-env.sh`
 (validation), read-only; both are DevHub files, not Foundry ones.
 
-1. Reuse a DevHub image built by `deploy/qa/up.sh`, tagged `devhub-qa:<revision>`.
+Prerequisites, stated because this page does not build the image:
+
+- A DevHub image `devhub-qa:<revision>` (full 40-hex revision) must already exist locally.
+  Its documented source is `deploy/qa/up.sh <revision>` (`compose build app`,
+  `up.sh:62-63`). That script is not an image-only step: it also brings up the separate
+  compose project `devhub-qa` on `127.0.0.1:3205` and `3206` with local accounts
+  (`up.sh:80-103`), writes its env files under `~/.config/devhub-qa` (`up.sh:10,26-50`), and
+  stores a test-owner password in the macOS keychain (`up.sh:96`). It needs `pnpm install`
+  in the DevHub checkout and a clean tracked tree (`up.sh:18,22`). Do not reuse that env
+  directory or that database for the suite. Docker and a Postgres image
+  (`postgres:16-alpine`) must be available. Line numbers of this procedure are those of
+  DevHub at `ff22b3a`.
+- The commands below are the ones of the 2026-10-20 run, except the hardening lines marked
+  below, which were added afterwards from the QA compose file and have not been run.
+
+1. Take the image of the prerequisite above.
 2. Use a separate compose project `devhub-lv`, published on `127.0.0.1:3305` only, with its
-   own named volume `devhub-lv-db-data`. The compose file used:
+   own named volume `devhub-lv-db-data`. The compose file used (the lines `cpus` to
+   `pids_limit`, `cap_drop` and `security_opt` copy `deploy/qa/compose.yml:10-13,41-44,66-69`
+   at `ff22b3a`; they were **not run** here, the run of 2026-10-20 used the file without
+   them; the QA file also sets logging, restart and stop-grace options, left out):
 
 ```yaml
 name: devhub-lv
 services:
   db:
     image: postgres:16-alpine
+    cpus: "1.0"
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 128
     env_file: [ ./env/database.env ]
     volumes: [ "devhub-lv-db-data:/var/lib/postgresql/data" ]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U devhub -d devhub_lv"], interval: 5s, timeout: 3s, retries: 20 }
   app:
     image: devhub-qa:<revision>
+    cpus: "2.0"
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 128
     init: true
     env_file: [ ./env/app.env ]
     environment: { NODE_ENV: production, TRACKER_ONLY_MODE: "true", DEVHUB_DEPLOY_REVISION: "<revision>" }
@@ -124,6 +150,8 @@ services:
     ports: [ "127.0.0.1:3305:3000" ]
     read_only: true
     tmpfs: [ "/tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001" ]
+    cap_drop: [ ALL ]
+    security_opt: [ "no-new-privileges:true" ]
 volumes:
   devhub-lv-db-data: { name: devhub-lv-db-data }
 ```
@@ -139,9 +167,12 @@ volumes:
    `select local_accounts from account_workspace` must answer false.
 5. Export the suite variables from `app.env` in a subshell, never in your interactive
    shell: `DEVHUB_LIVE_URL=http://127.0.0.1:3305`, the confirmation phrase,
-   `DEVHUB_LIVE_TOKEN` = `DEVHUB_TRACKER_TOKEN`, `DEVHUB_LIVE_PROOF_SECRET` =
-   `DEVHUB_TRACKER_PROOF_SECRET`; then run the command of "Run the suite". Never print
-   those values.
+   `DEVHUB_LIVE_TOKEN` = `DEVHUB_TRACKER_TOKEN` and `DEVHUB_LIVE_PROOF_SECRET` =
+   `DEVHUB_TRACKER_PROOF_SECRET` of `app.env`. Do not export `DEVHUB_TRACKER_TOKEN` or
+   `DEVHUB_TRACKER_PROOF_SECRET` themselves in that subshell: the gate refuses a credential
+   equal to them (check 3 of "Production safety"). Then run only the `python3 -m pytest` line
+   of "Run the suite", not its `export DEVHUB_LIVE_URL=http://127.0.0.1:3000` line, which
+   would replace port 3305. Never print those values.
 
 Reset: remove the compose project and the volume `devhub-lv-db-data`; the suite deletes
 nothing. Question 2 asks DevHub for a supported way.
@@ -172,8 +203,7 @@ answers of the instance). DHN-42 was run alone on an instance with local account
 day (`DEVHUB_LIVE_LOCAL_ACCOUNTS=1`): `xfailed`. That `xfailed` alone does not show the
 refused creation (limit in "Reading the result"); the refusal is the 403 of `POST /projects`
 observed at the setup of an earlier attempt on an instance with local accounts (row DHN-42).
-Test names are in
-`tests/integration/test_devhub_live_conformance.py`.
+Test names are in `tests/integration/test_devhub_live_conformance.py`.
 
 | ID | Need | Test | Status | Owner of the gap | Basis |
 | --- | --- | --- | --- | --- | --- |
@@ -243,9 +273,15 @@ above. `tests/test_devhub_requirements.py` keeps the page and the decorators equ
 
 Numbered so an answer can cite them. "Unknown" means Foundry has no evidence either way.
 
-1. **Deployed version**: how can a client read which DevHub build it talks to? Foundry
-   knows of no version endpoint (unknown); the run of 2026-10-20 knew its revision only
-   because Foundry built the image and set `DEVHUB_DEPLOY_REVISION` itself.
+1. **Deployed version**: how can a client read which DevHub build it talks to? DevHub's
+   `/api/health` returns a `revision` (`src/app/api/health/route.ts:16-19,43` at `ff22b3a`,
+   observed in source; `deploy/qa/up.sh:68-77` reads it), but that value is the
+   `DEVHUB_DEPLOY_REVISION` the operator set, or `unknown` when it does not match
+   `^[0-9a-f]{7,64}(?:-d[0-9a-f]{12})?$` (a tracker-only instance then reports `degraded`,
+   `route.ts:30-33`), not a measure of the build, and the adapter does not read it
+   (observed: no `api/health` in this repository's tools). Is it a stable client contract?
+   The run of 2026-10-20 knew its revision because the image came from `deploy/qa/up.sh` at
+   that revision and `DEVHUB_DEPLOY_REVISION` was set to it.
 2. **Disposable instance**: what is the supported way to get a throwaway instance
    (database reset, compose profile)? What scopes must `DEVHUB_LIVE_TOKEN` carry for the
    tests above? Is there a way to delete or archive the `LV*` projects a run leaves?
@@ -299,6 +335,7 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
 | `docs/devhub-tracker.md`, `docs/tracker-conformance.md` | One pointer line each to this page; no other change. |
 | Statuses of DHN-01 to DHN-31 (25 green, first live run of 2026-10-20), new need DHN-42 (red, `server`), `DEVHUB_LIVE_LOCAL_ACCOUNTS`, limit of the instance marker under local accounts, procedure "Bring up a disposable instance" (PAT-300) | Updated in "Needs", "Environment variables", "Production safety", "Bring up a disposable instance" and question 14. |
 | Counts, DHN-40 owner and the new need DHN-41, `raises=` of each gap, server citations by repository path (PAT-299) | Updated in "Needs" and "Reading the result". |
+| Wording of the procedure "Bring up a disposable instance" (prerequisites, hardening lines not run, suite command), question 1, the "First live run" paragraph (PAT-301) | Updated in those sections; no need, status or count changed. |
 | `trackers/devhub.py`, `tracker-contract.md`, `tracker-contract.v1.json` | Not changed: no adapter behaviour, CLI verb or contract cell changed. |
 
 Mechanical enforcement: `tests/test_devhub_requirements.py` checks that this table and the
