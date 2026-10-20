@@ -45,8 +45,10 @@ PR. A non-empty `--summary-stdin` explicitly replaces its canonical body while p
 Foundry's required closing markers; without that supplied summary, Foundry preserves the
 existing body and only refreshes the `review` transition on the current head/base/diff.
 A closed candidate, a wrong base, or several open candidates fails with an explicit recovery instruction;
-Foundry never creates a duplicate silently. The command then writes the PR URL onto the
-issue. If work remains (review round expected, AC unchecked), leave a progress note so a
+Foundry never creates a duplicate silently. The command then publishes the PR URL to the
+tracker: it writes the `GitHub PR` field, except on a tracker that sets
+`append_only_lifecycle_supported` (`issue.py:492-494`), where the PR URL travels only in the
+`review` transition proof. If work remains (review round expected, AC unchecked), leave a progress note so a
 future session can resume cold:
 ```bash
 python3 "$(test -n "${CLAUDE_PLUGIN_ROOT}" && printf %s "${CLAUDE_PLUGIN_ROOT}" || printf %s "<foundry-root>")/tooling/foundry_cli.py" edit comment <ISSUE-ID> < /path/to/note.md

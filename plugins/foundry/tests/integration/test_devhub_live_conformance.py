@@ -736,18 +736,101 @@ def test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it(suite)
     assert len(suite.tracker.search(suite.project, title)) == before
 
 
-@gap("DHN-38", "adapter", "append_only_lifecycle_supported is False", raises=AssertionError)
+@need("DHN-38")
 def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
-    assert suite.tracker.append_only_lifecycle_supported is True
+    tracker = suite.tracker
+    assert tracker.append_only_lifecycle_supported is True
     assert "append_only_lifecycle_supported" not in campaign_cadence.missing_capabilities(
-        suite.tracker,
+        tracker,
     )
+    issue = _create(suite, _unique("live receipts"), "")
+    assert tracker.read_proof_receipts(issue.id, project=suite.project) == ()
+    # No `GitHub PR` field write here: the review proof alone must set the issue pr_url.
+    _start(suite, issue.id)
+    context = _review_context(suite, issue.id)
+    assert tracker.get_issue(issue.id).pr_url in (None, "")
+    tracker.set_state(issue.id, "review", context=context, project=suite.project)
+    assert tracker.get_issue(issue.id).pr_url == context.pr_url
+    coordinates = (context.pr_url, context.head_sha, context.base_sha, context.review_digest)
+
+    def read():
+        return tracker.read_proof_receipts(issue.id, project=suite.project)
+
+    (first,) = read()
+    assert first["action"] == "review" and first["merge_sha"] is None
+    assert (first["pr_url"], first["head_sha"], first["base_sha"], first["review_digest"]) == coordinates
+    # the same generation appends nothing; a new head returns through in-progress
+    tracker.set_state(issue.id, "review", context=context, project=suite.project)
+    assert read() == (first,)
+    newer = TransitionContext(
+        pr_url=context.pr_url, head_sha="e" * 40, base_sha=context.base_sha,
+        review_digest=context.review_digest,
+    )
+    tracker.set_state(issue.id, "review", context=newer, project=suite.project)
+    assert tracker.get_issue(issue.id).state == "review"
+    assert [(item["action"], item["head_sha"]) for item in read()] == [
+        ("review", context.head_sha), ("review", newer.head_sha)]
+    # a new PR generation (new pr_url) updates the issue pr_url from the proof alone
+    newest = TransitionContext(
+        pr_url=context.pr_url.rsplit("/", 1)[0] + "/2", head_sha="f" * 40,
+        base_sha=context.base_sha, review_digest=context.review_digest,
+    )
+    tracker.set_state(issue.id, "review", context=newest, project=suite.project)
+    assert tracker.get_issue(issue.id).pr_url == newest.pr_url
+    done = TransitionContext(
+        pr_url=newest.pr_url, head_sha=newest.head_sha, base_sha=newest.base_sha,
+        review_digest=newest.review_digest, merge_sha=_digests(issue.id)["merge"],
+    )
+    tracker.set_state(issue.id, "done", context=done, project=suite.project)
+    receipts = read()
+    assert [item["action"] for item in receipts] == ["review", "review", "review", "done"]
+    assert [int(item["id"]) for item in receipts] == sorted(int(item["id"]) for item in receipts)
+    assert receipts[-1]["merge_sha"] == done.merge_sha
+    assert len({item["proof_nonce"] for item in receipts}) == 4
+    assert tracker.recover_done_projection(
+        issue.id, pr_url=done.pr_url, head_sha=done.head_sha, base_sha=done.base_sha,
+        merge_sha=done.merge_sha, project=suite.project,
+    ) is True
+    assert tracker.recover_done_projection(
+        issue.id, pr_url=done.pr_url, head_sha=done.head_sha, base_sha=done.base_sha,
+        merge_sha="9" * 40, project=suite.project,
+    ) is False
 
 
-@gap("DHN-39", "adapter", "no read_release_scope: ReleaseScopeUnavailableError", raises=ReleaseScopeUnavailableError)
+@need("DHN-39")
 def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(suite):
-    scope = suite.tracker.read_release_scope(suite.project, "live-release")
-    assert scope.release == "live-release" and scope.project_key == suite.project.key
+    tracker = suite.tracker
+    body = "Goal\n\n- [ ] one\n"
+    shipped = _create(suite, _unique("live release shipped"), body)
+    tracker.sync_acceptance_body(
+        shipped.id, body, body.replace("[ ]", "[x]"),
+        hashlib.sha256(shipped.id.encode()).hexdigest(), project=suite.project,
+    )
+    _to_done(suite, shipped.id)
+    pending = _create(suite, _unique("live release pending"), "")
+    name = _unique("live-release").replace(" ", "-")
+    created = tracker._application_req(
+        "POST", f"/projects/{suite.project.key}/versions",
+        {"name": name, "kind": "code", "scope": [
+            {"issue_id": item, "issue_version": tracker.get_issue(item).version}
+            for item in (shipped.id, pending.id)
+        ]},
+        idempotent=True,
+    )
+    version_id = created["id"]
+    assert re.fullmatch(rf"{suite.project.key}-VERSION-[1-9][0-9]*", version_id)
+    mapped = Project(
+        key=suite.project.key, id=suite.project.id, extra={"release_ids": {name: version_id}},
+    )
+    scope = tracker.read_release_scope(mapped, name)
+    assert scope.release == name and scope.release_id == version_id
+    assert scope.project_key == suite.project.key
+    assert {item.id: item.disposition for item in scope.issues} == {
+        shipped.id: "accepted", pending.id: "unfinished"}
+    # the name alone never finds a Version: only the stored id does
+    with pytest.raises(ReleaseScopeUnavailableError) as unmapped:
+        tracker.read_release_scope(suite.project, name)
+    assert unmapped.value.reason == "unmapped"
 
 
 # --- Foundry-side prerequisite --------------------------------------------------------

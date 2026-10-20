@@ -124,7 +124,11 @@ def test_existing_real_provider_openpr_path_is_unchanged_by_noop_preflight(
         "codehost:list-prs",
         "codehost:open-pr",
     ]
-    if tracker.bounded_transition_proofs:
+    if tracker.append_only_lifecycle_supported:
+        # PAT-309: the review receipt carries the PR; no `GitHub PR` field is written.
+        assert "tracker:set-pr" not in events
+        assert events[-1] == "tracker:transition:review"
+    elif tracker.bounded_transition_proofs:
         assert events[-2:] == ["tracker:set-pr", "tracker:transition:review"]
     else:
         assert events[-2:] == ["tracker:transition:review", "tracker:set-pr"]
@@ -137,7 +141,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     events = []
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
-        id="DEMO-7", state="review", body="", ac_done=0, ac_total=0,
+        id="DEMO-7", state="review", body="", ac_done=1, ac_total=1,
         pr_url="https://github.com/acme/demo/pull/12",
     )
     pull_request = SimpleNamespace(
@@ -200,6 +204,9 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     assert events.index("tracker:preflight-merge-effect") < events.index(
         "codehost:merge"
     )
+    if tracker.append_only_lifecycle_supported:
+        # PAT-309: the current PR generation is published before the code-host merge.
+        assert events.index("tracker:transition:review") < events.index("codehost:merge")
     if tracker.bounded_transition_proofs or tracker.bounded_state_transitions:
         assert events.index("tracker:transition:done") < events.index(
             "codehost:delete-branch"

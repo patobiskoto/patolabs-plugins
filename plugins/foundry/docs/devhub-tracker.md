@@ -155,6 +155,75 @@ binary diff from that immutable SHA.
 Merge reuses those exact bytes and exact base coordinate for any structured AC proof;
 missing, invalid, or stale base coordinates fail closed.
 
+## Append-only lifecycle receipts (PAT-309, DHN-38)
+
+`DevHubTracker.append_only_lifecycle_supported` is `True` (`trackers/devhub.py`), so
+`campaign_cadence.missing_capabilities` no longer reports it; the only capability it still
+reports for DevHub is `issue_creation_reconciliation` (DHN-37,
+`test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads`). What the flag makes
+Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)` branches of
+`issue.py`; the page `devhub-requirements.md`, "Needs", row DHN-38, keeps the status.
+
+- `read_proof_receipts(issue_id, project=None)` reads
+  `GET /api/tracker/v1/issues/:id/proof-receipts?cursor=&limit=` (route and fields: DevHub
+  `docs/TRACKER_API.md`, "Issue proof receipts", read at `2edcea2`). It validates every item
+  against the `proofReceiptSchema` keys, the issue and project of the request, the
+  `merge_sha` rule (`done` only), the ascending ids and the unique nonces, follows the
+  cursor up to `_MAX_RECEIPT_PAGES` pages of 100 and `_MAX_RECEIPT_ITEMS` items, and fails
+  closed (`DevHubTrackerError`) otherwise.
+- With the flag, `issue openpr` no longer writes the `GitHub PR` field (`issue.py:492-494`):
+  the issue's `pr_url`, which `DevHubTracker` reads only from `raw["pr_url"]`
+  (`trackers/devhub.py:577`) and which `issue.py:607` and `issue.py:883`, `recover_done_projection`
+  and the release check compare with the PR URL, comes from the review proof. DevHub's proven
+  transition runs `pr_url = COALESCE($3, pr_url)` with the proof's `pr_url`
+  (`2edcea2:src/tracker/store.ts:1714-1716`, after `consumeProof` requires a non-empty one,
+  `store.ts:1690-1698`; observed in source, observed live in the run of PAT-309 by
+  `test_dhn_38_lifecycle_is_append_only_for_the_cadencer`, which makes the review
+  transitions without writing the field and sees `pr_url` follow each new PR URL; offline
+  mirror: `test_review_transition_proof_sets_the_issue_pr_url_without_a_field_write`).
+  `issue merge`
+  publishes the current PR generation as a `review` transition before reading the
+  projection (`issue.py`). DevHub answers `review -> review` with the stored issue and no
+  receipt (`2edcea2:src/tracker/store.ts:1686`, observed in source), which would leave the
+  head of an earlier round bound to the issue and refuse the later `done` (`store.ts:1700-1712`).
+  `set_state` therefore reads the receipts when the issue is already in `review`: the same
+  PR URL, head, base and diff digest as the latest receipt is a no-op, any other
+  generation goes through `in-progress` (the refresh `issue merge` makes for adapters
+  without the flag) and then `review`, which appends a new receipt.
+- Operational change: with the flag, `issue merge` refuses an issue with no acceptance
+  criterion (`ac_total < 1`) before any GitHub merge (`issue.py:598-605`); a DevHub issue
+  with an empty body can no longer be merged through Foundry.
+- `recover_done_projection` is read-only: it returns `True` only when the issue is `done`
+  on that PR and exactly one `done` receipt carries the coordinates after a `review`
+  receipt of the same head, base and digest. DevHub sets the state and appends the receipt in
+  one transaction (`2edcea2:src/tracker/store.ts:1714-1744`), so no native State is left to
+  repair; `recover_review_projection` is not defined (it is called only after a
+  `TrackerConflictError`, which `get_issue` does not raise here).
+- Not provided, by decision of this issue, and not required by `issue.py` for the flag:
+  a start receipt (DevHub receipts only `review` and `done`), and a typed acceptance-override
+  receipt (`acceptance_override_projection_supported` stays `False`, so the audit comment
+  fallback of `issue.py` applies until DEVHUB-106, `devhub-requirements.md` question 12).
+  `observe_issue` stays the `base.py` default: `normalized_state`, `native_state` and
+  `projection_status` stay `None` for DevHub.
+
+## Release scope (PAT-309, DHN-39)
+
+`read_release_scope(project, release)` maps `release` through
+`project.extra["release_ids"][release]`, the Version id `<KEY>-VERSION-N` (a name is not
+unique, `devhub-requirements.md` question 11), and reads `GET /api/tracker/v1/versions/:id`
+(shape: `versionSchema`, DevHub `src/tracker/application-contract.ts`, read at `2edcea2`).
+It refuses with `ReleaseScopeUnavailableError` an unmapped release, an id of another
+project, an absent or unreadable Version, a Version whose `name` differs from the release,
+an incomplete scope, and a scope whose `total_count` exceeds `direct_count`, because the
+Version publishes only its direct issue ids and listing the Epic descendants would be
+approximate discovery. It never lists Versions to find one by name. Each direct issue is
+`accepted` only if it is `done`, all its criteria are checked and one `done` receipt
+(preceded by a `review` receipt of the same coordinates) binds its PR; `unfinished` while
+it is not `done` or `dropped`; `unavailable` otherwise, which includes a `done` issue with
+unchecked criteria (no typed override receipt exists to call it `deviated`). Foundry has no
+code that creates a Version or writes the mapping: the registry validates `release_ids` for
+YouTrack and GitHub Projects only (`registry.py`), and DevHub is not a V1 tracker (DHN-40).
+
 ## Acceptance checkbox synchronization
 
 When a current, mergeable structured review proof covers every acceptance criterion,
@@ -213,7 +282,9 @@ The remote branch is deleted only after the `done` receipt is durable, so a trac
 outage after a successful code-host merge remains recoverable. On retry, Foundry reads
 GitHub's existing merge receipt SHA and finishes the tracker transition without issuing
 a second merge. If the PR head changed during remediation, the mechanical merge step
-refreshes the `review` receipt on the exact head/diff that passed the current gates.
+refreshes the `review` receipt on the exact head/diff it is merging; with
+`append_only_lifecycle_supported` it republishes that generation before the gates that
+follow, not after them (`issue.py:676-680`).
 Before that gate, rerunning `issue openpr` reuses the one open PR for the exact branch and
 base, preserves its body unless a non-empty `--summary-stdin` is explicitly supplied, and
 emits a fresh proof-bound `review` transition. It
