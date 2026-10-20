@@ -170,7 +170,10 @@ Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)`
   against the `proofReceiptSchema` keys, the issue and project of the request, the
   `merge_sha` rule (`done` only), the ascending ids and the unique nonces, follows the
   cursor up to `_MAX_RECEIPT_PAGES` pages of 100 and `_MAX_RECEIPT_ITEMS` items, and fails
-  closed (`DevHubTrackerError`) otherwise.
+  closed (`DevHubTrackerError`) otherwise. Since PAT-318 the item has the extended form
+  (16 keys: the 13 above plus `reason`, `decision_digest`, `decision`) and four known
+  actions, with the per-action null rules of "Acceptance override and human acceptance"
+  below.
 - With the flag, `issue openpr` no longer writes the `GitHub PR` field (`issue.py:492-494`):
   the issue's `pr_url`, which `DevHubTracker` reads only from `raw["pr_url"]`
   (`trackers/devhub.py:577`) and which `issue.py:607` and `issue.py:883`, `recover_done_projection`
@@ -200,11 +203,65 @@ Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)`
   repair; `recover_review_projection` is not defined (it is called only after a
   `TrackerConflictError`, which `get_issue` does not raise here).
 - Not provided, by decision of this issue, and not required by `issue.py` for the flag:
-  a start receipt (DevHub receipts only `review` and `done`), and a typed acceptance-override
-  receipt (`acceptance_override_projection_supported` stays `False`, so the audit comment
-  fallback of `issue.py` applies until DEVHUB-106, `devhub-requirements.md` question 12).
+  a start receipt (DevHub receipts no start transition). The typed acceptance-override
+  receipt, absent when PAT-309 shipped, is written since PAT-318 (section below).
   `observe_issue` stays the `base.py` default: `normalized_state`, `native_state` and
   `projection_status` stay `None` for DevHub.
+
+## Acceptance override and human acceptance (PAT-318, DHN-25, DHN-26)
+
+Both operations use routes announced by DevHub on 2026-10-20 as DEVHUB-106 (DevHub pull
+request 95, reviewed on the DevHub side, not yet merged; `devhub-requirements.md`, question
+12). The adapter is written from that announcement and was not run against a server
+carrying them: the live result of DHN-25 and DHN-26 is pending.
+
+- `project_acceptance_override(issue, reason, context)` (`DevHubTracker`, flag
+  `acceptance_override_projection_supported = True`, which `issue.py` reads before the
+  merge). It reads the issue (must be in `review`) and the receipts, and refuses with
+  `TrackerConflictError` unless the four coordinates equal the latest `review` receipt
+  and that generation has no `done` receipt. An override already following that review with
+  the same reason returns `False` without a request; another reason is refused. Otherwise
+  it sends `POST /issues/:id/acceptance-override` with the body `reason`, `pr_url`,
+  `head_sha`, `base_sha`, `review_digest`, the issue version, an idempotency key and a proof
+  of action `acceptance-override` over `project_key`, `resource_id`, `expected_version`, the
+  four coordinates and `reason`, then reads the receipts back and requires one new
+  `acceptance_override` receipt. The announced server effect keeps state and version.
+  `set_state(review)` ignores override receipts when it decides whether the generation is
+  the same. `recover_acceptance_override` raises `TrackerConflictError`: DevHub has no
+  recovery after the merge. On a DevHub that lacks the route the override merge is refused
+  before any code-host merge (`issue.py`, "reçu typé d'override AC impossible").
+- `accept_issue(issue, decision, project=, verify_evidence=)` validates the decision
+  (`acceptance_decision.validate`), reads the issue and the receipts, and refuses with
+  `TrackerConflictError` a state other than the decision's `from_state`, any existing
+  receipt, an Epic, a child, a PR, no criterion, a body or criteria drift
+  (`acceptance_decision.check_against_body`) and a failing `verify_evidence`. An existing
+  `human_acceptance` receipt of the same digest converges without a request; another digest is
+  refused. Otherwise it sends `POST /issues/:id/human-acceptance` with the body `decision`
+  and a proof of action `human-acceptance` over `project_key`, `resource_id`,
+  `expected_version` and `decision_digest` (`acceptance_decision.decision_digest`), then
+  requires the issue `done` and one receipt whose object equals the decision. The command
+  `issue accept` and its `--status` stay Linear-only: `human_acceptance_supported` is
+  `False` for DevHub (PAT-ADR-0025, "Fournisseurs"; the status reads `linear-human-acceptance`).
+- Both: a 404 `route_unavailable`, the answer of a server without DEVHUB-106 (DevHub reply,
+  question 12 (e)), becomes `TrackerCapabilityUnavailableError` (`devhub.acceptance_override`,
+  `devhub.human_acceptance`; `_route_unavailable`); a 409 `version_conflict` becomes
+  `TrackerConflictError`; any other error keeps its
+  frozen V1 code (`invalid_transition`, `resource_conflict`, `proof_required`,
+  `invalid_proof`, `proof_replayed`, announced; no dedicated code).
+- Receipt reader (`_to_proof_receipt`, `_PROOF_RECEIPT_KEYS`): exact key set; actions
+  `review`, `done`, `acceptance_override`, `human_acceptance`; `reason` set only for
+  `acceptance_override` (public code `[a-z0-9_-]{3,80}`, the rule of `issue.py`);
+  `decision_digest` and `decision` set only for `human_acceptance`, where the four
+  coordinates and `merge_sha` are null; every other action needs the four coordinates and
+  null `reason`, `decision_digest`, `decision`; `merge_sha` set only for `done`. The
+  `decision` is stored as jsonb, so the reader recomputes its digest from the object read
+  and validates it as the decision document, never comparing bytes. Any other shape raises
+  `invalid_response`.
+- Not done here: `read_release_scope` still classes a `done` issue without a `done` receipt
+  `unavailable`, so an issue accepted by `human_acceptance` or merged under an override is
+  not read as `accepted` in a release scope.
+- Known limit announced by DevHub (DEVHUB-87, deferred): a decision string with U+0000 or a
+  lone surrogate passes validation and fails at insert (a server error, not a 400).
 
 ## Release scope (PAT-309, DHN-39)
 

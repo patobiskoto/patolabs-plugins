@@ -251,8 +251,10 @@ def test_other_providers_refuse_before_any_read(provider):
     assert provider.human_acceptance_predecessors == frozenset()
     with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
         write.validate_acceptance_request(provider, "LIN-5", "accepted", _data(_doc("LIN-5")))
-    with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
-        provider.accept_issue(object.__new__(provider), "LIN-5", {})
+    if provider is not DevHubTracker:
+        # PAT-318: DevHub implements the port operation (not the `issue accept` command).
+        with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
+            provider.accept_issue(object.__new__(provider), "LIN-5", {})
     with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
         write.issue_acceptance_state(provider, "LIN-5")
     assert Tracker.human_acceptance_supported is False

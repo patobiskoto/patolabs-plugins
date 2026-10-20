@@ -582,25 +582,72 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite, m
     ).replayed is True
 
 
-@gap("DHN-25", "adapter+server", "no typed acceptance-override receipt, server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@need("DHN-25")
 def test_dhn_25_acceptance_override_leaves_a_typed_receipt(suite):
+    # PAT-318: route announced by DevHub on 2026-10-20 (DEVHUB-106); live result pending.
     tracker = suite.tracker
+    assert tracker.acceptance_override_projection_supported is True
     issue = _create(suite, _unique("live override"), "- [ ] unchecked")
     _to_review(suite, issue.id)
+    context = _review_context(suite, issue.id)
+    version = tracker.get_issue(issue.id).version
     assert tracker.project_acceptance_override(
-        issue.id, "maintainer-override", _review_context(suite, issue.id),
-        project=suite.project,
+        issue.id, "maintainer-override", context, project=suite.project,
     ) is True
-    assert tracker.acceptance_override_projection_supported is True
+    after = tracker.get_issue(issue.id)
+    assert (after.state, after.version) == ("review", version)  # state and version unchanged
+    receipts = tracker.read_proof_receipts(issue.id, project=suite.project)
+    assert [item["action"] for item in receipts] == ["review", "acceptance_override"]
+    assert receipts[-1]["reason"] == "maintainer-override"
+    assert (receipts[-1]["head_sha"], receipts[-1]["review_digest"]) == (
+        context.head_sha, context.review_digest)
+    # one override per review generation: the exact replay writes nothing
+    assert tracker.project_acceptance_override(
+        issue.id, "maintainer-override", context, project=suite.project,
+    ) is False
+    with pytest.raises(TrackerConflictError):
+        tracker.project_acceptance_override(
+            issue.id, "another-reason", context, project=suite.project,
+        )
 
 
-@gap("DHN-26", "adapter+server", "no accept_issue (PAT-ADR-0025), server action planned as DEVHUB-106: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+def _human_decision(issue_id: str, body: str, evidence_id: str, from_state="backlog") -> dict:
+    from foundry.routing import acceptance_criteria, acceptance_digest
+
+    criteria = acceptance_criteria(body)
+    return {
+        "schema": "foundry.issue-acceptance-decision.v1", "issue": issue_id,
+        "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "ac_digest": acceptance_digest(criteria), "from_state": from_state,
+        "authority": "maintainer-direct", "decided_on": "2026-10-20",
+        "verdict": "accepted", "delivery": "none",
+        "criteria": [
+            {**item, "verdict": "pass", "evidence": [{"type": "issue", "id": evidence_id}],
+             "unknowns": []}
+            for item in criteria
+        ],
+    }
+
+
+@need("DHN-26")
 def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suite):
-    issue = _create(suite, _unique("live human acceptance"), "- [ ] decided offline")
-    accepted = suite.tracker.accept_issue(
-        issue.id, {"schema": "foundry.issue-acceptance-decision.v1"}, project=suite.project,
-    )
+    # PAT-318 / PAT-ADR-0025: route announced by DevHub on 2026-10-20 (DEVHUB-106).
+    body = "- [ ] decided offline"
+    issue = _create(suite, _unique("live human acceptance"), body)
+    cited = _create(suite, _unique("live cited evidence"), "")
+    decision = _human_decision(issue.id, body, cited.id)
+    accepted = suite.tracker.accept_issue(issue.id, decision, project=suite.project)
     assert accepted.state == "done"
+    (receipt,) = suite.tracker.read_proof_receipts(issue.id, project=suite.project)
+    assert receipt["action"] == "human_acceptance"
+    assert (receipt["pr_url"], receipt["head_sha"], receipt["base_sha"],
+            receipt["review_digest"]) == (None, None, None, None)
+    assert receipt["decision"] == decision
+    # an exact replay converges; another decision is refused
+    assert suite.tracker.accept_issue(issue.id, decision, project=suite.project).state == "done"
+    other = {**decision, "decided_on": "2026-10-21"}
+    with pytest.raises(TrackerConflictError):
+        suite.tracker.accept_issue(issue.id, other, project=suite.project)
 
 
 @need("DHN-27")
