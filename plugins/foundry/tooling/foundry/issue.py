@@ -1146,9 +1146,11 @@ def _state_lines(
 
 
 def _epic_command(tracker, issue_id, flags) -> str:
+    # --accept-dropped always requires the verdict, also on an atomic tracker (PAT-ADR-0030).
     verdict_flag = (
         " --human-verdict=accepted"
         if getattr(tracker, "bounded_epic_closure_supported", False)
+        or any(flag.startswith("--accept-dropped=") for flag in flags)
         else ""
     )
     verdict_flag += "".join(

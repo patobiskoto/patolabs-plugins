@@ -50,8 +50,9 @@ ALLOWED_STATES = {
     "dropped",
 }
 # DevHub retains its historical atomic contract, which permits a dropped child.
-# PAT-ADR-0006 providers apply the stricter accepted-only rule below; on Linear
-# only, PAT-ADR-0017 admits a dropped node named by ``--accept-dropped``.
+# PAT-ADR-0006 providers apply the stricter accepted-only rule below; on Linear,
+# PAT-ADR-0017 admits a dropped node named by ``--accept-dropped``. On DevHub,
+# PAT-ADR-0030 requires every dropped direct child to be named that way.
 EPIC_CHILD_TERMINAL_STATES = frozenset({"done", "dropped"})
 _EPIC_HUMAN_VERDICT = "accepted"
 _SAFE_RECEIPT_NONCE = re.compile(r"[A-Za-z0-9_-]{16,128}")
@@ -1017,6 +1018,20 @@ def epic_receipt_dropped(receipt: EpicClosureReceipt) -> tuple[str, ...]:
     return tuple(sorted({node.id for node in nodes if node.state == "dropped"}))
 
 
+def _closure_dropped(tracker, receipt: EpicClosureReceipt) -> tuple[str, ...]:
+    """Abandoned nodes of a receipt, atomic DevHub receipts included (PAT-ADR-0030).
+
+    An atomic receipt carries no human verdict; on a tracker that declares
+    ``epic_dropped_closure_supported`` its abandoned direct children are the named set.
+    """
+    if (receipt.human_verdict is None
+            and getattr(tracker, "epic_dropped_closure_supported", False) is True):
+        return tuple(sorted(
+            child.id for child in receipt.children if child.state == "dropped"
+        ))
+    return epic_receipt_dropped(receipt)
+
+
 def epic_receipt_overrides(
     children: tuple[EpicClosureChild, ...],
     dependencies: tuple[EpicClosureDependency, ...],
@@ -1366,13 +1381,15 @@ def _validate_epic_outcome(
 ) -> EpicClosureOutcome:
     """Validate a provider closure outcome before it is trusted.
 
-    ``tracker`` is the provider the outcome came from.  Only one that declares
-    ``epic_dropped_closure_supported`` (PAT-ADR-0017, Linear only) may bind an
+    ``tracker`` is the provider the outcome came from.  Only a bounded provider that
+    declares ``epic_dropped_closure_supported`` (PAT-ADR-0017, Linear) may bind an
     abandoned node in a bounded receipt; without it, and with no tracker at all,
-    such a node keeps the rule that predates PAT-ADR-0017.
+    such a node keeps the rule that predates PAT-ADR-0017.  DevHub's flag
+    (PAT-ADR-0030) concerns its atomic receipt only.
     """
     dropped_admitted = (
         getattr(tracker, "epic_dropped_closure_supported", False) is True
+        and getattr(tracker, "bounded_epic_closure_supported", False) is True
     )
     if type(outcome) is not EpicClosureOutcome:
         raise SystemExit("Clôture Epic refusée : reçu provider invalide.")
@@ -1687,7 +1704,7 @@ def epic_closure_state(tracker, parent_id: str) -> EpicClosureState:
         "closed" if done else "pending", audit_id=outcome.audit_id,
         intent=intent_state, intent_audit_id=intent_audit,
         waived=tuple(item.node_id for item in outcome.receipt.accepted_overrides),
-        dropped=epic_receipt_dropped(outcome.receipt),
+        dropped=_closure_dropped(tracker, outcome.receipt),
     )
 
 
@@ -1723,17 +1740,17 @@ def validate_epic_closure_request(
                 "Clôture Epic refusée : --accept-override n'est qualifié que pour Linear "
                 f"(tracker {tracker.name})."
             )
-    # PAT-ADR-0017: same fail-closed rule, before any provider read.
+    # PAT-ADR-0017 / PAT-ADR-0030: same fail-closed rule, before any provider read.
     if accept_dropped is not None:
         dropped_ids = parse_accept_dropped(accept_dropped)
         if human_verdict != _EPIC_HUMAN_VERDICT:
             raise SystemExit(
                 "Clôture Epic refusée : --accept-dropped exige --human-verdict=accepted."
             )
-        if not bounded or not getattr(tracker, "epic_dropped_closure_supported", False):
+        if not getattr(tracker, "epic_dropped_closure_supported", False):
             raise SystemExit(
                 "Clôture Epic refusée : --accept-dropped n'est qualifié que pour Linear "
-                f"(tracker {tracker.name})."
+                f"et DevHub (tracker {tracker.name})."
             )
         both = sorted(set(dropped_ids) & set(accepted_ids))
         if both:
@@ -1812,7 +1829,7 @@ def close_epic(
                 f"déjà écrit (reçu : {', '.join(recorded) or 'aucun'} ; "
                 f"demandé : {', '.join(accepted_ids) or 'aucun'})."
             )
-        recorded_dropped = epic_receipt_dropped(outcome.receipt)
+        recorded_dropped = _closure_dropped(tracker, outcome.receipt)
         if recorded_dropped != dropped_ids:
             raise SystemExit(
                 "Clôture Epic refusée : ensemble --accept-dropped différent du reçu "
@@ -1918,6 +1935,10 @@ def close_epic(
             raise SystemExit("Clôture Epic refusée : liens enfants dupliqués.")
         child_ids.sort()
         tracker.validate_issue_binding(project, parent_id, *child_ids)
+        # PAT-ADR-0030: on a tracker that declares the flag (DevHub), every abandoned
+        # direct child must be named exactly, under the human verdict, before the
+        # atomic server call; a named abandoned child owes no acceptance proof.
+        named = getattr(tracker, "epic_dropped_closure_supported", False) is True
         atomic_children = []
         for child_id in child_ids:
             child = tracker.get_issue(child_id)
@@ -1934,11 +1955,25 @@ def close_epic(
                 ac_done=_exact_nonnegative_int(child.ac_done, "AC enfant satisfaites"),
                 ac_total=_exact_nonnegative_int(child.ac_total, "AC enfant totales"),
             ))
-            if child.ac_done != child.ac_total:
+            if child.ac_done != child.ac_total and not (named and child.state == "dropped"):
                 raise SystemExit(
                     f"Clôture Epic refusée : les AC de l'enfant {child_id} sont incomplètes ou inconnues."
                 )
         children = tuple(atomic_children)
+        if named:
+            abandoned = tuple(sorted(
+                child.id for child in children if child.state == "dropped"
+            ))
+            if abandoned != tuple(sorted(dropped_ids)):
+                hint = (
+                    f" Commande : issue close-epic {parent_id} --human-verdict=accepted "
+                    f"--accept-dropped={','.join(abandoned)}" if abandoned else ""
+                )
+                raise SystemExit(
+                    "Clôture Epic refusée : --accept-dropped doit nommer exactement les "
+                    f"enfants abandonnés (abandonnés : {', '.join(abandoned) or 'aucun'} ; "
+                    f"nommés : {', '.join(sorted(dropped_ids)) or 'aucun'})." + hint
+                )
 
     issued = int(time.time() * 1000) if issued_at is None else issued_at
     _exact_nonnegative_int(issued, "horodatage")

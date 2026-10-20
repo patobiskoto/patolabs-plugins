@@ -1403,8 +1403,8 @@ def test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads():
     from foundry import campaign_cadence
     tracker = ScriptedTracker([])
     assert tracker.append_only_lifecycle_supported is True
-    # The one capability still missing is DHN-37, not this flag.
-    assert campaign_cadence.missing_capabilities(tracker) == ("issue_creation_reconciliation",)
+    # DHN-37 (PAT-313): the reconciliation override is declared too, so nothing is missing.
+    assert campaign_cadence.missing_capabilities(tracker) == ()
 
 
 def test_proof_receipts_are_read_oldest_first_across_pages_and_validated():
@@ -1720,3 +1720,65 @@ def test_supersede_adr_stays_unavailable_because_no_service_route_names_a_replac
         ScriptedTracker([]).supersede_adr(
             Adr(id="TRAME-ADR-0001", title="t"), "TRAME-ADR-0002", project=PROJECT,
         )
+
+
+def created_raw(**overrides):
+    value = dict(
+        id="TRAME-7", title="Created", state="backlog", priority="P3", type="Task",
+        labels=[], estimate=None, milestone=None, pr_url=None, body="body",
+        links=[{"type": "subtask-of", "direction": "outward", "target": "TRAME-1"}],
+    )
+    value.update(overrides)
+    return issue_raw(**value)
+
+
+def test_reconcile_issue_creation_validates_an_existing_issue_with_one_read():
+    tracker = ScriptedTracker([created_raw()])
+    result = tracker.reconcile_issue_creation(
+        PROJECT, "TRAME-7", "Created", "body", {"Priority": "P3", "Type": "Task"}, "TRAME-1",
+    )
+    assert [call[:2] for call in tracker.calls] == [("GET", "/issues/TRAME-7")]
+    assert result["validation"] == "accepted" and result["issue_id"] == "TRAME-7"
+    assert result["automatic_retry"] is False and result["comparison"] == "exact"
+    assert result["source_sha256"] == hashlib.sha256(b"body").hexdigest()
+
+
+def test_reconcile_issue_creation_accepts_the_inverse_parent_link_and_no_parent():
+    inward = created_raw(links=[{"type": "parent-of", "direction": "inward", "target": "TRAME-1"}])
+    assert ScriptedTracker([inward]).reconcile_issue_creation(
+        PROJECT, "TRAME-7", "Created", "body", None, "TRAME-1",
+    )["validation"] == "accepted"
+    assert ScriptedTracker([created_raw(links=[])]).reconcile_issue_creation(
+        PROJECT, "TRAME-7", "Created", "body", None, None,
+    )["validation"] == "accepted"
+
+
+@pytest.mark.parametrize("args, diverged", [
+    (("Other", "body", None, "TRAME-1"), "title"),
+    (("Created", "other", None, "TRAME-1"), "body"),
+    (("Created", "body", None, "TRAME-2"), "parent"),
+    (("Created", "body", None, None), "parent"),
+    (("Created", "body", {"Priority": "P0"}, "TRAME-1"), "priority"),
+])
+def test_reconcile_issue_creation_refuses_a_divergent_issue_without_values(args, diverged):
+    tracker = ScriptedTracker([created_raw()])
+    with pytest.raises(TrackerConflictError, match="validation refused; no retry") as caught:
+        tracker.reconcile_issue_creation(PROJECT, "TRAME-7", *args)
+    assert f"diverged: {diverged}" in str(caught.value)
+    assert "other" not in str(caught.value).split("diverged:")[1]
+    assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+def test_reconcile_issue_creation_reports_an_absent_issue_and_refuses_a_foreign_binding():
+    from foundry.trackers.base import IssueUnavailableError
+    absent = DevHubTrackerError("GET", "/issues/TRAME-7", 404, "issue_unavailable")
+    with pytest.raises(IssueUnavailableError):
+        ScriptedTracker([absent]).reconcile_issue_creation(PROJECT, "TRAME-7", "Created", "body")
+    foreign = ScriptedTracker([])
+    with pytest.raises(SystemExit):
+        foreign.reconcile_issue_creation(PROJECT, "OTHER-7", "Created", "body")
+    with pytest.raises(SystemExit):  # a client identifier is not an issue id of the project
+        foreign.reconcile_issue_creation(
+            PROJECT, "3f2c1d4e-0000-4000-8000-000000000000", "Created", "body",
+        )
+    assert foreign.calls == []

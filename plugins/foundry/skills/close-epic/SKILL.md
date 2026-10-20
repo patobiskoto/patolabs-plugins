@@ -73,8 +73,8 @@ converges, a different set is refused, and each node stays `override` (never
 accepted). The flag is neither a CAS nor an acceptance. YouTrack, GitHub Projects and
 DevHub refuse it. Never invent the list: the maintainer attests it.
 
-When a refusal lists abandoned (`dropped`) nodes, a human may name them on Linear only
-(PAT-ADR-0017). The refusal prints the exact command, combined with `--accept-override`
+When a refusal lists abandoned (`dropped`) nodes, a human may name them on Linear
+(PAT-ADR-0017) and must name them on DevHub (PAT-ADR-0030; see the DevHub paragraph below). The refusal prints the exact command, combined with `--accept-override`
 when both apply:
 
 ```bash
@@ -93,8 +93,12 @@ gains no field: the dropped node stays in the bound graph (id, version, state), 
 audit id derives from it, an exact replay converges and a different set is refused.
 Limits: a node cancelled or reopened after the closure makes the replay diverge, and a
 pending audit whose graph changes stays blocked; both fail closed, with no recovery
-path. YouTrack, GitHub Projects and DevHub refuse the flag and keep their current
-behaviour. Never invent the list and never cancel an issue to make the command pass:
+path. YouTrack and GitHub Projects refuse the flag and keep their current behaviour.
+On DevHub (PAT-ADR-0030) the graph is the direct children the server checks: when one
+is `dropped`, the closure needs `--human-verdict=accepted` and `--accept-dropped` naming
+exactly the dropped direct children, checked before the atomic call; a named child owes
+no acceptance proof, and the server receipt binds it with its state (`docs/devhub-tracker.md`,
+"Epic closure over a dropped child"). Never invent the list and never cancel an issue to make the command pass:
 abandoning is the maintainer's decision, done with
 `edit transition <ISSUE-ID> dropped <expected-state>`.
 

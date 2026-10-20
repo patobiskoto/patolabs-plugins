@@ -158,9 +158,9 @@ missing, invalid, or stale base coordinates fail closed.
 ## Append-only lifecycle receipts (PAT-309, DHN-38)
 
 `DevHubTracker.append_only_lifecycle_supported` is `True` (`trackers/devhub.py`), so
-`campaign_cadence.missing_capabilities` no longer reports it; the only capability it still
-reports for DevHub is `issue_creation_reconciliation` (DHN-37,
-`test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads`). What the flag makes
+`campaign_cadence.missing_capabilities` no longer reports it; since PAT-313 it reports
+nothing for DevHub (`test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads`,
+"Issue creation reconciliation" below). What the flag makes
 Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)` branches of
 `issue.py`; the page `devhub-requirements.md`, "Needs", row DHN-38, keeps the status.
 
@@ -223,6 +223,55 @@ it is not `done` or `dropped`; `unavailable` otherwise, which includes a `done` 
 unchecked criteria (no typed override receipt exists to call it `deviated`). Foundry has no
 code that creates a Version or writes the mapping: the registry validates `release_ids` for
 YouTrack and GitHub Projects only (`registry.py`), and DevHub is not a V1 tracker (DHN-40).
+
+## Issue creation reconciliation (PAT-313, DHN-37)
+
+`reconcile_issue_creation(project, issue_id, title, body, fields, parent)` of
+`trackers/devhub.py` overrides `Tracker.reconcile_issue_creation`, which is what
+`campaign_cadence.missing_capabilities` tests (`campaign_cadence.py`, "Capabilities
+required" in `campaign-cadence.md`). It is the same port as Linear's (`edit reconcile-create`,
+`edit.py::reconcile_create`, `write.reconcile_issue_creation`): one `GET /issues/:id`, no
+write, no replay. It compares the project binding of the id, the identity, the title, the
+byte-exact body, the parent (the `subtask-of` link, whichever direction DevHub stores) and
+each requested field (`Labels` as a set), and returns `validation: accepted`,
+`automatic_retry: false`. A difference raises `TrackerConflictError` ("validation refused;
+no retry", the text `campaign_defer.py::_REFUSED` reads) naming the diverging properties and
+no value; an absent or forbidden issue raises `IssueUnavailableError`.
+
+Limit (`devhub-requirements.md`, answers 9 and 16): the reference must be an issue id of
+the bound project. DevHub has no read by `Idempotency-Key`; it recovers a lost answer only
+through an identical replay (same credential, key and payload, including the original
+`parent_version`), and the adapter keeps neither key nor payload after the call. `DevHubTracker.create_issue` therefore keeps a random
+per-call key and never raises `IssueCreationValidationError`; a client identifier handed to
+`reconcile-create` is refused before any read (the binding check or the id parse,
+`DevHubTracker._project_key`). Unknown: what the campaign does after a creation whose
+answer is lost beyond the two same-key attempts of one call.
+
+## Epic closure over a dropped child (PAT-313, DHN-24)
+
+The DevHub server closes an Epic whose direct children are all `done` or `dropped`, and
+checks in the same transaction that the children of the receipt (id, version, state) are
+exactly those it reads (`1227841:src/tracker/epic-closure-store.ts:182-183`, observed in
+source). PAT-ADR-0030 extends the nominative closure of PAT-ADR-0017 to DevHub: the
+adapter declares `epic_dropped_closure_supported`, and the atomic branch of
+`write.close_epic` refuses before the server call when the set named by `--accept-dropped`
+is not exactly the set of `dropped` direct children it read, with the exact command in
+the refusal. `write.validate_epic_closure_request` requires `--human-verdict=accepted`
+with the flag. A named dropped child owes no acceptance proof (its AC are not checked);
+a child that is not dropped keeps the AC check. Replaying a closed Epic needs the same
+named set, read back from the dropped children of the server receipt
+(`write._closure_dropped`). Limits (PAT-ADR-0030): the named set and the verdict are
+checked by Foundry, not stored by the server, so a client that bypasses Foundry can still
+close over a dropped child, and the receipt does not tell a named child from one admitted
+by another client. Unlike PAT-ADR-0017 on Linear, PAT-ADR-0030 requires no `done` direct
+child: an Epic whose direct children are all `dropped` and named closes
+(`test_named_atomic_closure_needs_no_done_child`, fixture only). Behaviour change: a closure over a dropped child without the
+flag, accepted before PAT-313, is now refused, including the `close-epic` step of the
+frozen DevHub coordinator (`campaign_runtime.py`), which passes no flag. Known defect
+(PAT-316, observed offline, not live): a child with nonzero AC counters, `done` or named
+`dropped`, makes `DevHubTracker.close_epic` fail before the POST (`invalid_response`), because
+the adapter renormalizes the receipt without those counters; the live run of PAT-313 used
+children without criteria. Row DHN-24 of `devhub-requirements.md`.
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
