@@ -745,8 +745,12 @@ def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     )
     issue = _create(suite, _unique("live receipts"), "")
     assert tracker.read_proof_receipts(issue.id, project=suite.project) == ()
-    _to_review(suite, issue.id)
+    # No `GitHub PR` field write here: the review proof alone must set the issue pr_url.
+    _start(suite, issue.id)
     context = _review_context(suite, issue.id)
+    assert tracker.get_issue(issue.id).pr_url in (None, "")
+    tracker.set_state(issue.id, "review", context=context, project=suite.project)
+    assert tracker.get_issue(issue.id).pr_url == context.pr_url
     coordinates = (context.pr_url, context.head_sha, context.base_sha, context.review_digest)
 
     def read():
@@ -766,16 +770,23 @@ def test_dhn_38_lifecycle_is_append_only_for_the_cadencer(suite):
     assert tracker.get_issue(issue.id).state == "review"
     assert [(item["action"], item["head_sha"]) for item in read()] == [
         ("review", context.head_sha), ("review", newer.head_sha)]
+    # a new PR generation (new pr_url) updates the issue pr_url from the proof alone
+    newest = TransitionContext(
+        pr_url=context.pr_url.rsplit("/", 1)[0] + "/2", head_sha="f" * 40,
+        base_sha=context.base_sha, review_digest=context.review_digest,
+    )
+    tracker.set_state(issue.id, "review", context=newest, project=suite.project)
+    assert tracker.get_issue(issue.id).pr_url == newest.pr_url
     done = TransitionContext(
-        pr_url=newer.pr_url, head_sha=newer.head_sha, base_sha=newer.base_sha,
-        review_digest=newer.review_digest, merge_sha=_digests(issue.id)["merge"],
+        pr_url=newest.pr_url, head_sha=newest.head_sha, base_sha=newest.base_sha,
+        review_digest=newest.review_digest, merge_sha=_digests(issue.id)["merge"],
     )
     tracker.set_state(issue.id, "done", context=done, project=suite.project)
     receipts = read()
-    assert [item["action"] for item in receipts] == ["review", "review", "done"]
+    assert [item["action"] for item in receipts] == ["review", "review", "review", "done"]
     assert [int(item["id"]) for item in receipts] == sorted(int(item["id"]) for item in receipts)
     assert receipts[-1]["merge_sha"] == done.merge_sha
-    assert len({item["proof_nonce"] for item in receipts}) == 3
+    assert len({item["proof_nonce"] for item in receipts}) == 4
     assert tracker.recover_done_projection(
         issue.id, pr_url=done.pr_url, head_sha=done.head_sha, base_sha=done.base_sha,
         merge_sha=done.merge_sha, project=suite.project,

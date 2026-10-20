@@ -1466,6 +1466,33 @@ def test_review_on_an_already_reviewed_issue_republishes_only_a_new_generation()
     assert decode_proof(posts[1][3]["proof"])["head_sha"] == "e" * 40
 
 
+def test_review_transition_proof_sets_the_issue_pr_url_without_a_field_write():
+    # Mirrors DevHub `2edcea2:src/tracker/store.ts:1714-1716`: the proven transition
+    # stores `pr_url = COALESCE(proof.pr_url, pr_url)`; no `GitHub PR` field is written.
+    stored = issue_raw(state="in-progress", pr_url=None, version=3)
+
+    class ServerLike(ScriptedTracker):
+        def _req(self, method, path, body=None, **kwargs):
+            self.calls.append((method, path, body, kwargs))
+            if method == "POST" and body == {"state": "in-progress"}:
+                stored.update(state="in-progress", version=stored["version"] + 1)
+            elif method == "POST":
+                stored.update(
+                    state=body["state"], version=stored["version"] + 1,
+                    pr_url=decode_proof(kwargs["proof"])["pr_url"],
+                )
+            return dict(stored)
+
+    tracker = ServerLike([])
+    first = TransitionContext(
+        pr_url="https://github.com/acme/trame/pull/1", head_sha="a" * 40,
+        base_sha="d" * 40, review_digest="b" * 64,
+    )
+    tracker.set_state("TRAME-1", "review", context=first, project=PROJECT)
+    assert tracker.get_issue("TRAME-1").pr_url == first.pr_url
+    assert not any("GitHub PR" in repr(call[2]) for call in tracker.calls)
+
+
 def test_done_projection_is_confirmed_only_by_the_exact_receipt_chain():
     done = issue_raw(state="done", version=6)
     coordinates = {
