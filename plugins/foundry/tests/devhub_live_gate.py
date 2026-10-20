@@ -17,7 +17,11 @@ Limit of the instance marker: ``assert_disposable_instance`` only sees the proje
 credential can see.  On an instance with local accounts (observed: ``authorizeProject`` of
 DevHub limits a service credential to the projects granted to it) it proves nothing: 0
 visible projects does not mean an empty instance.  Use a disposable instance without local
-accounts, and a credential created for it (``docs/devhub-requirements.md``, DHN-42).
+accounts, and a credential created for it (``docs/devhub-requirements.md``).  This holds for
+the 41 tests that use the ``suite`` fixture of the live suite.  DHN-42 is the exception: it
+needs a target with local accounts, where the marker proves nothing, so that target must be
+disposable by construction (an instance and a database made for this run), not by the check;
+the confirmation phrase is its only other safeguard.
 """
 from __future__ import annotations
 
