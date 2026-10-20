@@ -1576,3 +1576,147 @@ def test_release_scope_refuses_unmapped_foreign_or_unlisted_scopes(mapping, resp
     with pytest.raises(ReleaseScopeUnavailableError) as caught:
         tracker.read_release_scope(release_project(mapping), "v1")
     assert caught.value.reason == reason
+
+
+# --- PAT-312: DHN-21 update_body, DHN-33 link_adr_issue, DHN-32 supersede_adr ---------
+
+def test_update_body_checks_expected_body_then_patches_with_the_read_version():
+    from foundry.models import Issue
+
+    tracker = ScriptedTracker([
+        issue_raw(body="before\n", version=4),
+        issue_raw(body="after\n", version=5),
+        issue_raw(body="after\n", version=5),
+    ])
+    issue = Issue(id="TRAME-1", title="Pilot", state="backlog")
+
+    assert tracker.update_body(issue, "before\n", "after\n", project=PROJECT) is True
+    assert [call[:2] for call in tracker.calls] == [
+        ("GET", "/issues/TRAME-1"), ("PATCH", "/issues/TRAME-1"), ("GET", "/issues/TRAME-1"),
+    ]
+    assert tracker.calls[1][2] == {"body": "after\n"}
+    assert tracker.calls[1][3]["version"] == 4
+
+
+def test_update_body_refuses_a_divergent_body_and_reports_a_current_one():
+    from foundry.models import Issue
+    from foundry.trackers.base import BodyUpdateUnavailableError
+
+    issue = Issue(id="TRAME-1", title="Pilot", state="backlog")
+    changed = ScriptedTracker([issue_raw(body="human edit\n")])
+    with pytest.raises(TrackerConflictError, match="corps DevHub modifié"):
+        changed.update_body(issue, "before\n", "after\n", project=PROJECT)
+    assert [call[0] for call in changed.calls] == ["GET"]
+
+    current = ScriptedTracker([issue_raw(body="after\n")])
+    assert current.update_body(issue, "after\n", "after\n", project=PROJECT) is False
+    assert [call[0] for call in current.calls] == ["GET"]
+
+    conflict = ScriptedTracker([
+        issue_raw(body="before\n"),
+        DevHubTrackerError("PATCH", "/issues/TRAME-1", 409, "version_conflict"),
+    ])
+    with pytest.raises(TrackerConflictError, match="version DevHub modifiée"):
+        conflict.update_body(issue, "before\n", "after\n", project=PROJECT)
+
+    unread = ScriptedTracker([
+        issue_raw(body="before\n"), issue_raw(body="before\n"), issue_raw(body="not after\n"),
+    ])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        unread.update_body(issue, "before\n", "after\n", project=PROJECT)
+
+    with pytest.raises(BodyUpdateUnavailableError):
+        ScriptedTracker([]).update_body(
+            Adr(id="TRAME-ADR-0001", title="t"), "a", "b", project=PROJECT,
+        )
+
+
+def adr_document(status="proposed", linked=(), version=2):
+    return {
+        "schema_version": "devhub-adr-authoring.v1",
+        "adr": {
+            "id": "TRAME-ADR-0001", "title": "Choice", "status": status,
+            "body": "## Context\n", "version": version,
+        },
+        "linked_issue_ids": list(linked),
+        "editable": status == "proposed",
+    }
+
+
+def test_link_adr_issue_edits_a_proposed_adr_with_the_whole_relation_set():
+    tracker = ScriptedTracker([
+        adr_document(linked=["TRAME-3"]), adr_document(linked=["TRAME-3", "TRAME-1"], version=3),
+    ])
+    adr = Adr(id="TRAME-ADR-0001", title="Choice")
+
+    result = tracker.link_adr_issue(adr, "TRAME-1", project=PROJECT)
+
+    assert (result.id, result.status) == ("TRAME-ADR-0001", "proposed")
+    assert tracker.calls[0][:2] == ("GET", "/adr-authoring/adrs/TRAME-ADR-0001")
+    method, path, body, kwargs = tracker.calls[1]
+    assert (method, path) == ("PATCH", "/adr-authoring/adrs/TRAME-ADR-0001")
+    assert body == {
+        "schema_version": "devhub-adr-authoring.v1", "title": "Choice",
+        "body": "## Context\n", "linked_issue_ids": ["TRAME-3", "TRAME-1"],
+    }
+    assert kwargs["version"] == 2 and kwargs["idempotent"] is True
+    assert kwargs["response_contract"] == "devhub-adr-authoring.v1"
+
+
+def test_link_adr_issue_is_a_no_write_when_the_relation_exists():
+    tracker = ScriptedTracker([adr_document(linked=["TRAME-1"])])
+    tracker.link_adr_issue(Adr(id="TRAME-ADR-0001", title="Choice"), "TRAME-1", project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+def test_link_adr_issue_on_a_decided_adr_is_a_typed_refusal_before_any_write():
+    from foundry.trackers.devhub import AdrRelationFrozenError
+
+    adr = Adr(id="TRAME-ADR-0001", title="Choice")
+    accepted = ScriptedTracker([adr_document(status="accepted")])
+    with pytest.raises(AdrRelationFrozenError, match="avant l'acceptation"):
+        accepted.link_adr_issue(adr, "TRAME-1", project=PROJECT)
+    assert [call[0] for call in accepted.calls] == ["GET"]
+
+    raced = ScriptedTracker([
+        adr_document(),
+        DevHubTrackerError("PATCH", "/adr-authoring/adrs/TRAME-ADR-0001", 403, "authority_boundary"),
+    ])
+    with pytest.raises(AdrRelationFrozenError):
+        raced.link_adr_issue(adr, "TRAME-1", project=PROJECT)
+    assert issubclass(AdrRelationFrozenError, TrackerConflictError)
+
+
+def test_link_adr_issue_refuses_a_foreign_project_issue():
+    with pytest.raises(ValueError):
+        ScriptedTracker([]).link_adr_issue(
+            Adr(id="TRAME-ADR-0001", title="Choice"), "OTHER-1", project=PROJECT,
+        )
+
+
+def test_read_adr_issue_relations_pages_through_the_relationships_route():
+    def page(ids, cursor):
+        return {
+            "schema_version": "devhub-adr-relationships.v1",
+            "adr": {"id": "TRAME-ADR-0001", "version": 4},
+            "items": [{"id": i} for i in ids],
+            "page": {"returned_count": len(ids), "cursor": cursor, "truncation": cursor is not None},
+        }
+
+    tracker = ScriptedTracker([page(["TRAME-1"], 1), page(["TRAME-2"], None)])
+    ids = tracker.read_adr_issue_relations(
+        Adr(id="TRAME-ADR-0001", title="Choice"), project=PROJECT,
+    )
+    assert ids == ["TRAME-1", "TRAME-2"]
+    assert tracker.calls[0][1] == "/adrs/TRAME-ADR-0001/relationships?cursor=0&limit=100"
+    assert tracker.calls[1][1].endswith("cursor=1&limit=100")
+    assert tracker.calls[0][3]["response_contract"] == "devhub-adr-relationships.v1"
+
+
+def test_supersede_adr_stays_unavailable_because_no_service_route_names_a_replacement():
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    with pytest.raises(TrackerCapabilityUnavailableError):
+        ScriptedTracker([]).supersede_adr(
+            Adr(id="TRAME-ADR-0001", title="t"), "TRAME-ADR-0002", project=PROJECT,
+        )

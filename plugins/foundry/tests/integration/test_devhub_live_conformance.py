@@ -40,13 +40,12 @@ from foundry.models import (
     TransitionContext,
 )
 from foundry.trackers.base import (
-    BodyUpdateUnavailableError,
     ProjectProvisioningUnavailableError,
     ReleaseScopeUnavailableError,
     TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
-from foundry.trackers.devhub import DevHubTracker, DevHubTrackerError
+from foundry.trackers.devhub import AdrRelationFrozenError, DevHubTracker, DevHubTrackerError
 
 pytestmark = [pytest.mark.integration, pytest.mark.devhub_live]
 
@@ -512,14 +511,17 @@ def test_dhn_20_acceptance_sync_patches_only_with_the_expected_body(suite):
         )
 
 
-@gap("DHN-21", "adapter", "devhub.py defines no update_body: BodyUpdateUnavailableError", raises=BodyUpdateUnavailableError)
+@need("DHN-21")
 def test_dhn_21_arbitrary_body_update_is_checked_against_the_expected_body(suite):
     tracker = suite.tracker
     body, replacement = "before\n", "after\n"
     issue = _create(suite, _unique("live update body"), body)
     assert tracker.update_body(issue, body, replacement, project=suite.project) is True
     assert tracker.get_issue(issue.id).body == replacement
-    assert tracker.update_body(issue, body, replacement, project=suite.project) is False
+    assert tracker.update_body(issue, replacement, replacement, project=suite.project) is False
+    with pytest.raises(TrackerConflictError):
+        tracker.update_body(issue, body, "other\n", project=suite.project)
+    assert tracker.get_issue(issue.id).body == replacement
 
 
 # --- Epic closure ---------------------------------------------------------------------
@@ -642,7 +644,7 @@ def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(s
     assert statuses[adr.id] == "superseded"
 
 
-@gap("DHN-32", "adapter", "devhub.py defines no supersede_adr: TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@gap("DHN-32", "adapter+server", "no service-reachable route names the replacement (adr-decisions supersede is limited to an interactive human administrator): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
     old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
@@ -652,17 +654,18 @@ def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     assert statuses[old.id] == "superseded"
 
 
-@gap("DHN-33", "adapter", "no link_adr_issue on a proposed ADR (DevHub supports it before acceptance, DEVHUB-73 freezes it after): TrackerCapabilityUnavailableError", raises=TrackerCapabilityUnavailableError)
+@need("DHN-33")
 def test_dhn_33_adr_issue_relation_set_before_acceptance_survives_it(suite):
     tracker = suite.tracker
     adr = _new_adr(suite, "live adr link")
     issue = _create(suite, _unique("live adr linked issue"), "")
     tracker.link_adr_issue(adr, issue.id, project=suite.project)
     tracker.set_adr_status(adr, "accepted", project=suite.project)
-    page = tracker._req(
-        "GET", f"/adrs/{adr.id}/relationships", response_contract="devhub-adr-relationships.v1",
-    )
-    assert [item["id"] for item in page["items"]] == [issue.id]
+    assert tracker.read_adr_issue_relations(adr, project=suite.project) == [issue.id]
+    other = _create(suite, _unique("live adr late issue"), "")
+    with pytest.raises(AdrRelationFrozenError):
+        tracker.link_adr_issue(adr, other.id, project=suite.project)
+    assert tracker.read_adr_issue_relations(adr, project=suite.project) == [issue.id]
 
 
 # --- selective import (FOUNDRY-ADR-0026) ----------------------------------------------

@@ -224,6 +224,28 @@ unchecked criteria (no typed override receipt exists to call it `deviated`). Fou
 code that creates a Version or writes the mapping: the registry validates `release_ids` for
 YouTrack and GitHub Projects only (`registry.py`), and DevHub is not a V1 tracker (DHN-40).
 
+## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
+
+`update_body(issue, expected_body, updated_body)` reads the issue, raises
+`TrackerConflictError` when its body differs from `expected_body`, returns `False` when
+it already equals `updated_body`, and otherwise sends the body-only `PATCH` of
+"Acceptance checkbox synchronization" with the version it read (`If-Match`) and an
+idempotency key, then re-reads the issue and raises `DevHubTrackerError` (`invalid_response`) if the body is not the requested one; a 409 `version_conflict` becomes `TrackerConflictError`. An ADR body is
+not written: `BodyUpdateUnavailableError`.
+
+`link_adr_issue(adr, issue)` reads `GET /api/tracker/v1/adr-authoring/adrs/:id`
+(`devhub-adr-authoring.v1`) and, for a `proposed` ADR, sends `PATCH` on the same path with
+the complete `linked_issue_ids` (the edit route replaces the set) and the version it
+read. It is a no-write when the relation exists. A decided ADR is frozen by the server
+(403 `authority_boundary`, `2edcea2:src/tracker/store.ts:1966`): the adapter raises
+`AdrRelationFrozenError` (a `TrackerConflictError`) before any write, and also when the
+server answers that 403 after the read. The relation must be set before acceptance.
+`read_adr_issue_relations(adr)` reads `GET /api/tracker/v1/adrs/:id/relationships`
+(`devhub-adr-relationships.v1`), also for a decided ADR.
+
+`supersede_adr` is not implemented: no route reachable by a service credential names the
+replacement of a supersession (`devhub-requirements.md`, DHN-32 and question 15).
+
 ## Acceptance checkbox synchronization
 
 When a current, mergeable structured review proof covers every acceptance criterion,
