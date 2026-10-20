@@ -44,8 +44,8 @@ that suite is deterministic over fake transports, this one needs a server.
 Reading the result: a passing test is a need met; `xfailed` is a need not met yet (an
 expected red, listed below with its owner) that raised the exception its `gap` declares in
 `raises=`, any other exception, a setup error included, is a failure or an error, not an
-`xfailed` (no `@gap` declares `DevHubTrackerError` any more since PAT-303; each remaining
-`raises=` is checked by `tests/test_devhub_requirements.py`); `XPASS(strict)` reported as a failure
+`xfailed` (no `@gap` declares `DevHubTrackerError` any more since PAT-303; `tests/test_devhub_requirements.py`
+checks that each remaining `@gap` declares exactly one `raises=`, not that it is the right exception); `XPASS(strict)` reported as a failure
 means a gap closed and its test must be turned into a plain need (see "Closing a gap");
 `failed` on a need expected green is a regression or a wrong expectation to discuss on this
 page.
@@ -106,7 +106,7 @@ the head of the unmerged DEVHUB-100 branch and not on DevHub `main`, answer of t
 agent), on the machine of the maintainer, never against the production URL. The current
 DevHub reference is `2edcea2` (`main`); the run of PAT-303 at `2edcea2` is in "Live run of
 PAT-303". It yields an instance
-without local accounts, which the suite needs (DHN-42 explains why). Sources: DevHub
+without local accounts, which the suite needs (limit of check 4 of "Production safety"). Sources: DevHub
 `deploy/qa/up.sh` (image and `app.env` generation) and `deploy/dogfood/validate-app-env.sh`
 (validation), read-only; both are DevHub files, not Foundry ones.
 
@@ -308,7 +308,7 @@ DHN-27, DHN-28 and DHN-42 were then set to `green`.
 
 When a red need is met, its strict `xfail` test XPASSes and the run fails. The owner then:
 (1) replaces `@gap(...)` by `@need(...)` on that test, after checking that the test really
-exercises the behaviour (DHN-26 and DHN-39 use placeholder inputs; PAT-303 checked this for DHN-27, DHN-28 and DHN-42); (2) sets the page status
+exercises the behaviour (DHN-26 and DHN-39 use placeholder inputs; PAT-303 checked this for DHN-27, DHN-28 and DHN-42, whose tests exercise the abandon and the return to `backlog` from `in-progress` only: the `review` side of DHN-27 and DHN-28 rests on answer 5, not on a Foundry test); (2) sets the page status
 to `unknown`, then `green` after a run against a DevHub instance; (3) updates the counts
 above. `tests/test_devhub_requirements.py` keeps the page and the decorators equal.
 
@@ -381,7 +381,7 @@ Numbered so an answer can cite them. "Unknown" means Foundry has no evidence eit
     repository cannot be bootstrapped under local accounts.
     Answer (DevHub agent, 2026-10-20, `2edcea2`): Done in DEVHUB-102 (merge `3da571f`): under local accounts the environment Foundry service credential (actor `foundry`, `tracker:write`) may create a project when an active owner exists (`2edcea2:src/access/domain.ts:139-152`); in the same transaction the credential is bound to that project only and every active owner becomes its `admin`, audited (`2edcea2:src/tracker/store.ts:1341-1350`). Personal keys, service keys and the legacy `human` actor stay refused. Observed: XPASS of DHN-42 at `2edcea2` (DevHub agent run) and `tests/local-accounts.integration.test.ts` there.
 
-Still open on the DevHub side, awaiting a human decision, no commitment: DHN-33 (answer 7), DHN-34 / DHN-36 (answer 8) and the question of typed receipts (answer 12). Adapter-side only, per the DevHub agent: DHN-21, 24, 25, 26, 32, 35, 37, 41, the DHN-38 flag, DHN-39 and DHN-40.
+Still open on the DevHub side, awaiting a human decision, no commitment: DHN-33 (answer 7), DHN-34 / DHN-36 (answer 8) and the question of typed receipts (answer 12). Adapter-side only, per the DevHub agent: DHN-21, 24, 25, 26, 32, 35, 37, 41, the DHN-38 flag and DHN-39; DHN-40 is Foundry and adapter (its row).
 
 ## Documentation status (AGENTS.md#R5, FOUNDRY-ADR-0018)
 
