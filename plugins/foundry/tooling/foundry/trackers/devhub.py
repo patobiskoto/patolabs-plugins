@@ -28,6 +28,7 @@ from foundry.models import (
     TransitionContext,
 )
 from foundry.trackers.base import (
+    BodyUpdateUnavailableError,
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
     Tracker,
@@ -39,6 +40,8 @@ _CONTRACT = "devhub-tracker.v1"
 _APPLICATION_CONTRACT = "devhub-application.v1"
 _PROJECT_CATALOG_CONTRACT = "devhub-project-catalog.v1"
 _EPIC_CLOSURE_CONTRACT = "devhub-epic-closure.v1"
+_ADR_AUTHORING_CONTRACT = "devhub-adr-authoring.v1"
+_ADR_RELATIONSHIPS_CONTRACT = "devhub-adr-relationships.v1"
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_SEARCH_ITEMS = 1_000
 _MAX_SEARCH_PAGES = 100
@@ -157,6 +160,18 @@ class DevHubTrackerError(RuntimeError):
         self.code = code
         status_text = str(status) if status is not None else "unavailable"
         super().__init__(f"DevHubTracker {method} {path} -> {status_text} ({code})")
+
+
+class AdrRelationFrozenError(TrackerConflictError):
+    """The ADR is decided: DevHub no longer takes an ADR-to-issue relation (DHN-33)."""
+
+    def __init__(self, adr_id: str, status: str):
+        super().__init__(
+            f"relation ADR-issue refusée pour {adr_id} (statut {status}) : DevHub fige "
+            "une ADR décidée ; pose la relation avant l'acceptation, ou porte-la par l'issue"
+        )
+        self.adr_id = adr_id
+        self.status = status
 
 
 def _canonical_loopback(host: str) -> bool:
@@ -1002,6 +1017,49 @@ class DevHubTracker(Tracker):
             raise
         return True
 
+    def update_body(
+        self, resource: Issue | Adr, expected_body: str, updated_body: str,
+        project: Project | None = None,
+    ) -> bool:
+        """Replace an issue body through the body `PATCH` route (PAT-312, DHN-21).
+
+        The body is read first and compared with ``expected_body``; the write carries
+        the version of that read, so a concurrent edit is a 409 `version_conflict`.
+        An ADR body is not written here: the ADR edit route is limited to proposed
+        ADRs and is only used by `link_adr_issue`.
+        """
+        if isinstance(resource, Adr):
+            raise BodyUpdateUnavailableError(
+                "mise à jour de corps indisponible pour une ADR DevHub"
+            )
+        if not isinstance(expected_body, str) or not isinstance(updated_body, str):
+            raise ValueError("corps attendu et voulu doivent être des chaînes")
+        raw = self._bound_issue_raw(resource.id, project)
+        current_body = raw.get("body") or ""
+        if current_body != expected_body:
+            raise TrackerConflictError(
+                "corps DevHub modifié ; recharge l'issue puis relance l'écriture"
+            )
+        if current_body == updated_body:
+            return False
+        try:
+            self._application_req(
+                "PATCH", f"/issues/{urllib.parse.quote(resource.id, safe='')}",
+                {"body": updated_body}, version=raw["version"], idempotent=True,
+            )
+        except DevHubTrackerError as exc:
+            if exc.status == 409 and exc.code == "version_conflict":
+                raise TrackerConflictError(
+                    "version DevHub modifiée ; recharge l'issue puis relance l'écriture"
+                ) from None
+            raise
+        if (self._issue_raw(resource.id).get("body") or "") != updated_body:
+            raise DevHubTrackerError(
+                "GET", f"/issues/{urllib.parse.quote(resource.id, safe='')}",
+                None, "invalid_response",
+            )
+        return True
+
     def start_transition_path(self, current_state: str) -> tuple[str, ...]:
         """Preflight Dev Hub's constrained workflow before Git is mutated."""
         try:
@@ -1527,3 +1585,92 @@ class DevHubTracker(Tracker):
             "POST", f"/adrs/{urllib.parse.quote(adr.id, safe='')}/status",
             {"status": status}, version=raw["version"], proof=proof, idempotent=True,
         )
+
+    def _read_adr_document(self, adr_id: str) -> dict:
+        """Read one ADR with its `linked_issue_ids` (`devhub-adr-authoring.v1`)."""
+        path = f"/adr-authoring/adrs/{urllib.parse.quote(adr_id, safe='')}"
+        raw = self._req("GET", path, response_contract=_ADR_AUTHORING_CONTRACT)
+        if (not isinstance(raw, dict)
+                or raw.get("schema_version") != _ADR_AUTHORING_CONTRACT
+                or not isinstance(raw.get("adr"), dict)
+                or not isinstance(raw.get("linked_issue_ids"), list)
+                or not all(isinstance(item, str) for item in raw["linked_issue_ids"])):
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+        self._to_adr(raw["adr"])
+        return raw
+
+    def link_adr_issue(
+        self, adr: Adr, issue_ref: str, project: Project | None = None,
+    ) -> Adr:
+        """Add one issue to a proposed ADR through the ADR edit route (PAT-312, DHN-33).
+
+        Only a proposed ADR takes the relation. A decided one is frozen by the server
+        (403 `authority_boundary`, `2edcea2:src/tracker/store.ts:1966`): the refusal is
+        typed, never a silent no-op, and the relation must be set before acceptance.
+        """
+        project_key = self._require_adr_binding(adr.id, project)
+        if (not isinstance(issue_ref, str) or _ISSUE_ID.fullmatch(issue_ref) is None
+                or self._project_key(issue_ref) != project_key):
+            raise ValueError("référence d'issue ADR DevHub invalide")
+        document = self._read_adr_document(adr.id)
+        current = self._to_adr(document["adr"])
+        if current.status != "proposed":
+            raise AdrRelationFrozenError(adr.id, current.status)
+        linked = list(document["linked_issue_ids"])
+        if issue_ref in linked:
+            return current
+        path = f"/adr-authoring/adrs/{urllib.parse.quote(adr.id, safe='')}"
+        try:
+            raw = self._req(
+                "PATCH", path,
+                {
+                    "schema_version": _ADR_AUTHORING_CONTRACT,
+                    "title": current.title, "body": current.body,
+                    "linked_issue_ids": [*linked, issue_ref],
+                },
+                version=document["adr"]["version"], idempotent=True,
+                response_contract=_ADR_AUTHORING_CONTRACT,
+            )
+        except DevHubTrackerError as exc:
+            if exc.status == 403 and exc.code == "authority_boundary":
+                raise AdrRelationFrozenError(adr.id, "decided") from None
+            if exc.status == 409 and exc.code == "version_conflict":
+                raise TrackerConflictError(
+                    "version ADR DevHub modifiée ; recharge l'ADR puis relance"
+                ) from None
+            raise
+        if (not isinstance(raw, dict) or not isinstance(raw.get("adr"), dict)
+                or issue_ref not in (raw.get("linked_issue_ids") or [])):
+            raise DevHubTrackerError("PATCH", path, None, "invalid_response")
+        return self._to_adr(raw["adr"])
+
+    def read_adr_issue_relations(
+        self, adr: Adr, project: Project | None = None,
+    ) -> list[str]:
+        """Return the issue ids related to an ADR, also once it is decided (DHN-33).
+
+        Reads `GET /adrs/:id/relationships` (`devhub-adr-relationships.v1`,
+        `2edcea2:src/app/api/tracker/v1/[...path]/route.ts:889`) page by page.
+        """
+        self._require_adr_binding(adr.id, project)
+        base = f"/adrs/{urllib.parse.quote(adr.id, safe='')}/relationships"
+        cursor, ids = 0, []
+        for _page_number in range(1, _MAX_ADR_PAGES + 1):
+            path = f"{base}?{urllib.parse.urlencode({'cursor': cursor, 'limit': 100})}"
+            raw = self._req("GET", path, response_contract=_ADR_RELATIONSHIPS_CONTRACT)
+            if (not isinstance(raw, dict)
+                    or raw.get("schema_version") != _ADR_RELATIONSHIPS_CONTRACT
+                    or not isinstance(raw.get("items"), list)
+                    or not isinstance(raw.get("page"), dict)
+                    or not all(isinstance(i, dict) and isinstance(i.get("id"), str)
+                               for i in raw["items"])):
+                raise DevHubTrackerError("GET", base, None, "invalid_response")
+            ids.extend(item["id"] for item in raw["items"])
+            if not raw["page"].get("truncation"):
+                return ids
+            next_cursor = raw["page"].get("cursor")
+            if (type(next_cursor) is not int or next_cursor <= cursor or not raw["items"]
+                    or len(ids) > _MAX_ADR_ITEMS):
+                raise DevHubTrackerError("GET", base, None, "pagination_stalled")
+            cursor = next_cursor
+        raise DevHubTrackerError("GET", base, None, "pagination_page_limit")
