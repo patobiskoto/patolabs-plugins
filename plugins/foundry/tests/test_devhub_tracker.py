@@ -1738,13 +1738,123 @@ def test_read_adr_issue_relations_pages_through_the_relationships_route():
     assert tracker.calls[1][3]["response_contract"] == "devhub-adr-relationships.v1"
 
 
-def test_supersede_adr_stays_unavailable_because_no_service_route_names_a_replacement():
+def _supersede_listing(old_status="accepted", new_status="accepted", old_version=3, new_version=5):
+    return receipt_page([
+        {"id": "TRAME-ADR-0001", "title": "Old", "status": old_status, "version": old_version},
+        {"id": "TRAME-ADR-0002", "title": "New", "status": new_status, "version": new_version},
+    ])
+
+
+def _decision_document(adr_id, supersedes=None, superseded_by=None, supersedes_all=None):
+    relations = {"supersedes": supersedes, "superseded_by": superseded_by}
+    if supersedes_all is not None:
+        relations["supersedes_all"] = supersedes_all
+    return {"schema_version": "devhub-adr-decisions.v1", "project": "TRAME",
+            "adr": {"id": adr_id}, "relations": relations}
+
+
+OLD, NEW = Adr(id="TRAME-ADR-0001", title="Old"), "TRAME-ADR-0002"
+
+
+def test_supersede_adr_posts_the_named_replacement_with_a_proof_bound_to_both_adrs():
+    tracker = ScriptedTracker([
+        _supersede_listing(), {"id": "TRAME-ADR-0001", "version": 4},
+        _decision_document("TRAME-ADR-0001", superseded_by=NEW),
+    ])
+    tracker.supersede_adr(OLD, NEW, project=PROJECT)
+    method, path, body, kwargs = tracker.calls[1]
+    assert (method, path) == ("POST", "/adrs/TRAME-ADR-0001/supersede")
+    assert body == {"replacement": NEW, "replacement_version": 5}
+    assert kwargs["version"] == 3 and kwargs["idempotent"] is True
+    proof = decode_proof(kwargs["proof"])
+    assert proof["action"] == "adr-supersede" and proof["target_status"] == "superseded"
+    assert (proof["resource_id"], proof["expected_version"]) == ("TRAME-ADR-0001", 3)
+    assert (proof["replacement_id"], proof["replacement_version"]) == (NEW, 5)
+    assert tracker.calls[2][:2] == ("GET", "/adr-decisions/adrs/TRAME-ADR-0001")
+    assert tracker.calls[2][3]["response_contract"] == "devhub-adr-decisions.v1"
+    assert [call[1] for call in tracker.calls].count("/adrs/TRAME-ADR-0001/status") == 0
+
+
+@pytest.mark.parametrize("old,new", [("accepted", "proposed"), ("proposed", "accepted"),
+                                     ("deprecated", "accepted"), ("accepted", "superseded")])
+def test_supersede_adr_refuses_an_unaccepted_side_before_any_write(old, new):
+    tracker = ScriptedTracker([_supersede_listing(old, new)])
+    with pytest.raises(TrackerConflictError):
+        tracker.supersede_adr(OLD, NEW, project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET"]
+    same = ScriptedTracker([_supersede_listing()])
+    with pytest.raises(TrackerConflictError):
+        same.supersede_adr(OLD, "TRAME-ADR-0001", project=PROJECT)
+    assert [call[0] for call in same.calls] == ["GET"]
+
+
+def test_supersede_adr_replays_without_a_write_and_refuses_another_replacement():
+    done = ScriptedTracker([
+        _supersede_listing("superseded"), _decision_document("TRAME-ADR-0001", superseded_by=NEW)])
+    done.supersede_adr(OLD, NEW, project=PROJECT)
+    assert [call[0] for call in done.calls] == ["GET", "GET"]
+    other = ScriptedTracker([
+        _supersede_listing("superseded"), _decision_document("TRAME-ADR-0001")])
+    with pytest.raises(TrackerConflictError):
+        other.supersede_adr(OLD, NEW, project=PROJECT)
+    assert [call[0] for call in other.calls] == ["GET", "GET"]
+
+
+def test_supersede_adr_maps_version_errors_and_a_missing_route_and_checks_the_link():
     from foundry.trackers.base import TrackerCapabilityUnavailableError
 
+    for code in ("version_conflict", "invalid_transition", "resource_conflict"):
+        tracker = ScriptedTracker([
+            _supersede_listing(), DevHubTrackerError("POST", "/adrs/x/supersede", 409, code)])
+        with pytest.raises(TrackerConflictError):
+            tracker.supersede_adr(OLD, NEW, project=PROJECT)
+    missing = ScriptedTracker([
+        _supersede_listing(), DevHubTrackerError("POST", "/adrs/x/supersede", 404, "route_unavailable")])
     with pytest.raises(TrackerCapabilityUnavailableError):
-        ScriptedTracker([]).supersede_adr(
-            Adr(id="TRAME-ADR-0001", title="t"), "TRAME-ADR-0002", project=PROJECT,
-        )
+        missing.supersede_adr(OLD, NEW, project=PROJECT)
+    forbidden = ScriptedTracker([
+        _supersede_listing(), DevHubTrackerError("POST", "/adrs/x/supersede", 403, "invalid_proof")])
+    with pytest.raises(DevHubTrackerError, match="invalid_proof"):
+        forbidden.supersede_adr(OLD, NEW, project=PROJECT)
+    unlinked = ScriptedTracker([
+        _supersede_listing(), {}, _decision_document("TRAME-ADR-0001")])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        unlinked.supersede_adr(OLD, NEW, project=PROJECT)
+
+
+def test_supersede_adr_uses_server_ids_for_swapped_imported_ids():
+    # port id TRAME-ADR-0011 is server TRAME-ADR-0013 (and conversely)
+    tracker = ScriptedTracker([
+        _swapped_listing(), {}, _decision_document("TRAME-ADR-0013", superseded_by="TRAME-ADR-0011")])
+    tracker.supersede_adr(Adr(id="TRAME-ADR-0011", title="A"), "TRAME-ADR-0013", project=PROJECT)
+    _, path, body, kwargs = tracker.calls[1]
+    assert path == "/adrs/TRAME-ADR-0013/supersede"
+    assert body == {"replacement": "TRAME-ADR-0011", "replacement_version": 7}
+    proof = decode_proof(kwargs["proof"])
+    assert (proof["resource_id"], proof["replacement_id"]) == ("TRAME-ADR-0013", "TRAME-ADR-0011")
+
+
+def test_migration_export_adrs_reads_supersession_relations_back():
+    listing = _supersede_listing("superseded", "accepted")
+    plain = receipt_page([{"id": "TRAME-ADR-0003", "title": "Third", "status": "accepted", "version": 2},
+                          {"id": "TRAME-ADR-0004", "title": "Fourth", "status": "superseded", "version": 2}])
+    items = listing["items"] + plain["items"]
+    page = receipt_page(items)
+    tracker = ScriptedTracker([
+        page, *[dict(item, body="b") for item in items], page,
+        _decision_document("TRAME-ADR-0001", superseded_by=NEW),
+        _decision_document(NEW, supersedes="TRAME-ADR-0001", supersedes_all=["TRAME-ADR-0001"]),
+        _decision_document("TRAME-ADR-0003"),
+        _decision_document("TRAME-ADR-0004"),
+    ])
+    relations = {entry["adr"].id: entry["relations"]
+                 for entry in tracker.migration_export_adrs(PROJECT)}
+    assert relations["TRAME-ADR-0001"]["superseded_by"] == NEW
+    assert relations[NEW]["supersedes"] == ["TRAME-ADR-0001"]
+    assert relations["TRAME-ADR-0003"] == {
+        "supersedes": [], "superseded_by": None, "issues": "unknown"}
+    # superseded without a recorded link (status route): not claimed absent
+    assert relations["TRAME-ADR-0004"]["superseded_by"] == "unknown"
 
 
 def created_raw(**overrides):
