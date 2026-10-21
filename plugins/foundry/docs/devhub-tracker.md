@@ -530,9 +530,69 @@ project (observed possible: the server checks a `foreign_id` for shape and uniqu
 `b0231d9:src/tracker/store.ts:2256-2259`) therefore reaches its own ADR, and an id absent from the
 listing is `invalid_response`, nothing written. Cost: one listing before each of the three routes.
 
-Not covered (unknown whether needed): `migration_preflight` and `migration_supported_attributes` are not set for
-DevHub, so a whole-repository migration to a DevHub target is not claimed. Rows DHN-34 and DHN-36
-of `devhub-requirements.md`.
+The whole-repository path (preflight, attributes, expected relations) is described in "Selective
+cutover target" below. Rows DHN-34 and DHN-36 of `devhub-requirements.md`.
+
+## Selective cutover target (PAT-324, DHN-43)
+
+DevHub is a valid target of `cutover preflight|copy|activate devhub <target-config.json>
+<manifest>` (FOUNDRY-ADR-0026; `tooling/foundry/cutover.py`, `tooling/foundry/migration.py`).
+The target configuration is `{"key": "<KEY>", "id": "<project id>", "extra": {"canonical_repo":
+"<host/owner/repo>"}}`: `canonical_repo` is the repository identity of the checkout being switched
+and must be the one the DevHub project is registered under, since `migration_preflight` reads the
+project back with `verify_project_identity`. The procedure below was run offline through
+`capture_manifest` with a scripted transport (`test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile`);
+against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server.
+
+**`migration_preflight`** (`trackers/devhub.py`) writes nothing and returns the same value for the
+same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
+"source_ref+foreign_id", "creation_states": ["backlog", "ready"]}`. The value is part of the manifest
+digest (`migration._source_view`), which `source_is_unchanged` compares again at activation, so it
+holds no timestamp and no server value. It first decides locally, before its two reads, what the
+server would refuse only after the first write (limits from `issueFieldsSchema`, `createIssueSchema`
+and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIssue`,
+`createTrackerLink` of `12ca158:src/tracker/store.ts`, observed in source):
+
+- the source coordinates: valid, unique (`TrackerConflictError`);
+- issue title and body: the title is already trimmed and has 300 UTF-16 units at most, the body 200000
+  at most (`_IMPORT_TITLE_MAX`, `_IMPORT_BODY_MAX`); a source title with surrounding space cannot be read
+  back equal, because the server trims it;
+- the living graph, over the issues of the manifest only: a link to oneself, an issue with several
+  parents, a parent whose `type` is not exactly `Epic` (or whose `type` is excepted), a hierarchy cycle and
+  a dependency cycle are refused (`createTrackerLink`: "parent must be an Epic", "issue already has a
+  parent", "hierarchy cycle refused", "dependency cycle refused");
+- the ADR corpus: a status DevHub lacks (`rejected`), source-only issue references (no carrier,
+  `devhub-requirements.md`, question 19), a relation that is `unknown` at the source (DevHub reads back a known value, never `unknown`,
+  PAT-ADR-0003 and PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
+  the reverse, a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
+  more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
+  (body digest, shapes).
+
+Then it calls `verify_project_identity` (one `GET /projects/resolve`, then one `GET /governance/projects/:key`):
+a project that is not the exact key, id and repository, or that is outside Foundry governance
+(`DevHubGovernanceModeError`), is refused. It does not probe whether the server carries DEVHUB-105
+(an older server refuses the first import) nor the workflow catalogue (below); both are unknown at preflight.
+
+**`migration_supported_attributes`** is the seven attributes of `migration._ISSUE_ATTRIBUTES`; the four
+field values are sent by `migration_import_issue`, and `parent`, `children` and `dependencies` are the links
+written by `migration_link_issue`. **`migration_attribute_exceptions`** names, per issue, each value DevHub
+cannot reproduce, so the manifest records it and `copy_and_verify` neither sends nor compares it:
+`priority` outside `P0` to `P3`, `estimate` that is not an integer from 1 to 21, `type` empty or longer than
+80 UTF-16 units, and a `state` other than `backlog` or `ready` (the server creates an issue in those two
+states only, `createTrackerIssue`: an imported `in-progress` or `review` issue is therefore created in
+`backlog`, with the exception recorded). A published project workflow may disable a value
+(`assertWorkflowAssignments`, 409 `value_disabled`, returned as `resource_conflict`): the service credential
+has no read route for that catalogue, so such a value is refused at copy time and is unknown at preflight
+(`devhub-requirements.md`, question 19).
+
+**ADR readback.** `migration_prepare_adr` returns the snapshot with `supersedes` sorted and the issue relations
+sorted by key then number, and `migration_export_adrs` returns the same order, because DevHub does not
+document the order it reads relations back in (unknown) and `copy_and_verify` compares lists. Since PAT-324
+`migration_export_adrs` also reads the issue relations of each ADR (`GET /adrs/:id/relationships`, one more
+read per ADR, shared with `read_adr_issue_relations`): they are no longer `unknown`. `migration_qualify_adrs`
+is the port default (`None`): the ADR codec needs no qualification, and `migration_import_adrs` refuses one.
+Order of the copy: issues, their links, then the ADRs, each replacement before the ADR it replaces
+("ADRs" above).
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
@@ -571,7 +631,7 @@ Source: DEVHUB-108, merge `6721ad8` (`6721ad8:docs/TRACKER_API.md`, "Proof-bound
 
 `supersede_adr(adr, replacement_id)` (`trackers/devhub.py`) resolves both port ids to their server item with one project listing (`_adr_route_items`, same rule as `_adr_route_item`). Before any write it raises `TrackerConflictError` when the two are the same ADR, when the source is neither `accepted` nor `superseded`, or when it is `accepted` and the replacement is not. A source already `superseded` returns without a write when `GET /adr-decisions/adrs/:id` already names that replacement as `superseded_by`, whatever the replacement's status now is (checked before the `accepted` test of the replacement), and is a `TrackerConflictError` otherwise. It then sends `POST /api/tracker/v1/adrs/:id/supersede` with the body `replacement` and `replacement_version` (server ids, versions read in the listing), the source version (`X-DevHub-Version` and `If-Match`), an idempotency key and `X-Foundry-Proof`: action `adr-supersede`, `target_status` `superseded`, `resource_id` and `expected_version` of the source, plus `replacement_id` and `replacement_version` (`_proof`, `extra`; fields `6721ad8:src/tracker/contract.ts:300-302`, checked by `consumeProof`, `store.ts:1751`). The proof payload is sorted JSON, base64url, signed by HMAC-SHA256 as for the other actions; the server decodes it as JSON and validates it with a strict schema (`verifyProof`, `6721ad8:src/tracker/contract.ts:408-442`), so key order is not part of the contract. A 409 `version_conflict`, `invalid_transition` or `resource_conflict` becomes `TrackerConflictError`, a 404 `route_unavailable` (server without DEVHUB-108) becomes `TrackerCapabilityUnavailableError` (`adr_supersession`), any other error propagates. After the POST the adapter reads `GET /adr-decisions/adrs/:id` (`devhub-adr-decisions.v1`, scope `tracker:read`) and raises `DevHubTrackerError` (`invalid_response`) when `relations.superseded_by` is not the replacement. The status route (`POST /adrs/:id/status` with `superseded`) is never used: up to `8028000` it created an unlinked supersession (DEVHUB-87); since `12ca158` it refuses `superseded` (below).
 
-`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (set through the status route, possible up to `8028000`; refused since `12ca158`) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` stays `unknown`. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (set through the status route, possible up to `8028000`; refused since `12ca158`) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` is read from `GET /adrs/:id/relationships` (PAT-324, "Selective cutover target"); `supersedes` and `issues` are sorted. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
 
 `DevHubTracker.set_adr_status(adr, "superseded")` raises `ValueError` before any request, naming `supersede_adr` (`adr supersede`) (PAT-326): since DEVHUB-116 the status route answers 409 `invalid_transition` to `superseded` and supersedes nothing (`12ca158:src/tracker/store.ts:2365`, `12ca158:docs/TRACKER_API.md`, route table; observed in source, run by DHN-31). The server checks governance first, so a Manual project gets 403 `authority_boundary`, not the 409 (`12ca158:src/tracker/store.ts:2363-2365`, observed in source, not run). The ADR id parsing of the adapter (`_adr_project_key`: `<KEY>-ADR-` then at least four digits) is unaffected: a number above 999999 is numbered by the server counter and still has at least four digits.
 

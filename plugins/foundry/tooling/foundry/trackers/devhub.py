@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import copy
 import hashlib
 import hmac
 import ipaddress
@@ -111,6 +112,15 @@ _FIELD_MAP = {
 # PAT-319 / DHN-34, DHN-36: origin coordinates of DEVHUB-105 (`sourceRefSchema`,
 # `foreignIdSchema`, `src/tracker/contract.ts:94-96` at `b0231d9`): no whitespace, no
 # control character (C0, DEL, C1); lengths are counted in UTF-16 units like the server.
+# PAT-324: limits of a created issue and of an imported ADR (`createIssueSchema`,
+# `importAdrSchema`, `issueFieldsSchema` of `src/tracker/contract.ts` at `12ca158`).
+_IMPORT_TITLE_MAX = 300
+_IMPORT_BODY_MAX = 200_000
+_IMPORT_TYPE_MAX = 80
+_IMPORT_PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
+_IMPORT_ESTIMATES = (1, 21)
+_IMPORT_CREATION_STATES = ("backlog", "ready")
+_ADR_LINK_MAX = 50
 _ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f]+")
 _SOURCE_REF_MAX = 200
 _FOREIGN_ID_MAX = 120
@@ -136,6 +146,41 @@ _EPIC_CLOSURE_ERROR_STATUSES = {
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _MAX_EPIC_CLOSURE_CHILDREN = 100
 _AUDIT_ID = re.compile(r"[A-Za-z0-9._:-]{1,160}")
+
+
+def _issue_order(issue_id: str) -> tuple[str, int]:
+    """Sort key of readable issue ids: project key, then the number as a number (PAT-324)."""
+    key, _separator, number = issue_id.rpartition("-")
+    return (key, int(number)) if number.isdigit() else (issue_id, -1)
+
+
+def _utf16_length(value: str) -> int:
+    """Length in UTF-16 units, the unit of the server's string limits (PAT-324)."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _has_cycle(edges: dict[str, set[str]]) -> bool:
+    """True when the directed graph ``edges`` (node to successors) holds a cycle."""
+    done: set[str] = set()
+    for root in edges:
+        if root in done:
+            continue
+        path = {root}
+        stack = [(root, iter(sorted(edges.get(root, ()))))]
+        while stack:
+            node, successors = stack[-1]
+            for successor in successors:
+                if successor in path:
+                    return True
+                if successor not in done:
+                    path.add(successor)
+                    stack.append((successor, iter(sorted(edges.get(successor, ())))))
+                    break
+            else:
+                path.discard(node)
+                done.add(node)
+                stack.pop()
+    return False
 
 
 def _closure_invalid(method: str, path: str) -> None:
@@ -303,6 +348,13 @@ class DevHubTracker(Tracker):
     # `False`: `issue accept` and `--status` are Linear-only (PAT-ADR-0025) and read
     # `linear-human-acceptance`; `accept_issue` below is the port-level operation.
     acceptance_override_projection_supported = True
+    # PAT-324: DevHub can be the target of a selective cutover (FOUNDRY-ADR-0026).  The four
+    # field attributes are sent by ``migration_import_issue`` (values it cannot reproduce are
+    # named by ``migration_attribute_exceptions``); the three graph attributes are written by
+    # ``migration_link_issue`` and checked as a whole by ``migration_preflight``.
+    migration_supported_attributes = frozenset({
+        "type", "priority", "estimate", "state", "parent", "children", "dependencies",
+    })
 
     def __init__(
         self,
@@ -665,7 +717,7 @@ class DevHubTracker(Tracker):
     @staticmethod
     def _origin_text(value, limit: int) -> bool:
         return (isinstance(value, str) and _ORIGIN_TEXT.fullmatch(value) is not None
-                and len(value.encode("utf-16-le")) // 2 <= limit)
+                and _utf16_length(value) <= limit)
 
     @staticmethod
     def _project_key(issue_id: str) -> str:
@@ -1932,6 +1984,185 @@ class DevHubTracker(Tracker):
             raise TrackerConflictError("issue migration DevHub divergente après import")
         return issue
 
+    # --- selective cutover target (PAT-324, FOUNDRY-ADR-0026) ------------------------
+    def migration_attribute_exceptions(
+        self, project: Project, snapshot: dict,
+    ) -> dict[str, str]:
+        """Name the field values ``migration_import_issue`` cannot reproduce exactly.
+
+        Limits of the DevHub fields, each from the server schema read at ``12ca158``
+        (``issueFieldsSchema`` of ``src/tracker/contract.ts``, ``createTrackerIssue`` of
+        ``src/tracker/store.ts``): ``priority`` is ``P0`` to ``P3``, ``estimate`` an integer
+        from 1 to 21, ``type`` a non-empty string of 80 characters at most, and a new issue
+        is created in ``backlog`` or ``ready`` only (409 ``invalid_transition`` otherwise).  A
+        value outside these is excepted, never approximated.  The project workflow catalogue
+        (a published workflow may disable a value, 409 ``value_disabled``) is not readable by
+        the service credential: such a value is refused by the server at copy time, unknown here.
+        """
+        self._require_project(project)
+        attributes = snapshot.get("attributes")
+        if not isinstance(attributes, dict):
+            raise TrackerConflictError("snapshot issue de migration DevHub invalide")
+        exceptions: dict[str, str] = {}
+        issue_type = attributes.get("type")
+        if issue_type is not None and (
+            not isinstance(issue_type, str) or not issue_type
+            or _utf16_length(issue_type) > _IMPORT_TYPE_MAX
+        ):
+            exceptions["type"] = "target value unavailable: type"
+        priority = attributes.get("priority")
+        if priority is not None and priority not in _IMPORT_PRIORITIES:
+            exceptions["priority"] = f"target value unavailable: {str(priority)[:40]}"
+        estimate = attributes.get("estimate")
+        if estimate is not None and (
+            type(estimate) is not int or not _IMPORT_ESTIMATES[0] <= estimate <= _IMPORT_ESTIMATES[1]
+        ):
+            exceptions["estimate"] = "target value unavailable: estimate"
+        state = attributes.get("state")
+        if state is not None and state not in _IMPORT_CREATION_STATES:
+            exceptions["state"] = f"target creation state unavailable: {str(state)[:40]}"
+        return exceptions
+
+    def migration_preflight(
+        self, project: Project, records: tuple[dict, ...],
+    ) -> dict:
+        """Qualify a DevHub target before the first effect (PAT-324).
+
+        No request writes anything.  One read (``verify_project_identity``) proves the key,
+        id and canonical repository of the target and refuses a project outside Foundry
+        governance (``DevHubGovernanceModeError``).  Everything else is decided locally on
+        the closed manifest, because ``migration_import_issue`` and ``migration_import_adrs``
+        run only after the issues are written: the source coordinates (valid and unique), the
+        issue texts, the living graph (every parent an exact ``Epic`` with at most one parent,
+        no hierarchy or dependency cycle: the server refuses the others on the link) and the
+        ADR corpus (status, relations that DevHub can record, reciprocal supersession).  A
+        route missing on an older server and a disabled workflow value are not probed
+        (unknown); the first copy request would refuse them.
+        """
+        project = self._require_project(project)
+        refs = [record["source_ref"] for record in records]
+        if len(refs) != len(set(refs)):
+            raise TrackerConflictError("provenance source de migration dupliquée")
+        for ref in refs:
+            try:
+                self._source_ref(ref)
+            except ValueError:
+                raise TrackerConflictError(
+                    f"source_ref de migration invalide pour DevHub: {str(ref)[:60]}"
+                ) from None
+        issues = [record for record in records if record.get("kind") == "issue"]
+        adrs = [record for record in records if record.get("kind") == "adr"]
+        self._preflight_issues(issues)
+        self._preflight_adrs(project, adrs)
+        if not self.verify_project_identity(project):
+            raise TrackerConflictError("profil migration DevHub hors projet")
+        return {
+            "kind": "devhub-source-ref-v1",
+            "issue_coordinate": "source_ref",
+            "adr_coordinate": "source_ref+foreign_id",
+            "creation_states": list(_IMPORT_CREATION_STATES),
+        }
+
+    def _preflight_issues(self, issues: list[dict]) -> None:
+        by_id = {record["id"]: record for record in issues}
+        parents: dict[str, str] = {}
+        hierarchy: dict[str, set[str]] = {}
+        dependencies: dict[str, set[str]] = {}
+        for record in issues:
+            title, body = record["title"], record["body"]
+            if (not isinstance(title, str) or not title.strip() or title != title.strip()
+                    or _utf16_length(title) > _IMPORT_TITLE_MAX
+                    or not isinstance(body, str) or _utf16_length(body) > _IMPORT_BODY_MAX):
+                raise TrackerConflictError(
+                    f"titre ou corps non reproductible par DevHub: {record['source_ref']}"
+                )
+            for link in record["links"]:
+                other, kind = link["target"], link["type"]
+                if kind not in _LINK_TYPES:
+                    raise TrackerCapabilityUnavailableError(
+                        self.name, f"migration_issue_link:{kind}")
+                if other not in by_id:
+                    continue  # outside the living scope, as migration.copy_and_verify does
+                if other == record["id"]:
+                    raise TrackerConflictError(
+                        f"lien vers soi-même refusé par DevHub: {record['source_ref']}")
+                if kind in {"subtask-of", "parent-of"}:
+                    child, parent = (
+                        (record["id"], other) if kind == "subtask-of" else (other, record["id"]))
+                    if parents.setdefault(child, parent) != parent:
+                        raise TrackerConflictError(
+                            f"plusieurs parents refusés par DevHub: {by_id[child]['source_ref']}")
+                    hierarchy.setdefault(child, set()).add(parent)
+                elif kind in {"depends-on", "blocks"}:
+                    first, second = (
+                        (record["id"], other) if kind == "depends-on" else (other, record["id"]))
+                    dependencies.setdefault(first, set()).add(second)
+        for child, parent in parents.items():
+            parent_record = by_id[parent]
+            excepted = {item["attribute"] for item in parent_record.get("exceptions", [])}
+            if parent_record["attributes"].get("type") != "Epic" or "type" in excepted:
+                raise TrackerConflictError(
+                    f"parent non Epic refusé par DevHub: {by_id[child]['source_ref']}")
+        if _has_cycle(hierarchy) or _has_cycle(dependencies):
+            raise TrackerConflictError("cycle de liens refusé par DevHub")
+
+    def _preflight_adrs(self, project: Project, adrs: list[dict]) -> None:
+        ordered, by_id = self._replacement_order(tuple(adrs))
+        del ordered  # only the cycle and duplicate refusals matter here
+        for record in adrs:
+            ref, relations = record["source_ref"], record["relations"]
+            for name in ("supersedes", "superseded_by", "issues"):
+                if relations.get(name) == "unknown":
+                    # DevHub records no "unknown" relation: the readback would be a known
+                    # value, a different claim (PAT-ADR-0003, PAT-ADR-0008).
+                    raise TrackerConflictError(
+                        f"relation ADR inconnue non reproductible par DevHub: {ref} ({name})")
+            if record.get("source_only_issue_refs"):
+                raise TrackerConflictError(
+                    f"références d'issue source-seule sans porteur DevHub: {ref}")
+            title, body = record["title"], record["body"]
+            if (not isinstance(title, str) or title != title.strip()
+                    or _utf16_length(title) > _IMPORT_TITLE_MAX
+                    or not isinstance(body, str) or _utf16_length(body) > _IMPORT_BODY_MAX):
+                raise TrackerConflictError(f"titre ou corps ADR non reproductible: {ref}")
+            replacement = relations["superseded_by"]
+            if replacement is not None and replacement not in by_id:
+                raise TrackerConflictError(f"ADR de remplacement hors corpus: {ref}")
+            if (record["status"] == "superseded") != (replacement is not None):
+                raise TrackerConflictError(f"supersession ADR sans lien réciproque: {ref}")
+            expected = sorted(
+                other["id"] for other in adrs if other["relations"]["superseded_by"] == record["id"])
+            if sorted(relations["supersedes"]) != expected:
+                raise TrackerConflictError(f"supersession ADR non réciproque: {ref}")
+            if len(relations["issues"]) > _ADR_LINK_MAX:
+                raise TrackerConflictError(f"trop de relations d'issue pour DevHub: {ref}")
+            arguments = self._snapshot_import_arguments(record, ref, by_id)
+            arguments.setdefault("supersedes", _UNSPECIFIED_ADR_RELATION)
+            arguments.setdefault("superseded_by", _UNSPECIFIED_ADR_RELATION)
+            # The issue ids are still the source's: their shape is checked on the target
+            # ids by ``migration_import_adrs``.
+            arguments["issue_refs"] = _UNSPECIFIED_ADR_RELATION
+            try:
+                self._prepare_adr_import(project, **arguments)
+            except ValueError as error:
+                raise TrackerConflictError(f"ADR non importable dans DevHub: {ref} ({error})") from None
+
+    def migration_prepare_adr(self, project: Project, snapshot: dict) -> dict:
+        """Give the target ADR snapshot a canonical relation order (PAT-324).
+
+        The foreign id is the port id, so no id is translated.  DevHub does not keep the order
+        of ``supersedes`` or of the issue relations, and ``migration_export_adrs`` sorts them:
+        sorting the expected side here makes the readback comparison one of sets.
+        """
+        del project
+        prepared = copy.deepcopy(snapshot)
+        relations = prepared["relations"]
+        if isinstance(relations.get("supersedes"), list):
+            relations["supersedes"] = sorted(relations["supersedes"])
+        if isinstance(relations.get("issues"), list):
+            relations["issues"] = sorted(relations["issues"], key=_issue_order)
+        return prepared
+
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,
     ) -> None:
@@ -2284,18 +2515,13 @@ class DevHubTracker(Tracker):
             **optional,
         }
 
-    def migration_import_adrs(
-        self, project: Project, snapshots: tuple[dict, ...],
-        *, qualification: object | None = None,
-    ) -> list[Adr]:
-        """Import a closed corpus, replacements first, answers in input order (PAT-319).
+    @staticmethod
+    def _replacement_order(snapshots: tuple[dict, ...]) -> tuple[list[dict], dict]:
+        """Snapshots ordered replacement first, and the snapshots by id (PAT-319, PAT-324).
 
-        The server refuses ``superseded_by`` to an ADR not yet imported, so each ADR is
-        written after the one that replaces it; a cycle or a replacement outside the
-        corpus is not reordered (the server's refusal stands).
+        The server refuses ``superseded_by`` to an ADR not yet imported.  A cycle is
+        ``TrackerConflictError``; a replacement outside the corpus is not reordered.
         """
-        if qualification is not None:
-            raise TrackerConflictError("devhub ADR migration qualification is unexpected")
         by_id = {snapshot["id"]: snapshot for snapshot in snapshots}
         if len(by_id) != len(snapshots):
             raise TrackerConflictError("identifiant ADR de migration dupliqué")
@@ -2316,6 +2542,21 @@ class DevHubTracker(Tracker):
 
         for snapshot in snapshots:
             visit(snapshot)
+        return ordered, by_id
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        """Import a closed corpus, replacements first, answers in input order (PAT-319).
+
+        The server refuses ``superseded_by`` to an ADR not yet imported, so each ADR is
+        written after the one that replaces it; a cycle or a replacement outside the
+        corpus is not reordered (the server's refusal stands).
+        """
+        if qualification is not None:
+            raise TrackerConflictError("devhub ADR migration qualification is unexpected")
+        ordered, by_id = self._replacement_order(snapshots)
         project = self._require_project(project)
         registry.require_writable_project(self.name, project)
         for snapshot in ordered:
@@ -2560,8 +2801,10 @@ class DevHubTracker(Tracker):
         superseded ADR with no recorded link (the status route creates one) keeps `unknown`
         (PAT-ADR-0003).  Its replacement is unknown too, so while the project holds such an
         ADR other than the entry itself, no entry's `supersedes` is known complete: it is
-        `unknown`, never `[]` or a partial list (PAT-ADR-0008).  `issues` stays `unknown`
-        as in the port.
+        `unknown`, never `[]` or a partial list (PAT-ADR-0008).  `issues` is read from
+        ``GET /adrs/:id/relationships`` (one more read per ADR, PAT-324): a complete empty page is
+        a known empty list.  ``supersedes`` and ``issues`` are sorted, the order
+        ``migration_prepare_adr`` gives the expected side, so a readback comparison is by set.
         """
         items = self._list_adr_items(project)
         port_id = {item["id"]: self._to_adr(item).id for item in items}
@@ -2570,15 +2813,16 @@ class DevHubTracker(Tracker):
             adr = self._to_adr(self._application_req(
                 "GET", f"/adrs/{urllib.parse.quote(item['id'], safe='')}"))
             relations = self._read_adr_decision_document(item["id"])["relations"]
-            entries.append((adr, relations))
+            entries.append((adr, relations, self._adr_relationship_ids(item["id"])))
         unlinked = {
-            adr.id for adr, relations in entries
+            adr.id for adr, relations, _issues in entries
             if adr.status == "superseded" and relations.get("superseded_by") is None
         }
         exported = []
-        for adr, relations in entries:
+        for adr, relations, issues in entries:
             entry_relations = {
-                "supersedes": "unknown", "superseded_by": "unknown", "issues": "unknown"}
+                "supersedes": "unknown", "superseded_by": "unknown",
+                "issues": sorted(issues, key=_issue_order)}
             try:
                 if unlinked - {adr.id}:
                     entry_relations["supersedes"] = "unknown"
@@ -2587,7 +2831,8 @@ class DevHubTracker(Tracker):
                     if predecessors is None:
                         predecessors = (
                             [relations["supersedes"]] if relations.get("supersedes") else [])
-                    entry_relations["supersedes"] = [port_id[item] for item in predecessors]
+                    entry_relations["supersedes"] = sorted(
+                        port_id[item] for item in predecessors)
                 successor = relations.get("superseded_by")
                 if successor is not None:
                     entry_relations["superseded_by"] = port_id[successor]
@@ -2679,7 +2924,10 @@ class DevHubTracker(Tracker):
         Reads `GET /adrs/:id/relationships` (`devhub-adr-relationships.v1`,
         `2edcea2:src/app/api/tracker/v1/[...path]/route.ts:889`) page by page.
         """
-        server_id = self._adr_route_item(adr, project)[1]["id"]
+        return self._adr_relationship_ids(self._adr_route_item(adr, project)[1]["id"])
+
+    def _adr_relationship_ids(self, server_id: str) -> list[str]:
+        """Page through ``GET /adrs/:id/relationships`` of one server ADR id (DHN-33)."""
         base = f"/adrs/{urllib.parse.quote(server_id, safe='')}/relationships"
         cursor, ids, seen = 0, [], set()
         for _page_number in range(1, _MAX_ADR_PAGES + 1):

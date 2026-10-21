@@ -65,15 +65,15 @@ closed vocabulary:
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) | supported |
 | Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) | supported (atomic `close_epic`, PAT-ADR-0030 for dropped children) |
 | Périmètre de release/changelog | `record_delivery_receipt`, `read_release_scope` via `query.py changelog()` | supported (PAT-82 exact merge receipt; terminal native state stays unavailable without one exact current proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) | supported (mapped Version id) |
-| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | gap (PAT-324: no `migration_preflight`) |
-| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | gap (PAT-324: no `migration_preflight`, no `migration_supported_attributes`) |
+| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | supported (PAT-324; offline fake transport, live capture on a disposable instance) |
+| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | supported (PAT-324; offline fake transport, live capture on a disposable instance; values DevHub cannot create are explicit exceptions) |
 | Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding | supported (archive guard only; DevHub as cutover source is not claimed) |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
 cell. The DevHub column was added by PAT-323 under PAT-ADR-0031 (accepted): DevHub is the
-fourth V1 provider (`v1_core: true`), with 17 of its 19 core cells `supported` and two `gap`
-cells (the two cross-tracker copy rows above), so it is not repository-ready until those
-close. The owner ticket of those two cells is PAT-324. The write guarantees of DevHub are those of
+fourth V1 provider (`v1_core: true`), with 17 of its 19 core cells `supported` at that date and
+two `gap` cells (the two cross-tracker copy rows above); PAT-324 made both `supported`, so
+all 19 are. The write guarantees of DevHub are those of
 PAT-ADR-0006 for a V1 provider; its stronger mechanisms (proof-bound transitions, atomic
 Epic closure) remain its own. Admission switches no repository: the switch of a repository
 to DevHub keeps its own ADR (FOUNDRY-ADR-0026).

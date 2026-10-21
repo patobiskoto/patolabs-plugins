@@ -37,7 +37,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
       "v1_core": true,
-      "note": "Fourth V1 provider since PAT-ADR-0031 (PAT-323): registry._V1_TRACKERS holds devhub, a DevHub binding is a canonical repository marker, and the former basename pilot path is retired. It is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178. Two core cells are not yet supported (cross-tracker-adr-import, cross-tracker-live-work-copy); DevHub is not repository-ready until they are."
+      "note": "Fourth V1 provider since PAT-ADR-0031 (PAT-323): registry._V1_TRACKERS holds devhub, a DevHub binding is a canonical repository marker, and the former basename pilot path is retired. It is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178. All 19 core cells are supported since PAT-324 (cross-tracker-adr-import and cross-tracker-live-work-copy: DevHub is a valid target of a staged cutover); the switch of a repository keeps its own ADR (FOUNDRY-ADR-0026)."
     }
   },
   "operations": [
@@ -660,9 +660,8 @@
           "evidence": "migration_prepare_adr remaps the source ADR namespace, while migration_find_adr and migration_import_adr use the reserved provenance label and PAT-ADR-0007 Issue/comment codec with exact body/status/relation readback and source-only issue references. Staged-target reads resolve known living ADR-to-issue relations through the supplied migration binding rather than the active source (ghprojects.py; test_ghprojects_tracker.py; live P64Q-to-P64G qualification)"
         },
         "devhub": {
-          "status": "gap",
-          "evidence": "DevHub implements the ADR import ports (import_adr, migration_find_adr, migration_import_adr, migration_import_adrs, migration_export_adrs; DHN-36 live, devhub.py) but migration.capture_manifest calls target.migration_preflight, which DevHub does not override, so the base raises TrackerCapabilityUnavailableError(migration_provenance_profile) and no cutover manifest can target DevHub (base.py, migration.py). Blocks V1 exit for DevHub",
-          "ticket": "PAT-324"
+          "status": "supported",
+          "evidence": "DevHub is a valid ADR import target of a staged cutover: migration_preflight refuses before any write a corpus DevHub cannot record exactly (status without a DevHub equivalent, source-only issue references, relations known only as unknown, non-reciprocal or cyclic supersession, unrepresentable text) and migration_prepare_adr gives the expected relations the order that migration_export_adrs reads back; migration_import_adrs writes each replacement before the ADR it replaces from the foreign id, exact body (sha-256 checked locally and by the server), status and source dates, and migration_export_adrs reads supersession and issue relations back for the cutover comparison (devhub.py; DHN-36). Offline: test_devhub_tracker.py, test_tracker_conformance_v1.py. Live capture to a disposable instance: tests/integration/test_devhub_live_conformance.py (PAT-324)"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -692,9 +691,8 @@
           "evidence": "migration_preflight qualifies the reserved anchor label, exact Project/repository and native field catalog before effects. The manifest records unsupported, absent and project-specific unavailable values explicitly; migration_import_issue uses Task only under a declared Type exception, and exact provenance labels make create/read/replay unambiguous (ghprojects.py; test_tracker_migration.py; live P64Q-to-P64G qualification)"
         },
         "devhub": {
-          "status": "gap",
-          "evidence": "DevHub implements migration_find_issue, migration_import_issue and migration_link_issue (source_ref lookup, DHN-34 and DHN-35 live, devhub.py) but does not override migration_preflight nor declare migration_supported_attributes (base.py defaults), so migration.capture_manifest refuses a DevHub target with TrackerCapabilityUnavailableError(migration_provenance_profile) and excepts every issue attribute; the staged cutover to DevHub is unusable end to end (migration.py). Blocks V1 exit for DevHub",
-          "ticket": "PAT-324"
+          "status": "supported",
+          "evidence": "migration_preflight proves the target identity and Foundry governance with one read, refuses locally a closed corpus whose graph or texts the server would refuse after the first write (parent not an exact Epic, several parents, hierarchy or dependency cycle, text over the schema limits) and returns a deterministic source_ref profile; migration_supported_attributes declares the seven cutover attributes and migration_attribute_exceptions names each value DevHub cannot reproduce (priority outside P0-P3, estimate outside 1-21, type over 80 characters, creation state other than backlog or ready); migration_find_issue, migration_import_issue and migration_link_issue recover by exact source_ref (devhub.py; DHN-34, DHN-35). Offline: test_devhub_tracker.py, test_tracker_conformance_v1.py. Live capture to a disposable instance: tests/integration/test_devhub_live_conformance.py (PAT-324). Unknown: a disabled workflow value is refused by the server only at copy time"
         }
       },
       "note": "Criterion 4 makes the faithful copy of living work and ADRs core V1. PAT-64 supplies one provider-neutral command and distinct adapter migration ports; the real P64Q-to-P64G recipe qualifies one directed pair and the other pairs retain provider-specific fake-transport evidence."
