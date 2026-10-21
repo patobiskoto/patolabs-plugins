@@ -436,7 +436,7 @@
         },
         "devhub": {
           "status": "supported",
-          "evidence": "set_adr_status moves proposed to accepted to deprecated or superseded with a signed proof bound to the ADR, its server id and version, refusing an ADR of another project before any request (devhub.py; DHN-30, DHN-31 live). Offline: test_devhub_tracker.py"
+          "evidence": "set_adr_status moves proposed to accepted to deprecated with a signed proof bound to the ADR, its server id and version, refusing an ADR of another project before any request; it refuses superseded before any request, which supersede_adr carries with a named replacement (devhub.py; DHN-30, DHN-32 live; DHN-31 live: the status route refuses superseded since DevHub 12ca158). Offline: test_devhub_tracker.py"
         }
       }
     },
