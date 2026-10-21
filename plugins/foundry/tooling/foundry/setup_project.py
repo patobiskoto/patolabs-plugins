@@ -149,6 +149,16 @@ def setup(name, short, repo, adr_dir=None):
         )
     if tracker.name in registry._V1_TRACKERS and "canonical_repo" in project.extra:
         # A canonical entry without its marker fails closed (PAT-323): publish both.
+        # Same read-back as `registry bootstrap`: exact identity, governance mode (PAT-321).
+        try:
+            verified = tracker.verify_project_identity(project)
+        except Exception as exc:
+            raise SystemExit(f"Setup tracker refusé : {exc}") from None
+        if verified is not True:
+            raise SystemExit(
+                "Setup tracker refusé : coordonnées du projet "
+                f"'{tracker.name}' étrangères ou contradictoires."
+            )
         registry.bootstrap_repository_binding(
             tracker.name, repo, project.key, project.id, **project.extra,
         )

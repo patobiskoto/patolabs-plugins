@@ -357,7 +357,7 @@
         },
         "devhub": {
           "status": "supported",
-          "evidence": "project_provisioning_supported = True and provision_project creates or recovers the repository-bound project, idempotently (devhub.py; DHN-01 live; setup_project.py registers a canonical entry that still needs registry bootstrap to publish the marker)"
+          "evidence": "project_provisioning_supported = True and provision_project creates or recovers the repository-bound project, idempotently (devhub.py; DHN-01 live; setup_project.py registers the canonical entry and publishes the marker)"
         }
       },
       "note": "Distinct from the core repository-bootstrap row: this row is provisioning beyond create-or-recover of the repository's own binding."
@@ -600,7 +600,7 @@
           "evidence": "epic_closure_supported = True: close_epic posts the Epic closure receipt atomically and get_epic_closure reads the original back; with epic_dropped_closure_supported = True the dropped children are named under PAT-ADR-0030 (devhub.py, write.py; DHN-22, DHN-23, DHN-24 live). Offline: test_devhub_tracker.py"
         }
       },
-      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction and, like every non-Linear provider, refuses the PAT-ADR-0014 --accept-override flag before any provider read; under PAT-ADR-0030 it declares epic_dropped_closure_supported and write.close_epic refuses, before the atomic call, any dropped direct child not named exactly by --accept-dropped under the human verdict; its atomic receipt binds that child with its state; the three V1 providers use the qualified PAT-ADR-0006 bounded shape where no provider transaction is available."
+      "note": "DevHub retains its stronger atomic epic_closure_supported transaction and, like every non-Linear provider, refuses the PAT-ADR-0014 --accept-override flag before any provider read; under PAT-ADR-0030 it declares epic_dropped_closure_supported and write.close_epic refuses, before the atomic call, any dropped direct child not named exactly by --accept-dropped under the human verdict; its atomic receipt binds that child with its state; the other three V1 providers use the qualified PAT-ADR-0006 bounded shape where no provider transaction is available."
     },
     {
       "id": "tombstone-archived-source-after-switch",

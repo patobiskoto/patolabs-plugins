@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 BRIDGE_CONTRACT = "ship-ios.foundry-changelog-bridge.v1"
-_V1_TRACKERS = frozenset({"youtrack", "linear", "ghprojects"})
+_V1_TRACKERS = frozenset({"youtrack", "linear", "ghprojects", "devhub"})
 _DISPOSITIONS = ("accepted", "deviated", "unfinished", "unavailable")
 
 

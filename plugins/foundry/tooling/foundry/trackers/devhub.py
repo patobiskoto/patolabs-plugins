@@ -871,6 +871,13 @@ class DevHubTracker(Tracker):
         remote = self._to_project(raw)
         if remote.key != registered.key or remote.id != registered.id:
             raise SystemExit(f"Binding DevHub contradictoire pour '{repo}' ; mutation refusée.")
+        # `release_ids` is a local mapping the server does not carry (read_release_scope):
+        # keep it from the binding; every other field stays the server's answer.
+        if "release_ids" in registered.extra and "release_ids" not in remote.extra:
+            remote = Project(
+                key=remote.key, id=remote.id,
+                extra={**remote.extra, "release_ids": registered.extra["release_ids"]},
+            )
         return remote
 
     def verify_project_identity(self, project: Project) -> bool:

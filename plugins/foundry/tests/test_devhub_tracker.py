@@ -1600,6 +1600,26 @@ def release_project(mapping):
     return Project(key="TRAME", id="42", extra={"release_ids": mapping})
 
 
+def test_registered_release_ids_survive_the_server_read_back(monkeypatch):
+    from foundry import registry
+
+    registered = Project(
+        key="TRAME", id="42",
+        extra={"canonical_repo": "github.com/acme/trame",
+               "release_ids": {"v1": "TRAME-VERSION-3"}},
+    )
+    monkeypatch.setattr(registry, "resolve", lambda provider, repo: registered)
+    empty = {"direct": [], "direct_count": 0, "total_count": 0, "complete": True}
+    project_raw = {"key": "TRAME", "id": "42", "canonical_repo": "github.com/acme/trame"}
+    tracker = ScriptedTracker([
+        project_raw, version_raw(scope=empty), version_raw(scope=empty),
+    ])
+    project = tracker.resolve_project("trame")
+    assert project.extra["release_ids"] == {"v1": "TRAME-VERSION-3"}
+    assert project.extra["canonical_repo"] == "github.com/acme/trame"
+    assert tracker.read_release_scope(project, "v1").release_id == "TRAME-VERSION-3"
+
+
 def test_release_scope_orders_issues_by_number_and_refuses_a_version_that_moved():
     from foundry.trackers.base import ReleaseScopeUnavailableError
 
