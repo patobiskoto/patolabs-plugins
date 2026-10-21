@@ -1648,6 +1648,12 @@ def test_update_body_refuses_a_divergent_body_and_reports_a_current_one():
         )
 
 
+def adr_listing(*ids):
+    return receipt_page([
+        {"id": i, "title": "Choice", "status": "proposed", "ref": "1", "version": 2}
+        for i in ids])
+
+
 def adr_document(status="proposed", linked=(), version=2):
     return {
         "schema_version": "devhub-adr-authoring.v1",
@@ -1662,6 +1668,7 @@ def adr_document(status="proposed", linked=(), version=2):
 
 def test_link_adr_issue_edits_a_proposed_adr_with_the_whole_relation_set():
     tracker = ScriptedTracker([
+        adr_listing("TRAME-ADR-0001"),
         adr_document(linked=["TRAME-3"]), adr_document(linked=["TRAME-3", "TRAME-1"], version=3),
     ])
     adr = Adr(id="TRAME-ADR-0001", title="Choice")
@@ -1669,8 +1676,8 @@ def test_link_adr_issue_edits_a_proposed_adr_with_the_whole_relation_set():
     result = tracker.link_adr_issue(adr, "TRAME-1", project=PROJECT)
 
     assert (result.id, result.status) == ("TRAME-ADR-0001", "proposed")
-    assert tracker.calls[0][:2] == ("GET", "/adr-authoring/adrs/TRAME-ADR-0001")
-    method, path, body, kwargs = tracker.calls[1]
+    assert tracker.calls[1][:2] == ("GET", "/adr-authoring/adrs/TRAME-ADR-0001")
+    method, path, body, kwargs = tracker.calls[2]
     assert (method, path) == ("PATCH", "/adr-authoring/adrs/TRAME-ADR-0001")
     assert body == {
         "schema_version": "devhub-adr-authoring.v1", "title": "Choice",
@@ -1681,22 +1688,22 @@ def test_link_adr_issue_edits_a_proposed_adr_with_the_whole_relation_set():
 
 
 def test_link_adr_issue_is_a_no_write_when_the_relation_exists():
-    tracker = ScriptedTracker([adr_document(linked=["TRAME-1"])])
+    tracker = ScriptedTracker([adr_listing("TRAME-ADR-0001"), adr_document(linked=["TRAME-1"])])
     tracker.link_adr_issue(Adr(id="TRAME-ADR-0001", title="Choice"), "TRAME-1", project=PROJECT)
-    assert [call[0] for call in tracker.calls] == ["GET"]
+    assert [call[0] for call in tracker.calls] == ["GET", "GET"]
 
 
 def test_link_adr_issue_on_a_decided_adr_is_a_typed_refusal_before_any_write():
     from foundry.trackers.devhub import AdrRelationFrozenError
 
     adr = Adr(id="TRAME-ADR-0001", title="Choice")
-    accepted = ScriptedTracker([adr_document(status="accepted")])
+    accepted = ScriptedTracker([adr_listing("TRAME-ADR-0001"), adr_document(status="accepted")])
     with pytest.raises(AdrRelationFrozenError, match="avant l'acceptation"):
         accepted.link_adr_issue(adr, "TRAME-1", project=PROJECT)
-    assert [call[0] for call in accepted.calls] == ["GET"]
+    assert [call[0] for call in accepted.calls] == ["GET", "GET"]
 
     raced = ScriptedTracker([
-        adr_document(),
+        adr_listing("TRAME-ADR-0001"), adr_document(),
         DevHubTrackerError("PATCH", "/adr-authoring/adrs/TRAME-ADR-0001", 403, "authority_boundary"),
     ])
     with pytest.raises(AdrRelationFrozenError):
@@ -1720,14 +1727,15 @@ def test_read_adr_issue_relations_pages_through_the_relationships_route():
             "page": {"returned_count": len(ids), "cursor": cursor, "truncation": cursor is not None},
         }
 
-    tracker = ScriptedTracker([page(["TRAME-1"], 1), page(["TRAME-2"], None)])
+    tracker = ScriptedTracker([
+        adr_listing("TRAME-ADR-0001"), page(["TRAME-1"], 1), page(["TRAME-2"], None)])
     ids = tracker.read_adr_issue_relations(
         Adr(id="TRAME-ADR-0001", title="Choice"), project=PROJECT,
     )
     assert ids == ["TRAME-1", "TRAME-2"]
-    assert tracker.calls[0][1] == "/adrs/TRAME-ADR-0001/relationships?cursor=0&limit=100"
-    assert tracker.calls[1][1].endswith("cursor=1&limit=100")
-    assert tracker.calls[0][3]["response_contract"] == "devhub-adr-relationships.v1"
+    assert tracker.calls[1][1] == "/adrs/TRAME-ADR-0001/relationships?cursor=0&limit=100"
+    assert tracker.calls[2][1].endswith("cursor=1&limit=100")
+    assert tracker.calls[1][3]["response_contract"] == "devhub-adr-relationships.v1"
 
 
 def test_supersede_adr_stays_unavailable_because_no_service_route_names_a_replacement():
@@ -2148,3 +2156,356 @@ def test_a_server_older_than_devhub_106_is_a_named_unavailable_capability():
     tracker = ScriptedTracker([ready_issue(), receipt_page([]), absent])
     with pytest.raises(TrackerCapabilityUnavailableError, match="devhub.human_acceptance"):
         tracker.accept_issue("TRAME-1", human_decision(), project=PROJECT)
+
+
+# --- PAT-319: DHN-34 selective issue import and DHN-36 ADR import ---------------------
+# Contract announced by DevHub on 2026-10-21 (DEVHUB-105, merged as b0231d9).
+
+REF = "linear:issue:PAT-1001"
+SNAPSHOT = {
+    "kind": "issue", "source_ref": REF, "id": "PAT-1001", "title": "Imported",
+    "body": "- [ ] one\n",
+    "attributes": {"type": "Task", "priority": "P2", "estimate": None, "state": "backlog"},
+}
+
+
+def conflict(code="resource_conflict"):
+    return DevHubTrackerError("POST", "/projects/TRAME/issues", 409, code)
+
+
+def test_migration_import_issue_posts_the_coordinate_and_the_non_null_fields(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([issue_raw(
+        id="TRAME-7", title="Imported", body="- [ ] one\n", source_ref=REF)])
+    issue = tracker.migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/projects/TRAME/issues")
+    assert body == {
+        "title": "Imported", "body": "- [ ] one\n", "source_ref": REF,
+        "fields": {"type": "Task", "priority": "P2", "state": "backlog"},
+    }
+    assert kwargs["idempotent"] is True
+    assert issue.id == "TRAME-7" and len(tracker.calls) == 1
+
+
+def test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    with pytest.raises(TrackerConflictError, match="source_ref"):
+        ScriptedTracker([conflict()]).migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
+    with pytest.raises(DevHubTrackerError) as other:
+        ScriptedTracker([conflict("invalid_transition")]).migration_import_issue(
+            PROJECT, SNAPSHOT, source_ref=REF)
+    assert other.value.code == "invalid_transition"
+    for change in ({"source_ref": None}, {"source_ref": "other:ref"}, {"body": "x"},
+                   {"title": "Other"}, {"id": "OTHER-7"}):
+        raw = {**issue_raw(id="TRAME-7", title="Imported", body="- [ ] one\n", source_ref=REF),
+               **change}
+        with pytest.raises(TrackerConflictError, match="divergente"):
+            ScriptedTracker([raw]).migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
+
+
+@pytest.mark.parametrize("ref", ["", "a b", "a\tb", "a\x7fb", "x" * 201, "é\u0085", None])
+def test_migration_issue_ports_refuse_an_invalid_source_ref_before_any_request(monkeypatch, ref):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError):
+        tracker.migration_find_issue(PROJECT, ref)
+    with pytest.raises(ValueError):
+        tracker.migration_import_issue(PROJECT, {**SNAPSHOT, "source_ref": ref}, source_ref=ref)
+    assert tracker.calls == []
+
+
+def test_migration_import_issue_refuses_an_archived_project_before_any_request(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {
+        "devhub": {"old": {"archive": True, "key": "TRAME", "id": "42"}}})
+    tracker = ScriptedTracker([])
+    with pytest.raises(SystemExit, match="archive"):
+        tracker.migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
+    assert tracker.calls == []
+
+
+def test_migration_find_issue_reads_by_exact_source_ref_then_by_id():
+    listed = issue_raw(id="TRAME-7", source_ref=REF)
+    detail = issue_raw(id="TRAME-7", title="Imported", body="b", source_ref=REF)
+    tracker = ScriptedTracker([receipt_page([listed]), detail])
+    found = tracker.migration_find_issue(PROJECT, REF)
+    assert tracker.calls[0][:2] == (
+        "GET", "/projects/TRAME/issues?source_ref=linear%3Aissue%3APAT-1001")
+    assert tracker.calls[1][:2] == ("GET", "/issues/TRAME-7")
+    assert (found.id, found.body) == ("TRAME-7", "b")
+    assert ScriptedTracker([receipt_page([])]).migration_find_issue(PROJECT, REF) is None
+
+
+@pytest.mark.parametrize("answer", [
+    receipt_page([issue_raw(id="TRAME-7", source_ref=REF), issue_raw(id="TRAME-8", source_ref=REF)]),
+    receipt_page([issue_raw(id="TRAME-7")]),                       # filter ignored
+    receipt_page([issue_raw(id="TRAME-7", source_ref="other")]),
+    receipt_page([issue_raw(id="OTHER-7", source_ref=REF)]),        # other project
+    receipt_page([issue_raw(id="TRAME-7", source_ref=REF)], cursor=1),
+    {"items": [], "page": {"schema_version": "x", "returned_count": 0, "truncation": False}},
+    [],
+])
+def test_migration_find_issue_refuses_an_answer_that_is_not_the_exact_coordinate(answer):
+    with pytest.raises(DevHubTrackerError) as error:
+        ScriptedTracker([answer]).migration_find_issue(PROJECT, REF)
+    assert error.value.code == "invalid_response"
+
+
+def test_migration_find_issue_refuses_a_detail_that_lost_the_coordinate():
+    tracker = ScriptedTracker([
+        receipt_page([issue_raw(id="TRAME-7", source_ref=REF)]),
+        issue_raw(id="TRAME-7", source_ref=None),
+    ])
+    with pytest.raises(DevHubTrackerError) as error:
+        tracker.migration_find_issue(PROJECT, REF)
+    assert error.value.code == "invalid_response"
+
+
+ADR_SRC = "linear:adr:FOUNDRY-ADR-0026"
+ADR_BODY = "## Decision\n\nOne tracker per repository.\n"
+ADR_SHA = hashlib.sha256(ADR_BODY.encode()).hexdigest()
+
+
+def adr_raw(**overrides):
+    value = {
+        "id": "TRAME-ADR-0004", "title": "FOUNDRY-ADR-0026 - single tracker",
+        "status": "accepted", "body": ADR_BODY, "ref": "9", "version": 1,
+        "created": 1, "updated": 2, "source_ref": ADR_SRC,
+        "foreign_id": "FOUNDRY-ADR-0026", "source_created": 5, "source_updated": 6,
+    }
+    value.update(overrides)
+    return value
+
+
+def import_adr(tracker, **overrides):
+    arguments = dict(
+        adr_id="FOUNDRY-ADR-0026", title="FOUNDRY-ADR-0026 - single tracker", body=ADR_BODY,
+        historical_status="accepted", source_ref=ADR_SRC, source_created=5,
+        source_updated=6, expected_source_sha256=ADR_SHA,
+    )
+    arguments.update(overrides)
+    return tracker.import_adr(PROJECT, **arguments)
+
+
+def test_imported_adr_exposes_its_foreign_id_as_id_and_keeps_the_server_id_as_route():
+    adr_model = DevHubTracker._to_adr(adr_raw())
+    assert (adr_model.id, adr_model.status, adr_model.body) == (
+        "FOUNDRY-ADR-0026", "accepted", ADR_BODY)
+    native = DevHubTracker._to_adr(adr_raw(foreign_id=None, source_ref=None))
+    assert native.id == "TRAME-ADR-0004"
+    legacy = {key: value for key, value in adr_raw().items()
+              if key not in {"source_ref", "foreign_id", "source_created", "source_updated"}}
+    assert DevHubTracker._to_adr(legacy).id == "TRAME-ADR-0004"
+    for change in ({"foreign_id": 3}, {"foreign_id": "a b"}, {"source_ref": 3},
+                   {"source_created": -1}, {"source_updated": True}):
+        with pytest.raises(DevHubTrackerError):
+            DevHubTracker._to_adr(adr_raw(**change))
+
+
+def test_import_adr_posts_the_strict_body_and_returns_the_foreign_id(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([adr_raw()])
+    result = import_adr(tracker)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/projects/TRAME/adrs/import")
+    assert body == {
+        "source_ref": ADR_SRC, "foreign_id": "FOUNDRY-ADR-0026",
+        "title": "FOUNDRY-ADR-0026 - single tracker", "body": ADR_BODY,
+        "body_sha256": ADR_SHA, "status": "accepted",
+        "source_created": 5, "source_updated": 6,
+    }
+    assert kwargs["idempotent"] is True and "proof" not in kwargs
+    assert (result.id, result.status, result.body) == ("FOUNDRY-ADR-0026", "accepted", ADR_BODY)
+
+
+def test_import_adr_sends_the_replacement_source_ref_and_the_issue_links(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    replacement = adr_raw(id="TRAME-ADR-0005", foreign_id="FOUNDRY-ADR-0030",
+                          source_ref="linear:adr:FOUNDRY-ADR-0030")
+    tracker = ScriptedTracker([
+        receipt_page([replacement]),
+        adr_raw(status="superseded"),
+    ])
+    import_adr(tracker, historical_status="superseded", superseded_by="FOUNDRY-ADR-0030",
+               issue_refs=("TRAME-1",))
+    assert tracker.calls[0][:2] == (
+        "GET", "/projects/TRAME/adrs?foreign_id=FOUNDRY-ADR-0030")
+    body = tracker.calls[1][2]
+    assert body["superseded_by"] == "linear:adr:FOUNDRY-ADR-0030"
+    assert body["linked_issue_ids"] == ["TRAME-1"] and "supersedes" not in body
+    # a known `supersedes` relation the server cannot carry is refused unsent, not dropped
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+    refused = ScriptedTracker([])
+    with pytest.raises(TrackerCapabilityUnavailableError):
+        import_adr(refused, supersedes=("FOUNDRY-ADR-0001",))
+    assert refused.calls == []
+    import_adr(ScriptedTracker([adr_raw()]), supersedes=())
+    # replacement not imported yet: refused before the import is written
+    missing = ScriptedTracker([receipt_page([])])
+    with pytest.raises(TrackerConflictError, match="remplacement"):
+        import_adr(missing, historical_status="superseded", superseded_by="FOUNDRY-ADR-0030")
+    assert len(missing.calls) == 1
+
+
+@pytest.mark.parametrize("overrides, error", [
+    ({"historical_status": "rejected"}, ValueError),
+    ({"adr_id": "a b"}, ValueError),
+    ({"adr_id": "x" * 121}, ValueError),
+    ({"source_ref": "a b"}, ValueError),
+    ({"superseded_by": "FOUNDRY-ADR-0030"}, ValueError),         # status is accepted
+    ({"issue_refs": ("OTHER-1",)}, ValueError),
+    ({"source_created": -1}, ValueError),
+    ({"expected_source_sha256": "0" * 64}, TrackerConflictError),
+    ({"source_only_issue_refs": ("linear:issue:PAT-1",)}, TrackerCapabilityUnavailableError),
+])
+def test_import_adr_refuses_before_any_request(monkeypatch, overrides, error):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    with pytest.raises(error):
+        import_adr(tracker, **overrides)
+    assert tracker.calls == []
+
+
+def test_import_adr_maps_conflict_and_missing_route_and_checks_the_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    path = "/projects/TRAME/adrs/import"
+    with pytest.raises(TrackerConflictError, match="foreign_id"):
+        import_adr(ScriptedTracker([DevHubTrackerError("POST", path, 409, "resource_conflict")]))
+    with pytest.raises(TrackerCapabilityUnavailableError, match="migration_adr_import"):
+        import_adr(ScriptedTracker([DevHubTrackerError("POST", path, 404, "route_unavailable")]))
+    with pytest.raises(DevHubTrackerError) as invalid:
+        import_adr(ScriptedTracker([DevHubTrackerError("POST", path, 422, "invalid_request")]))
+    assert invalid.value.code == "invalid_request"
+    for change in ({"body": "x"}, {"status": "proposed"}, {"foreign_id": "OTHER"},
+                   {"source_ref": "other"}, {"source_updated": 7}, {"title": "x"}):
+        with pytest.raises(TrackerConflictError, match="divergente"):
+            import_adr(ScriptedTracker([adr_raw(**change)]))
+
+
+def test_migration_find_adr_reads_by_source_ref_or_foreign_id():
+    item = {key: value for key, value in adr_raw().items() if key != "body"}
+    by_ref = ScriptedTracker([receipt_page([item]), adr_raw()])
+    assert by_ref.migration_find_adr(PROJECT, ADR_SRC).id == "FOUNDRY-ADR-0026"
+    assert by_ref.calls[0][1] == (
+        "/projects/TRAME/adrs?source_ref=linear%3Aadr%3AFOUNDRY-ADR-0026")
+    assert by_ref.calls[1][1] == "/adrs/TRAME-ADR-0004"
+    by_alias = ScriptedTracker([receipt_page([item]), adr_raw()])
+    assert by_alias.migration_find_adr(PROJECT, foreign_id="FOUNDRY-ADR-0026").body == ADR_BODY
+    assert by_alias.calls[0][1] == "/projects/TRAME/adrs?foreign_id=FOUNDRY-ADR-0026"
+    assert ScriptedTracker([receipt_page([])]).migration_find_adr(PROJECT, ADR_SRC) is None
+    with pytest.raises(ValueError):
+        ScriptedTracker([]).migration_find_adr(PROJECT)
+    with pytest.raises(DevHubTrackerError):
+        ScriptedTracker([receipt_page([{**item, "foreign_id": "OTHER"}])]).migration_find_adr(
+            PROJECT, ADR_SRC, foreign_id="FOUNDRY-ADR-0026")
+
+
+def test_migration_import_adrs_writes_replacements_first_and_answers_in_input_order(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+
+    def snapshot(number, status="accepted", superseded_by=None):
+        return {
+            "id": f"FOUNDRY-ADR-{number:04d}", "source_ref": f"linear:adr:{number}",
+            "title": f"ADR {number}", "body": f"body {number}\n", "status": status,
+            "relations": {"supersedes": "unknown", "superseded_by": superseded_by,
+                          "issues": ["TRAME-1"]},
+            "source_created": None, "source_updated": None,
+        }
+
+    def answer(number, status="accepted"):
+        return adr_raw(
+            id=f"TRAME-ADR-{number:04d}", title=f"ADR {number}", body=f"body {number}\n",
+            status=status, source_ref=f"linear:adr:{number}",
+            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None)
+
+    old, new = snapshot(1, "superseded", "FOUNDRY-ADR-0002"), snapshot(2)
+    tracker = ScriptedTracker([
+        answer(2), receipt_page([answer(2)]), answer(1, "superseded")])
+    result = tracker.migration_import_adrs(PROJECT, (old, new))
+    assert [item.id for item in result] == ["FOUNDRY-ADR-0001", "FOUNDRY-ADR-0002"]
+    posts = [call[2]["source_ref"] for call in tracker.calls if call[0] == "POST"]
+    assert posts == ["linear:adr:2", "linear:adr:1"]
+    with pytest.raises(TrackerConflictError, match="cycle"):
+        ScriptedTracker([]).migration_import_adrs(PROJECT, (
+            snapshot(1, "superseded", "FOUNDRY-ADR-0002"),
+            snapshot(2, "superseded", "FOUNDRY-ADR-0001")))
+    with pytest.raises(TrackerConflictError, match="qualification"):
+        ScriptedTracker([]).migration_import_adrs(PROJECT, (new,), qualification={})
+
+
+def test_adr_lifecycle_operations_keep_the_server_id_binding_for_an_imported_adr():
+    # An id of another project (a foreign id of that shape included) is refused unsent.
+    tracker = ScriptedTracker([])
+    foreign = Adr(id="FOUNDRY-ADR-0026", title="t")
+    with pytest.raises(SystemExit, match="Binding DevHub refusé"):
+        tracker.set_adr_status(foreign, "deprecated", project=PROJECT)
+    with pytest.raises(SystemExit, match="Binding DevHub refusé"):
+        tracker.read_adr_issue_relations(foreign, project=PROJECT)
+    assert tracker.calls == []
+
+
+def _swapped_listing():
+    # A: foreign id equal to the server id of B, and conversely (replacements imported first).
+    a = {"id": "TRAME-ADR-0013", "title": "A", "status": "accepted", "version": 3,
+         "foreign_id": "TRAME-ADR-0011", "source_ref": "linear:adr:11"}
+    b = {"id": "TRAME-ADR-0011", "title": "B", "status": "accepted", "version": 7,
+         "foreign_id": "TRAME-ADR-0013", "source_ref": "linear:adr:13"}
+    return receipt_page([a, b])
+
+
+def test_adr_routes_use_the_server_id_of_the_adr_the_port_id_names_when_ids_are_swapped():
+    adr_a = Adr(id="TRAME-ADR-0011", title="A")
+
+    status = ScriptedTracker([_swapped_listing(), {}])
+    status.set_adr_status(adr_a, "deprecated", project=PROJECT)
+    method, path, body, kwargs = status.calls[1]
+    assert path == "/adrs/TRAME-ADR-0013/status" and kwargs["version"] == 3
+    assert decode_proof(kwargs["proof"])["resource_id"] == "TRAME-ADR-0013"
+
+    doc = adr_document()
+    doc["adr"].update(id="TRAME-ADR-0013", foreign_id="TRAME-ADR-0011")
+    linked = dict(doc, linked_issue_ids=["TRAME-1"])
+    link = ScriptedTracker([_swapped_listing(), doc, linked])
+    link.link_adr_issue(adr_a, "TRAME-1", project=PROJECT)
+    assert [call[1] for call in link.calls[1:]] == [
+        "/adr-authoring/adrs/TRAME-ADR-0013", "/adr-authoring/adrs/TRAME-ADR-0013"]
+
+    rel = ScriptedTracker([_swapped_listing(), {
+        "schema_version": "devhub-adr-relationships.v1", "items": [],
+        "page": {"returned_count": 0, "cursor": None, "truncation": False}}])
+    rel.read_adr_issue_relations(adr_a, project=PROJECT)
+    assert rel.calls[1][1].startswith("/adrs/TRAME-ADR-0013/relationships")
+
+
+def test_adr_routes_refuse_an_adr_absent_from_the_listing_and_a_swapped_document():
+    absent = Adr(id="TRAME-ADR-0099", title="x")
+    for call in (
+        lambda t: t.set_adr_status(absent, "deprecated", project=PROJECT),
+        lambda t: t.link_adr_issue(absent, "TRAME-1", project=PROJECT),
+        lambda t: t.read_adr_issue_relations(absent, project=PROJECT),
+    ):
+        tracker = ScriptedTracker([_swapped_listing()])
+        with pytest.raises(DevHubTrackerError, match="invalid_response"):
+            call(tracker)
+        assert len(tracker.calls) == 1
+    # the authoring document answers another ADR than the resolved one: nothing is written
+    other = adr_document()
+    other["adr"]["id"] = "TRAME-ADR-0011"
+    tracker = ScriptedTracker([_swapped_listing(), other])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        tracker.link_adr_issue(Adr(id="TRAME-ADR-0011", title="A"), "TRAME-1", project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "GET"]
+
+
+def test_server_supplied_malformed_adr_ids_and_cursors_are_invalid_response():
+    item = adr_raw()
+    for bad in ("garbage", "OTHER-ADR-0004"):
+        with pytest.raises(DevHubTrackerError, match="invalid_response"):
+            ScriptedTracker([receipt_page([{**item, "id": bad}])]).migration_find_adr(
+                PROJECT, ADR_SRC)
+    with pytest.raises(TrackerConflictError):
+        import_adr(ScriptedTracker([adr_raw(id="garbage")]))
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        ScriptedTracker([receipt_page([item], cursor=None) | {
+            "page": {"schema_version": PAGE_V1, "returned_count": 1,
+                     "truncation": False, "cursor": 3}}]).migration_find_adr(PROJECT, ADR_SRC)

@@ -351,10 +351,78 @@ target (`migration.copy_and_verify`). It refuses an archived project before any 
 source and posts the link through `link` only when the source does not already carry it.
 DevHub stores one relation and shows its inverse on the other end (`depends-on` on one
 side, `blocks` on the other), so a replay, or the migration linking the other end, makes
-no second write. The other migration primitives (`migration_find_issue`,
-`migration_import_issue`) stay unavailable until DevHub stores a source coordinate
-(DHN-34, DEVHUB-105). The live test therefore links two issues created normally, by
-decision for PAT-314. Row DHN-35 of `devhub-requirements.md`.
+no second write. The import itself is described in "Selective import" below (PAT-319);
+the live test of PAT-314 links two issues created normally, by decision for PAT-314.
+Row DHN-35 of `devhub-requirements.md`.
+
+## Selective import (PAT-319, DHN-34, DHN-36)
+
+Routes of DEVHUB-105, merged in DevHub as `b0231d9` (its page `docs/TRACKER_API.md`, section
+"Selective import (DEVHUB-105)"). The adapter is `trackers/devhub.py`; the offline tests are in
+`tests/test_devhub_tracker.py` (PAT-319 block). A `source_ref` is 1 to 200 characters, a
+`foreign_id` 1 to 120, both without whitespace or control character
+(`_ORIGIN_TEXT`, `_SOURCE_REF_MAX`, `_FOREIGN_ID_MAX`); an invalid one is a `ValueError` before any
+request.
+
+**Issues.** `migration_import_issue(project, snapshot, source_ref=...)` refuses an archived
+project (`registry.require_writable_project`) and always sends one `POST
+/projects/:key/issues` with the title, body and fields of the snapshot and `source_ref`; it does
+no lookup first, so the server's content comparison is never bypassed. The fields sent are the
+non-null `type`, `priority`, `estimate` and `state` of the snapshot attributes. DevHub answers
+201 for a first import and 200 with the existing issue for a replay of the same content; a
+different content, or a coordinate held by another issue, is 409 `resource_conflict`, which
+becomes `TrackerConflictError`. Any other error is raised unchanged. The answer must carry the same
+`source_ref` and body, the project's key and the trimmed title, otherwise `TrackerConflictError`.
+The server accepts only `backlog` or `ready` as state at creation (409 `invalid_transition`,
+raised unchanged). Relations are not sent: use `migration_link_issue`.
+`migration_find_issue(project, source_ref)` reads `GET /projects/:key/issues?source_ref=`
+(zero or one body-free item) then `GET /issues/:id`; a list that is not exactly the coordinate
+asked (several items, a missing or different `source_ref`, another project, a truncated page)
+is `DevHubTrackerError` `invalid_response`, which is also what a server that ignores the
+filter produces.
+
+**ADRs.** `import_adr` (and `migration_import_adr`, which calls it) sends one `POST
+/projects/:key/adrs/import` with the strict body: `source_ref`, `foreign_id` (the snapshot id),
+`title`, `body`, `body_sha256`, `status` and the optional `source_created`, `source_updated`,
+`superseded_by`, `linked_issue_ids`. The sha-256 of the UTF-8 body is compared with
+`expected_source_sha256` before any request (`TrackerConflictError`); the server checks it
+again (422 `invalid_request`). The status must be one of `proposed`, `accepted`, `deprecated`,
+`superseded`; any other (for example `rejected`) is a `ValueError`. `superseded_by` is the foreign
+id of the replacement: the adapter looks it up (`?foreign_id=`) and sends its `source_ref`;
+an unknown replacement is `TrackerConflictError` before the import is written, and the
+parameter requires the status `superseded`. `issue_refs` become `linked_issue_ids` (issues of the
+bound project). A non-empty `supersedes` raises
+`TrackerCapabilityUnavailableError` before any request (`adr_import_supersedes`): DevHub stores the
+edge from the replaced ADR, so it is written when that ADR is imported with its `superseded_by`.
+Source-only issue references have no DevHub carrier and raise
+`TrackerCapabilityUnavailableError`. The call carries a scope `tracker:adr` credential and no
+`X-Foundry-Proof` header (a deviation declared by DevHub). Replay is 200; a divergent content, or a
+`foreign_id` held by another `source_ref`, is 409 `resource_conflict` (`TrackerConflictError`);
+a 404 `route_unavailable` is `TrackerCapabilityUnavailableError` (`migration_adr_import`). The
+answer must repeat the `source_ref`, `foreign_id`, status, body and source dates, otherwise
+`TrackerConflictError`. `migration_import_adrs` writes each replacement before the ADR it
+replaces (the server refuses a replacement not yet imported) and returns the ADRs in input order;
+a cycle is `TrackerConflictError`.
+
+**Reading.** `_to_adr` reads the additive keys `source_ref`, `foreign_id`, `source_created`,
+`source_updated` (absent or null on an ADR created normally; a wrongly typed value is
+`invalid_response`) and sets `Adr.id` to the foreign id when there is one; the server id
+`<KEY>-ADR-NNNN` stays the route identity. `migration_find_adr(project, source_ref)` (or the
+keyword `foreign_id=`, or both, combined by AND on the server) reads `GET
+/projects/:key/adrs?source_ref=|foreign_id=` then `GET /adrs/:id`. `list_adrs` therefore indexes an
+imported ADR by its foreign id; two ADRs with the same port id (a foreign id equal to a native id of
+the project) make the listing fail closed (`pagination_repeated`). The routes that act on an ADR
+(`set_adr_status`, `link_adr_issue`, `read_adr_issue_relations`) refuse an id of another project
+before any request, then resolve the server id from the project listing by port id
+(`_adr_route_item`), never from `Adr.id`: a foreign id equal to the server id of another ADR of the
+project (observed possible: the server checks a `foreign_id` for shape and uniqueness only,
+`b0231d9:src/tracker/store.ts:2256-2259`) therefore reaches its own ADR, and an id absent from the
+listing is `invalid_response`, nothing written. Cost: one listing before each of the three routes.
+
+Not covered (unknown whether needed): `migration_export_adrs` keeps the port default, with
+relations `unknown`; `migration_preflight` and `migration_supported_attributes` are not set for
+DevHub, so a whole-repository migration to a DevHub target is not claimed. Rows DHN-34 and DHN-36
+of `devhub-requirements.md`.
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
