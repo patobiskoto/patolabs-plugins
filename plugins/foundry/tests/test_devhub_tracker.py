@@ -3109,8 +3109,10 @@ def test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_wri
 
 
 def test_migration_preflight_refuses_a_project_whose_identity_or_governance_fails():
+    unbound = ScriptedTracker([])
     with pytest.raises(TrackerConflictError, match="hors projet"):
-        _preflight([_migration_issue(1)], project=PROJECT)  # no canonical_repo, no request
+        unbound.migration_preflight(PROJECT, (_migration_issue(1),))  # no canonical_repo
+    assert unbound.calls == []  # refused before any request
     wrong = ScriptedTracker([dict(_BOUND_REMOTE, id="43")])
     with pytest.raises(TrackerConflictError, match="hors projet"):
         wrong.migration_preflight(BOUND, (_migration_issue(1),))

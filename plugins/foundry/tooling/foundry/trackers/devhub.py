@@ -1993,7 +1993,10 @@ class DevHubTracker(Tracker):
         Limits of the DevHub fields, each from the server schema read at ``12ca158``
         (``issueFieldsSchema`` of ``src/tracker/contract.ts``, ``createTrackerIssue`` of
         ``src/tracker/store.ts``): ``priority`` is ``P0`` to ``P3``, ``estimate`` an integer
-        from 1 to 21, ``type`` a non-empty string of 80 characters at most, and a new issue
+        from 1 to 21, ``type`` a string of 80 UTF-16 units at most (the creation schema accepts an empty one, but
+        the ADR relations read, ``adrRelatedEntitySchema`` of
+        ``src/tracker/adr-relationships-contract.ts``, requires ``min(1)``, so an empty type is
+        excepted), and a new issue
         is created in ``backlog`` or ``ready`` only (409 ``invalid_transition`` otherwise).  A
         value outside these is excepted, never approximated.  The project workflow catalogue
         (a published workflow may disable a value, 409 ``value_disabled``) is not readable by
@@ -2028,9 +2031,10 @@ class DevHubTracker(Tracker):
     ) -> dict:
         """Qualify a DevHub target before the first effect (PAT-324).
 
-        No request writes anything.  One read (``verify_project_identity``) proves the key,
-        id and canonical repository of the target and refuses a project outside Foundry
-        governance (``DevHubGovernanceModeError``).  Everything else is decided locally on
+        No request writes anything.  Two reads (``verify_project_identity``: ``GET
+        /projects/resolve`` then ``GET /governance/projects/:key``) prove the key, id and
+        canonical repository of the target and refuse a project outside Foundry governance
+        (``DevHubGovernanceModeError``).  Everything else is decided locally on
         the closed manifest, because ``migration_import_issue`` and ``migration_import_adrs``
         run only after the issues are written: the source coordinates (valid and unique), the
         issue texts, the living graph (every parent an exact ``Epic`` with at most one parent,

@@ -1511,7 +1511,6 @@
         "core-operations"
       ],
       "operations": [
-        "cross-tracker-adr-import",
         "cross-tracker-live-work-copy"
       ]
     },
@@ -1526,7 +1525,6 @@
         "capabilities"
       ],
       "operations": [
-        "cross-tracker-adr-import",
         "cross-tracker-live-work-copy"
       ]
     },
@@ -1551,9 +1549,6 @@
       ],
       "categories": [
         "explicit-refusals"
-      ],
-      "operations": [
-        "cross-tracker-adr-import"
       ]
     },
     {
@@ -1592,9 +1587,6 @@
       "categories": [
         "core-operations",
         "replay"
-      ],
-      "operations": [
-        "cross-tracker-adr-import"
       ]
     },
     {
@@ -1605,9 +1597,6 @@
       ],
       "categories": [
         "core-operations"
-      ],
-      "operations": [
-        "cross-tracker-adr-import"
       ]
     },
     {

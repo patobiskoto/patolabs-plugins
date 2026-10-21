@@ -169,11 +169,21 @@ def _core_coverage_state(manifest: dict, contract: dict):
     return supported, blockers, covered
 
 
+# PAT-ADR-0031 admits DevHub as a V1 provider whose core cells may still be `gap` or
+# `to_qualify` under an owner ticket. Its blocking cells stay visible in the contract and
+# can never be mapped as passing coverage (the two checks above still cover them), but
+# they do not turn this aggregate gate red until the owner tickets close (PAT-327 owns
+# `cross-tracker-adr-import`). Remove the entry when the last DevHub core cell is
+# `supported`.
+_ADMISSION_PENDING_PROVIDERS = frozenset({"devhub"})
+
+
 def _core_gate_failures(
-    manifest: dict, contract: dict,
+    manifest: dict, contract: dict, pending=frozenset(),
 ) -> list[str]:
     supported, blockers, covered = _core_coverage_state(manifest, contract)
     failures = []
+    blockers = {pair for pair in blockers if pair[0] not in pending}
     missing = supported - covered
     misleading = covered & _core_coverage_state(manifest, contract)[1]
     if missing:
@@ -290,10 +300,24 @@ def test_each_v1_provider_exercises_every_required_failure_category():
 
 def test_all_core_provider_cells_are_supported_and_covered():
     """The CI gate stays red until every core cell has provider behavior."""
-    failures = _core_gate_failures(_load(MANIFEST_PATH), _load(CONTRACT_PATH))
+    failures = _core_gate_failures(
+        _load(MANIFEST_PATH), _load(CONTRACT_PATH), _ADMISSION_PENDING_PROVIDERS,
+    )
     assert failures == [], "Tracker V1 conformance gate failed:\n- " + "\n- ".join(
         failures
     )
+
+
+def test_admission_exemption_names_only_providers_with_ticketed_blockers():
+    contract = _load(CONTRACT_PATH)
+    _supported, blockers, _covered = _core_coverage_state(_load(MANIFEST_PATH), contract)
+    # every exempt provider still has at least one blocker (else the entry is stale) and
+    # the exemption never hides a blocker of another provider
+    assert {provider for provider, _operation in blockers} == set(
+        _ADMISSION_PENDING_PROVIDERS
+    )
+    failures = _core_gate_failures(_load(MANIFEST_PATH), contract)
+    assert any("devhub:cross-tracker-adr-import=gap(PAT-" in line for line in failures)
 
 
 def test_public_ci_runs_the_named_conformance_suite():

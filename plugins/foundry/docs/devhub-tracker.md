@@ -544,6 +544,8 @@ project back with `verify_project_identity`. The procedure below was run offline
 `capture_manifest` with a scripted transport (`test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile`);
 against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server.
 
+DevHub is a target for living work and for an ADR corpus whose relations it can record, not for every ADR corpus: the contract cell `cross-tracker-adr-import` stays a `gap` owned by PAT-327, because DevHub at `12ca158` has no carrier for source-only issue references nor for an `unknown` relation (observed in source; `devhub-requirements.md`, question 19) and the target must keep both (PAT-ADR-0008, PAT-ADR-0003). The preflight below refuses such a corpus, so the cutover fails closed. For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR, so a preflight of this repository toward DevHub would be refused.
+
 **`migration_preflight`** (`trackers/devhub.py`) writes nothing and returns the same value for the
 same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
 "source_ref+foreign_id", "creation_states": ["backlog", "ready"]}`. The value is part of the manifest
@@ -562,7 +564,7 @@ and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIs
   a dependency cycle are refused (`createTrackerLink`: "parent must be an Epic", "issue already has a
   parent", "hierarchy cycle refused", "dependency cycle refused");
 - the ADR corpus: a status DevHub lacks (`rejected`), source-only issue references (no carrier,
-  `devhub-requirements.md`, question 19), a relation that is `unknown` at the source (DevHub reads back a known value, never `unknown`,
+  `devhub-requirements.md`, question 19; PAT-327), a relation that is `unknown` at the source (DevHub reads back a known value, never `unknown`,
   PAT-ADR-0003 and PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
   the reverse, a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
   more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
@@ -583,7 +585,10 @@ states only, `createTrackerIssue`: an imported `in-progress` or `review` issue i
 `backlog`, with the exception recorded). A published project workflow may disable a value
 (`assertWorkflowAssignments`, 409 `value_disabled`, returned as `resource_conflict`): the service credential
 has no read route for that catalogue, so such a value is refused at copy time and is unknown at preflight
-(`devhub-requirements.md`, question 19).
+(`devhub-requirements.md`, question 19). This is below what the other providers do: they name every
+unavailable value as an exception in the manifest before the first effect, whereas DevHub refuses a
+workflow-disabled value only at copy time, after partial writes. The live-work copy cell stays
+`supported` with that named gap; question 19 is the follow-up.
 
 **ADR readback.** `migration_prepare_adr` returns the snapshot with `supersedes` sorted and the issue relations
 sorted by key then number, and `migration_export_adrs` returns the same order, because DevHub does not
