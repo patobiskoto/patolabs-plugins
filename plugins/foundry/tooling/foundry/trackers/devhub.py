@@ -660,6 +660,14 @@ class DevHubTracker(Tracker):
             raise ValueError("ADR id DevHubTracker invalide")
         return key
 
+    @classmethod
+    def _server_adr_key(cls, adr_id: str) -> str | None:
+        """Project key of a server-supplied ADR id; a malformed id is ``None``, never raised."""
+        try:
+            return cls._adr_project_key(adr_id)
+        except ValueError:
+            return None
+
     @staticmethod
     def _require_project(project: Project | None) -> Project:
         if (not isinstance(project, Project) or not isinstance(project.key, str)
@@ -1733,6 +1741,7 @@ class DevHubTracker(Tracker):
         page = raw["page"]
         if (page.get("schema_version") != _APPLICATION_CONTRACT
                 or page.get("truncation") is not False
+                or page.get("cursor") is not None
                 or page.get("returned_count") != len(raw["items"])
                 or len(raw["items"]) > 1
                 or not all(isinstance(item, dict) for item in raw["items"])):
@@ -1959,7 +1968,7 @@ class DevHubTracker(Tracker):
             return None
         item = items[0]
         self._to_adr(item)
-        if (self._adr_project_key(item["id"]) != project.key
+        if (self._server_adr_key(item["id"]) != project.key
                 or any(item.get(key) != value for key, value in params.items())):
             raise DevHubTrackerError("GET", base, None, "invalid_response")
         return item
@@ -2009,9 +2018,10 @@ class DevHubTracker(Tracker):
         and the exact body are kept (``body_sha256`` is checked here against
         ``expected_source_sha256`` and again by the server).  ``superseded_by`` names a
         replacement of this project by its foreign id, imported first; the server takes its
-        ``source_ref``.  ``supersedes`` is not sent: DevHub stores the edge from the
-        replaced ADR, so it is written when that ADR is imported.  A status DevHub lacks
-        (``rejected``) and source-only issue references are refused.  Replay 200, divergence
+        ``source_ref``.  A non-empty ``supersedes`` is refused (DevHub stores the
+        edge from the replaced ADR, written when that ADR is imported with its
+        ``superseded_by``).  A status DevHub lacks (``rejected``) and source-only issue
+        references are refused.  Replay 200, divergence
         or a taken ``foreign_id`` 409 (``TrackerConflictError``).
         """
         project = self._require_project(project)
@@ -2025,6 +2035,10 @@ class DevHubTracker(Tracker):
         if source_only_issue_refs:
             raise TrackerCapabilityUnavailableError(
                 self.name, "adr_source_only_issue_refs",
+            )
+        if supersedes is not _UNSPECIFIED_ADR_RELATION and supersedes:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "adr_import_supersedes",
             )
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         if not isinstance(expected_source_sha256, str) or digest != expected_source_sha256:
@@ -2073,7 +2087,7 @@ class DevHubTracker(Tracker):
         if (raw.get("source_ref") != source_ref or raw.get("foreign_id") != adr_id
                 or adr.status != historical_status or raw.get("body") != body
                 or adr.title != title.strip()
-                or self._adr_project_key(raw["id"]) != project.key
+                or self._server_adr_key(raw["id"]) != project.key
                 or any(raw.get(key) != request.get(key)
                        for key in ("source_created", "source_updated"))):
             raise TrackerConflictError("ADR migration DevHub divergente après import")
@@ -2220,23 +2234,37 @@ class DevHubTracker(Tracker):
             cursor = next_cursor
         raise DevHubTrackerError("GET", "/projects/audit", None, "pagination_page_limit")
 
+    def _adr_route_item(self, adr: Adr, project: Project | None) -> tuple[str, dict]:
+        """Resolve the server item whose port id is ``adr.id`` (project key, item).
+
+        ``Adr.id`` is the foreign id of an imported ADR (``_to_adr``), which can equal the
+        server id of another ADR of the project; the route id is therefore taken from the
+        project listing by port id, never from ``adr.id``.  Absent, or an item whose server
+        id is not of the bound project, is ``invalid_response``.
+        """
+        project_key = self._require_adr_binding(adr.id, project)
+        item = next(
+            (item for item in self._list_adr_items(Project(key=project_key, id="bound"))
+             if self._to_adr(item).id == adr.id),
+            None,
+        )
+        if (not isinstance(item, dict) or not isinstance(item.get("version"), int)
+                or self._server_adr_key(item["id"]) != project_key):
+            raise DevHubTrackerError("GET", "/projects/adrs", None, "invalid_response")
+        return project_key, item
+
     def set_adr_status(
         self, adr: Adr, status: str, project: Project | None = None,
     ) -> None:
         if status not in _ADR_STATES - {"proposed"}:
             raise ValueError("statut ADR non supporté par DevHub")
-        project_key = self._require_adr_binding(adr.id, project)
-        raw = next(
-            (item for item in self._list_adr_items(Project(key=project_key, id="bound"))
-             if item.get("id") == adr.id),
-            None,
-        )
-        if not isinstance(raw, dict) or not isinstance(raw.get("version"), int):
-            raise DevHubTrackerError("GET", "/projects/adrs", None, "invalid_response")
-        proof = self._proof(action="adr-status", project_key=project_key, resource_id=adr.id,
+        project_key, raw = self._adr_route_item(adr, project)
+        server_id = raw["id"]
+        proof = self._proof(action="adr-status", project_key=project_key,
+                            resource_id=server_id,
                             version=raw["version"], target_status=status)
         self._application_req(
-            "POST", f"/adrs/{urllib.parse.quote(adr.id, safe='')}/status",
+            "POST", f"/adrs/{urllib.parse.quote(server_id, safe='')}/status",
             {"status": status}, version=raw["version"], proof=proof, idempotent=True,
         )
 
@@ -2266,14 +2294,17 @@ class DevHubTracker(Tracker):
         if (not isinstance(issue_ref, str) or _ISSUE_ID.fullmatch(issue_ref) is None
                 or self._project_key(issue_ref) != project_key):
             raise ValueError("référence d'issue ADR DevHub invalide")
-        document = self._read_adr_document(adr.id)
+        server_id = self._adr_route_item(adr, project)[1]["id"]
+        document = self._read_adr_document(server_id)
+        if document["adr"].get("id") != server_id:
+            raise DevHubTrackerError("GET", "/adr-authoring/adrs", None, "invalid_response")
         current = self._to_adr(document["adr"])
         if current.status != "proposed":
             raise AdrRelationFrozenError(adr.id, current.status)
         linked = list(document["linked_issue_ids"])
         if issue_ref in linked:
             return current
-        path = f"/adr-authoring/adrs/{urllib.parse.quote(adr.id, safe='')}"
+        path = f"/adr-authoring/adrs/{urllib.parse.quote(server_id, safe='')}"
         try:
             raw = self._req(
                 "PATCH", path,
@@ -2306,8 +2337,8 @@ class DevHubTracker(Tracker):
         Reads `GET /adrs/:id/relationships` (`devhub-adr-relationships.v1`,
         `2edcea2:src/app/api/tracker/v1/[...path]/route.ts:889`) page by page.
         """
-        self._require_adr_binding(adr.id, project)
-        base = f"/adrs/{urllib.parse.quote(adr.id, safe='')}/relationships"
+        server_id = self._adr_route_item(adr, project)[1]["id"]
+        base = f"/adrs/{urllib.parse.quote(server_id, safe='')}/relationships"
         cursor, ids = 0, []
         for _page_number in range(1, _MAX_ADR_PAGES + 1):
             path = f"{base}?{urllib.parse.urlencode({'cursor': cursor, 'limit': 100})}"

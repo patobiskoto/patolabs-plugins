@@ -391,8 +391,10 @@ again (422 `invalid_request`). The status must be one of `proposed`, `accepted`,
 id of the replacement: the adapter looks it up (`?foreign_id=`) and sends its `source_ref`;
 an unknown replacement is `TrackerConflictError` before the import is written, and the
 parameter requires the status `superseded`. `issue_refs` become `linked_issue_ids` (issues of the
-bound project). `supersedes` is not sent: DevHub stores the edge from the replaced ADR, so it is
-written when that ADR is imported. Source-only issue references have no DevHub carrier and raise
+bound project). A non-empty `supersedes` raises
+`TrackerCapabilityUnavailableError` before any request (`adr_import_supersedes`): DevHub stores the
+edge from the replaced ADR, so it is written when that ADR is imported with its `superseded_by`.
+Source-only issue references have no DevHub carrier and raise
 `TrackerCapabilityUnavailableError`. The call carries a scope `tracker:adr` credential and no
 `X-Foundry-Proof` header (a deviation declared by DevHub). Replay is 200; a divergent content, or a
 `foreign_id` held by another `source_ref`, is 409 `resource_conflict` (`TrackerConflictError`);
@@ -410,8 +412,12 @@ keyword `foreign_id=`, or both, combined by AND on the server) reads `GET
 /projects/:key/adrs?source_ref=|foreign_id=` then `GET /adrs/:id`. `list_adrs` therefore indexes an
 imported ADR by its foreign id; two ADRs with the same port id (a foreign id equal to a native id of
 the project) make the listing fail closed (`pagination_repeated`). The routes that act on an ADR
-(`set_adr_status`, `link_adr_issue`, `read_adr_issue_relations`) still take the `<KEY>-ADR-NNNN`
-id and refuse an id of another project before any request, so they do not act on a foreign id.
+(`set_adr_status`, `link_adr_issue`, `read_adr_issue_relations`) refuse an id of another project
+before any request, then resolve the server id from the project listing by port id
+(`_adr_route_item`), never from `Adr.id`: a foreign id equal to the server id of another ADR of the
+project (observed possible: the server checks a `foreign_id` for shape and uniqueness only,
+`b0231d9:src/tracker/store.ts:2256-2259`) therefore reaches its own ADR, and an id absent from the
+listing is `invalid_response`, nothing written. Cost: one listing before each of the three routes.
 
 Not covered (unknown whether needed): `migration_export_adrs` keeps the port default, with
 relations `unknown`; `migration_preflight` and `migration_supported_attributes` are not set for
