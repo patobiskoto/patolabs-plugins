@@ -757,7 +757,7 @@ def _issue_snapshot(source_ref: str, title: str, body: str) -> dict:
     }
 
 
-@gap("DHN-34", "adapter+server", "no migration_find_issue or migration_import_issue; server source_ref planned as DEVHUB-105", raises=TrackerCapabilityUnavailableError)
+@need("DHN-34")
 def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     tracker = suite.tracker
     ref = f"linear:issue:PAT-{secrets.randbelow(10**6) + 1000}"
@@ -769,6 +769,12 @@ def test_dhn_34_living_issue_is_imported_once_by_exact_source_coordinate(suite):
     assert again.id == first.id
     found = tracker.migration_find_issue(suite.project, ref)
     assert found is not None and (found.id, found.title, found.body) == (first.id, title, body)
+    assert [item.id for item in tracker.search(suite.project, title)] == [first.id]
+    # a divergent replay fails closed and writes nothing
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_issue(
+            suite.project, _issue_snapshot(ref, title, body + "- [ ] other\n"), source_ref=ref,
+        )
     assert [item.id for item in tracker.search(suite.project, title)] == [first.id]
 
 
@@ -789,20 +795,57 @@ def test_dhn_35_imported_issues_are_linked_through_the_staged_port(suite):
     assert _has_link(tracker.get_issue(target.id), "blocks", source.id)
 
 
-@gap("DHN-36", "adapter+server", "no ADR import; server import route planned as DEVHUB-105, foreign id kept as an alias the adapter must expose as id", raises=TrackerCapabilityUnavailableError)
+def _adr_snapshot(number: int, status: str, body: str, superseded_by=None) -> dict:
+    adr_id = f"FOUNDRY-ADR-{number:04d}"
+    return {
+        "kind": "adr", "source_ref": f"linear:adr:{adr_id}", "id": adr_id,
+        "title": f"{adr_id} - single tracker", "body": body, "status": status,
+        "relations": {"supersedes": "unknown", "superseded_by": superseded_by, "issues": []},
+        "source_created": 1_700_000_000_000, "source_updated": 1_700_000_000_001,
+    }
+
+
+@need("DHN-36")
 def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite):
     tracker = suite.tracker
-    adr_id = "FOUNDRY-ADR-0026"
+    old_number = secrets.randbelow(4000) + 1000
     body = "## Decision\n\nOne tracker per repository.\n"
-    tracker.import_adr(
-        suite.project, adr_id=adr_id, title=f"{adr_id} - single tracker", body=body,
-        historical_status="accepted", source_ref=f"linear:adr:{adr_id}",
-        source_created=1_700_000_000_000, source_updated=1_700_000_000_001,
-        expected_source_sha256=hashlib.sha256(body.encode()).hexdigest(),
-        supersedes=(), superseded_by=None, issue_refs=(),
+    replacement = _adr_snapshot(old_number + 5000, "accepted", body)
+    old = _adr_snapshot(
+        old_number, "superseded", body + "Superseded.\n", replacement["id"],
     )
+    # replacements first: the corpus lists the replaced ADR first on purpose
+    imported = tracker.migration_import_adrs(suite.project, (old, replacement))
+    assert [item.id for item in imported] == [old["id"], replacement["id"]]
     listed = {item.id: item for item in tracker.list_adrs(suite.project)}
-    assert listed[adr_id].status == "accepted" and listed[adr_id].body == body
+    for snapshot in (old, replacement):
+        adr = listed[snapshot["id"]]
+        assert (adr.status, adr.body) == (snapshot["status"], snapshot["body"])
+        by_ref = tracker.migration_find_adr(suite.project, snapshot["source_ref"])
+        by_alias = tracker.migration_find_adr(suite.project, foreign_id=snapshot["id"])
+        assert by_ref is not None and by_alias is not None
+        assert (by_ref.id, by_ref.body) == (snapshot["id"], snapshot["body"])
+        assert by_alias.id == by_ref.id and by_alias.ref == by_ref.ref
+    assert tracker.migration_find_adr(suite.project, "linear:adr:absent") is None
+    # a faithful replay converges on the same ADR; a divergent one fails closed
+    again = tracker.migration_import_adr(
+        suite.project, old, source_ref=old["source_ref"],
+    )
+    assert again.ref == listed[old["id"]].ref
+    assert len([item for item in tracker.list_adrs(suite.project)
+                if item.id == old["id"]]) == 1
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_adr(
+            suite.project, {**old, "title": "changed"}, source_ref=old["source_ref"],
+        )
+    # a body whose hash is wrong is refused before any write (the server also answers 422)
+    with pytest.raises(TrackerConflictError):
+        tracker.import_adr(
+            suite.project, adr_id=f"FOUNDRY-ADR-{old_number + 1:04d}", title="bad hash",
+            body=body, historical_status="accepted",
+            source_ref="linear:adr:bad-hash", source_created=None, source_updated=None,
+            expected_source_sha256="0" * 64,
+        )
 
 
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------

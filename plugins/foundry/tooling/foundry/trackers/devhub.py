@@ -28,6 +28,7 @@ from foundry.models import (
     TransitionContext,
 )
 from foundry.trackers.base import (
+    _UNSPECIFIED_ADR_RELATION,
     BodyUpdateUnavailableError,
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
@@ -103,6 +104,12 @@ _FIELD_MAP = {
     "Labels": "labels",
     "GitHub PR": "pr_url",
 }
+# PAT-319 / DHN-34, DHN-36: origin coordinates of DEVHUB-105 (`sourceRefSchema`,
+# `foreignIdSchema`, `src/tracker/contract.ts:94-96` at `b0231d9`): no whitespace, no
+# control character (C0, DEL, C1); lengths are counted in UTF-16 units like the server.
+_ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f]+")
+_SOURCE_REF_MAX = 200
+_FOREIGN_ID_MAX = 120
 _PROJECT_KEY = re.compile(r"[A-Z][A-Z0-9]{1,15}")
 _PROJECT_ID = re.compile(r"[1-9][0-9]*")
 _ISSUE_ID = re.compile(r"[A-Z][A-Z0-9]{1,15}-[0-9]+")
@@ -616,8 +623,28 @@ class DevHubTracker(Tracker):
                 or raw.get("status") not in _ADR_STATES
                 or type(raw.get("version")) is not int or raw["version"] < 1):
             raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
-        return Adr(id=raw["id"], title=raw.get("title", ""), status=raw.get("status", "proposed"),
+        # DEVHUB-105 keys are additive: absent on an older server, null on a normal ADR.
+        for key in ("source_ref", "foreign_id"):
+            if raw.get(key) is not None and not isinstance(raw[key], str):
+                raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
+        for key in ("source_created", "source_updated"):
+            if raw.get(key) is not None and (
+                    type(raw[key]) is not int or raw[key] < 0):
+                raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
+        foreign_id = raw.get("foreign_id")
+        if foreign_id is not None and not DevHubTracker._origin_text(
+                foreign_id, _FOREIGN_ID_MAX):
+            raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
+        # The foreign id is the port identity of an imported ADR (PAT-319, DHN-36);
+        # the server id `<KEY>-ADR-NNNN` stays the route identity.
+        return Adr(id=foreign_id or raw["id"], title=raw.get("title", ""),
+                   status=raw.get("status", "proposed"),
                    body=raw.get("body"), ref=raw.get("ref"))
+
+    @staticmethod
+    def _origin_text(value, limit: int) -> bool:
+        return (isinstance(value, str) and _ORIGIN_TEXT.fullmatch(value) is not None
+                and len(value.encode("utf-16-le")) // 2 <= limit)
 
     @staticmethod
     def _project_key(issue_id: str) -> str:
@@ -1691,6 +1718,103 @@ class DevHubTracker(Tracker):
             return
         self.link(src_id, link_type, dst_id, project)
 
+    @classmethod
+    def _source_ref(cls, value) -> str:
+        if not cls._origin_text(value, _SOURCE_REF_MAX):
+            raise ValueError("source_ref DevHubTracker invalide")
+        return value
+
+    def _import_lookup_page(self, path: str, base: str) -> list[dict]:
+        """One exact-lookup list answer: zero or one item, never a page to walk."""
+        raw = self._application_req("GET", path)
+        if (not isinstance(raw, dict) or not isinstance(raw.get("items"), list)
+                or not isinstance(raw.get("page"), dict)):
+            raise DevHubTrackerError("GET", base, None, "invalid_response")
+        page = raw["page"]
+        if (page.get("schema_version") != _APPLICATION_CONTRACT
+                or page.get("truncation") is not False
+                or page.get("returned_count") != len(raw["items"])
+                or len(raw["items"]) > 1
+                or not all(isinstance(item, dict) for item in raw["items"])):
+            raise DevHubTrackerError("GET", base, None, "invalid_response")
+        return raw["items"]
+
+    def migration_find_issue(self, project: Project, source_ref: str) -> Issue | None:
+        """Find the issue imported for an exact source coordinate (DHN-34, PAT-319).
+
+        One ``GET /projects/:key/issues?source_ref=`` (zero or one body-free item), then
+        ``GET /issues/:id`` for the body.  The answer must carry the same ``source_ref`` and
+        belong to the bound project; a server that ignores the filter answers a shape this
+        method refuses (``invalid_response``) instead of returning a wrong issue.
+        """
+        project = self._require_project(project)
+        self._source_ref(source_ref)
+        base = f"/projects/{urllib.parse.quote(project.key, safe='')}/issues"
+        items = self._import_lookup_page(
+            f"{base}?{urllib.parse.urlencode({'source_ref': source_ref})}", base,
+        )
+        if not items:
+            return None
+        listed = items[0]
+        if (listed.get("source_ref") != source_ref or not isinstance(listed.get("id"), str)
+                or _ISSUE_ID.fullmatch(listed["id"]) is None
+                or self._project_key(listed["id"]) != project.key):
+            raise DevHubTrackerError("GET", base, None, "invalid_response")
+        raw = self._issue_raw(listed["id"])
+        if raw.get("source_ref") != source_ref or raw.get("id") != listed["id"]:
+            raise DevHubTrackerError("GET", base, None, "invalid_response")
+        return self._to_issue(raw)
+
+    def migration_import_issue(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Issue:
+        """Import one living issue under its source coordinate (DHN-34, PAT-319).
+
+        Always one ``POST /projects/:key/issues`` carrying ``source_ref``: the server
+        answers 201 for a first import, 200 with the existing issue for a replay of the same
+        content, 409 ``resource_conflict`` for different content or a coordinate held by
+        another issue (``TrackerConflictError``).  No client-side lookup precedes it, so
+        the server's content comparison is never bypassed.  ``None`` attributes are omitted;
+        the server accepts only ``backlog`` or ``ready`` as creation state (409
+        ``invalid_transition`` otherwise).  Relations are not sent: ``migration_link_issue``.
+        """
+        project = self._require_project(project)
+        registry.require_writable_project(self.name, project)
+        self._source_ref(source_ref)
+        if snapshot.get("source_ref", source_ref) != source_ref:
+            raise ValueError("source_ref de migration divergent")
+        title, body = snapshot["title"], snapshot["body"]
+        if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
+            raise ValueError("titre/corps de migration DevHubTracker invalides")
+        attributes = snapshot.get("attributes") or {}
+        fields = self._normalize_fields({
+            native: attributes[name]
+            for native, name in (
+                ("Type", "type"), ("Priority", "priority"),
+                ("Estimate", "estimate"), ("State", "state"),
+            )
+            if attributes.get(name) is not None
+        }, allow_state=True)
+        try:
+            raw = self._application_req(
+                "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/issues",
+                {"title": title, "body": body, "fields": fields, "source_ref": source_ref},
+                idempotent=True,
+            )
+        except DevHubTrackerError as error:
+            if error.status == 409 and error.code == "resource_conflict":
+                raise TrackerConflictError(
+                    "source_ref DevHub déjà importé avec un autre contenu "
+                    "ou tenu par une autre issue ; import refusé"
+                ) from None
+            raise
+        issue = self._to_issue(raw)
+        if (raw.get("source_ref") != source_ref or raw.get("body") != body
+                or issue.title != title.strip()
+                or self._project_key(issue.id) != project.key):
+            raise TrackerConflictError("issue migration DevHub divergente après import")
+        return issue
+
     def add_comment(
         self, issue_id: str, text: str, project: Project | None = None,
     ) -> None:
@@ -1809,6 +1933,212 @@ class DevHubTracker(Tracker):
             {"title": title, "body": body, "status": status}, idempotent=True,
         )
         return self._to_adr(raw)
+
+    def _adr_lookup(
+        self, project: Project, *, source_ref: str | None = None,
+        foreign_id: str | None = None,
+    ) -> dict | None:
+        """Exact ADR lookup by ``source_ref`` and/or ``foreign_id`` (zero or one item).
+
+        The two filters combine by AND on the server; the answer must echo every filter
+        given and belong to the bound project, otherwise ``invalid_response``.
+        """
+        project = self._require_project(project)
+        params = {}
+        if source_ref is not None:
+            params["source_ref"] = self._source_ref(source_ref)
+        if foreign_id is not None:
+            if not self._origin_text(foreign_id, _FOREIGN_ID_MAX):
+                raise ValueError("foreign_id DevHubTracker invalide")
+            params["foreign_id"] = foreign_id
+        if not params:
+            raise ValueError("source_ref ou foreign_id requis")
+        base = f"/projects/{urllib.parse.quote(project.key, safe='')}/adrs"
+        items = self._import_lookup_page(f"{base}?{urllib.parse.urlencode(params)}", base)
+        if not items:
+            return None
+        item = items[0]
+        self._to_adr(item)
+        if (self._adr_project_key(item["id"]) != project.key
+                or any(item.get(key) != value for key, value in params.items())):
+            raise DevHubTrackerError("GET", base, None, "invalid_response")
+        return item
+
+    def migration_find_adr(
+        self, project: Project, source_ref: str | None = None, *,
+        foreign_id: str | None = None,
+    ) -> Adr | None:
+        """Read an imported ADR back by ``source_ref`` or ``foreign_id`` (DHN-36, PAT-319).
+
+        The port passes the ``source_ref``; ``foreign_id`` is an additive keyword for the
+        alias.  The body-free list item is completed by ``GET /adrs/:id``; the returned
+        ``Adr.id`` is the foreign id when the ADR has one (``_to_adr``).
+        """
+        item = self._adr_lookup(project, source_ref=source_ref, foreign_id=foreign_id)
+        if item is None:
+            return None
+        path = f"/adrs/{urllib.parse.quote(item['id'], safe='')}"
+        raw = self._application_req("GET", path)
+        adr = self._to_adr(raw)
+        if (raw.get("id") != item["id"] or raw.get("source_ref") != item.get("source_ref")
+                or raw.get("foreign_id") != item.get("foreign_id")
+                or not isinstance(raw.get("body"), str)):
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+        return adr
+
+    def import_adr(
+        self,
+        project: Project,
+        *,
+        adr_id: str,
+        title: str,
+        body: str,
+        historical_status: str,
+        source_ref: str,
+        source_created: int | None,
+        source_updated: int | None,
+        expected_source_sha256: str,
+        supersedes: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
+        issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
+        source_only_issue_refs: tuple[str, ...] = (),
+    ) -> Adr:
+        """Import one historical ADR through ``POST /projects/:key/adrs/import`` (DHN-36).
+
+        ``adr_id`` is kept as ``foreign_id`` and becomes the port ``Adr.id``; the status
+        and the exact body are kept (``body_sha256`` is checked here against
+        ``expected_source_sha256`` and again by the server).  ``superseded_by`` names a
+        replacement of this project by its foreign id, imported first; the server takes its
+        ``source_ref``.  ``supersedes`` is not sent: DevHub stores the edge from the
+        replaced ADR, so it is written when that ADR is imported.  A status DevHub lacks
+        (``rejected``) and source-only issue references are refused.  Replay 200, divergence
+        or a taken ``foreign_id`` 409 (``TrackerConflictError``).
+        """
+        project = self._require_project(project)
+        registry.require_writable_project(self.name, project)
+        self._source_ref(source_ref)
+        if not self._origin_text(adr_id, _FOREIGN_ID_MAX):
+            raise ValueError("identifiant ADR étranger DevHubTracker invalide")
+        if (not isinstance(title, str) or not title.strip() or not isinstance(body, str)
+                or historical_status not in _ADR_STATES):
+            raise ValueError("ADR d'import DevHubTracker invalide")
+        if source_only_issue_refs:
+            raise TrackerCapabilityUnavailableError(
+                self.name, "adr_source_only_issue_refs",
+            )
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        if not isinstance(expected_source_sha256, str) or digest != expected_source_sha256:
+            raise TrackerConflictError("empreinte du corps ADR divergente ; import refusé")
+        request = {
+            "source_ref": source_ref, "foreign_id": adr_id, "title": title, "body": body,
+            "body_sha256": digest, "status": historical_status,
+        }
+        for key, value in (("source_created", source_created), ("source_updated", source_updated)):
+            if value is not None:
+                if type(value) is not int or value < 0:
+                    raise ValueError("date source ADR DevHubTracker invalide")
+                request[key] = value
+        if superseded_by is not _UNSPECIFIED_ADR_RELATION and superseded_by is not None:
+            if historical_status != "superseded":
+                raise ValueError("superseded_by exige le statut superseded")
+            replacement = self._adr_lookup(project, foreign_id=superseded_by)
+            if replacement is None or not isinstance(replacement.get("source_ref"), str):
+                raise TrackerConflictError(
+                    "ADR de remplacement DevHub non importée ; importe-la d'abord"
+                )
+            request["superseded_by"] = replacement["source_ref"]
+        if issue_refs is not _UNSPECIFIED_ADR_RELATION:
+            linked = list(issue_refs)
+            for ref in linked:
+                if (not isinstance(ref, str) or _ISSUE_ID.fullmatch(ref) is None
+                        or self._project_key(ref) != project.key):
+                    raise ValueError("référence d'issue ADR DevHub invalide")
+            request["linked_issue_ids"] = linked
+        try:
+            raw = self._application_req(
+                "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/adrs/import",
+                request, idempotent=True,
+            )
+        except DevHubTrackerError as error:
+            unavailable = self._route_unavailable(error, "migration_adr_import")
+            if unavailable is not None:
+                raise unavailable from None
+            if error.status == 409 and error.code == "resource_conflict":
+                raise TrackerConflictError(
+                    "import ADR DevHub refusé : source_ref déjà importé avec un autre "
+                    "contenu, foreign_id pris, ou remplacement invalide"
+                ) from None
+            raise
+        adr = self._to_adr(raw)
+        if (raw.get("source_ref") != source_ref or raw.get("foreign_id") != adr_id
+                or adr.status != historical_status or raw.get("body") != body
+                or adr.title != title.strip()
+                or self._adr_project_key(raw["id"]) != project.key
+                or any(raw.get(key) != request.get(key)
+                       for key in ("source_created", "source_updated"))):
+            raise TrackerConflictError("ADR migration DevHub divergente après import")
+        return adr
+
+    def migration_import_adr(
+        self, project: Project, snapshot: dict, *, source_ref: str,
+    ) -> Adr:
+        relations = snapshot["relations"]
+        optional = {}
+        if relations.get("superseded_by") != "unknown":
+            optional["superseded_by"] = relations["superseded_by"]
+        if relations.get("issues") != "unknown":
+            optional["issue_refs"] = tuple(relations["issues"])
+        return self.import_adr(
+            project,
+            adr_id=snapshot["id"], title=snapshot["title"], body=snapshot["body"],
+            historical_status=snapshot["status"], source_ref=source_ref,
+            source_created=snapshot.get("source_created"),
+            source_updated=snapshot.get("source_updated"),
+            expected_source_sha256=hashlib.sha256(
+                snapshot["body"].encode("utf-8")
+            ).hexdigest(),
+            source_only_issue_refs=tuple(snapshot.get("source_only_issue_refs", [])),
+            **optional,
+        )
+
+    def migration_import_adrs(
+        self, project: Project, snapshots: tuple[dict, ...],
+        *, qualification: object | None = None,
+    ) -> list[Adr]:
+        """Import a closed corpus, replacements first, answers in input order (PAT-319).
+
+        The server refuses ``superseded_by`` to an ADR not yet imported, so each ADR is
+        written after the one that replaces it; a cycle or a replacement outside the
+        corpus is not reordered (the server's refusal stands).
+        """
+        if qualification is not None:
+            raise TrackerConflictError("devhub ADR migration qualification is unexpected")
+        by_id = {snapshot["id"]: snapshot for snapshot in snapshots}
+        if len(by_id) != len(snapshots):
+            raise TrackerConflictError("identifiant ADR de migration dupliqué")
+        ordered, state = [], {}
+
+        def visit(snapshot):
+            mark = state.get(snapshot["id"])
+            if mark == "done":
+                return
+            if mark == "active":
+                raise TrackerConflictError("cycle de remplacement ADR de migration")
+            state[snapshot["id"]] = "active"
+            replacement = snapshot["relations"].get("superseded_by")
+            if replacement in by_id:
+                visit(by_id[replacement])
+            state[snapshot["id"]] = "done"
+            ordered.append(snapshot)
+
+        for snapshot in snapshots:
+            visit(snapshot)
+        imported = {}
+        for snapshot in ordered:
+            imported[snapshot["id"]] = self.migration_import_adr(
+                project, snapshot, source_ref=snapshot["source_ref"],
+            )
+        return [imported[snapshot["id"]] for snapshot in snapshots]
 
     @staticmethod
     def _audit_resource_belongs_to(project: Project, resource: str) -> bool:
