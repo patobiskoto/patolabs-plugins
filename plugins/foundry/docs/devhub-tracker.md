@@ -10,6 +10,7 @@ boundaries under `/api/tracker/v1` and does not change any judgment skill:
 | Project discovery | `devhub-project-catalog.v1` | Bounded, read-only project catalogue; never a repository binding |
 | Original Epic closure | `devhub-epic-closure.v1` | Atomic closure plus replayable proof of the exact pre-closure graph |
 | Terminal recovery | `devhub-foundry-terminal-receipt.v1` | Project-bound recovery of an existing terminal reconciliation |
+| Governance mode | `devhub-governance.v1` | Read-only project governance mode (`manual` or `foundry`), see "Governance mode" |
 | Proof envelope | `devhub-tracker.v1` | The signed Foundry proof payload verified for guarded transitions |
 
 Foundry rejects a response whose header or pagination schema does not match the
@@ -353,7 +354,60 @@ without guessing; any other error is raised. It is the read-back that the
 `repository-bootstrap` journey of `tracker-contract.v1.json` asks for before a binding is
 published. `registry bootstrap` does not reach it on DevHub yet: it refuses a tracker
 outside `registry._V1_TRACKERS` first (`registry._validated_binding_entry`, DHN-40).
-Row DHN-41 of `devhub-requirements.md`.
+Row DHN-41 of `devhub-requirements.md`. Since PAT-321 it also reads the project governance
+mode once the identity holds: see "Governance mode".
+
+## Governance mode (PAT-321)
+
+Source: the stable contract `devhub-governance.v1` (`src/tracker/governance-contract.ts:6`
+at DevHub `8028000`) and the refusal `assertFoundryGovernance` (`src/tracker/store.ts:1768-1771`
+at `8028000`), both read in source, not run. DevHub documents the route in `TRACKER_API.md`
+with DEVHUB-116, which was not merged when this section was written: until then the
+documented source is the contract file and the refusal message, which is not a contract.
+
+A project is in mode `manual` or `foundry`; DevHub refuses Foundry writes (proof-bound
+transitions and the routes of this page) outside `foundry`, with 403 `authority_boundary`.
+That code is shared with other authority refusals (for example a decided ADR, see
+`link_adr_issue`), so the adapter never names a governance cause from the code alone.
+
+- Identity read-back. `verify_project_identity` (`trackers/devhub.py`), after the identity
+  checks succeed, reads `GET /api/tracker/v1/governance/projects/<KEY>` through `_req` with
+  `response_contract` `devhub-governance.v1` (`_governance_mode`; scope `tracker:read`,
+  readable whatever the mode, as stated by the DevHub agent on 2026-10-21, not observed). It
+  accepts exactly `schema_version` `devhub-governance.v1`, `project` equal to the key and
+  `mode` in `manual`, `foundry` (`_GOVERNANCE_MODES`); anything else is
+  `invalid_response`. Mode `manual` raises `DevHubGovernanceModeError` (a
+  `TrackerConflictError`) naming the project and the mode, not `False`, which stays an
+  identity mismatch. A 404 `route_unavailable` (server without the route) keeps the previous
+  behaviour: the mode is unknown and nothing is refused. Any other error is raised.
+- Guard on writes. `_governance_guard` wraps `POST /issues/:id/state` (both calls of
+  `set_state`), `/acceptance-override`, `/human-acceptance`, `POST /adrs/:id/status`,
+  `POST /adrs/:id/supersede`, `POST /projects/:key/adrs/import` and the Epic closure
+  `POST /projects/:key/epics/:id/closure`. On a 403 `authority_boundary` it re-reads the
+  mode once: not `foundry` raises `DevHubGovernanceModeError`; `foundry`, an unknown mode or
+  a failing read re-raises the original error. No governance read precedes a write. The
+  `link_adr_issue` handling of the same code is unchanged. Since DEVHUB-110 (DevHub merge `5782d78`) the five proof-bound routes above, supersede
+  included, refuse outside Foundry governance (`assertFoundryGovernance`,
+  `8028000:src/tracker/store.ts:1768`, called at `:1782`, `:1864`, `:1914`, `:2357`,
+  `:2393`; observed in source, not run). Whether the import and Epic closure routes check
+  the mode is unknown until DEVHUB-116 (announced, not merged); they are wrapped already.
+- Callers. `registry.verify_existing_project` turns a `TrackerConflictError` of the
+  read-back into a `ValueError` carrying its message (any other exception keeps the generic
+  message), so a binding fails closed naming the mode; `devhub` is outside
+  `registry._V1_TRACKERS`, so `registry bootstrap` does not reach this path on DevHub yet
+  (DHN-40). `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
+  `ghprojects`, so `doctor` does not read the governance mode of a DevHub project.
+
+Tests: `tests/test_devhub_tracker.py`, section "PAT-321" (offline, scripted transport).
+Observed on 2026-10-21 on a disposable instance built from DevHub `8028000` (never
+production): the live suite passed (40 passed, 1 xfailed DHN-40, 1 skipped DHN-42), so the
+identity read-back of DHN-41 read the governance route of a `foundry` project. A one-off
+script then set that project to `manual` directly in the disposable database (`projects`
+columns `governance_mode` and `governance_origin`; the human conversion route needs an
+interactive session, `convertGovernance` in `src/tracker/governance-store.ts`):
+`verify_project_identity` raised `DevHubGovernanceModeError` naming `manual`, and
+`set_state` on an issue of that project, refused by DevHub with 403 `authority_boundary`,
+raised the same error.
 
 ## Staged migration links (PAT-314, DHN-35)
 
@@ -494,7 +548,7 @@ Source: DEVHUB-108, merge `6721ad8` (`6721ad8:docs/TRACKER_API.md`, "Proof-bound
 
 `migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (status route) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` stays `unknown`. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
 
-Limits, observed in source: the route does not check the project governance mode (DEVHUB-110, same section of `TRACKER_API.md`); the id of an ADR imported with a foreign id that is not shaped `<KEY>-ADR-NNNN` is refused by the binding check before any request, as for the other ADR methods (`_require_adr_binding`).
+Limits: at `6721ad8` the route did not check the project governance mode; since DEVHUB-110 (`5782d78`) it refuses outside Foundry governance with 403 `authority_boundary` (`8028000:src/tracker/store.ts:2393`, observed in source), reported by the adapter as described in "Governance mode"; the id of an ADR imported with a foreign id that is not shaped `<KEY>-ADR-NNNN` is refused by the binding check before any request, as for the other ADR methods (`_require_adr_binding`).
 
 ## Acceptance checkbox synchronization
 

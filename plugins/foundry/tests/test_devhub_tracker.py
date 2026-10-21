@@ -2085,6 +2085,13 @@ def test_reconcile_issue_creation_reports_an_absent_issue_and_refuses_a_foreign_
 # --- PAT-314: DHN-41 project identity read-back, DHN-35 staged migration link ---
 
 BOUND = Project(key="TRAME", id="42", extra={"canonical_repo": "github.com/acme/trame"})
+_BOUND_REMOTE = {"key": "TRAME", "id": "42", "canonical_repo": "github.com/acme/trame"}
+
+
+def governance_raw(mode="foundry", **overrides):
+    raw = {"schema_version": "devhub-governance.v1", "project": "TRAME", "mode": mode}
+    raw.update(overrides)
+    return raw
 
 
 @pytest.mark.parametrize(("remote", "expected"), (
@@ -2095,10 +2102,12 @@ BOUND = Project(key="TRAME", id="42", extra={"canonical_repo": "github.com/acme/
     ({"key": "TRAME", "id": "42"}, False),
 ))
 def test_verify_project_identity_reads_back_key_id_and_repository(remote, expected):
-    tracker = ScriptedTracker([remote])
+    tracker = ScriptedTracker([remote, governance_raw()])
     assert tracker.verify_project_identity(BOUND) is expected
-    assert [call[:2] for call in tracker.calls] == [
-        ("GET", "/projects/resolve?repo=github.com%2Facme%2Ftrame")]
+    expected_calls = [("GET", "/projects/resolve?repo=github.com%2Facme%2Ftrame")]
+    if expected:  # the governance mode is read only once the identity holds (PAT-321)
+        expected_calls.append(("GET", "/governance/projects/TRAME"))
+    assert [call[:2] for call in tracker.calls] == expected_calls
 
 
 def test_verify_project_identity_is_false_without_a_repository_or_on_404():
@@ -2871,3 +2880,107 @@ def test_server_supplied_malformed_adr_ids_and_cursors_are_invalid_response():
         ScriptedTracker([receipt_page([item], cursor=None) | {
             "page": {"schema_version": PAGE_V1, "returned_count": 1,
                      "truncation": False, "cursor": 3}}]).migration_find_adr(PROJECT, ADR_SRC)
+
+
+# --- PAT-321: DevHub governance mode ---
+
+def test_identity_read_back_passes_a_foundry_governed_project_and_reads_the_contract():
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw("foundry")])
+    assert tracker.verify_project_identity(BOUND) is True
+    assert tracker.calls[1][3]["response_contract"] == "devhub-governance.v1"
+
+
+def test_identity_read_back_refuses_a_manual_project_naming_the_mode():
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw("manual")])
+    with pytest.raises(DevHubGovernanceModeError, match="'manual'") as caught:
+        tracker.verify_project_identity(BOUND)
+    assert isinstance(caught.value, TrackerConflictError)
+    assert caught.value.mode == "manual"
+    assert "TRAME" in str(caught.value)
+
+
+def test_identity_read_back_keeps_old_behaviour_when_the_governance_route_is_absent():
+    absent = DevHubTrackerError("GET", "/governance/projects/TRAME", 404, "route_unavailable")
+    assert ScriptedTracker([_BOUND_REMOTE, absent]).verify_project_identity(BOUND) is True
+    other = DevHubTrackerError("GET", "/governance/projects/TRAME", 404, "project_unavailable")
+    with pytest.raises(DevHubTrackerError, match="project_unavailable"):
+        ScriptedTracker([_BOUND_REMOTE, other]).verify_project_identity(BOUND)
+
+
+@pytest.mark.parametrize("answer", (
+    None, [], governance_raw(schema_version="devhub-governance.v0"),
+    governance_raw(project="OTHER"), governance_raw(mode="auto"), governance_raw(mode=None),
+    {"schema_version": "devhub-governance.v1", "project": "TRAME"},
+))
+def test_identity_read_back_rejects_a_malformed_governance_answer(answer):
+    tracker = ScriptedTracker([_BOUND_REMOTE, answer])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        tracker.verify_project_identity(BOUND)
+
+
+def test_registry_binding_fails_closed_with_the_governance_message(monkeypatch, tmp_path):
+    import subprocess
+    from foundry import registry
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", "https://github.com/acme/app.git"],
+        check=True,
+    )
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    # `devhub` is not in `registry._V1_TRACKERS` yet: exercise the generic read-back
+    # path with a stand-in adapter that raises the typed refusal.
+    class Refusing:
+        def verify_project_identity(self, project):
+            raise DevHubGovernanceModeError("TRAME", "manual")
+
+    monkeypatch.setattr(foundry, "tracker", lambda name, cwd=None: Refusing())
+    with pytest.raises(ValueError, match="mode de gouvernance 'manual'"):
+        registry.verify_existing_project(
+            "youtrack", "app", "APP", "0-1", cwd=str(tmp_path),
+        )
+
+
+def _state_refusal(path="/issues/TRAME-1/state"):
+    return DevHubTrackerError("POST", path, 403, "authority_boundary")
+
+
+def test_authority_boundary_on_a_write_is_a_governance_refusal_when_the_project_is_manual():
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    tracker = ScriptedTracker([
+        _supersede_listing(), _state_refusal("/adrs/TRAME-ADR-0001/status"),
+        governance_raw("manual"),
+    ])
+    with pytest.raises(DevHubGovernanceModeError, match="'manual'"):
+        tracker.set_adr_status(OLD, "accepted", project=PROJECT)
+    assert tracker.calls[2][:2] == ("GET", "/governance/projects/TRAME")
+
+
+def test_authority_boundary_on_a_write_stands_when_the_project_is_foundry_governed():
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    refusal = _state_refusal("/adrs/TRAME-ADR-0001/status")
+    tracker = ScriptedTracker([_supersede_listing(), refusal, governance_raw("foundry")])
+    with pytest.raises(DevHubTrackerError, match="authority_boundary") as caught:
+        tracker.set_adr_status(OLD, "accepted", project=PROJECT)
+    assert caught.value is refusal and not isinstance(caught.value, DevHubGovernanceModeError)
+    # a governance read that fails or is absent leaves the original error too
+    for failure in (
+        DevHubTrackerError("GET", "/governance/projects/TRAME", 404, "route_unavailable"),
+        DevHubTrackerError("GET", "/governance/projects/TRAME", 503, "unavailable"),
+    ):
+        scripted = ScriptedTracker([_supersede_listing(), refusal, failure])
+        with pytest.raises(DevHubTrackerError, match="authority_boundary"):
+            scripted.set_adr_status(OLD, "accepted", project=PROJECT)
+
+
+def test_other_write_errors_do_not_read_the_governance():
+    conflict = DevHubTrackerError("POST", "/adrs/TRAME-ADR-0001/status", 409, "version_conflict")
+    tracker = ScriptedTracker([_supersede_listing(), conflict])
+    with pytest.raises(DevHubTrackerError, match="version_conflict"):
+        tracker.set_adr_status(OLD, "accepted", project=PROJECT)
+    assert len(tracker.calls) == 2

@@ -1450,6 +1450,7 @@ def verify_existing_project(
 ) -> Project:
     """Read back exact provider coordinates before any local binding publication."""
     import foundry
+    from foundry.trackers.base import TrackerConflictError
 
     root = _checkout_root(cwd)
     if root is None:
@@ -1478,6 +1479,9 @@ def verify_existing_project(
         adapter = foundry.tracker(tracker, cwd=str(root))
     try:
         verified = adapter.verify_project_identity(project)
+    except TrackerConflictError as exc:
+        # A typed refusal (for example DevHub governance mode, PAT-321) names its cause.
+        raise ValueError(str(exc)) from None
     except Exception:
         raise ValueError(
             f"coordonnées du projet '{tracker}' indisponibles à la relecture"
