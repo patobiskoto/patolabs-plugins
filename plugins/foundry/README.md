@@ -11,7 +11,7 @@ Foundry owns the **outer loop** (what to do, the source of truth, the decision m
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
 or Plan mode. Its V1 gated PR lifecycle uses YouTrack, Linear, or qualified private
 personal GitHub Projects bound to a private repository, with the GitHub **code-host**
-adapter. DevHub is the fourth V1 provider (PAT-ADR-0031) but not yet repository-ready: two core cells are gaps (PAT-324). Linear
+adapter. DevHub is the fourth V1 provider (PAT-ADR-0031); 18 of its 19 core cells are `supported` (PAT-324), the last one, cross-tracker ADR import, is a `gap` owned by PAT-327, and the switch of a repository to it keeps its own ADR (FOUNDRY-ADR-0026). Linear
 derives delivery state, PR link and reviewed AC from deterministic receipts, with
 targeted native state synchronization; native AC checkbox replacement is refused.
 Separate grooming operations can replace targeted
@@ -673,8 +673,8 @@ an unregistered repository never falls through to `FOUNDRY_TRACKER`. A malformed
 moved, ambiguous or stale binding refuses the command. DevHub binds through the same
 marker. `trackers/base.py` and `codehosts/base.py` are the ports.
 YouTrack, Linear, GitHub Projects and DevHub are real V1 adapters; GitHub support is bounded
-to the qualified private personal Project/private-repository shape. DevHub has two core
-gaps (PAT-324), so it is not repository-ready.
+to the qualified private personal Project/private-repository shape. DevHub has one core
+gap, cross-tracker ADR import (PAT-327); it can be the target of the `preflight` and `copy` steps of a selective cutover of living work and of ADRs it can record exactly; `activate` toward DevHub is not qualified (`devhub-tracker.md`, "Selective cutover target").
 See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
 and bounded recovery procedure, [`docs/ghprojects-tracker.md`](docs/ghprojects-tracker.md)
 for the GitHub issue/ADR/lifecycle contract, and

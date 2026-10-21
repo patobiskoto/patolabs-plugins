@@ -1502,6 +1502,104 @@
       ]
     },
     {
+      "id": "devhub-migration-capture",
+      "test": "test_devhub_tracker.py::test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-preflight",
+      "test": "test_devhub_tracker.py::test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_write",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "capabilities"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-preflight-refusals",
+      "test": "test_devhub_tracker.py::test_migration_preflight_refuses_what_the_server_would_refuse_after_the_first_write",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-adr-corpus-refusals",
+      "test": "test_devhub_tracker.py::test_migration_preflight_refuses_an_adr_corpus_devhub_cannot_record",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ]
+    },
+    {
+      "id": "devhub-migration-issue-import-conflict",
+      "test": "test_devhub_tracker.py::test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answer",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "conflicts",
+        "replay"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-link-replay",
+      "test": "test_devhub_tracker.py::test_migration_link_issue_posts_one_link_then_replays_without_write",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "replay"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-adr-corpus-import",
+      "test": "test_devhub_tracker.py::test_migration_import_adrs_writes_replacements_first_and_answers_in_input_order",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "replay"
+      ]
+    },
+    {
+      "id": "devhub-migration-adr-export-readback",
+      "test": "test_devhub_tracker.py::test_migration_export_adrs_reads_supersession_relations_back",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ]
+    },
+    {
       "id": "devhub-factory-capabilities",
       "test": "test_devhub_tracker.py::test_factory_instantiates_devhub_without_changing_other_providers",
       "providers": [

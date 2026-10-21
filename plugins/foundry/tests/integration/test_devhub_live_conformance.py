@@ -876,6 +876,52 @@ def test_dhn_36_adr_is_imported_with_its_foreign_id_status_and_exact_body(suite)
         )
 
 
+@need("DHN-43")
+def test_dhn_43_a_manifest_is_captured_copied_and_verified_to_devhub(suite):
+    # PAT-324: DevHub as the target of the provider-neutral cutover path, in its own project
+    # (the copy writes issues and ADRs whose graph is compared as a whole).
+    import copy as copy_module
+
+    from foundry.migration import capture_manifest, copy_and_verify, verify_targets
+    from foundry.models import Adr, Issue, Link
+    from test_tracker_migration import FakeTransportTracker
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live cutover target", key, repository)
+    epic = Issue("PAT-1", "live cutover epic", state="ready", type="Epic", priority="P1",
+                 estimate=8, body="- [ ] first\n",
+                 links=[Link("parent-of", "outward", "PAT-2")])
+    child = Issue("PAT-2", "live cutover child", state="in-progress", type="Task",
+                  priority="P2", estimate=3, body="- [x] done\n- [ ] open\n",
+                  links=[Link("subtask-of", "outward", "PAT-1")])
+    adrs = [Adr(f"FOUNDRY-ADR-{number:04d}", f"ADR {number}", status, f"body {number}\n")
+            for number, status in ((1, "superseded"), (2, "accepted"))]
+    source = FakeTransportTracker("linear", issues=[epic, child], adrs=adrs, adr_relations={
+        adrs[0].id: {"supersedes": [], "superseded_by": adrs[1].id, "issues": []},
+        adrs[1].id: {"supersedes": [adrs[0].id], "superseded_by": None, "issues": ["PAT-2"]},
+    })
+    source_project = Project("T", "source")
+    manifest = capture_manifest(source, source_project, tracker, project)
+    assert manifest["target"]["migration_profile"]["kind"] == "devhub-source-ref-v1"
+    # a state DevHub cannot create is an explicit exception, never an approximation
+    assert {item["id"]: [entry["attribute"] for entry in item["exceptions"]]
+            for item in manifest["issues"]} == {"PAT-1": [], "PAT-2": ["state"]}
+    copy_and_verify(manifest, tracker, project, lambda: None)
+    assert manifest["phase"] == "verified"
+    verify_targets(manifest, tracker, project)
+    imported = tracker.get_issue(manifest["issues"][1]["target_id"])
+    assert imported.state == "backlog" and imported.body == child.body
+    # the profile is deterministic, and a second copy converges on the same objects
+    assert capture_manifest(source, source_project, tracker, project)["source_digest"] == (
+        manifest["source_digest"])
+    replay = copy_module.deepcopy(manifest)
+    copy_and_verify(replay, tracker, project, lambda: None)
+    assert [item["target_id"] for item in replay["issues"]] == [
+        item["target_id"] for item in manifest["issues"]]
+
+
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
 
 @need("DHN-37")

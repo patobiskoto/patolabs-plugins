@@ -2018,11 +2018,22 @@ def test_supersede_adr_uses_server_ids_for_swapped_imported_ids():
     assert (proof["resource_id"], proof["replacement_id"]) == ("TRAME-ADR-0013", "TRAME-ADR-0011")
 
 
-def _export_tracker(items, documents):
-    """Listing, then for each ADR its detail and its decision document, in listing order."""
+def _relationships_page(adr_id, issue_ids=()):
+    return {
+        "schema_version": "devhub-adr-relationships.v1",
+        "adr": {"id": adr_id, "version": 4}, "items": [{"id": i} for i in issue_ids],
+        "page": {"returned_count": len(issue_ids), "cursor": None, "truncation": False},
+    }
+
+
+def _export_tracker(items, documents, issues=None):
+    """Listing, then for each ADR its detail, decision document and relationships page."""
     responses = [receipt_page(items)]
     for item, document in zip(items, documents):
-        responses += [dict(item, body="b"), document]
+        responses += [
+            dict(item, body="b"), document,
+            _relationships_page(item["id"], (issues or {}).get(item["id"], ())),
+        ]
     return ScriptedTracker(responses)
 
 
@@ -2036,13 +2047,15 @@ def test_migration_export_adrs_reads_supersession_relations_back():
         _decision_document("TRAME-ADR-0001", superseded_by=NEW),
         _decision_document(NEW, supersedes="TRAME-ADR-0001", supersedes_all=["TRAME-ADR-0001"]),
         _decision_document("TRAME-ADR-0003"),
-    ])
+    ], issues={"TRAME-ADR-0003": ["TRAME-10", "TRAME-2"]})
     relations = {entry["adr"].id: entry["relations"]
                  for entry in tracker.migration_export_adrs(PROJECT)}
     assert relations["TRAME-ADR-0001"]["superseded_by"] == NEW
     assert relations[NEW]["supersedes"] == ["TRAME-ADR-0001"]
+    # PAT-324: the issue relations are read (sorted by number), a complete empty page is []
     assert relations["TRAME-ADR-0003"] == {
-        "supersedes": [], "superseded_by": None, "issues": "unknown"}
+        "supersedes": [], "superseded_by": None, "issues": ["TRAME-2", "TRAME-10"]}
+    assert relations["TRAME-ADR-0001"]["issues"] == []
     # one project listing only
     assert [call[1] for call in tracker.calls].count("/projects/TRAME/adrs?cursor=0&limit=100") == 1
 
@@ -2061,7 +2074,7 @@ def test_migration_export_adrs_never_claims_supersedes_while_a_superseded_adr_is
     assert relations["TRAME-ADR-0003"]["supersedes"] == "unknown"
     assert relations["TRAME-ADR-0003"]["superseded_by"] is None
     assert relations["TRAME-ADR-0004"] == {
-        "supersedes": [], "superseded_by": "unknown", "issues": "unknown"}
+        "supersedes": [], "superseded_by": "unknown", "issues": []}
     # an unknown replacement is not the entry itself: with no other unlinked ADR, [] is known
     only = _export_tracker(items[1:], [_decision_document("TRAME-ADR-0004")])
     assert only.migration_export_adrs(PROJECT)[0]["relations"]["supersedes"] == []
@@ -3036,3 +3049,200 @@ def test_other_write_errors_do_not_read_the_governance():
     with pytest.raises(DevHubTrackerError, match="version_conflict"):
         tracker.set_adr_status(OLD, "accepted", project=PROJECT)
     assert len(tracker.calls) == 2
+
+
+# --- PAT-324: DevHub as the target of a selective cutover (FOUNDRY-ADR-0026) -------------
+
+
+def _migration_issue(number, *, type="Task", state="backlog", priority="P2", estimate=3,
+                     links=(), title=None, body="- [ ] one\n"):
+    return {
+        "kind": "issue", "source_ref": f"linear:issue:PAT-{number}", "id": f"PAT-{number}",
+        "title": title or f"Issue {number}", "body": body,
+        "attributes": {"type": type, "priority": priority, "estimate": estimate, "state": state},
+        "links": [{"type": kind, "direction": "outward", "target": f"PAT-{target}"}
+                  for kind, target in links],
+        "exceptions": [],
+    }
+
+
+def _migration_adr(number, *, status="accepted", supersedes=(), superseded_by=None,
+                   issues=(), **extra):
+    return {
+        "kind": "adr", "source_ref": f"linear:adr:{number}", "id": f"FOUNDRY-ADR-{number:04d}",
+        "title": f"ADR {number}", "body": f"body {number}\n", "status": status,
+        "relations": {"supersedes": list(supersedes), "superseded_by": superseded_by,
+                      "issues": list(issues)},
+        "source_created": None, "source_updated": None, **extra,
+    }
+
+
+def _preflight(records, *, project=BOUND):
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw()])
+    return tracker, tracker.migration_preflight(project, tuple(records))
+
+
+def test_devhub_advertises_every_issue_attribute_of_the_cutover_path():
+    from foundry.migration import _ISSUE_ATTRIBUTES
+
+    assert set(_ISSUE_ATTRIBUTES) == DevHubTracker.migration_supported_attributes
+
+
+def test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_write():
+    records = [
+        _migration_issue(1, type="Epic", links=[("parent-of", 2)]),
+        _migration_issue(2, links=[("subtask-of", 1), ("depends-on", 3), ("relates", 99)]),
+        _migration_issue(3, links=[("blocks", 2)]),
+        _migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+        _migration_adr(2, supersedes=["FOUNDRY-ADR-0001"], issues=["PAT-2"]),
+    ]
+    tracker, profile = _preflight(records)
+    assert profile == {
+        "kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref",
+        "adr_coordinate": "source_ref+foreign_id", "creation_states": ["backlog", "ready"],
+    }
+    assert [call[:2] for call in tracker.calls] == [
+        ("GET", "/projects/resolve?repo=github.com%2Facme%2Ftrame"),
+        ("GET", "/governance/projects/TRAME")]
+    # the profile is part of the source digest: a second preflight returns the same value
+    assert _preflight(records)[1] == profile
+
+
+def test_migration_preflight_refuses_a_project_whose_identity_or_governance_fails():
+    unbound = ScriptedTracker([])
+    with pytest.raises(TrackerConflictError, match="hors projet"):
+        unbound.migration_preflight(PROJECT, (_migration_issue(1),))  # no canonical_repo
+    assert unbound.calls == []  # refused before any request
+    wrong = ScriptedTracker([dict(_BOUND_REMOTE, id="43")])
+    with pytest.raises(TrackerConflictError, match="hors projet"):
+        wrong.migration_preflight(BOUND, (_migration_issue(1),))
+    manual = ScriptedTracker([_BOUND_REMOTE, governance_raw("manual")])
+    with pytest.raises(devhub_module.DevHubGovernanceModeError):
+        manual.migration_preflight(BOUND, (_migration_issue(1),))
+
+
+@pytest.mark.parametrize(("records", "message"), (
+    ([_migration_issue(1), _migration_issue(1)], "dupliquée"),
+    ([dict(_migration_issue(1), source_ref="has space")], "source_ref de migration invalide"),
+    ([_migration_issue(1, title=" padded ")], "non reproductible"),
+    ([_migration_issue(1, title="x" * 301)], "non reproductible"),
+    ([_migration_issue(1, body="x" * 200_001)], "non reproductible"),
+    ([_migration_issue(1, links=[("relates", 1)])], "soi-même"),
+    ([_migration_issue(1, type="Epic", links=[("parent-of", 2), ("parent-of", 3)]),
+      _migration_issue(2), _migration_issue(3, links=[("subtask-of", 4)]),
+      _migration_issue(4, type="Epic", links=[("parent-of", 3)])], "plusieurs parents"),
+    ([_migration_issue(1, links=[("parent-of", 2)]), _migration_issue(2)], "non Epic"),
+    ([_migration_issue(1, type="Epic", links=[("parent-of", 2)],),
+      _migration_issue(2, type="Epic", links=[("parent-of", 1)])], "cycle"),
+    ([_migration_issue(1, links=[("depends-on", 2)]),
+      _migration_issue(2, links=[("depends-on", 1)])], "cycle"),
+))
+def test_migration_preflight_refuses_what_the_server_would_refuse_after_the_first_write(
+        records, message):
+    tracker = ScriptedTracker([])
+    with pytest.raises(TrackerConflictError, match=message):
+        tracker.migration_preflight(BOUND, tuple(records))
+    assert tracker.calls == []  # local refusals come before the identity read
+
+
+def test_migration_preflight_refuses_a_parent_whose_type_is_excepted():
+    parent = _migration_issue(1, type="Epic", links=[("parent-of", 2)])
+    parent["exceptions"] = [{"attribute": "type", "reason": "target value unavailable: type"}]
+    with pytest.raises(TrackerConflictError, match="non Epic"):
+        ScriptedTracker([]).migration_preflight(
+            BOUND, (parent, _migration_issue(2, links=[("subtask-of", 1)])))
+
+
+@pytest.mark.parametrize(("records", "message"), (
+    ([_migration_adr(1, status="rejected")], "non importable"),
+    ([_migration_adr(1, **{"source_only_issue_refs": ["linear:issue:PAT-9"]})], "source-seule"),
+    ([_migration_adr(1, superseded_by="FOUNDRY-ADR-0002"),
+      _migration_adr(2, supersedes=["FOUNDRY-ADR-0001"])], "sans lien réciproque"),
+    ([_migration_adr(1, status="superseded")], "sans lien réciproque"),
+    ([_migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0099")], "hors corpus"),
+    ([_migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+      _migration_adr(2)], "non réciproque"),
+    ([_migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+      _migration_adr(2, status="superseded", superseded_by="FOUNDRY-ADR-0001",
+                     supersedes=["FOUNDRY-ADR-0001"])], "cycle"),
+    ([_migration_adr(1, issues=[f"PAT-{n}" for n in range(1, 52)])], "trop de relations"),
+    ([_migration_adr(1, title="padded ")], "non reproductible"),
+    ([_migration_adr(1), _migration_adr(1)], "dupliqué"),
+))
+def test_migration_preflight_refuses_an_adr_corpus_devhub_cannot_record(records, message):
+    tracker = ScriptedTracker([])
+    with pytest.raises(TrackerConflictError, match=message):
+        tracker.migration_preflight(BOUND, tuple(records))
+    assert tracker.calls == []
+
+
+@pytest.mark.parametrize("name", ("supersedes", "superseded_by", "issues"))
+def test_migration_preflight_never_turns_an_unknown_adr_relation_into_a_known_one(name):
+    # PAT-ADR-0003 / PAT-ADR-0008: DevHub reads back a known value, never "unknown".
+    record = _migration_adr(1)
+    record["relations"][name] = "unknown"
+    with pytest.raises(TrackerConflictError, match=f"inconnue.*{name}"):
+        ScriptedTracker([]).migration_preflight(BOUND, (record,))
+
+
+def test_migration_attribute_exceptions_name_each_value_devhub_cannot_reproduce():
+    tracker = ScriptedTracker([])
+    exact = _migration_issue(1, type="Epic", state="ready", priority="P0", estimate=21)
+    assert tracker.migration_attribute_exceptions(BOUND, exact) == {}
+    assert tracker.migration_attribute_exceptions(BOUND, _migration_issue(
+        1, type=None, state=None, priority=None, estimate=None)) == {}
+    found = tracker.migration_attribute_exceptions(BOUND, _migration_issue(
+        1, type="t" * 81, state="in-progress", priority="Major", estimate=22))
+    assert found == {
+        "type": "target value unavailable: type",
+        "priority": "target value unavailable: Major",
+        "estimate": "target value unavailable: estimate",
+        "state": "target creation state unavailable: in-progress",
+    }
+    for estimate in (0, 2.5, True):
+        assert "estimate" in tracker.migration_attribute_exceptions(
+            BOUND, _migration_issue(1, estimate=estimate))
+    assert tracker.migration_attribute_exceptions(
+        BOUND, _migration_issue(1, type=""))["type"]
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_attribute_exceptions(BOUND, {"attributes": None})
+
+
+def test_migration_prepare_adr_orders_relations_and_leaves_the_source_snapshot_alone():
+    snapshot = _migration_adr(
+        2, supersedes=["FOUNDRY-ADR-0003", "FOUNDRY-ADR-0001"],
+        issues=["TRAME-10", "TRAME-2", "TRAME-1"])
+    prepared = ScriptedTracker([]).migration_prepare_adr(BOUND, snapshot)
+    assert prepared["relations"]["supersedes"] == ["FOUNDRY-ADR-0001", "FOUNDRY-ADR-0003"]
+    assert prepared["relations"]["issues"] == ["TRAME-1", "TRAME-2", "TRAME-10"]
+    assert snapshot["relations"]["issues"] == ["TRAME-10", "TRAME-2", "TRAME-1"]
+    unknown = _migration_adr(1)
+    unknown["relations"]["issues"] = "unknown"
+    assert ScriptedTracker([]).migration_prepare_adr(BOUND, unknown) == unknown
+    assert ScriptedTracker([]).migration_qualify_adrs(BOUND, (snapshot,)) is None
+
+
+def test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile():
+    from foundry.migration import capture_manifest
+    from foundry.models import Issue, Link
+    from test_tracker_migration import FakeTransportTracker
+
+    source = FakeTransportTracker("linear", issues=[
+        Issue("PAT-1", "Epic", body="- [ ] a\n", state="in-progress", type="Epic",
+              priority="P1", estimate=3),
+        Issue("PAT-2", "Child", body="", state="ready", type="Task", priority="Urgent",
+              estimate=5, links=[Link("subtask-of", "outward", "PAT-1")]),
+        Issue("PAT-3", "Closed", state="done", type="Task"),
+    ], adrs=[Adr("FOUNDRY-ADR-0001", "ADR 1", "accepted", "body")], adr_relations={
+        "FOUNDRY-ADR-0001": {"supersedes": [], "superseded_by": None, "issues": ["PAT-1"]}})
+    target = ScriptedTracker([_BOUND_REMOTE, governance_raw()])
+    manifest = capture_manifest(source, Project("T", "source"), target, BOUND)
+    assert manifest["target"]["migration_profile"]["kind"] == "devhub-source-ref-v1"
+    exceptions = {record["id"]: {item["attribute"]: item["reason"]
+                                 for item in record["exceptions"]}
+                  for record in manifest["issues"]}
+    assert exceptions == {
+        "PAT-1": {"state": "target creation state unavailable: in-progress"},
+        "PAT-2": {"priority": "target value unavailable: Urgent"},
+    }
+    assert manifest["phase"] == "preflight"

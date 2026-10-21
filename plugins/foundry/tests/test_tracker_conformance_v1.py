@@ -172,8 +172,9 @@ def _core_coverage_state(manifest: dict, contract: dict):
 # PAT-ADR-0031 admits DevHub as a V1 provider whose core cells may still be `gap` or
 # `to_qualify` under an owner ticket. Its blocking cells stay visible in the contract and
 # can never be mapped as passing coverage (the two checks above still cover them), but
-# they do not turn this aggregate gate red until the owner tickets close. Remove the
-# entry when the last DevHub core cell is `supported`.
+# they do not turn this aggregate gate red until the owner tickets close (PAT-327 owns
+# `cross-tracker-adr-import`). Remove the entry when the last DevHub core cell is
+# `supported`.
 _ADMISSION_PENDING_PROVIDERS = frozenset({"devhub"})
 
 

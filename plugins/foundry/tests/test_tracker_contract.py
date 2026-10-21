@@ -383,18 +383,24 @@ def test_pat64_contract_rows_are_supported_for_the_three_original_providers(oper
     assert all("ticket" not in cell for cell in original.values())
 
 
-def test_devhub_cutover_target_cells_stay_gaps_until_migration_preflight_exists():
-    """PAT-323: DevHub implements the import ports but not the preflight the cutover
-    manifest requires, so both cross-tracker cells stay owned gaps (migration.py)."""
+def test_devhub_cutover_target_cells_split_between_supported_copy_and_ticketed_adr_gap():
+    """PAT-324: DevHub overrides the preflight and declares the attributes the cutover
+    manifest requires (migration.py), so the live-work copy is supported. The ADR import
+    stays a gap owned by PAT-327: DevHub has no carrier for source-only issue references
+    nor for an `unknown` ADR relation (PAT-ADR-0003, PAT-ADR-0008)."""
     from foundry.trackers.base import Tracker
     from foundry.trackers.devhub import DevHubTracker
 
-    assert "migration_preflight" not in DevHubTracker.__dict__
-    assert DevHubTracker.migration_preflight is Tracker.migration_preflight
+    for name in ("migration_preflight", "migration_attribute_exceptions",
+                 "migration_prepare_adr"):
+        assert name in DevHubTracker.__dict__
+        assert getattr(DevHubTracker, name) is not getattr(Tracker, name)
+    assert DevHubTracker.migration_supported_attributes
     rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
-    for operation_id in ("cross-tracker-adr-import", "cross-tracker-live-work-copy"):
-        cell = rows[operation_id]["cells"]["devhub"]
-        assert cell["status"] == "gap" and _GAP_TICKET_RE.match(cell["ticket"])
+    live = rows["cross-tracker-live-work-copy"]["cells"]["devhub"]
+    assert live["status"] == "supported" and "ticket" not in live
+    adr = rows["cross-tracker-adr-import"]["cells"]["devhub"]
+    assert adr["status"] == "gap" and adr["ticket"] == "PAT-327"
     tombstone = rows["tombstone-archived-source-after-switch"]["cells"]["devhub"]
     assert tombstone["status"] == "supported"
 

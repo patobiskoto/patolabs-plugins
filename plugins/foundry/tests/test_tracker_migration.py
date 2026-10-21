@@ -921,6 +921,41 @@ def test_activation_readback_rejects_target_drift_and_manifest_redirect():
         verify_targets(manifest, target, project)
 
 
+class _CountingExportTarget(FakeTransportTracker):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.export_calls = 0
+        self.duplicate = None
+
+    def migration_export_adrs(self, project):
+        self.export_calls += 1
+        exported = super().migration_export_adrs(project)
+        return exported + [item for item in exported if item["adr"].id == self.duplicate]
+
+
+@pytest.mark.parametrize("count", [1, 3, 6])
+def test_activation_readback_exports_target_adrs_once_per_pass(count):
+    source = FakeTransportTracker("youtrack", adrs=[
+        Adr(f"T-ADR-{index:04d}", f"decision {index}", "accepted", "body\n")
+        for index in range(1, count + 1)
+    ])
+    target = _CountingExportTarget("linear")
+    project = Project("T", "target")
+    manifest = capture_manifest(source, Project("T", "source"), target, project)
+    copy_and_verify(manifest, target, project, lambda: None)
+    target.export_calls = 0
+    verify_targets(manifest, target, project)
+    assert target.export_calls == 1
+    target.duplicate = "T-ADR-0001"
+    with pytest.raises(MigrationError, match="relecture ADR divergente"):
+        verify_targets(manifest, target, project)
+    target.duplicate = None
+    del target.adrs["T-ADR-0001"]
+    with pytest.raises(MigrationError, match="relecture ADR divergente"):
+        verify_targets(manifest, target, project)
+    assert target.export_calls == 3
+
+
 def test_preflight_rejects_unqualified_target_before_any_import_effect():
     source = FakeTransportTracker(
         "youtrack", [Issue("T-1", "x", state="ready", body="body")]
