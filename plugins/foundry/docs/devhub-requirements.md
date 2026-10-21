@@ -11,10 +11,14 @@ repository, atomic cutover, selective import of living work and of the ADRs stil
 no full history migration. Migration needs below (DHN-34 to DHN-36) are stated in that form
 only.
 
-DevHub is still a pilot outside the V1 contract: `registry._V1_TRACKERS` holds
-`youtrack`, `linear`, `ghprojects` (`registry.py`), and `tracker-contract.v1.json` lists
-DevHub "for contrast only" (observed, 2026-10-19). DHN-40 states the Foundry-side
-prerequisite that follows, with DHN-41.
+Until PAT-323, DevHub was a pilot outside the V1 contract: `registry._V1_TRACKERS` held
+`youtrack`, `linear`, `ghprojects` (`registry.py`), and `tracker-contract.v1.json` listed
+DevHub "for contrast only" (observed, 2026-10-19). PAT-ADR-0031 (accepted) admits DevHub as
+the fourth V1 provider and PAT-323 implements it: `devhub` is in `registry._V1_TRACKERS`,
+the contract carries a DevHub column with two core `gap` cells (cross-tracker ADR import and
+live-work copy, `tracker-contract.v1.json`), and the pilot path is retired
+(`devhub-tracker.md`, "Project binding and cutover"). DHN-40 is green since the live run of
+PAT-323 ("Live run of PAT-323" below).
 
 ## Run the suite
 
@@ -278,12 +282,11 @@ Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-37 | Reconcile an interrupted issue creation without recreating it (Epic cadencer) | `test_dhn_37_an_issue_creation_can_be_reconciled_without_recreating_it` | green | - | adapter, PAT-313: `reconcile_issue_creation` of `trackers/devhub.py` reads the issue once and validates it (`devhub-tracker.md`, "Issue creation reconciliation"), so `campaign_cadence.missing_capabilities` no longer reports `issue_creation_reconciliation` (`tests/test_devhub_tracker.py`); the live test exercises it on a parented issue and checks the replay of answer 9; observed green in the live run of PAT-313 (2026-10-20, disposable instance at `1227841`). Limit: the reference must be an issue id, DevHub has no read by key (answers 9 and 16) |
 | DHN-38 | Append-only lifecycle capability required by the Epic cadencer (PAT-ADR-0026) | `test_dhn_38_lifecycle_is_append_only_for_the_cadencer` | green | - | adapter, PAT-309: `append_only_lifecycle_supported` is `True` and `read_proof_receipts` reads `GET /issues/:id/proof-receipts` (`trackers/devhub.py`; obligations of the flag and their DevHub source in `devhub-tracker.md`, "Append-only lifecycle receipts"); server `2edcea2:src/tracker/store.ts:1735-1744` and `route.ts:995-1010`. Observed green in the live run of PAT-309 (2026-10-20, disposable instance at `2edcea2`). At `809ca94` the receipt listing ordered ids as text (receipts `10` before `9`), and the adapter refused the read (`pagination_repeated`): observed on a fresh instance, question 17; fixed in DEVHUB-107 (merge `1227841`) and observed green on a fresh instance at `1227841` in the live run of PAT-313, whose first pass crossed the `9` to `10` boundary on one issue. The adapter does not sort receipts. The reader accepts the extended receipt form of DEVHUB-106 since PAT-318; observed green against a server carrying it in "Live run of PAT-318" (`f347f38`) |
 | DHN-39 | Read a mapped release scope without approximate discovery | `test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery` | green | - | adapter, PAT-309: `read_release_scope` reads `GET /versions/:id` for the Version id stored in `project.extra["release_ids"]` (`trackers/devhub.py`, `devhub-tracker.md`, "Release scope"); the test creates a Version with `POST /projects/:key/versions` and maps its id (answer 11), no placeholder; the Version creation is limited to a service actor on the server (`2edcea2:src/app/api/tracker/v1/[...path]/route.ts:1401`) and the suite credential passed it. Observed green in the live run of PAT-309 (2026-10-20, disposable instance at `2edcea2`) |
-| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | red | foundry + adapter | foundry: `registry._V1_TRACKERS` excludes `devhub` (`registry.py:101`); adapter: DevHub still resolves a checkout through the basename pilot path (`resolve_checkout_project`, `trackers/devhub.py`), with no live test (DHN-41 covers `verify_project_identity` only); DHN-37 and DHN-38 no longer block the Epic cadencer (PAT-313, PAT-309) |
-| DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | green | - | adapter, PAT-314: `verify_project_identity` of `trackers/devhub.py` reads `GET /projects/resolve` and compares key, id and canonical repository (`devhub-tracker.md`, "Project identity read-back"); the live test checks the bound project and a foreign id. `registry bootstrap` still refuses DevHub before this read (DHN-40). The test covers it only, the `resolve_checkout_project` pilot path of DHN-40 has no live test. Observed green in the live run of PAT-314 (2026-10-20, disposable instance at `1227841`) |
+| DHN-40 | DevHub accepted as a V1 tracker of the repository | `test_dhn_40_devhub_is_a_v1_tracker_of_the_repository` | green | - | foundry, PAT-323 (PAT-ADR-0031): `registry._V1_TRACKERS` holds `devhub` (`registry.py`); the checkout is resolved through the V1 marker and re-read on the server (`resolve_checkout_project`, `trackers/devhub.py`); the basename pilot path is retired. The test asserts the membership only; DHN-41 covers `verify_project_identity`. Observed green in the live run of PAT-323 (2026-10-21, disposable instance at `8028000`), with `registry bootstrap devhub` run against the same instance ("Live run of PAT-323") |
+| DHN-41 | Repository bootstrap: read back the exact project identity before publishing a binding (`repository-bootstrap` of `tracker-contract.v1.json`) | `test_dhn_41_repository_bootstrap_reads_back_the_project_identity` | green | - | adapter, PAT-314: `verify_project_identity` of `trackers/devhub.py` reads `GET /projects/resolve` and compares key, id and canonical repository (`devhub-tracker.md`, "Project identity read-back"); the live test checks the bound project and a foreign id. Since PAT-323 `registry bootstrap devhub` makes this read before publishing (observed in "Live run of PAT-323"). Observed green in the live run of PAT-314 (2026-10-20, disposable instance at `1227841`) |
 | DHN-42 | Under local accounts the Foundry service credential can create its project and use it (issue create and read) | `test_dhn_42_service_credential_can_create_and_use_its_project_under_local_accounts` | green | - | server, observed by the DevHub agent: `2edcea2:src/access/domain.ts:139-152` lets the environment service credential (actor `foundry`, `tracker:write`) create a project when an active owner exists, and `2edcea2:src/tracker/store.ts:1341-1350` binds it to that project only and makes every active owner its `admin` (DEVHUB-102, merge `3da571f`); XPASS reported at `2edcea2` on an instance with local accounts (answer 14); history: 403 `insufficient_scope` at `ff22b3a`; observed by Foundry in "Live run of PAT-303" |
 
-Counts (equal to the table): 42 needs; 1 red (DHN-40); 0 unknown; 41 green (DHN-01 to DHN-39,
-DHN-41, DHN-42).
+Counts (equal to the table): 42 needs; 0 red; 0 unknown; 42 green (DHN-01 to DHN-42).
 
 ### Live run of PAT-303
 
@@ -373,6 +376,27 @@ one-off script, not part of the suite, then checked on the same instance that `s
 refuses a `proposed` replacement with no write, that a replay sends no second write, and that a
 source version the server no longer holds is a `TrackerConflictError`; each was observed.
 
+### Live run of PAT-323
+
+On a fresh disposable instance built from DevHub `8028000c21861f56b4e49b6422559930a0a368e5`
+(never production), 2026-10-21:
+
+- The live suite: 41 passed, 1 skipped (DHN-42, local accounts only). DHN-40 is green.
+- `registry bootstrap devhub` was then run once through `tooling/foundry_cli.py`, in a
+  throwaway Git checkout whose origin matches a project provisioned on that instance, with an
+  isolated `FOUNDRY_DATA` and an empty `FOUNDRY_CONFIG` (observed):
+  - a wrong project id is refused naming foreign or contradictory coordinates; nothing is
+    written (no registry file, no marker);
+  - the exact coordinates publish the registry entry and `.foundry/tracker.json`; an exact
+    replay converges;
+  - `registry selection --require-v1` returns the DevHub binding, and `FOUNDRY_TRACKER=linear`
+    does not replace it;
+  - `query backlog` resolves the bound project through the marker;
+  - after the project was set to `manual` directly in the disposable database (the human
+    conversion route needs an interactive session), a new bootstrap is refused naming the
+    mode `manual`, with nothing written.
+- The instance was then removed (`down -v`).
+
 ### Live run of PAT-315
 
 Run on 2026-10-21 (observed), patolabs-plugins branch of PAT-315, all tests (DHN-42 skipped, not
@@ -398,7 +422,7 @@ import as `<KEY>-ADR-0005` the next native ADR took `<KEY>-ADR-0006`.
 
 - The tombstone of an archived *source* (`tracker-contract.v1.json`,
   `tombstone-archived-source-after-switch`): DevHub is the target of the cutover, not its
-  source.
+  source. The DevHub cell covers the archive guard only, offline (PAT-323); no live test.
 - A full history migration: excluded by FOUNDRY-ADR-0026.
 - The deployed DevHub version: no test; it is question 1.
 
@@ -525,7 +549,8 @@ Decided on the DevHub side on 2026-10-20, in the order of item 18 (DEVHUB-106, D
 | `import_adr`, `migration_import_adr`, `migration_import_adrs`, `migration_find_adr`, `migration_find_issue`, `migration_import_issue` of `trackers/devhub.py`, the ADR reader (`foreign_id` as `Adr.id`); DHN-34 and DHN-36 (`@need`, owner `-`, `green` after "Live run of PAT-319" at `b0231d9`), counts (2 red, 0 unknown, 40 green) (PAT-319) | Updated in "Needs" and "Live run of PAT-319"; new section "Selective import" of `devhub-tracker.md`; changelog fragment `changelog.d/PAT-319.md`. `tracker-contract.md` and `tracker-contract.v1.json` not changed (DevHub is outside the three V1 provider columns). |
 | `supersede_adr`, `migration_export_adrs` and the `_adr_route_items` helper of `trackers/devhub.py`; DHN-32 (`@need`, owner `-`, `green` after "Live run of PAT-320" at `6721ad8`), question 15 follow-up, item 18, counts (1 red, 0 unknown, 41 green) (PAT-320) | Updated in "Needs", "Live run of PAT-320" and "Questions for the DevHub agent"; new section "Proof-bound ADR supersession" of `devhub-tracker.md`; changelog fragment `changelog.d/PAT-320.md`. |
 | Review remarks deferred from PAT-309 to PAT-320 (PAT-315): `read_release_scope` (second Version read, numeric order), `link_adr_issue`, `read_adr_issue_relations`, `migration_link_issue`, `import_adr` (foreign id equal to the server id of a native ADR; DEVHUB-111 merged as `16b6888`), `migration_import_adr(s)`, `supersede_adr` (replay first), `migration_export_adrs` (one listing, `supersedes` `unknown` while an unlinked superseded ADR exists), `models.AC_OVERRIDE_REASON`; rows DHN-24, DHN-25, DHN-32, DHN-33, DHN-36, questions 16 and 18, first live run paragraph | Updated in "Needs" and "Questions for the DevHub agent"; `devhub-tracker.md` (sections "Append-only lifecycle receipts", "Release scope", "Staged migration links", "Selective import", "Body replacement and ADR relations", "Proof-bound ADR supersession"); new "Live run of PAT-315", which runs the additions to the live tests of DHN-24 and DHN-32; counts unchanged. |
-| `tracker-contract.md`, `tracker-contract.v1.json` | Not changed by PAT-309 to PAT-312 (PAT-313 updates them, row above): DevHub is outside the three V1 provider columns of the contract (`tracker-contract.v1.json`, `devhub` note), and no CLI verb or configuration key changed. |
+| `registry._V1_TRACKERS`, `registry._validated_binding_entry`, `setup_project.py`, `trackers/devhub.py` `resolve_checkout_project`, retirement of `mode=pilot`; DHN-40 (green after the live run at `8028000`), counts (0 red, 0 unknown, 42 green); `tracker-contract.md`, `tracker-contract.v1.json` (version 5, DevHub column) (PAT-323) | Updated in the opening paragraph, "Needs" (row DHN-40, counts) and "Not covered, on purpose"; `devhub-tracker.md` ("Project binding and cutover", "Release scope", "Project identity read-back", "Governance mode"); changelog fragment `changelog.d/PAT-323.md`. Live run of PAT-323 at `8028000`: 41 passed, 1 skipped (DHN-42); new section "Live run of PAT-323". |
+| `tracker-contract.md`, `tracker-contract.v1.json` | Not changed by PAT-309 to PAT-312 (PAT-313 updates them, row above): DevHub was outside the three V1 provider columns of the contract at that date (`tracker-contract.v1.json`, `devhub` note), and no CLI verb or configuration key changed. |
 | `verify_project_identity`, `DevHubGovernanceModeError` and the write guard of `trackers/devhub.py`, `registry.verify_existing_project` message pass-through (PAT-321) | Documented in `devhub-tracker.md`, "Governance mode"; no need, status or count of this page changed (no live test added; the governance route is not yet in `TRACKER_API.md`, DEVHUB-116 unmerged); row DHN-32 now says the supersede route checks the mode since DEVHUB-110 (`5782d78`); live observation at `8028000` in `devhub-tracker.md`, "Governance mode". |
 
 Mechanical enforcement: `tests/test_devhub_requirements.py` checks that this table and the

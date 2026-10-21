@@ -453,14 +453,14 @@ The first three writes of `AGENTS.md#R9` (b) are `create_issue` with the field
 `Type: Epic` and no parent, `create_issue(parent=…)` and `add_comment`.
 [`tracker-contract.md`](tracker-contract.md),
 table "Core journey", marks the rows "Frame/intake/groom: create, comment" and
-"Epics/enfants/dépendances: child creation, relations" `supported` for YouTrack, Linear
-and `ghprojects`.
+"Epics/enfants/dépendances: child creation, relations" `supported` for YouTrack, Linear,
+`ghprojects` and DevHub (PAT-323).
 
 `tests/test_tracker_conformance_v1.py` runs them once per provider, on a double of the
 provider, never on a real tracker: it creates an Epic without parent next to an existing
 origin Epic, creates a child issue under it, adds a comment to that child, and checks
 that the origin Epic was neither written nor linked. The double is not the same seam for
-the three providers:
+the four providers:
 
 - YouTrack: the HTTP method `_req` is replaced; `create_issue`, `link` and `add_comment`
   of `tooling/foundry/trackers/youtrack.py` run as written;
@@ -475,6 +475,10 @@ the three providers:
   sequence, the parent pairing checks and `_write_catalog` (over the doubled
   `_field_catalog`). Only the test of a Project without `Epic` option goes through the
   `runner=` seam.
+- DevHub: the HTTP method `_req` is replaced (a subclass of the scripted tracker of
+  `tests/test_devhub_tracker.py`); `create_issue`, `add_comment` and `get_issue` of
+  `tooling/foundry/trackers/devhub.py` run as written. `create_issue(parent=…)` is one POST
+  that carries the parent, not two writes.
 
 No provider needed a fallback for these three writes on its double. A second test per
 provider covers a project where the `Epic` type is not available:
@@ -483,6 +487,7 @@ provider covers a project where the `Epic` type is not available:
 |---|---|---|
 | YouTrack | a value of the project's `Type` field, sent by name (`_cf_write`, `tooling/foundry/trackers/youtrack.py`) | the adapter does not check before it posts; the provider's answer is not verified. The test makes the double raise `_YouTrackHTTPError`, the error `_req` raises on an HTTP failure: it shows that `create_issue` lets that error out unchanged and sends no further request (no readback, no link). It does not show what a real project answers |
 | Linear | the `Epic` entry of the binding's `type_label_ids` | the adapter refuses with `type_unmapped` before the create mutation (`tooling/foundry/trackers/linear.py`) |
+| DevHub | the `Type` field value sent by name (`_FIELD_MAP`, `tooling/foundry/trackers/devhub.py`) | the adapter does not check before it posts; the provider's answer is not verified. The test makes the double raise `DevHubTrackerError` (status 400), the error `_req` raises on an HTTP failure: it shows that `create_issue` lets that error out and sends no further request. It does not show what a real project answers |
 | `ghprojects` | the `Epic` option of the Project's "Foundry type" field | the adapter refuses with `invalid_field_options:type` when it reads the Project, before any write (`_field_map`, `tooling/foundry/trackers/ghprojects.py`), because it requires the options of that field to be exactly the declared set; a read of that Project is refused the same way |
 
 What the coordinator does when the `Epic` type is missing (the table above) is in

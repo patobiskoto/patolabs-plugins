@@ -2,7 +2,7 @@
 
 Provider factories: the pipeline asks for `tracker()` / `codehost()` and gets the
 one selected by the repository binding — it never imports a concrete adapter.
-Host configuration selects the code host and the unbound historical DevHub pilot;
+Host configuration selects the code host and, for an unbound checkout only, DevHub;
 it never replaces an existing repository tracker selection.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _effective_tracker_selection(cwd: str | None = None):
     try:
         selection = registry.repository_tracker_selection(cwd, allow_unbound=True)
     except SystemExit as exc:
-        # The historical pilot also has host diagnostics outside a Git checkout.
+        # DevHub also has host diagnostics outside a Git checkout.
         # No repository state exists there to be replaced by a global provider.
         if "checkout Git introuvable" in str(exc) and config.tracker_name() == "devhub":
             return "devhub", None
@@ -42,7 +42,8 @@ def _effective_tracker_selection(cwd: str | None = None):
     if selection["mode"] != "unbound":
         return selection["tracker"], selection["binding"]
     if config.tracker_name() == "devhub":
-        # Only a proven unbound checkout can use the host-selected pilot.
+        # Only a proven unbound checkout can use the host-selected DevHub name; it
+        # resolves nothing without a V1 marker (PAT-323).
         return "devhub", None
     return registry.tracker_name_for_checkout(cwd), None
 

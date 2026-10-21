@@ -46,8 +46,13 @@ class ScriptedDevHubTracker(DevHubTracker):
         )
         self.responses = list(responses)
         self.calls = []
+        self.governance_mode = "foundry"
 
     def _req(self, method, path, body=None, **kwargs):
+        if path.startswith("/governance/projects/"):  # PAT-321 read-back before the marker
+            self.governance_reads = getattr(self, "governance_reads", 0) + 1
+            return {"schema_version": "devhub-governance.v1",
+                    "project": path.rsplit("/", 1)[1], "mode": self.governance_mode}
         self.calls.append((method, path, body, kwargs))
         if not self.responses:
             raise AssertionError(f"unexpected request: {method} {path}")
@@ -231,7 +236,7 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
     missing = DevHubTrackerError(
         "GET", "/projects/resolve", 404, "project_not_found",
     )
-    tracker = ScriptedDevHubTracker([missing, PROJECT_RAW, PROJECT_RAW, PROJECT_RAW])
+    tracker = ScriptedDevHubTracker([missing, *[PROJECT_RAW] * 5])  # +1 read-back per attempt
     selected_providers = []
     monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
     monkeypatch.setattr(
@@ -268,6 +273,23 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
             },
         },
     }
+    # PAT-323: DevHub is a V1 provider, so setup publishes the marker with the entry.
+    assert registry.repository_tracker_binding().tracker == "devhub"
+
+
+def test_setup_refuses_a_manual_governed_project_before_publishing(monkeypatch, tmp_path):
+    repo = _repo(tmp_path, "acme", "trame")
+    missing = DevHubTrackerError("GET", "/projects/resolve", 404, "project_not_found")
+    tracker = ScriptedDevHubTracker([missing, PROJECT_RAW, PROJECT_RAW, PROJECT_RAW])
+    tracker.governance_mode = "manual"
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_DATA", str(tmp_path))
+    with pytest.raises(SystemExit, match="Setup tracker refusé"):
+        setup_project.setup("Trame", "TRAME", "trame")
+    assert registry.load() == {}
+    assert not (repo / ".foundry/tracker.json").exists()
 
 
 def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch, tmp_path):

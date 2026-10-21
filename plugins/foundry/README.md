@@ -11,7 +11,7 @@ Foundry owns the **outer loop** (what to do, the source of truth, the decision m
 the exit gates). The **inner loop** (design → plan → implement) is delegated to Superpowers
 or Plan mode. Its V1 gated PR lifecycle uses YouTrack, Linear, or qualified private
 personal GitHub Projects bound to a private repository, with the GitHub **code-host**
-adapter. DevHubTracker remains optional outside the V1 qualification matrix. Linear
+adapter. DevHub is the fourth V1 provider (PAT-ADR-0031) but not yet repository-ready: two core cells are gaps (PAT-324). Linear
 derives delivery state, PR link and reviewed AC from deterministic receipts, with
 targeted native state synchronization; native AC checkbox replacement is refused.
 Separate grooming operations can replace targeted
@@ -666,20 +666,20 @@ docs/model-routing-pilot-*.md   frozen manual measurement protocol + results she
 ## Providers (pluggable)
 
 The code host remains a host parameter (`FOUNDRY_CODEHOST`). A repository selects
-YouTrack, Linear or GitHub Projects through its versioned `.foundry/tracker.json`, from
+YouTrack, Linear, GitHub Projects or DevHub through its versioned `.foundry/tracker.json`, from
 the Git root even when a command starts in a nested directory. Without a marker, only
 one already-registered historical basename binding can run in explicit `legacy` mode;
 an unregistered repository never falls through to `FOUNDRY_TRACKER`. A malformed,
-moved, ambiguous or stale binding refuses the command. DevHub remains the separate
-host-selected internal pilot. `trackers/base.py` and `codehosts/base.py` are the ports.
-YouTrack, Linear and GitHub Projects are real V1 adapters; GitHub support is bounded
-to the qualified private personal Project/private-repository shape. DevHubTracker v1
-remains an optional real adapter outside the V1 qualification matrix.
+moved, ambiguous or stale binding refuses the command. DevHub binds through the same
+marker. `trackers/base.py` and `codehosts/base.py` are the ports.
+YouTrack, Linear, GitHub Projects and DevHub are real V1 adapters; GitHub support is bounded
+to the qualified private personal Project/private-repository shape. DevHub has two core
+gaps (PAT-324), so it is not repository-ready.
 See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
 and bounded recovery procedure, [`docs/ghprojects-tracker.md`](docs/ghprojects-tracker.md)
 for the GitHub issue/ADR/lifecycle contract, and
-[`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the isolated DevHub pilot cutover.
-The portable V1 functional contract across all three trackers — core journeys, identity
+[`docs/devhub-tracker.md`](docs/devhub-tracker.md) for the DevHub project binding and cutover.
+The portable V1 functional contract across all four trackers — core journeys, identity
 model, mutation-guarantee levels without a provider CAS, and the capability matrix
 grounding every `gap`/`refused`/`to_qualify` cell in adapter code — is
 [`docs/tracker-contract.md`](docs/tracker-contract.md) and its machine-readable

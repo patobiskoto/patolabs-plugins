@@ -31,6 +31,10 @@ from foundry.trackers.ghprojects import _FieldBinding as GitHubFieldBinding
 from foundry.trackers.linear import LinearBindingError, LinearTracker
 from foundry.trackers.youtrack import YouTrackTracker, _YouTrackHTTPError
 
+from foundry.trackers.devhub import DevHubTrackerError
+
+from test_devhub_tracker import ScriptedTracker as DevHubScriptedTracker
+from test_devhub_tracker import issue_raw as devhub_issue_raw
 from test_linear_tracker import LinearWire
 from test_linear_tracker import PROJECT as LINEAR_PROJECT
 from test_linear_tracker import connection as linear_connection
@@ -165,11 +169,22 @@ def _core_coverage_state(manifest: dict, contract: dict):
     return supported, blockers, covered
 
 
-def _core_gate_failures(manifest: dict, contract: dict) -> list[str]:
+# PAT-ADR-0031 admits DevHub as a V1 provider whose core cells may still be `gap` or
+# `to_qualify` under an owner ticket. Its blocking cells stay visible in the contract and
+# can never be mapped as passing coverage (the two checks above still cover them), but
+# they do not turn this aggregate gate red until the owner tickets close. Remove the
+# entry when the last DevHub core cell is `supported`.
+_ADMISSION_PENDING_PROVIDERS = frozenset({"devhub"})
+
+
+def _core_gate_failures(
+    manifest: dict, contract: dict, pending=frozenset(),
+) -> list[str]:
     supported, blockers, covered = _core_coverage_state(manifest, contract)
     failures = []
+    blockers = {pair for pair in blockers if pair[0] not in pending}
     missing = supported - covered
-    misleading = covered & blockers
+    misleading = covered & _core_coverage_state(manifest, contract)[1]
     if missing:
         failures.append(
             "supported cells without executable provider behavior: "
@@ -284,10 +299,24 @@ def test_each_v1_provider_exercises_every_required_failure_category():
 
 def test_all_core_provider_cells_are_supported_and_covered():
     """The CI gate stays red until every core cell has provider behavior."""
-    failures = _core_gate_failures(_load(MANIFEST_PATH), _load(CONTRACT_PATH))
+    failures = _core_gate_failures(
+        _load(MANIFEST_PATH), _load(CONTRACT_PATH), _ADMISSION_PENDING_PROVIDERS,
+    )
     assert failures == [], "Tracker V1 conformance gate failed:\n- " + "\n- ".join(
         failures
     )
+
+
+def test_admission_exemption_names_only_providers_with_ticketed_blockers():
+    contract = _load(CONTRACT_PATH)
+    _supported, blockers, _covered = _core_coverage_state(_load(MANIFEST_PATH), contract)
+    # every exempt provider still has at least one blocker (else the entry is stale) and
+    # the exemption never hides a blocker of another provider
+    assert {provider for provider, _operation in blockers} == set(
+        _ADMISSION_PENDING_PROVIDERS
+    )
+    failures = _core_gate_failures(_load(MANIFEST_PATH), contract)
+    assert any("devhub:cross-tracker-adr-import=gap(PAT-" in line for line in failures)
 
 
 def test_public_ci_runs_the_named_conformance_suite():
@@ -333,7 +362,7 @@ def test_missing_secret_backed_tracker_credentials_fail_before_transport(
         LinearTracker()
 
 
-@pytest.mark.parametrize("provider", ["youtrack", "linear"])
+@pytest.mark.parametrize("provider", ["youtrack", "linear", "devhub"])
 def test_archived_binding_refusal_is_shared_by_bound_providers(
     provider: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -700,6 +729,87 @@ def test_youtrack_companion_epic_refusal_leaves_no_later_write(
     assert wire.rows == {"T-1": origin_before}
 
 
+class _DevHubCompanionTracker(DevHubScriptedTracker):
+    """Stateful double of the DevHub application routes used by the companion Epic writes."""
+
+    def __init__(self, *, epic_type_exists: bool = True):
+        super().__init__([])
+        self.epic_type_exists = epic_type_exists
+        self.posts: list[tuple[str, object]] = []
+        self.rows = {"TRAME-1": devhub_issue_raw(
+            id="TRAME-1", title="origin Epic", type="Epic", labels=[], links=[],
+            comments=[], version=1,
+        )}
+
+    def _req(self, method, path, body=None, **kwargs):
+        self.calls.append((method, path, body, kwargs))
+        if method == "GET" and path.startswith("/issues/"):
+            return copy.deepcopy(self.rows[path.split("/")[2]])
+        self.posts.append((path, copy.deepcopy(body)))
+        if method == "POST" and path == "/projects/TRAME/issues":
+            if body["fields"].get("type") == "Epic" and not self.epic_type_exists:
+                # what ``DevHubTracker._req`` raises on an HTTP failure
+                raise DevHubTrackerError(method, path, 400, "validation_error")
+            identifier = f"TRAME-{len(self.rows) + 1}"
+            links = []
+            if body["parent"] is not None:
+                links = [{"type": "subtask-of", "direction": "outward", "target": body["parent"]}]
+                self.rows[body["parent"]]["links"].append(
+                    {"type": "parent-of", "direction": "outward", "target": identifier},
+                )
+            self.rows[identifier] = devhub_issue_raw(
+                id=identifier, title=body["title"], body=body["body"],
+                type=body["fields"].get("type"), state=body["fields"].get("state", "backlog"),
+                labels=[], links=links, comments=[], version=1,
+            )
+            return copy.deepcopy(self.rows[identifier])
+        if method == "POST" and path.endswith("/comments"):
+            self.rows[path.split("/")[2]]["comments"].append({"text": body["text"], "created": 2})
+            return {"id": 1, "text": body["text"], "created": 2, "version": 2}
+        raise AssertionError(f"unexpected provider request: {method} {path}")
+
+
+def test_devhub_companion_epic_child_issue_and_comment():
+    tracker = _DevHubCompanionTracker()
+    project = Project(key="TRAME", id="42")
+    origin_before = copy.deepcopy(tracker.rows["TRAME-1"])
+
+    companion = tracker.create_issue(project, "Nits TRAME-1", "", fields=_COMPANION_FIELDS)
+    follow_up = tracker.create_issue(
+        project, "Deferred remarks, batch 1", _FOLLOW_UP_BODY, parent=companion.id,
+    )
+    tracker.add_comment(follow_up.id, _DEFERRED_REMARK, project=project)
+
+    assert (companion.id, companion.type) == ("TRAME-2", "Epic")
+    assert tracker.get_issue(companion.id).links == [
+        Link("parent-of", "outward", follow_up.id),
+    ]
+    final = tracker.get_issue(follow_up.id)
+    assert final.links == [Link("subtask-of", "outward", companion.id)]
+    assert [comment["text"] for comment in final.comments] == [_DEFERRED_REMARK]
+    assert tracker.rows["TRAME-1"] == origin_before
+    assert [path for path, _body in tracker.posts] == [
+        "/projects/TRAME/issues", "/projects/TRAME/issues", "/issues/TRAME-3/comments",
+    ]
+    assert tracker.posts[0][1]["fields"] == {"type": "Epic", "state": "backlog"}
+
+
+def test_devhub_companion_epic_refusal_leaves_no_later_write():
+    # The refusal is SIMULATED by the double, which raises the error type ``_req`` raises
+    # on an HTTP failure; what a real project answers is not verified here.
+    tracker = _DevHubCompanionTracker(epic_type_exists=False)
+    origin_before = copy.deepcopy(tracker.rows["TRAME-1"])
+
+    with pytest.raises(DevHubTrackerError) as raised:
+        tracker.create_issue(
+            Project(key="TRAME", id="42"), "Nits TRAME-1", "", fields=_COMPANION_FIELDS,
+        )
+
+    assert raised.value.status == 400
+    assert [path for path, _body in tracker.posts] == ["/projects/TRAME/issues"]
+    assert tracker.rows == {"TRAME-1": origin_before}
+
+
 def test_youtrack_child_creation_is_two_writes_and_a_failed_link_leaves_the_issue(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1058,7 +1168,7 @@ def test_companion_epic_writes_have_one_conformance_case_per_v1_provider():
     }
     cases = {case["id"]: case for case in manifest["cases"]}
 
-    assert providers == {"youtrack", "linear", "ghprojects"}
+    assert providers == {"youtrack", "linear", "ghprojects", "devhub"}
     for provider in providers:
         writes = cases[f"{provider}-companion-epic-writes"]
         assert writes["providers"] == [provider]

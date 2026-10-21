@@ -1,15 +1,15 @@
 # Tracker contract v1 (PAT-53)
 
 This is the versioned, portable functional contract Foundry V1.0.0 holds every tracker
-adapter to. A repository chooses exactly one tracker among YouTrack, Linear and GitHub
-Projects (`ghprojects`) through a versioned `.foundry/tracker.json`, and runs
+adapter to. A repository chooses exactly one tracker among YouTrack, Linear, GitHub
+Projects (`ghprojects`) and DevHub (`devhub`, PAT-ADR-0031) through a versioned `.foundry/tracker.json`, and runs
 the same journeys in Claude Code and Codex. GitHub as a *code host* (PRs, merges, CI) is
 a separate dimension (§3). `FOUNDRY_TRACKER` remains only a host setting used by
 explicit setup and historical tooling; it never substitutes for a repository binding.
 
 Every claim below is grounded in the current adapter code, cited by module and symbol. The
 machine-readable capability matrix is [`tracker-contract.v1.json`](tracker-contract.v1.json)
-(`contract: "foundry.tracker-contract.v1"`, `version: 4`);
+(`contract: "foundry.tracker-contract.v1"`, `version: 5`);
 [`test_tracker_contract.py`](../tests/test_tracker_contract.py) pins its schema and
 cross-checks it against the `Tracker` ABC and the adapter modules. This contract records
 capabilities and requirements; it changes no adapter behaviour.
@@ -51,26 +51,32 @@ closed vocabulary:
 
 `test_tracker_contract.py` enforces the first two rules and the owner tickets, and checks the `blocked_by_adr` cells against the invariants listed in §4.3; only a few cells are tied to adapter code by the test, the rest are grounded by their cited evidence.
 
-| Core journey | Representative `Tracker` ops | YouTrack | Linear | ghprojects |
-|---|---|---|---|---|
-| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow methods remain with PAT-57/66/67) |
-| Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) |
-| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | supported (PAT-57, qualified private personal-project read profile) |
-| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | supported (PAT-66) |
-| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
-| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) |
-| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) |
-| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) |
-| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) |
-| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) |
-| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) |
-| Périmètre de release/changelog | `record_delivery_receipt`, `read_release_scope` via `query.py changelog()` | supported (PAT-82 exact merge receipt; terminal native state stays unavailable without one exact current proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) |
-| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
-| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G |
-| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding |
+| Core journey | Representative `Tracker` ops | YouTrack | Linear | ghprojects | DevHub |
+|---|---|---|---|---|---|
+| Contexte/backlog: identity and project resolution | `resolve_project`, `resolve_checkout_project`, `validate_mutation_*` | supported | supported | supported (binding only; workflow methods remain with PAT-57/66/67) | supported (PAT-323; the basename pilot path is retired) |
+| Contexte/backlog: repository bootstrap (bind an existing verified project) | `verify_project_identity`, `resolve_checkout_project` | supported | supported | supported (binding only) | supported (`registry bootstrap devhub`, PAT-314, PAT-321) |
+| Contexte/backlog: read | `search`, `get_issue` | supported | supported (unknown mapping fails closed; `registry update` resumes) | supported (PAT-57, qualified private personal-project read profile) | supported |
+| Frame/intake/groom: create, comment | `create_issue`, `add_comment` | supported | supported | supported (PAT-66) | supported |
+| Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) | supported |
+| Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) | supported |
+| Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) | supported |
+| Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) | supported |
+| Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) | supported (proof-bound `review` and `done`, append-only receipts) |
+| État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) | supported |
+| Clôture d'epic | `close_epic`, `get_epic_closure` | supported (PAT-ADR-0006 bounded detection) | supported (PAT-ADR-0006 bounded detection) | supported (PAT-69; PAT-ADR-0006 bounded detection) | supported (atomic `close_epic`, PAT-ADR-0030 for dropped children) |
+| Périmètre de release/changelog | `record_delivery_receipt`, `read_release_scope` via `query.py changelog()` | supported (PAT-82 exact merge receipt; terminal native state stays unavailable without one exact current proof) | supported (exact ProjectMilestone mapping and proof-bound lifecycle receipts) | supported (exact repository Milestone plus bound Project membership; terminal classification requires the PAT-67 lifecycle proof) | supported (mapped Version id) |
+| Bascule par copie fidèle (PAT-64): ADR import target | `migration_export_adrs`, `migration_find_adr`, `migration_import_adrs` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | gap (PAT-324: no `migration_preflight`) |
+| Bascule par copie fidèle (PAT-64): live-work copy | `migration_preflight`, `migration_attribute_exceptions`, `migration_find_issue`, `migration_import_issue`, `migration_link_issue` | supported; live source in P64Q→P64G | supported; provider-specific fake transport | supported; live target in P64Q→P64G | gap (PAT-324: no `migration_preflight`, no `migration_supported_attributes`) |
+| Bascule (PAT-64): archived source refuses writes | staged target plus atomic registry promotion/source archive/marker replacement | supported; live P64Q tombstone | supported; provider-specific fake transport | supported; active-binding refusal and live P64G binding | supported (archive guard only; DevHub as cutover source is not claimed) |
 
 The JSON is authoritative for every cell and its evidence; read it before relying on a
-cell.
+cell. The DevHub column was added by PAT-323 under PAT-ADR-0031 (accepted): DevHub is the
+fourth V1 provider (`v1_core: true`), with 17 of its 19 core cells `supported` and two `gap`
+cells (the two cross-tracker copy rows above), so it is not repository-ready until those
+close. The owner ticket of those two cells is PAT-324. The write guarantees of DevHub are those of
+PAT-ADR-0006 for a V1 provider; its stronger mechanisms (proof-bound transitions, atomic
+Epic closure) remain its own. Admission switches no repository: the switch of a repository
+to DevHub keeps its own ADR (FOUNDRY-ADR-0026).
 
 **Capability work and remaining qualification limits:**
 - **PAT-206** — `accept_issue` (operation `human-acceptance-decision`, non-core) accepts a
@@ -120,8 +126,8 @@ cell.
   targeted parent State projection, complete graph readback and fresh-process replay
   without a second effect. Title, body, labels, unrelated relations and non-State
   Project fields remain part of the protected snapshot. The path retains the explicit
-  S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The non-V1
-  DevHub adapter keeps the stronger atomic form of the port (`devhub.py`).
+  S1→S2 race: it is neither CAS nor an atomic provider graph transaction. The
+  DevHub adapter (V1 since PAT-ADR-0031) keeps the stronger atomic form of the port (`devhub.py`).
 - **PAT-82** — YouTrack persists one canonical delivery receipt only after Foundry has
   verified review, AC or explicit override, CI and the exact code-host merge. The
   receipt binds project/issue, repository/PR, head/base/diff, exact review proof and
@@ -385,26 +391,34 @@ factory/doctor resolution and updates match `canonical_repo`. A basename lookup 
 only the compatibility fallback for a legacy entry without `canonical_repo`, so
 `first/same` and `second/same` can both be active without sharing a binding.
 
-**One checkout selection for all three adapters.**
+**One checkout selection for all four adapters.**
 `repository_tracker_selection()` reads the marker from the Git root and validates its
 canonical origin, provider, project coordinates and registry digest
 (`registry.py`). The default `Tracker.resolve_checkout_project()` consumes that
-selection for YouTrack and `ghprojects` (`base.py`); Linear delegates to that
+selection for YouTrack and `ghprojects` (`base.py`); DevHub calls it, then re-reads the
+project on the server (`devhub.py`); Linear delegates to that
 same selection before activation (`linear.py`) and keeps provider-level
 team/project assertions (`linear.py`). `foundry.effective_tracker_name()` is the shared
 selection used by both the implicit factory and doctor (`foundry/__init__.py`,
 `doctor.py`), so a repository V1 binding wins even when the host setting names
-the DevHub pilot. Before using a host-selected DevHub pilot, the factory and doctor
-validate the local selection: an existing legacy binding wins, and ambiguous,
-interrupted or archived bindings refuse. The canonical DevHub pilot is represented
-explicitly as `mode=pilot`, including historical DevHub markers, outside the three
-V1 trackers; `--require-v1` refuses it.
+DevHub. Since PAT-323 (PAT-ADR-0031) the DevHub pilot is retired: `devhub` is in
+`registry._V1_TRACKERS`, `mode=pilot` and the basename resolution of `resolve_checkout_project`
+no longer exist, and `--require-v1` accepts a DevHub marker. A DevHub registry entry that
+carries `canonical_repo` but no marker is therefore an interrupted or moved V1 publication
+(deduced from `registry.repository_tracker_selection`): it fails closed before provider
+access, as for the other providers, and the operator republishes it with `registry bootstrap
+devhub <repo> <KEY> <project-id>` run in the checkout, which reads the exact project back,
+refuses a project outside the `foundry` governance mode, and writes only the missing marker
+when the registry entry is identical (`registry.bootstrap_repository_binding`). A DevHub
+entry without `canonical_repo` is legacy (`registry upgrade devhub <repo>`). The DevHub
+binding carries no extra beyond `canonical_repo` and the optional `release_ids` map
+(`registry._validated_binding_entry`).
 A valid marker cannot mask another active canonical or matching legacy provider
 binding: the published binding reader and mapping update refuse that ambiguity
 before effects (`registry.py`). Archived bindings
 are excluded from the active-provider check. Only a proven unbound checkout or a
 host diagnostic outside Git can use the global
-pilot setting. A V1 canonical registry entry whose marker is absent is an interrupted
+`FOUNDRY_TRACKER=devhub` name; it selects a name only and resolves no project without a marker. A V1 canonical registry entry whose marker is absent is an interrupted
 or moved publication and fails before provider access. `PROJECT_REPO` and
 `FOUNDRY_TRACKER` cannot change that result. The administrative setup boundary alone
 passes the configured provider explicitly, but only after
@@ -420,8 +434,7 @@ active registry entry and that entry has no `canonical_repo`. `registry selectio
 reports `mode=legacy`; `registry selection --require-v1` refuses it and points to
 `registry upgrade`. An unregistered repository, two legacy providers for one basename,
 or a canonical entry without its marker is never treated as a new legacy repository.
-DevHub remains the separately identified internal pilot outside the three-provider V1
-matrix.
+DevHub follows the same rules since PAT-323: it is a V1 provider, not a pilot.
 
 **Normalized issue key.** `Issue.id` (`models.py`) is the provider's
 human-readable identifier (YouTrack `idReadable`, Linear `identifier`), of the form
@@ -545,7 +558,7 @@ never **excludes** them, and no text in Foundry may say otherwise.
   chain excepted: it reads `aligned`, PAT-ADR-0024 and PAT-ADR-0017); an invalid or incomplete receipt chain is `unknown`
   and has no normalized state, including when the native State says `done`.
 - **Level 3 — provider transaction plus receipt.** Only DevHub's `close_epic`
-  (`devhub.py`), outside V1.
+  (`devhub.py`).
 
 ### 4.2 V1 target guarantees without CAS
 
@@ -863,6 +876,6 @@ never used by the code-host path.
 
 ## Document status
 
-This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 4`. A change to
+This is contract **v1**, matching `tracker-contract.v1.json`'s `version: 5`. A change to
 any status cell, the operation list or the closed status vocabulary bumps the JSON
 `version` and this heading together.

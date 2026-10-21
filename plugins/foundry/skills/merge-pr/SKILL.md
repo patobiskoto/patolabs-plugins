@@ -333,7 +333,7 @@ depending on the adapter.)
 
 The rule names no tracker. Its writes are operations of the portable contract
 `docs/tracker-contract.md`, whose table "Core journey" marks the three rows below `supported`
-in each of its three provider columns:
+in each of its provider columns:
 
 - row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`) carries
   writes 1 and 3;

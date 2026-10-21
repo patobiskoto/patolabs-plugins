@@ -98,7 +98,7 @@ _TRACKER_MARKER_V2_KEYS = frozenset(
     }
 )
 _SUPPORTED_MARKER_TRACKERS = frozenset({"youtrack", "ghprojects", "devhub", "linear"})
-_V1_TRACKERS = frozenset({"youtrack", "linear", "ghprojects"})
+_V1_TRACKERS = frozenset({"youtrack", "linear", "ghprojects", "devhub"})
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -580,7 +580,8 @@ def repository_tracker_selection(
 ) -> dict[str, object]:
     """Resolve the checkout mode without trusting a global provider or env alias.
 
-    A marker is V1 for the three V1 trackers; a historical DevHub marker is pilot.
+    A marker is V1 for the four V1 trackers (PAT-ADR-0031 admits DevHub; the former
+    DevHub pilot mode is retired, PAT-323).
     An exact canonical registry entry without its marker is an
     interrupted or moved V1 publication and therefore fails closed. Legacy mode is
     limited to one already-registered basename binding; an unregistered checkout is
@@ -590,10 +591,7 @@ def repository_tracker_selection(
     """
     binding = repository_tracker_binding(cwd)
     if binding is not None:
-        mode = "v1" if binding.tracker in _V1_TRACKERS else "pilot"
-        if require_v1 and mode != "v1":
-            raise SystemExit("Binding tracker V1 requis : le dépôt utilise le pilote DevHub.")
-        return {"mode": mode, "tracker": binding.tracker, "binding": binding}
+        return {"mode": "v1", "tracker": binding.tracker, "binding": binding}
     root = _checkout_root(cwd)
     if root is None:
         raise SystemExit("Binding tracker absent : checkout Git introuvable.")
@@ -644,29 +642,6 @@ def repository_tracker_selection(
         and "_staged_cutover" not in entry
         and "canonical_repo" not in entry
     ]
-    pilot = [
-        entry for entry in data.get("devhub", {}).values()
-        if isinstance(entry, dict)
-        and entry.get("archive") is not True
-        and "_staged_cutover" not in entry
-        and entry.get("canonical_repo") == repository
-    ] if isinstance(data.get("devhub", {}), dict) else []
-    if pilot:
-        if any(entry != pilot[0] for entry in pilot[1:]) or any(
-            provider != "devhub" or entry != pilot[0] for provider, entry in legacy
-        ):
-            raise SystemExit("Binding tracker pilote ambigu pour le dépôt courant.")
-        if require_v1:
-            raise SystemExit("Binding tracker V1 requis : le dépôt utilise le pilote DevHub.")
-        entry = pilot[0]
-        return {
-            "mode": "pilot", "tracker": "devhub", "repository": repository,
-            "repo": repo, "binding": None,
-            "project": Project(
-                key=entry["key"], id=entry["id"],
-                extra={k: v for k, v in entry.items() if k not in {"key", "id", "archive"}},
-            ),
-        }
     if not legacy:
         if allow_unbound:
             # Administrative setup is allowed to select a configured provider only
@@ -1167,6 +1142,11 @@ def _validated_binding_entry(
             or len(candidate["migration_label"]) > 30
         ):
             raise ValueError("binding ghprojects invalide : migration_label invalide")
+    elif tracker == "devhub":
+        if set(candidate) - {"canonical_repo", "release_ids"}:
+            raise ValueError("binding DevHub V1 invalide : extra non autorisé")
+        if "release_ids" in candidate:
+            candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
     return {"key": key, "id": project_id, **candidate}
 
 
@@ -1469,11 +1449,13 @@ def verify_existing_project(
         from foundry.trackers.youtrack import YouTrackTracker
         from foundry.trackers.linear import LinearTracker
         from foundry.trackers.ghprojects import GitHubProjectsTracker
+        from foundry.trackers.devhub import DevHubTracker
 
         adapter = {
             "youtrack": YouTrackTracker,
             "linear": LinearTracker,
             "ghprojects": GitHubProjectsTracker,
+            "devhub": DevHubTracker,
         }[tracker]()
     else:
         adapter = foundry.tracker(tracker, cwd=str(root))

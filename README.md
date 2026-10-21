@@ -302,8 +302,8 @@ remote. Linear supports bounded grooming of fields, body and parent; its deliver
 state, PR and AC authority use deterministic append-only receipts, with targeted native
 state synchronization. Native AC checkbox replacement remains unavailable. Linear ADRs
 are versioned, witness-bound project Documents; GitHub ADRs use reserved Issue supports
-and integrity-checked version comments. Epic closure is audited and non-atomic on the
-three V1 trackers. Bounded detection does not exclude an external overwrite between
+and integrity-checked version comments. Epic closure is audited and non-atomic on
+YouTrack, Linear and GitHub Projects (DevHub closes atomically). Bounded detection does not exclude an external overwrite between
 the fresh read and write (S1→S2). A cockpit Evidence Plane envelope is advisory and
 has no state, AC or merge authority.
 This repository itself is bound to Linear (project PAT) for issues and ADRs; the

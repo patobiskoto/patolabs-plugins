@@ -634,7 +634,8 @@
       "test": "test_tracker_conformance_v1.py::test_archived_binding_refusal_is_shared_by_bound_providers",
       "providers": [
         "youtrack",
-        "linear"
+        "linear",
+        "devhub"
       ],
       "categories": [
         "explicit-refusals"
@@ -1034,6 +1035,519 @@
       "test": "test_tracker_conformance_v1.py::test_ghprojects_companion_epic_without_type_option_is_refused_at_project_read",
       "providers": [
         "ghprojects"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "devhub-checkout-resolution",
+      "test": "test_devhub_tracker.py::test_resolution_cross_checks_registry_and_remote",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "conflicts"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ],
+      "adversarial": [
+        "registry-drift"
+      ]
+    },
+    {
+      "id": "devhub-same-basename-foreign-origin",
+      "test": "test_devhub_tracker.py::test_same_basename_different_owner_refuses_before_any_mutation",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ],
+      "adversarial": [
+        "near-name-or-number",
+        "repository-switch"
+      ]
+    },
+    {
+      "id": "devhub-canonical-entry-needs-marker",
+      "test": "test_repository_binding_v1.py::test_devhub_canonical_entry_without_marker_fails_closed_until_bootstrap_replay",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "replay"
+      ],
+      "operations": [
+        "identity-and-project-resolution",
+        "repository-bootstrap"
+      ],
+      "adversarial": [
+        "registry-drift"
+      ]
+    },
+    {
+      "id": "devhub-foreign-active-binding-refusal",
+      "test": "test_repository_binding_v1.py::test_devhub_adapter_refuses_a_checkout_active_on_another_provider",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "identity-and-project-resolution",
+        "tombstone-archived-source-after-switch"
+      ],
+      "adversarial": [
+        "contradictory-global-provider"
+      ]
+    },
+    {
+      "id": "devhub-bootstrap-publication",
+      "test": "test_repository_binding_v1.py::test_devhub_bootstrap_publishes_only_a_verified_foundry_governed_project",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "devhub-identity-read-back",
+      "test": "test_devhub_tracker.py::test_verify_project_identity_reads_back_key_id_and_repository",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "devhub-governance-refusal",
+      "test": "test_devhub_tracker.py::test_identity_read_back_refuses_a_manual_project_naming_the_mode",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals",
+        "permissions"
+      ],
+      "operations": [
+        "repository-bootstrap"
+      ]
+    },
+    {
+      "id": "devhub-backlog-pagination",
+      "test": "test_devhub_tracker.py::test_search_consumes_every_bounded_page_without_duplicates",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "pagination"
+      ],
+      "operations": [
+        "backlog-read",
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "devhub-backlog-pagination-limits",
+      "test": "test_devhub_tracker.py::test_search_refuses_empty_advancing_page_and_hard_caps_page_count",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "pagination",
+        "explicit-refusals"
+      ],
+      "operations": [
+        "backlog-read"
+      ]
+    },
+    {
+      "id": "devhub-port-round-trip",
+      "test": "test_devhub_tracker.py::test_port_methods_round_trip_normalized_shapes",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "frame-intake-groom-evolve-existing",
+        "mid-flight-comment",
+        "epics-children-creation",
+        "dependencies-relates-blocks",
+        "adr-read",
+        "adr-create"
+      ]
+    },
+    {
+      "id": "devhub-reparent",
+      "test": "test_devhub_tracker.py::test_link_reparents_an_existing_issue_with_both_hierarchy_types",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "epics-children-reparent-existing"
+      ]
+    },
+    {
+      "id": "devhub-body-update",
+      "test": "test_devhub_tracker.py::test_update_body_checks_expected_body_then_patches_with_the_read_version",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "devhub-body-update-conflict",
+      "test": "test_devhub_tracker.py::test_update_body_refuses_a_divergent_body_and_reports_a_current_one",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "frame-intake-groom-evolve-existing"
+      ]
+    },
+    {
+      "id": "devhub-comment-stale-version",
+      "test": "test_devhub_tracker.py::test_link_and_comment_send_fresh_if_match_and_propagate_stale_version",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "mid-flight-comment",
+        "dependencies-relates-blocks"
+      ]
+    },
+    {
+      "id": "devhub-link-lost-response-replay",
+      "test": "test_devhub_tracker.py::test_link_sends_canonical_header_and_retries_with_one_idempotency_key",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "dependencies-relates-blocks"
+      ]
+    },
+    {
+      "id": "devhub-mutation-project-binding",
+      "test": "test_devhub_tracker.py::test_every_id_mutation_requires_the_current_project_binding",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "identity-and-project-resolution",
+        "adr-status-evolution"
+      ],
+      "adversarial": [
+        "repository-switch"
+      ]
+    },
+    {
+      "id": "devhub-ambiguous-mutation-retry",
+      "test": "test_devhub_tracker.py::test_ambiguous_mutation_retries_once_with_the_same_idempotency_key",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "ambiguous-effects",
+        "replay"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "devhub-divergent-replay",
+      "test": "test_devhub_tracker.py::test_explicit_idempotency_key_detects_divergent_replay",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "replay",
+        "conflicts"
+      ],
+      "operations": [
+        "frame-intake-groom-create"
+      ]
+    },
+    {
+      "id": "devhub-scope-refusal",
+      "test": "test_devhub_tracker.py::test_transport_preserves_403_scope_code_without_provider_details",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "permissions"
+      ],
+      "operations": [
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "devhub-proof-bound-transitions",
+      "test": "test_devhub_tracker.py::test_review_done_and_adr_proofs_are_bound_and_signed",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions",
+        "adr-status-evolution"
+      ]
+    },
+    {
+      "id": "devhub-append-only-lifecycle",
+      "test": "test_devhub_tracker.py::test_devhub_declares_the_append_only_lifecycle_the_cadencer_reads",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "capabilities"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "devhub-proof-receipts-pagination",
+      "test": "test_devhub_tracker.py::test_proof_receipts_are_read_oldest_first_across_pages_and_validated",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "pagination"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "devhub-review-republication",
+      "test": "test_devhub_tracker.py::test_review_on_an_already_reviewed_issue_republishes_only_a_new_generation",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "replay"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "devhub-done-projection-recovery",
+      "test": "test_devhub_tracker.py::test_done_projection_is_confirmed_only_by_the_exact_receipt_chain",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "ambiguous-effects"
+      ],
+      "operations": [
+        "issue-lifecycle-transitions"
+      ]
+    },
+    {
+      "id": "devhub-acceptance-sync",
+      "test": "test_devhub_tracker.py::test_acceptance_sync_uses_exact_body_version_and_idempotency_boundary",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "devhub-acceptance-sync-replay",
+      "test": "test_devhub_tracker.py::test_acceptance_sync_is_idempotent_and_refuses_changed_body_before_patch",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "replay",
+        "conflicts"
+      ],
+      "operations": [
+        "acceptance-criteria-sync"
+      ]
+    },
+    {
+      "id": "devhub-epic-closure-replay",
+      "test": "test_devhub_tracker.py::test_epic_closure_posts_exact_original_receipt_with_stable_replay_identity",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "replay"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "devhub-epic-closure-cross-project",
+      "test": "test_devhub_tracker.py::test_epic_closure_refuses_cross_project_request_before_http",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "epic-closure"
+      ],
+      "adversarial": [
+        "repository-switch"
+      ]
+    },
+    {
+      "id": "devhub-epic-closure-changed-receipt",
+      "test": "test_devhub_tracker.py::test_epic_closure_post_refuses_a_changed_provider_receipt",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "conflicts"
+      ],
+      "operations": [
+        "epic-closure"
+      ]
+    },
+    {
+      "id": "devhub-release-scope",
+      "test": "test_devhub_tracker.py::test_release_scope_reads_the_mapped_version_id_and_classifies_each_issue",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "devhub-release-scope-refusals",
+      "test": "test_devhub_tracker.py::test_release_scope_refuses_unmapped_foreign_or_unlisted_scopes",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [
+        "release-and-changelog-scope"
+      ]
+    },
+    {
+      "id": "devhub-adr-import-foreign-id",
+      "test": "test_devhub_tracker.py::test_import_adr_posts_the_strict_body_and_returns_the_foreign_id",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "adr-create"
+      ]
+    },
+    {
+      "id": "devhub-factory-capabilities",
+      "test": "test_devhub_tracker.py::test_factory_instantiates_devhub_without_changing_other_providers",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "capabilities"
+      ],
+      "operations": [
+        "identity-and-project-resolution"
+      ]
+    },
+    {
+      "id": "devhub-missing-credentials",
+      "test": "test_devhub_tracker.py::test_configured_url_is_validated_before_any_secret_resolution",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "explicit-refusals"
+      ],
+      "operations": [],
+      "adversarial": [
+        "missing-credentials"
+      ]
+    },
+    {
+      "id": "devhub-companion-epic-writes",
+      "test": "test_tracker_conformance_v1.py::test_devhub_companion_epic_child_issue_and_comment",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "frame-intake-groom-create",
+        "epics-children-creation",
+        "mid-flight-comment"
+      ]
+    },
+    {
+      "id": "devhub-companion-epic-refusal",
+      "test": "test_tracker_conformance_v1.py::test_devhub_companion_epic_refusal_leaves_no_later_write",
+      "providers": [
+        "devhub"
       ],
       "categories": [
         "explicit-refusals"

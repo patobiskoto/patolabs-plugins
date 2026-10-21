@@ -849,7 +849,10 @@ class DevHubTracker(Tracker):
         )
 
     def resolve_project(self, repo: str) -> Project:
-        registered = registry.resolve(self.name, repo)
+        return self._read_back_registered(registry.resolve(self.name, repo), repo)
+
+    def _read_back_registered(self, registered: Project, repo: str) -> Project:
+        """Re-read a registered project on the server and refuse any contradiction."""
         canonical = registered.extra.get("canonical_repo")
         if not isinstance(canonical, str) or not canonical:
             raise SystemExit(f"Binding DevHub incomplet pour '{repo}' : canonical_repo requis.")
@@ -868,6 +871,13 @@ class DevHubTracker(Tracker):
         remote = self._to_project(raw)
         if remote.key != registered.key or remote.id != registered.id:
             raise SystemExit(f"Binding DevHub contradictoire pour '{repo}' ; mutation refusée.")
+        # `release_ids` is a local mapping the server does not carry (read_release_scope):
+        # keep it from the binding; every other field stays the server's answer.
+        if "release_ids" in registered.extra and "release_ids" not in remote.extra:
+            remote = Project(
+                key=remote.key, id=remote.id,
+                extra={**remote.extra, "release_ids": registered.extra["release_ids"]},
+            )
         return remote
 
     def verify_project_identity(self, project: Project) -> bool:
@@ -952,9 +962,13 @@ class DevHubTracker(Tracker):
         *,
         checkout_identity: str | None = None,
     ) -> Project:
-        """Keep the internal pilot's historical registry resolution outside V1."""
-        del cwd, checkout_identity
-        return self.resolve_project(registry.repo_basename())
+        """Resolve the checkout through its V1 binding, then re-read it on the server (PAT-323)."""
+        registered = super().resolve_checkout_project(
+            cwd, checkout_identity=checkout_identity,
+        )
+        return self._read_back_registered(
+            registered, registry.repo_basename(cwd, use_env=False),
+        )
 
     def search(self, project: Project, query: str = "") -> list[Issue]:
         items, cursor, seen = [], 0, set()

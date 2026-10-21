@@ -1021,7 +1021,7 @@ def test_dhn_39_a_mapped_release_scope_is_read_without_approximate_discovery(sui
 
 # --- Foundry-side prerequisite --------------------------------------------------------
 
-@gap("DHN-40", "foundry+adapter", "registry._V1_TRACKERS excludes devhub (registry.py); the V1 contract lists it for contrast only", raises=AssertionError)
+@need("DHN-40")
 def test_dhn_40_devhub_is_a_v1_tracker_of_the_repository(suite):
     assert "devhub" in registry._V1_TRACKERS
 

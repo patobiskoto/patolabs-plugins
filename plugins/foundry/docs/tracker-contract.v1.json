@@ -1,6 +1,6 @@
 {
   "contract": "foundry.tracker-contract.v1",
-  "version": 4,
+  "version": 5,
   "generated_for": "PAT-53",
   "doc": "plugins/foundry/docs/tracker-contract.md",
   "status_vocabulary": {
@@ -36,8 +36,8 @@
     "devhub": {
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
-      "v1_core": false,
-      "note": "Foundry's internal pilot tracker, not one of the three repository-facing V1 trackers; listed for contrast only: it is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178."
+      "v1_core": true,
+      "note": "Fourth V1 provider since PAT-ADR-0031 (PAT-323): registry._V1_TRACKERS holds devhub, a DevHub binding is a canonical repository marker, and the former basename pilot path is retired. It is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178. Two core cells are not yet supported (cross-tracker-adr-import, cross-tracker-live-work-copy); DevHub is not repository-ready until they are."
     }
   },
   "operations": [
@@ -54,7 +54,7 @@
       "cells": {
         "youtrack": {
           "status": "supported",
-          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py); for a V1 YouTrack marker the factory enables requires_mutation_binding (foundry/__init__.py), write.mutation_project resolves the exact checkout project and write.issue_binding invokes the adapter endpoint check (write.py). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the global DevHub pilot (foundry/__init__.py; doctor.py). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
+          "evidence": "repository_tracker_selection resolves a V1 marker by canonical origin, rejects an exact canonical entry without its marker, and limits legacy mode to one historical basename entry without canonical_repo (registry.py); homonymous repositories use deterministic internal storage keys while marker, factory, doctor and update resolution match canonical_repo. base.resolve_checkout_project returns that same selected project (base.py); for a V1 YouTrack marker the factory enables requires_mutation_binding (foundry/__init__.py), write.mutation_project resolves the exact checkout project and write.issue_binding invokes the adapter endpoint check (write.py). effective_tracker_name is shared by the factory and doctor and gives a repository marker priority over the host-selected DevHub name (foundry/__init__.py; doctor.py). PROJECT_REPO and FOUNDRY_TRACKER cannot replace a V1 selection"
         },
         "linear": {
           "status": "supported",
@@ -63,6 +63,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "the shared Tracker.resolve_checkout_project path uses repository_tracker_selection for the canonical V1 marker (base.py; registry.py), and ghprojects.verify_project_identity checks the exact private personal ProjectV2 node id, owner/number and linked private personal repository node id through at most ten read-only GraphQL pages (ghprojects.py). PAT-65 qualified exact provider coordinates in this scope; workflow adapter operations remain owned by PAT-57/PAT-66/PAT-67"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "resolve_checkout_project resolves the checkout through the shared strict repository_tracker_selection port (base.py; registry.py, PAT-323), then re-reads the registered project with one GET /projects/resolve and refuses a key or id contradiction (devhub.py _read_back_registered); validate_mutation_repository compares the canonical origin before any mutation and every id mutation requires the bound project (devhub.py). The basename pilot path and mode=pilot are retired: a canonical DevHub entry without its marker fails closed like the other V1 providers (registry.py). Live: DHN-02 (docs/devhub-requirements.md); offline: test_devhub_tracker.py, test_repository_binding_v1.py"
         }
       }
     },
@@ -86,6 +90,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "registry bootstrap requires canonical_repo, owner, project number and ProjectV2 node id; ghprojects.verify_project_identity performs at most ten read-only GraphQL pages and verifies the exact private personal Project plus the linked private personal repository node id before canonical-scoped local publication. Same-basename repositories retain independent deterministic entries. This qualifies an existing binding only; PAT-65 qualified the broader private personal-project API shape, while workflow adapter conformance remains with its owner tickets (registry.py; ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "registry bootstrap devhub publishes the binding only after DevHubTracker.verify_project_identity read back the exact key, id and canonical repository with GET /projects/resolve and the governance mode is foundry or unknown for an older server (PAT-321); a mode other than foundry raises DevHubGovernanceModeError and nothing is written; a DevHub extra other than canonical_repo and release_ids is refused (devhub.py, registry.py _validated_binding_entry, verify_existing_project). DHN-01 and DHN-41 live; offline: test_repository_binding_v1.py, test_devhub_tracker.py"
         }
       }
     },
@@ -108,6 +116,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-57 compares every supplied Project coordinate with the active checkout binding before transport, then reads the exact bound private personal ProjectV2 and private personal repository through bounded GraphQL item pages. It distinguishes and validates repository, Project, item, Issue, field and option IDs; requires the qualified state/type catalogs, a bounded priority catalog, and coherent typed field/option values; refuses unconsumed field/label/value pages; excludes only foundry:adr supports; and hydrates a canonical bound Issue's UTF-8 body/comments/timestamps/parent/sub-issues/both dependency directions through REST. Every relation target proves the canonical repository before normalization; foreign, public, draft, PR, malformed, incomplete and ambiguous responses fail closed (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "search lists a project's issues through GET /projects/:key/issues with a bounded cursor loop that refuses a repeated, empty or over-limit page, and get_issue reads one issue with its comments (devhub.py). DHN-04, DHN-08, DHN-09, DHN-14 live; offline: test_devhub_tracker.py"
         }
       }
     },
@@ -130,6 +142,10 @@
         "ghprojects": {
           "status": "refused",
           "evidence": "search(query=...) raises TrackerCapabilityUnavailableError(self.name, 'provider-native-search-query'); PAT-57 qualifies the bound Project backlog only, not provider-native free-text search (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "search(query=...) sends the query to the server, which matches the issue title or readable id as a case-insensitive substring and not the body (devhub.py; docs/devhub-requirements.md answer 3, DHN-08)"
         }
       },
       "note": "Criterion 4 excludes free native search from V1 core."
@@ -153,6 +169,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 persists a private local intent keyed by the exact binding and creation spec before the sole initial private-repository Issue POST. Fresh bounded observation makes zero/one/multiple candidates explicit: pending zero and multiple or unowned candidates refuse, while one exact canonical non-ADR candidate resumes without a second Issue POST. Project attachment, qualified fields and optional parent each converge by readback or get at most one recorded resume; known partial failures expose the Foundry/native Issue IDs. The journal is machine-local recovery state, not provider authority, CAS or a cross-machine exactly-once claim (ghprojects.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "create_issue POSTs the issue under the bound project with one idempotency key reused on a lost response (devhub.py; DHN-04, DHN-07 live; reconcile_issue_creation for an interrupted creation, DHN-37). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -176,6 +196,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 update_fields and issue update_body fresh-read only targeted portable values/body, issue one bounded write per effect and verify readback. GitHub supplies no qualified CAS: this is bounded detection with the S1-to-S2 residual race, not exclusion (ghprojects.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "update_fields sends only the named fields under the issue version and update_body checks the expected body against the version read before the PATCH (devhub.py; DHN-05, DHN-06, DHN-21 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -198,6 +222,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 proves the bound REST issue before one comment POST and validates its returned id/body. Free-text comments carry no state and a response loss is surfaced, never blindly retried (ghprojects.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "add_comment POSTs a comment with a fresh If-Match version and propagates a stale version as a conflict; the issue read returns every comment past 100 (devhub.py; DHN-13, DHN-14 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -220,6 +248,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 creates a child only after proving the parent is one unique complete non-ADR delivery item in the exact bound Project as well as the exact bound REST Issue; a canonical-repository Issue outside that Project and an ADR support refuse before any write. It then uses the child's distinct integer native Issue ID in the qualified sub_issues endpoint and verifies or boundedly resumes the normalized parent relation (ghprojects.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "create_issue(parent=...) sends the parent id and the parent version (devhub.py; DHN-10 live reads both ends of the link back). Offline: test_devhub_tracker.py test_port_methods_round_trip_normalized_shapes"
         }
       }
     },
@@ -242,6 +274,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 proves both same-repository REST endpoints, snapshots/re-reads their relations, sends one targeted replace_parent sub_issues request and verifies normalized readback; it never conflates issue number and native issue id (ghprojects.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "link accepts subtask-of and parent-of (_LINK_TYPES) with both issues' versions, bound to the project (devhub.py; DHN-12 live). Offline: test_devhub_tracker.py test_link_reparents_an_existing_issue_with_both_hierarchy_types"
         }
       }
     },
@@ -264,6 +300,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "PAT-66 proves same-repository endpoints, snapshots/re-reads relations and uses bounded native mutations: blocked_by for depends-on/blocks and qualified addRelatesTo for relates, with distinct Issue node IDs and symmetric GraphQL readback (ghprojects.py; qualification/github-projects-v1.md)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "link posts depends-on, blocks and relates with the canonical header and one idempotency key per attempt, the inverse stored on the target (devhub.py; DHN-11 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -287,6 +327,10 @@
           "status": "to_qualify",
           "evidence": "no override; the base default applies. PAT-65 qualified individual parent/sub-issue and dependency relations, not this aggregate projection",
           "ticket": "PAT-57"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "epic_subgraph_supported = True and get_epic_subgraph reads the strict devhub-application.v1 projection (devhub.py; DHN-15 live; epic_preview.py)"
         }
       },
       "note": "Optional read-only projection; DevHub (devhub-application.v1) and Linear (foundry-epic-subgraph.v1, PAT-ADR-0027) implement it, for the Epic preview. The core journey is served by search(), link() and create_issue(parent=...)."
@@ -310,6 +354,10 @@
         "ghprojects": {
           "status": "refused",
           "evidence": "no override; the base raises ProjectProvisioningUnavailableError (base.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "project_provisioning_supported = True and provision_project creates or recovers the repository-bound project, idempotently (devhub.py; DHN-01 live; setup_project.py registers the canonical entry and publishes the marker)"
         }
       },
       "note": "Distinct from the core repository-bootstrap row: this row is provisioning beyond create-or-recover of the repository's own binding."
@@ -333,6 +381,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "list_adrs exhaustively pages only the exact bound private Project, isolates foreign ADR namespaces, reads each reserved foundry:adr Issue and all version comments, then verifies source digest, sequence, predecessor coordinates and whole-version digest, native coordinates and reciprocal supersession before returning the normalized index (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "list_adrs pages through the ADR listing and returns each ADR with its exact body; an imported ADR exposes its foreign id (devhub.py; DHN-29, DHN-36 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -355,6 +407,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "create_adr reserves the next coordinate under a machine-local corpus lock after a fresh qualified snapshot, creates a reserved foundry:adr Issue in the exact private repository, adds it to the exact Project without a delivery Type default, appends its UTF-8 version-zero comment and verifies the full readback; durable stage markers prevent blind replay of an unknown provider effect without claiming distributed exclusion (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "create_adr POSTs the ADR as proposed with a server-assigned id <KEY>-ADR-NNNN (devhub.py; DHN-29 live). Offline: test_devhub_tracker.py test_port_methods_round_trip_normalized_shapes"
         }
       }
     },
@@ -377,6 +433,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "set_adr_status verifies the caller's complete expected ADR snapshot against a fresh strict read, appends one linked version comment, and verifies exact desired metadata, source, status, relations and native comment ID; it is bounded detection without CAS or blind retry (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "set_adr_status moves proposed to accepted to deprecated or superseded with a signed proof bound to the ADR, its server id and version, refusing an ADR of another project before any request (devhub.py; DHN-30, DHN-31 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -400,6 +460,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "link_adr_issue and supersede_adr append verified ADR versions, respectively retaining canonical delivery Issue references and reciprocal supersession coordinates (ghprojects.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "supersede_adr posts the named accepted replacement with a proof bound to both ADRs and link_adr_issue edits the relation set of a proposed ADR only; a decided ADR raises AdrRelationFrozenError (devhub.py; DHN-32, DHN-33 live)"
         }
       },
       "note": "ADR evolution in criterion 1 is served by set_adr_status on every V1 provider; these methods are an optional reciprocal-linking enhancement."
@@ -424,6 +488,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "ghprojects.py implements proof-bound in-progress/review/done receipts in the complete paged Issue comment history, bound to the canonical repository, Project and native Issue/node/item coordinates, followed by one targeted ProjectV2 State projection with untargeted-property readback. A durable pending intent prevents a second comment POST after an unknown response; replay observes exactly one bound receipt, and native done alone fails closed. PAT-67 raw transport tests exercise the full lifecycle, later review generations and fresh-process replay. The authorized private personal Project live recipe used GHQUAL-13 and PR #14: exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94 had a successful verify check, Foundry merged at c080d9833de1ca66b6b43f9ca95074f22cb07f0a, and fresh readback was done/aligned. PAT-165 changes nothing here: guarded_backlog_return_supported is False and set_state still refuses `backlog` itself (TrackerCapabilityUnavailableError, capability set_state) before any read (test_backlog_return.py)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "set_state sends review and done only with a signed proof bound to the PR and review coordinates, bounded_transition_proofs and append_only_lifecycle_supported are True, read_proof_receipts and recover_done_projection read the server receipts (devhub.py; DHN-17, DHN-18, DHN-19, DHN-27, DHN-28, DHN-38 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -446,6 +514,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "ghprojects.py project_acceptance_proof reuses the canonical PAT-56 six-field proof validator, appends one exact receipt per review generation, requires checked to equal the complete semantic AC count, and derives progress without trusting native checkboxes. Legacy, partial, blocked, foreign, stale or malformed proofs fail closed on every read. GHQUAL-13/PR #14 produced an independent review proof with both AC passed on exact head 03840ef8a56b308d53c8fec30eb6c4d09e8a1a94; Foundry's post-merge readback returned 2/2 AC."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "acceptance_sync_supported = True and sync_acceptance_body patches the checkboxes only against the expected body and version, replay is a no-op (devhub.py; DHN-20 live). Offline: test_devhub_tracker.py"
         }
       }
     },
@@ -469,6 +541,10 @@
         "ghprojects": {
           "status": "refused",
           "evidence": "not overridden; the base raises TrackerCapabilityUnavailableError. PAT-67 qualifies proof-bound normal acceptance, not the optional human override receipt."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "acceptance_override_projection_supported = True; project_acceptance_override posts the typed receipt with a proof of action acceptance-override and reads it back (devhub.py, PAT-318; DHN-25 live)"
         }
       }
     },
@@ -491,6 +567,10 @@
         "ghprojects": {
           "status": "refused",
           "evidence": "human_acceptance_supported is False (base.py); write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read and Tracker.accept_issue refuses (PAT-206, PAT-ADR-0025)"
+        },
+        "devhub": {
+          "status": "refused",
+          "evidence": "human_acceptance_supported is False for DevHub (base.py; devhub.py comment): write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read, so issue accept stays Linear-only (PAT-ADR-0025). The port operation accept_issue exists (PAT-318, DHN-26 live) but no command enables it"
         }
       }
     },
@@ -514,9 +594,13 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "bounded_epic_closure_supported and close_epic/get_epic_closure use an opaque full-snapshot coordinate, a deterministic append-only comment audit, one targeted State update, full graph readback and a local unknown-effect journal (ghprojects.py). PAT-69 qualified that exact path on private personal Project 7 and canonical private repository patobiskoto/foundry-v1-ghprojects-sandbox: GHQUAL-15 closed over the sole required child GHQUAL-13 with authenticated acceptance proof 53d56e4d367f3e72b91026b0352a607e68c4ef6afdc65018e45f30721813d6db, audit github:epic:758ff6bb0f7ecd04c4edea8f743360fa65d818662a39a051048ce7f484dfe23a, one State projection, full post-write graph readback and a fresh-process replay with no second effect. Title, body, labels, unrelated relations and non-State Project fields are preserved and covered by drift refusals. This is PAT-ADR-0006 bounded detection with the explicit S1-to-S2 residual race; no CAS or atomic provider graph precondition exists. The PAT-ADR-0014 --accept-override flag is refused explicitly (epic_override_closure_supported is False), and so is the PAT-ADR-0017 --accept-dropped flag (epic_dropped_closure_supported is False). A required child or dependency Epic that is done under a valid closure audit read by get_epic_closure counts as accepted (PAT-185; observed with the Linear GraphQL double only). PAT-208 does not change this provider: reading or replaying a closed Epic keeps the exact graph comparison, because the node version here is an opaque digest of the node snapshot (not a time order) that does not change on a timestamp-only update (ghprojects.py, docs/ghprojects-tracker.md)."
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "epic_closure_supported = True: close_epic posts the Epic closure receipt atomically and get_epic_closure reads the original back; with epic_dropped_closure_supported = True the dropped children are named under PAT-ADR-0030 (devhub.py, write.py; DHN-22, DHN-23, DHN-24 live). Offline: test_devhub_tracker.py"
         }
       },
-      "note": "DevHub (non-V1) retains its stronger atomic epic_closure_supported transaction and, like every non-Linear provider, refuses the PAT-ADR-0014 --accept-override flag before any provider read; under PAT-ADR-0030 it declares epic_dropped_closure_supported and write.close_epic refuses, before the atomic call, any dropped direct child not named exactly by --accept-dropped under the human verdict; its atomic receipt binds that child with its state; the three V1 providers use the qualified PAT-ADR-0006 bounded shape where no provider transaction is available."
+      "note": "DevHub retains its stronger atomic epic_closure_supported transaction and, like every non-Linear provider, refuses the PAT-ADR-0014 --accept-override flag before any provider read; under PAT-ADR-0030 it declares epic_dropped_closure_supported and write.close_epic refuses, before the atomic call, any dropped direct child not named exactly by --accept-dropped under the human verdict; its atomic receipt binds that child with its state; the other three V1 providers use the qualified PAT-ADR-0006 bounded shape where no provider transaction is available."
     },
     {
       "id": "tombstone-archived-source-after-switch",
@@ -544,6 +628,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "GitHubProjectsTracker.requires_mutation_binding is true and every normal Issue/ADR write enters through _authoritative_binding, which resolves the active checkout provider and exact project before transport; once cutover archives a GitHub source and promotes a different provider, _project refuses foreign_tracker before any provider effect (ghprojects.py; test_ghprojects_tracker.py). Migration-only reads use the explicitly staged target binding only inside the migration port, so they do not reopen an archived source. The shared cutover tests exercise exact source archive, target promotion, marker publication and replay without two active bindings (test_registry_sharing.py; test_tracker_migration.py)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "a DevHub tracker constructed for a checkout whose active binding is another provider, or whose binding was archived by a cutover, is refused by the shared repository_tracker_selection port before any request (base.resolve_checkout_project, registry.py); the migration ports refuse an archived project (registry.require_writable_project in devhub.py). This qualifies the archive guard only: DevHub as the source of a cutover is not claimed. Offline: test_repository_binding_v1.py, test_tracker_conformance_v1.py, test_devhub_tracker.py"
         }
       }
     },
@@ -570,6 +658,11 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "migration_prepare_adr remaps the source ADR namespace, while migration_find_adr and migration_import_adr use the reserved provenance label and PAT-ADR-0007 Issue/comment codec with exact body/status/relation readback and source-only issue references. Staged-target reads resolve known living ADR-to-issue relations through the supplied migration binding rather than the active source (ghprojects.py; test_ghprojects_tracker.py; live P64Q-to-P64G qualification)"
+        },
+        "devhub": {
+          "status": "gap",
+          "evidence": "DevHub implements the ADR import ports (import_adr, migration_find_adr, migration_import_adr, migration_import_adrs, migration_export_adrs; DHN-36 live, devhub.py) but migration.capture_manifest calls target.migration_preflight, which DevHub does not override, so the base raises TrackerCapabilityUnavailableError(migration_provenance_profile) and no cutover manifest can target DevHub (base.py, migration.py). Blocks V1 exit for DevHub",
+          "ticket": "PAT-324"
         }
       },
       "note": "ADR half of the switch only. The live-work half is the next row."
@@ -597,6 +690,11 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "migration_preflight qualifies the reserved anchor label, exact Project/repository and native field catalog before effects. The manifest records unsupported, absent and project-specific unavailable values explicitly; migration_import_issue uses Task only under a declared Type exception, and exact provenance labels make create/read/replay unambiguous (ghprojects.py; test_tracker_migration.py; live P64Q-to-P64G qualification)"
+        },
+        "devhub": {
+          "status": "gap",
+          "evidence": "DevHub implements migration_find_issue, migration_import_issue and migration_link_issue (source_ref lookup, DHN-34 and DHN-35 live, devhub.py) but does not override migration_preflight nor declare migration_supported_attributes (base.py defaults), so migration.capture_manifest refuses a DevHub target with TrackerCapabilityUnavailableError(migration_provenance_profile) and excepts every issue attribute; the staged cutover to DevHub is unusable end to end (migration.py). Blocks V1 exit for DevHub",
+          "ticket": "PAT-324"
         }
       },
       "note": "Criterion 4 makes the faithful copy of living work and ADRs core V1. PAT-64 supplies one provider-neutral command and distinct adapter migration ports; the real P64Q-to-P64G recipe qualifies one directed pair and the other pairs retain provider-specific fake-transport evidence."
@@ -621,6 +719,10 @@
         "ghprojects": {
           "status": "supported",
           "evidence": "read_release_scope verifies the exact canonical repository Milestone, exhausts its issues and requires membership in the bound product Project; native Done stays unavailable without PAT-67 proof (ghprojects.py, release-scope.md)"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "read_release_scope reads GET /versions/:id for the Version id stored in project.extra[release_ids] and classifies each issue; the name alone never finds a Version (devhub.py, release-scope.md; DHN-39 live). Offline: test_devhub_tracker.py"
         }
       },
       "note": "Ship-iOS (plugins/ship-ios/scripts/changelog_bridge.py) consumes only the 'query changelog' JSON of foundry_cli.py; it imports no Tracker adapter and holds no provider credential."
