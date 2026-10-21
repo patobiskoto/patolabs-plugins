@@ -44,6 +44,7 @@ _PROJECT_CATALOG_CONTRACT = "devhub-project-catalog.v1"
 _EPIC_CLOSURE_CONTRACT = "devhub-epic-closure.v1"
 _ADR_AUTHORING_CONTRACT = "devhub-adr-authoring.v1"
 _ADR_RELATIONSHIPS_CONTRACT = "devhub-adr-relationships.v1"
+_ADR_DECISIONS_CONTRACT = "devhub-adr-decisions.v1"
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_SEARCH_ITEMS = 1_000
 _MAX_SEARCH_PAGES = 100
@@ -2242,16 +2243,25 @@ class DevHubTracker(Tracker):
         project listing by port id, never from ``adr.id``.  Absent, or an item whose server
         id is not of the bound project, is ``invalid_response``.
         """
-        project_key = self._require_adr_binding(adr.id, project)
-        item = next(
-            (item for item in self._list_adr_items(Project(key=project_key, id="bound"))
-             if self._to_adr(item).id == adr.id),
-            None,
-        )
-        if (not isinstance(item, dict) or not isinstance(item.get("version"), int)
-                or self._server_adr_key(item["id"]) != project_key):
-            raise DevHubTrackerError("GET", "/projects/adrs", None, "invalid_response")
-        return project_key, item
+        project_key, items = self._adr_route_items((adr,), project)
+        return project_key, items[0]
+
+    def _adr_route_items(
+        self, adrs: tuple[Adr, ...], project: Project | None,
+    ) -> tuple[str, list[dict]]:
+        """`_adr_route_item` for several port ids over one project listing."""
+        project_key = self._require_adr_binding(adrs[0].id, project)
+        for adr in adrs[1:]:
+            self._require_adr_binding(adr.id, project)
+        listing = self._list_adr_items(Project(key=project_key, id="bound"))
+        found = []
+        for adr in adrs:
+            item = next((item for item in listing if self._to_adr(item).id == adr.id), None)
+            if (not isinstance(item, dict) or not isinstance(item.get("version"), int)
+                    or self._server_adr_key(item["id"]) != project_key):
+                raise DevHubTrackerError("GET", "/projects/adrs", None, "invalid_response")
+            found.append(item)
+        return project_key, found
 
     def set_adr_status(
         self, adr: Adr, status: str, project: Project | None = None,
@@ -2267,6 +2277,117 @@ class DevHubTracker(Tracker):
             "POST", f"/adrs/{urllib.parse.quote(server_id, safe='')}/status",
             {"status": status}, version=raw["version"], proof=proof, idempotent=True,
         )
+
+    def _read_adr_decision_document(self, server_id: str) -> dict:
+        """Read the supersession relations of one ADR (`devhub-adr-decisions.v1`, DHN-32).
+
+        `GET /adr-decisions/adrs/:id` (`6721ad8:src/tracker/adr-decisions-http.ts`, scope
+        `tracker:read`); `relations` come from the recorded supersede decisions
+        (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+        """
+        path = f"/adr-decisions/adrs/{urllib.parse.quote(server_id, safe='')}"
+        raw = self._req("GET", path, response_contract=_ADR_DECISIONS_CONTRACT)
+        relations = raw.get("relations") if isinstance(raw, dict) else None
+        if (not isinstance(raw, dict)
+                or raw.get("schema_version") != _ADR_DECISIONS_CONTRACT
+                or not isinstance(raw.get("adr"), dict)
+                or raw["adr"].get("id") != server_id
+                or not isinstance(relations, dict)
+                or any(relations.get(key) is not None
+                       and not isinstance(relations[key], str)
+                       for key in ("supersedes", "superseded_by"))
+                or ("supersedes_all" in relations
+                    and (not isinstance(relations["supersedes_all"], list)
+                         or not all(isinstance(item, str)
+                                    for item in relations["supersedes_all"])))):
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+        return raw
+
+    def supersede_adr(
+        self, adr: Adr, replacement_id: str, project: Project | None = None,
+    ) -> None:
+        """Supersede an accepted ADR by an already accepted one (PAT-320, DHN-32).
+
+        Both ADRs are resolved by port id to their server item (`_adr_route_item`). The
+        replacement must be `accepted` and the source `accepted` (or already superseded by
+        that same replacement, a no-write replay): otherwise `TrackerConflictError` before
+        any write. The route is `POST /adrs/:id/supersede` (`6721ad8:docs/TRACKER_API.md`,
+        "Proof-bound ADR supersession"), never the status route, which creates an
+        unlinked supersession.  The proof is bound to both server ids and versions; the
+        link is read back from `GET /adr-decisions/adrs/:id`.
+        """
+        project_key, (source, replacement) = self._adr_route_items(
+            (adr, Adr(id=replacement_id, title="")), project)
+        if source["id"] == replacement["id"]:
+            raise TrackerConflictError("ADR DevHub : une ADR ne peut se remplacer elle-même")
+        if replacement.get("status") != "accepted":
+            raise TrackerConflictError("ADR DevHub : le remplaçant doit être accepté")
+        if source.get("status") == "superseded":
+            if self._read_adr_decision_document(source["id"])["relations"].get(
+                    "superseded_by") == replacement["id"]:
+                return
+            raise TrackerConflictError(
+                "ADR DevHub déjà remplacée par une autre ADR ou sans lien nommé")
+        if source.get("status") != "accepted":
+            raise TrackerConflictError("ADR DevHub : seule une ADR acceptée peut être remplacée")
+        server_id, replacement_server_id = source["id"], replacement["id"]
+        proof = self._proof(
+            action="adr-supersede", project_key=project_key, resource_id=server_id,
+            version=source["version"], target_status="superseded",
+            extra={"replacement_id": replacement_server_id,
+                   "replacement_version": replacement["version"]},
+        )
+        path = f"/adrs/{urllib.parse.quote(server_id, safe='')}/supersede"
+        try:
+            self._application_req(
+                "POST", path,
+                {"replacement": replacement_server_id,
+                 "replacement_version": replacement["version"]},
+                version=source["version"], proof=proof, idempotent=True,
+            )
+        except DevHubTrackerError as exc:
+            unavailable = self._route_unavailable(exc, "adr_supersession")
+            if unavailable is not None:
+                raise unavailable from None
+            if exc.status == 409 and exc.code in {
+                    "version_conflict", "invalid_transition", "resource_conflict"}:
+                raise TrackerConflictError(
+                    "supersession ADR DevHub refusée (version modifiée, état ou lien "
+                    "invalide) ; recharge les ADR puis relance"
+                ) from None
+            raise
+        linked = self._read_adr_decision_document(server_id)["relations"]
+        if linked.get("superseded_by") != replacement_server_id:
+            raise DevHubTrackerError("GET", path, None, "invalid_response")
+
+    def migration_export_adrs(self, project: Project) -> list[dict]:
+        """Export ADRs with their supersession relations read back (PAT-320, DHN-32).
+
+        `superseded_by` and `supersedes` come from `GET /adr-decisions/adrs/:id`, mapped
+        to port ids. A superseded ADR with no recorded link (the status route creates
+        one) keeps `unknown` (PAT-ADR-0003); `issues` stays `unknown` as in the port.
+        """
+        exported = super().migration_export_adrs(project)
+        items = self._list_adr_items(project)
+        port_id = {item["id"]: self._to_adr(item).id for item in items}
+        server_of = {self._to_adr(item).id: item["id"] for item in items}
+        for entry in exported:
+            relations = self._read_adr_decision_document(
+                server_of[entry["adr"].id])["relations"]
+            try:
+                predecessors = relations.get("supersedes_all")
+                if predecessors is None:
+                    predecessors = [relations["supersedes"]] if relations.get("supersedes") else []
+                entry["relations"]["supersedes"] = [port_id[item] for item in predecessors]
+                successor = relations.get("superseded_by")
+                if successor is not None:
+                    entry["relations"]["superseded_by"] = port_id[successor]
+                elif entry["adr"].status != "superseded":
+                    entry["relations"]["superseded_by"] = None
+            except KeyError:
+                raise DevHubTrackerError(
+                    "GET", "/adr-decisions/adrs", None, "invalid_response") from None
+        return exported
 
     def _read_adr_document(self, adr_id: str) -> dict:
         """Read one ADR with its `linked_issue_ids` (`devhub-adr-authoring.v1`)."""

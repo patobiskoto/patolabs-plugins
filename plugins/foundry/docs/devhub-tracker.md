@@ -443,8 +443,17 @@ server answers that 403 after the read. The relation must be set before acceptan
 `read_adr_issue_relations(adr)` reads `GET /api/tracker/v1/adrs/:id/relationships`
 (`devhub-adr-relationships.v1`), also for a decided ADR.
 
-`supersede_adr` is not implemented: no route reachable by a service credential names the
-replacement of a supersession (`devhub-requirements.md`, DHN-32 and question 15). DevHub announced a proof-bound route for it as DEVHUB-108 (third in its order, no date; question 15 and item 18 of that page); the adapter waits for the server route.
+`supersede_adr` is described in "Proof-bound ADR supersession" below (PAT-320).
+
+## Proof-bound ADR supersession (PAT-320, DHN-32)
+
+Source: DEVHUB-108, merge `6721ad8` (`6721ad8:docs/TRACKER_API.md`, "Proof-bound ADR supersession"; `supersedeTrackerAdr`, `6721ad8:src/tracker/store.ts:2350-2404`; observed in source; observed green on a disposable instance built from `6721ad8`: `devhub-requirements.md`, "Live run of PAT-320").
+
+`supersede_adr(adr, replacement_id)` (`trackers/devhub.py`) resolves both port ids to their server item with one project listing (`_adr_route_items`, same rule as `_adr_route_item`). Before any write it raises `TrackerConflictError` when the two are the same ADR, when the replacement is not `accepted`, or when the source is not `accepted`. A source already `superseded` returns without a write when `GET /adr-decisions/adrs/:id` already names that replacement as `superseded_by`, and is a `TrackerConflictError` otherwise. It then sends `POST /api/tracker/v1/adrs/:id/supersede` with the body `replacement` and `replacement_version` (server ids, versions read in the listing), the source version (`X-DevHub-Version` and `If-Match`), an idempotency key and `X-Foundry-Proof`: action `adr-supersede`, `target_status` `superseded`, `resource_id` and `expected_version` of the source, plus `replacement_id` and `replacement_version` (`_proof`, `extra`; fields `6721ad8:src/tracker/contract.ts:300-302`, checked by `consumeProof`, `store.ts:1751`). The proof payload is sorted JSON, base64url, signed by HMAC-SHA256 as for the other actions; the server decodes it as JSON and validates it with a strict schema (`verifyProof`, `6721ad8:src/tracker/contract.ts:408-442`), so key order is not part of the contract. A 409 `version_conflict`, `invalid_transition` or `resource_conflict` becomes `TrackerConflictError`, a 404 `route_unavailable` (server without DEVHUB-108) becomes `TrackerCapabilityUnavailableError` (`adr_supersession`), any other error propagates. After the POST the adapter reads `GET /adr-decisions/adrs/:id` (`devhub-adr-decisions.v1`, scope `tracker:read`) and raises `DevHubTrackerError` (`invalid_response`) when `relations.superseded_by` is not the replacement. The status route (`POST /adrs/:id/status` with `superseded`) is never used: it creates an unlinked supersession (DEVHUB-87, known DevHub limit).
+
+`migration_export_adrs(project)` reads the same document for each ADR and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None` and `supersedes: []`; a `superseded` ADR with no recorded link (status route) keeps `unknown` (PAT-ADR-0003). `issues` stays `unknown`. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+
+Limits, observed in source: the route does not check the project governance mode (DEVHUB-110, same section of `TRACKER_API.md`); the id of an ADR imported with a foreign id that is not shaped `<KEY>-ADR-NNNN` is refused by the binding check before any request, as for the other ADR methods (`_require_adr_binding`).
 
 ## Acceptance checkbox synchronization
 

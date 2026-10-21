@@ -42,7 +42,6 @@ from foundry.models import (
 from foundry.trackers.base import (
     IssueUnavailableError,
     ReleaseScopeUnavailableError,
-    TrackerCapabilityUnavailableError,
     TrackerConflictError,
 )
 from foundry.trackers.devhub import AdrRelationFrozenError, DevHubTracker, DevHubTrackerError
@@ -706,7 +705,7 @@ def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(s
     assert statuses[adr.id] == "superseded"
 
 
-@gap("DHN-32", "adapter+server", "no service-reachable route names the replacement (adr-decisions supersede is limited to an interactive human administrator): TrackerCapabilityUnavailableError; planned as DEVHUB-108", raises=TrackerCapabilityUnavailableError)
+@need("DHN-32")
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
     old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
@@ -722,7 +721,7 @@ def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     assert (after[new.id].status, after[new.id].body) == ("accepted", before.body)
     # `Adr` carries no relation: the narrowest port read of the named link is
     # `migration_export_adrs`, whose `relations` hold `superseded_by` / `supersedes`.
-    # The DevHub adapter must override its default ("unknown") when the route lands.
+    # The DevHub adapter reads both ends from `GET /adr-decisions/adrs/:id` (PAT-320).
     relations = {
         entry["adr"].id: entry["relations"]
         for entry in tracker.migration_export_adrs(suite.project)
