@@ -535,8 +535,10 @@ cutover target" below. Rows DHN-34 and DHN-36 of `devhub-requirements.md`.
 
 ## Selective cutover target (PAT-324, DHN-43)
 
-DevHub is a valid target of `cutover preflight|copy|activate devhub <target-config.json>
+DevHub is a qualified target of `cutover preflight|copy devhub <target-config.json>
 <manifest>` (FOUNDRY-ADR-0026; `tooling/foundry/cutover.py`, `tooling/foundry/migration.py`).
+`cutover activate devhub` is not qualified: no test runs it toward DevHub, offline or live, and it
+publishes a registry entry staged with `canonical_repo` (`registry.cutover_repository_tracker`, `registry.py`).
 The target configuration is `{"key": "<KEY>", "id": "<project id>", "extra": {"canonical_repo":
 "<host/owner/repo>"}}`: `canonical_repo` is the repository identity of the checkout being switched
 and must be the one the DevHub project is registered under, since `migration_preflight` reads the

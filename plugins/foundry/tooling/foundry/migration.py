@@ -359,11 +359,13 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
         observed = {(link.type, link.target) for link in actual.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
+    # One export per pass: a per-ADR export made the read-back quadratic.
+    exported_adrs = target.migration_export_adrs(target_project) if manifest["adrs"] else []
     for record in manifest["adrs"]:
         found = target.migration_find_adr(target_project, record["source_ref"])
         if found is None or found.id != record["target_id"]:
             raise MigrationError(f"coordonnée ADR divergente: {record['source_ref']}")
-        actual, relations, source_only = _readback_adr(target, target_project, found.id)
+        actual, relations, source_only = _readback_adr(exported_adrs, found.id)
         target_snapshot = _target_adr_snapshot(
             target, target_project, record, ids,
         )
@@ -394,10 +396,10 @@ def _target_adr_snapshot(
 
 
 def _readback_adr(
-    target: Tracker, target_project: Project, target_id: str,
+    exported_adrs: list[dict], target_id: str,
 ) -> tuple[Adr | None, object, object]:
     matches = [
-        exported for exported in target.migration_export_adrs(target_project)
+        exported for exported in exported_adrs
         if exported["adr"].id == target_id
     ]
     if len(matches) != 1:

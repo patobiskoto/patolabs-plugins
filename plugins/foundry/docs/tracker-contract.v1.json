@@ -37,7 +37,7 @@
       "module": "plugins/foundry/tooling/foundry/trackers/devhub.py",
       "class": "DevHubTracker",
       "v1_core": true,
-      "note": "Fourth V1 provider since PAT-ADR-0031 (PAT-323): registry._V1_TRACKERS holds devhub, a DevHub binding is a canonical repository marker, and the former basename pilot path is retired. It is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178. 18 of its 19 core cells are supported; cross-tracker-adr-import is a gap owned by PAT-327 (DevHub has no carrier for source-only issue references nor for an unknown ADR relation, observed in source at 12ca158), and cross-tracker-live-work-copy is supported since PAT-324 (DevHub is a valid target of a staged cutover of living work); the switch of a repository keeps its own ADR (FOUNDRY-ADR-0026)."
+      "note": "Fourth V1 provider since PAT-ADR-0031 (PAT-323): registry._V1_TRACKERS holds devhub, a DevHub binding is a canonical repository marker, and the former basename pilot path is retired. It is the only adapter with epic_closure_supported (devhub.py); Linear also sets epic_subgraph_supported since PAT-178. 18 of its 19 core cells are supported; cross-tracker-adr-import is a gap owned by PAT-327 (DevHub has no carrier for source-only issue references nor for an unknown ADR relation, observed in source at 12ca158), and cross-tracker-live-work-copy is supported since PAT-324 (DevHub is a qualified target of the preflight and copy of a staged cutover of living work; activate toward DevHub is not qualified); the switch of a repository keeps its own ADR (FOUNDRY-ADR-0026)."
     }
   },
   "operations": [
