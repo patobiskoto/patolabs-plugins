@@ -97,8 +97,8 @@ path. YouTrack and GitHub Projects refuse the flag and keep their current behavi
 On DevHub (PAT-ADR-0030) the graph is the direct children the server checks: when one
 is `dropped`, the closure needs `--human-verdict=accepted` and `--accept-dropped` naming
 exactly the dropped direct children, checked before the atomic call; a named child owes
-no acceptance proof, an Epic whose direct children are all dropped and named closes there
-(the done-child rule above is Linear's), and the server receipt binds it with its state (`docs/devhub-tracker.md`,
+no acceptance proof and the server receipt binds it with its state, and an Epic whose direct
+children are all dropped and named closes there (the done-child rule above is Linear's) (`docs/devhub-tracker.md`,
 "Epic closure over a dropped child"). Never invent the list and never cancel an issue to make the command pass:
 abandoning is the maintainer's decision, done with
 `edit transition <ISSUE-ID> dropped <expected-state>`.

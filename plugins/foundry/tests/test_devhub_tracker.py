@@ -2691,11 +2691,15 @@ def test_import_adr_refuses_a_foreign_id_equal_to_the_server_id_of_another_adr(m
         id="TRAME-ADR-0008", foreign_id="TRAME-ADR-0007")])
     assert import_adr(swapped, adr_id="TRAME-ADR-0007").id == "TRAME-ADR-0007"
     assert [call[0] for call in swapped.calls] == ["GET", "POST"]
-    # a free number, and a foreign id that does not carry the project key, need no listing
+    # a free number is read in the listing, then written
     free = ScriptedTracker([receipt_page([native]), adr_raw(
         id="TRAME-ADR-0008", foreign_id="TRAME-ADR-0009")])
     import_adr(free, adr_id="TRAME-ADR-0009")
     assert free.calls[0][0] == "GET" and free.calls[1][0] == "POST"
+    # a foreign id that does not carry the project key needs no listing
+    foreign = ScriptedTracker([adr_raw(id="TRAME-ADR-0008", foreign_id="FOUNDRY-ADR-0009")])
+    assert import_adr(foreign, adr_id="FOUNDRY-ADR-0009").id == "FOUNDRY-ADR-0009"
+    assert [call[0] for call in foreign.calls] == ["POST"]
 
 
 def test_migration_import_adr_refuses_a_known_supersedes_and_a_corpus_checks_it_first(monkeypatch):
