@@ -425,13 +425,13 @@ def test_close_epic_is_a_dedicated_cli_command_without_flags():
     assert issue._KNOWN_FLAGS["close-epic"] == set()
 
 
-# --- PAT-131 / PAT-ADR-0017 : --accept-dropped is qualified for Linear only ---
+# --- PAT-131 / PAT-ADR-0017 : --accept-dropped is qualified for Linear and DevHub only ---
 
 @pytest.mark.parametrize("fixture", (AtomicEpicTracker, BoundedEpicTracker))
 def test_unqualified_trackers_refuse_accept_dropped_before_any_read(monkeypatch, fixture):
     tracker = fixture()
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: tracker.project)
-    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear"):
+    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear et DevHub"):
         write.close_epic(
             tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
         )
@@ -444,7 +444,7 @@ def test_youtrack_and_ghprojects_refuse_accept_dropped_fail_closed(provider):
     # Built without __init__: any provider read or write would raise AttributeError.
     tracker = object.__new__(provider)
     assert provider.epic_dropped_closure_supported is False
-    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear"):
+    with pytest.raises(SystemExit, match="--accept-dropped n'est qualifié que pour Linear et DevHub"):
         write.close_epic(
             tracker, "DEMO-1", human_verdict="accepted", accept_dropped=("DEMO-3",),
         )

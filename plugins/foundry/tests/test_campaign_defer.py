@@ -158,7 +158,9 @@ def test_a_workspace_usage_limit_refusal_is_durable_not_transient(env):
     reviewed(env)
     env.world.create_failure = (
         "foundry.trackers.linear.LinearUsageLimitError: Linear workspace usage limit reached: "
-        "Linear issue.create -> unavailable (usage_limit_exceeded) client_id=x creation=not_created")
+        "Linear issue.create -> unavailable (usage_limit_exceeded) (nothing was written; free space "
+        "or change plan, then retry by hand) client_id=0b8c7a52-1d4e-4f6a-9b3c-5e2d8f1a7c90 "
+        "creation=not_created")
     result = step(env)
     assert result.effect["deferral"]["state"] == "refused" and result.outcome == "executed"
     assert step(env).decision.reason == "remarks_not_deferrable"

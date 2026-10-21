@@ -303,6 +303,7 @@ def test_usage_limit_refusal_is_typed_known_and_not_retried(tracker, monkeypatch
     assert caught.value.client_id in text
     assert len(sent) == 1
     assert not any('mutation ' in d and 'IssueCreate' not in d for d, _ in wire.calls[count:])
+    assert not any('query ' in d for d, _ in wire.calls[count:])  # no read-back follows
     assert len(wire.issues) == 2
 
 
@@ -316,26 +317,25 @@ def test_another_unknown_graphql_code_stays_graphql_error(tracker, monkeypatch):
     assert caught.value.details['causes']['create']['code'] == 'graphql_error'
 
 
-def test_usage_limit_code_in_an_http_error_body_is_the_same_typed_refusal():
+@pytest.mark.parametrize('status, operation', ((400, 'issue.create'), (503, 'issue.read')))
+def test_usage_limit_code_in_an_http_error_body_is_the_same_typed_refusal(
+        monkeypatch, status, operation):
     import io
     import urllib.error
 
     body = json.dumps({'errors': [{'extensions': {'code': 'USAGE_LIMIT_EXCEEDED'}}]}).encode()
-    error = urllib.error.HTTPError('https://x', 400, 'Bad', {}, io.BytesIO(body))
+    calls = []
 
     class Opener:
-        def open(self, *a, **k):
-            raise error
+        def open(self, request, timeout=None):
+            calls.append(request)
+            raise urllib.error.HTTPError('https://x', status, 'x', {}, io.BytesIO(body))
 
+    monkeypatch.setattr(linear.urllib.request, 'build_opener', lambda *a, **k: Opener())
     instance = linear.LinearTracker(token='linear-test-secret')
-    import urllib.request
-    original = urllib.request.build_opener
-    urllib.request.build_opener = lambda *a, **k: Opener()
-    try:
-        with pytest.raises(linear.LinearUsageLimitError):
-            instance._graphql_once('mutation {}', {}, 'issue.create')
-    finally:
-        urllib.request.build_opener = original
+    with pytest.raises(linear.LinearUsageLimitError):
+        instance._graphql('mutation {}' if operation == 'issue.create' else 'query {}', {}, operation)
+    assert len(calls) == 1  # not retried, even on a 503 read
 
 
 def test_reconciliation_checks_requested_fields_and_parent(tracker):

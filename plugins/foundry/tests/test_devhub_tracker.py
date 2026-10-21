@@ -189,6 +189,35 @@ def test_epic_closure_posts_exact_original_receipt_with_stable_replay_identity()
     assert tracker.epic_closure_supported is True
 
 
+def test_epic_closure_over_children_that_carry_criteria_binds_id_version_and_state_only():
+    # PAT-316: the children read by write.close_epic carry criteria (the done child's met,
+    # the dropped child's open) but the wire receipt binds only what the server checks.
+    receipt = closure_receipt_model()
+    assert [child.state for child in receipt.children] == ["done", "dropped"]
+    tracker = ScriptedTracker([epic_closure_raw(replayed=False)])
+    assert tracker.close_epic(PROJECT, receipt).receipt == receipt
+    sent = tracker.calls[0][2]["receipt"]["children"]
+    assert sent == [
+        {"id": "TRAME-10", "version": 2, "state": "done"},
+        {"id": "TRAME-11", "version": 3, "state": "dropped"},
+    ]
+    assert all(set(child) == {"id", "version", "state"} for child in sent)
+    # a receipt that still carries criteria counters is not the wire receipt: refused unsent
+    with_counters = EpicClosureReceipt(
+        project_key="TRAME", project_id="42", parent_id="TRAME-9", parent_version=4,
+        parent_type="Epic", parent_ac_done=2, parent_ac_total=2,
+        children=(
+            EpicClosureChild("TRAME-10", 2, "done", ac_done=1, ac_total=1),
+            EpicClosureChild("TRAME-11", 3, "dropped", ac_done=0, ac_total=1),
+        ),
+        issued_at=12_000, nonce="closure_nonce_123456",
+    )
+    refused = ScriptedTracker([])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        refused.close_epic(PROJECT, with_counters)
+    assert refused.calls == []
+
+
 def test_epic_closure_reader_returns_the_same_original_receipt_read_only():
     tracker = ScriptedTracker([epic_closure_raw()])
 
@@ -1547,6 +1576,26 @@ def release_project(mapping):
     return Project(key="TRAME", id="42", extra={"release_ids": mapping})
 
 
+def test_release_scope_orders_issues_by_number_and_refuses_a_version_that_moved():
+    from foundry.trackers.base import ReleaseScopeUnavailableError
+
+    scope_ids = {"direct": ["TRAME-10", "TRAME-2"], "direct_count": 2, "total_count": 2,
+                 "complete": True}
+    version = version_raw(scope=scope_ids)
+    unfinished = [issue_raw(id=name, state="ready", pr_url=None) for name in ("TRAME-2", "TRAME-10")]
+    tracker = ScriptedTracker([version, *unfinished, version])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert [item.id for item in scope.issues] == ["TRAME-2", "TRAME-10"]
+    assert [call[1] for call in tracker.calls[1:3]] == ["/issues/TRAME-2", "/issues/TRAME-10"]
+    for moved in (version_raw(scope=scope_ids, version=3),
+                  version_raw(scope=scope_ids, status="released"),
+                  version_raw(scope={**scope_ids, "direct": ["TRAME-10", "TRAME-5"]})):
+        changed = ScriptedTracker([version, *unfinished, moved])
+        with pytest.raises(ReleaseScopeUnavailableError) as caught:
+            changed.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+        assert caught.value.reason == "coordinates_changed"
+
+
 def test_release_scope_reads_the_mapped_version_id_and_classifies_each_issue():
     tracker = ScriptedTracker([
         version_raw(),
@@ -1556,11 +1605,12 @@ def test_release_scope_reads_the_mapped_version_id_and_classifies_each_issue():
         issue_raw(id="TRAME-3", state="done", ac_done=0, ac_total=1),
         receipt_page([receipt_raw(3, issue="TRAME-3"),
                       receipt_raw(4, "done", issue="TRAME-3")]),
+        version_raw(),  # re-read after the issue reads
     ])
     scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
     assert tracker.calls[0][:2] == ("GET", "/versions/TRAME-VERSION-3")
     assert [call[1] for call in tracker.calls if "/versions" in call[1]] == [
-        "/versions/TRAME-VERSION-3"]  # no listing by name
+        "/versions/TRAME-VERSION-3"] * 2  # the id twice, never a listing by name
     assert scope.release_id == "TRAME-VERSION-3" and scope.native_state == "active"
     assert [(item.id, item.disposition) for item in scope.issues] == [
         ("TRAME-1", "accepted"), ("TRAME-2", "unfinished"), ("TRAME-3", "unavailable")]
@@ -1702,13 +1752,39 @@ def test_link_adr_issue_on_a_decided_adr_is_a_typed_refusal_before_any_write():
         accepted.link_adr_issue(adr, "TRAME-1", project=PROJECT)
     assert [call[0] for call in accepted.calls] == ["GET", "GET"]
 
+    refusal = DevHubTrackerError(
+        "PATCH", "/adr-authoring/adrs/TRAME-ADR-0001", 403, "authority_boundary")
     raced = ScriptedTracker([
-        adr_listing("TRAME-ADR-0001"), adr_document(),
-        DevHubTrackerError("PATCH", "/adr-authoring/adrs/TRAME-ADR-0001", 403, "authority_boundary"),
+        adr_listing("TRAME-ADR-0001"), adr_document(), refusal,
+        adr_document(status="accepted"),
     ])
-    with pytest.raises(AdrRelationFrozenError):
+    with pytest.raises(AdrRelationFrozenError, match="accepted"):
         raced.link_adr_issue(adr, "TRAME-1", project=PROJECT)
     assert issubclass(AdrRelationFrozenError, TrackerConflictError)
+    # a 403 `authority_boundary` on a still proposed ADR is not a freeze: the error stands
+    credential = ScriptedTracker([
+        adr_listing("TRAME-ADR-0001"), adr_document(), refusal, adr_document()])
+    with pytest.raises(DevHubTrackerError, match="authority_boundary") as caught:
+        credential.link_adr_issue(adr, "TRAME-1", project=PROJECT)
+    assert not isinstance(caught.value, AdrRelationFrozenError)
+
+
+def test_link_adr_issue_replay_on_a_decided_adr_is_a_no_write_and_a_body_is_required():
+    adr = Adr(id="TRAME-ADR-0001", title="Choice")
+    accepted = ScriptedTracker([
+        adr_listing("TRAME-ADR-0001"), adr_document(status="accepted", linked=["TRAME-1"])])
+    assert accepted.link_adr_issue(adr, "TRAME-1", project=PROJECT).status == "accepted"
+    assert [call[0] for call in accepted.calls] == ["GET", "GET"]
+    no_body = adr_document()
+    del no_body["adr"]["body"]
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        ScriptedTracker([adr_listing("TRAME-ADR-0001"), no_body]).link_adr_issue(
+            adr, "TRAME-1", project=PROJECT)
+    wrong_answer = adr_document(linked=["TRAME-1"])
+    wrong_answer["adr"]["id"] = "TRAME-ADR-0002"
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        ScriptedTracker([adr_listing("TRAME-ADR-0001"), adr_document(), wrong_answer]
+                        ).link_adr_issue(adr, "TRAME-1", project=PROJECT)
 
 
 def test_link_adr_issue_refuses_a_foreign_project_issue():
@@ -1736,6 +1812,46 @@ def test_read_adr_issue_relations_pages_through_the_relationships_route():
     assert tracker.calls[1][1] == "/adrs/TRAME-ADR-0001/relationships?cursor=0&limit=100"
     assert tracker.calls[2][1].endswith("cursor=1&limit=100")
     assert tracker.calls[1][3]["response_contract"] == "devhub-adr-relationships.v1"
+
+
+def test_read_adr_issue_relations_refuses_loose_pagination():
+    def page(ids, cursor, **over):
+        value = {
+            "schema_version": "devhub-adr-relationships.v1",
+            "adr": {"id": "TRAME-ADR-0001", "version": 4},
+            "items": [{"id": i} for i in ids],
+            "page": {"returned_count": len(ids), "cursor": cursor,
+                     "truncation": cursor is not None},
+        }
+        for key, change in over.items():
+            value[key] = change
+        return value
+
+    adr = Adr(id="TRAME-ADR-0001", title="Choice")
+    cases = {
+        "invalid_response": [
+            page(["TRAME-1"], None, adr={"id": "TRAME-ADR-0002", "version": 4}),
+            page(["TRAME-1"], None, page={"returned_count": 1, "cursor": None, "truncation": 0}),
+            page(["TRAME-1"], None, page={"returned_count": 2, "cursor": None, "truncation": False}),
+            page(["TRAME-1"], None, page={"returned_count": 1, "cursor": 3, "truncation": False}),
+            page(["not-an-issue"], None),
+        ],
+    }
+    for expected, pages in cases.items():
+        for first in pages:
+            tracker = ScriptedTracker([adr_listing("TRAME-ADR-0001"), first])
+            with pytest.raises(DevHubTrackerError, match=expected):
+                tracker.read_adr_issue_relations(adr, project=PROJECT)
+    repeated = ScriptedTracker([
+        adr_listing("TRAME-ADR-0001"), page(["TRAME-1"], 1), page(["TRAME-1"], None)])
+    with pytest.raises(DevHubTrackerError, match="pagination_repeated"):
+        repeated.read_adr_issue_relations(adr, project=PROJECT)
+    empty = ScriptedTracker([adr_listing("TRAME-ADR-0001"), page([], 1)])
+    with pytest.raises(DevHubTrackerError, match="pagination_empty_page"):
+        empty.read_adr_issue_relations(adr, project=PROJECT)
+    stalled = ScriptedTracker([adr_listing("TRAME-ADR-0001"), page(["TRAME-1"], 0)])
+    with pytest.raises(DevHubTrackerError, match="pagination_stalled"):
+        stalled.read_adr_issue_relations(adr, project=PROJECT)
 
 
 def _supersede_listing(old_status="accepted", new_status="accepted", old_version=3, new_version=5):
@@ -1800,6 +1916,22 @@ def test_supersede_adr_replays_without_a_write_and_refuses_another_replacement()
     assert [call[0] for call in other.calls] == ["GET", "GET"]
 
 
+def test_supersede_adr_replay_is_a_no_write_even_when_the_replacement_has_moved_on():
+    # A by B, then B by C: B is superseded now, yet A -> B is still recorded and replays
+    moved = ScriptedTracker([
+        _supersede_listing("superseded", "superseded"),
+        _decision_document("TRAME-ADR-0001", superseded_by=NEW)])
+    moved.supersede_adr(OLD, NEW, project=PROJECT)
+    assert [call[0] for call in moved.calls] == ["GET", "GET"]
+    # another recorded replacement is still refused, whatever the replacement's status
+    other = ScriptedTracker([
+        _supersede_listing("superseded", "superseded"),
+        _decision_document("TRAME-ADR-0001", superseded_by="TRAME-ADR-0009")])
+    with pytest.raises(TrackerConflictError):
+        other.supersede_adr(OLD, NEW, project=PROJECT)
+    assert [call[0] for call in other.calls] == ["GET", "GET"]
+
+
 def test_supersede_adr_maps_version_errors_and_a_missing_route_and_checks_the_link():
     from foundry.trackers.base import TrackerCapabilityUnavailableError
 
@@ -1834,18 +1966,24 @@ def test_supersede_adr_uses_server_ids_for_swapped_imported_ids():
     assert (proof["resource_id"], proof["replacement_id"]) == ("TRAME-ADR-0013", "TRAME-ADR-0011")
 
 
+def _export_tracker(items, documents):
+    """Listing, then for each ADR its detail and its decision document, in listing order."""
+    responses = [receipt_page(items)]
+    for item, document in zip(items, documents):
+        responses += [dict(item, body="b"), document]
+    return ScriptedTracker(responses)
+
+
 def test_migration_export_adrs_reads_supersession_relations_back():
-    listing = _supersede_listing("superseded", "accepted")
-    plain = receipt_page([{"id": "TRAME-ADR-0003", "title": "Third", "status": "accepted", "version": 2},
-                          {"id": "TRAME-ADR-0004", "title": "Fourth", "status": "superseded", "version": 2}])
-    items = listing["items"] + plain["items"]
-    page = receipt_page(items)
-    tracker = ScriptedTracker([
-        page, *[dict(item, body="b") for item in items], page,
+    items = [
+        {"id": "TRAME-ADR-0001", "title": "Old", "status": "superseded", "version": 3},
+        {"id": "TRAME-ADR-0002", "title": "New", "status": "accepted", "version": 5},
+        {"id": "TRAME-ADR-0003", "title": "Third", "status": "accepted", "version": 2},
+    ]
+    tracker = _export_tracker(items, [
         _decision_document("TRAME-ADR-0001", superseded_by=NEW),
         _decision_document(NEW, supersedes="TRAME-ADR-0001", supersedes_all=["TRAME-ADR-0001"]),
         _decision_document("TRAME-ADR-0003"),
-        _decision_document("TRAME-ADR-0004"),
     ])
     relations = {entry["adr"].id: entry["relations"]
                  for entry in tracker.migration_export_adrs(PROJECT)}
@@ -1853,8 +1991,33 @@ def test_migration_export_adrs_reads_supersession_relations_back():
     assert relations[NEW]["supersedes"] == ["TRAME-ADR-0001"]
     assert relations["TRAME-ADR-0003"] == {
         "supersedes": [], "superseded_by": None, "issues": "unknown"}
-    # superseded without a recorded link (status route): not claimed absent
-    assert relations["TRAME-ADR-0004"]["superseded_by"] == "unknown"
+    # one project listing only
+    assert [call[1] for call in tracker.calls].count("/projects/TRAME/adrs?cursor=0&limit=100") == 1
+
+
+def test_migration_export_adrs_never_claims_supersedes_while_a_superseded_adr_is_unlinked():
+    # TRAME-ADR-0004 became superseded through the status route: no recorded link, so its
+    # replacement is unknown and could be any other ADR (PAT-ADR-0008).
+    items = [
+        {"id": "TRAME-ADR-0003", "title": "Third", "status": "accepted", "version": 2},
+        {"id": "TRAME-ADR-0004", "title": "Fourth", "status": "superseded", "version": 2},
+    ]
+    tracker = _export_tracker(items, [
+        _decision_document("TRAME-ADR-0003"), _decision_document("TRAME-ADR-0004")])
+    relations = {entry["adr"].id: entry["relations"]
+                 for entry in tracker.migration_export_adrs(PROJECT)}
+    assert relations["TRAME-ADR-0003"]["supersedes"] == "unknown"
+    assert relations["TRAME-ADR-0003"]["superseded_by"] is None
+    assert relations["TRAME-ADR-0004"] == {
+        "supersedes": [], "superseded_by": "unknown", "issues": "unknown"}
+    # an unknown replacement is not the entry itself: with no other unlinked ADR, [] is known
+    only = _export_tracker(items[1:], [_decision_document("TRAME-ADR-0004")])
+    assert only.migration_export_adrs(PROJECT)[0]["relations"]["supersedes"] == []
+    # a predecessor outside the listing cannot be mapped: invalid_response, not a KeyError
+    broken = _export_tracker(items[:1], [
+        _decision_document("TRAME-ADR-0003", supersedes="TRAME-ADR-0099")])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        broken.migration_export_adrs(PROJECT)
 
 
 def created_raw(**overrides):
@@ -1956,8 +2119,11 @@ def test_migration_link_issue_posts_one_link_then_replays_without_write(monkeypa
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
     source = issue_raw(id="TRAME-1", version=3)
     target = issue_raw(id="TRAME-2", version=5)
-    tracker = ScriptedTracker([source, source, target, {"ok": True}])
+    tracker = ScriptedTracker([source, target, {"ok": True}])
     tracker.migration_link_issue(PROJECT, "TRAME-1", "depends-on", "TRAME-2")
+    assert [(call[0], call[1]) for call in tracker.calls] == [
+        ("GET", "/issues/TRAME-1"), ("GET", "/issues/TRAME-2"),
+        ("POST", "/issues/TRAME-1/links")]  # the source is read once
     method, path, body, kwargs = tracker.calls[-1]
     assert (method, path) == ("POST", "/issues/TRAME-1/links")
     assert body == {"type": "depends-on", "target": "TRAME-2", "target_version": 5}
@@ -1978,6 +2144,20 @@ def test_migration_link_issue_sees_the_inverse_stored_link_as_present(monkeypatc
     tracker = ScriptedTracker([inverse])
     tracker.migration_link_issue(PROJECT, "TRAME-2", "blocks", "TRAME-1")
     assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+def test_migration_link_issue_refuses_a_foreign_id_or_an_unsupported_type_before_any_request(
+        monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    for src, dst in (("OTHER-1", "TRAME-2"), ("TRAME-1", "OTHER-2")):
+        tracker = ScriptedTracker([])
+        with pytest.raises(SystemExit, match="Binding DevHub refusé"):
+            tracker.migration_link_issue(PROJECT, src, "depends-on", dst)
+        assert tracker.calls == []
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError):
+        tracker.migration_link_issue(PROJECT, "TRAME-1", "duplicates", "TRAME-2")
+    assert tracker.calls == []
 
 
 def test_migration_link_issue_refuses_an_archived_project_before_any_request(monkeypatch):
@@ -2492,6 +2672,77 @@ def test_import_adr_maps_conflict_and_missing_route_and_checks_the_answer(monkey
             import_adr(ScriptedTracker([adr_raw(**change)]))
 
 
+def test_import_adr_refuses_a_foreign_id_equal_to_the_server_id_of_another_adr(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    native = {"id": "TRAME-ADR-0007", "title": "Native", "status": "accepted", "version": 1,
+              "source_ref": None, "foreign_id": None}
+    tracker = ScriptedTracker([receipt_page([native])])
+    with pytest.raises(TrackerConflictError, match="identifiant serveur"):
+        import_adr(tracker, adr_id="TRAME-ADR-0007")
+    assert [call[0] for call in tracker.calls] == ["GET"]  # nothing written
+    # the same import replayed (the server id was taken by this very source_ref) goes on
+    same = {**native, "source_ref": ADR_SRC, "foreign_id": "TRAME-ADR-0007"}
+    replay = ScriptedTracker([receipt_page([same]), adr_raw(
+        id="TRAME-ADR-0007", foreign_id="TRAME-ADR-0007")])
+    assert import_adr(replay, adr_id="TRAME-ADR-0007").id == "TRAME-ADR-0007"
+    # the server id of another imported ADR is no clash (its port id is its foreign id)
+    other = {**native, "source_ref": "linear:adr:other", "foreign_id": "TRAME-ADR-0002"}
+    swapped = ScriptedTracker([receipt_page([other]), adr_raw(
+        id="TRAME-ADR-0008", foreign_id="TRAME-ADR-0007")])
+    assert import_adr(swapped, adr_id="TRAME-ADR-0007").id == "TRAME-ADR-0007"
+    assert [call[0] for call in swapped.calls] == ["GET", "POST"]
+    # a free number is read in the listing, then written
+    free = ScriptedTracker([receipt_page([native]), adr_raw(
+        id="TRAME-ADR-0008", foreign_id="TRAME-ADR-0009")])
+    import_adr(free, adr_id="TRAME-ADR-0009")
+    assert free.calls[0][0] == "GET" and free.calls[1][0] == "POST"
+    # a foreign id that does not carry the project key needs no listing
+    foreign = ScriptedTracker([adr_raw(id="TRAME-ADR-0008", foreign_id="FOUNDRY-ADR-0009")])
+    assert import_adr(foreign, adr_id="FOUNDRY-ADR-0009").id == "FOUNDRY-ADR-0009"
+    assert [call[0] for call in foreign.calls] == ["POST"]
+
+
+def test_migration_import_adr_refuses_a_known_supersedes_and_a_corpus_checks_it_first(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+
+    def snap(number, status="accepted", supersedes="unknown", superseded_by=None, **extra):
+        return {
+            "id": f"FOUNDRY-ADR-{number:04d}", "source_ref": f"linear:adr:{number}",
+            "title": f"ADR {number}", "body": f"body {number}\n", "status": status,
+            "relations": {"supersedes": supersedes, "superseded_by": superseded_by,
+                          "issues": []},
+            "source_created": None, "source_updated": None, **extra,
+        }
+
+    single = ScriptedTracker([])
+    with pytest.raises(TrackerCapabilityUnavailableError):
+        single.migration_import_adr(
+            PROJECT, snap(2, supersedes=["FOUNDRY-ADR-0001"]), source_ref="linear:adr:2")
+    assert single.calls == []
+    # the whole corpus is refused before its first write
+    for bad in (snap(3, status="rejected"),
+                snap(3, source_only_issue_refs=["linear:issue:PAT-1"]),
+                snap(3, supersedes=["FOUNDRY-ADR-0001"]),        # not named by that ADR
+                snap(3, supersedes=["FOUNDRY-ADR-0099"])):       # outside the corpus
+        tracker = ScriptedTracker([])
+        with pytest.raises((ValueError, TrackerCapabilityUnavailableError)):
+            tracker.migration_import_adrs(PROJECT, (snap(1), bad))
+        assert tracker.calls == []
+    # a supersedes that the predecessor's own `superseded_by` covers is not an error
+    old, new = snap(1, "superseded", superseded_by="FOUNDRY-ADR-0002"), snap(
+        2, supersedes=["FOUNDRY-ADR-0001"])
+
+    def answer(number, status="accepted"):
+        return adr_raw(
+            id=f"TRAME-ADR-{number:04d}", title=f"ADR {number}", body=f"body {number}\n",
+            status=status, source_ref=f"linear:adr:{number}",
+            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None)
+
+    tracker = ScriptedTracker([answer(2), receipt_page([answer(2)]), answer(1, "superseded")])
+    assert len(tracker.migration_import_adrs(PROJECT, (old, new))) == 2
+    assert all("supersedes" not in call[2] for call in tracker.calls if call[0] == "POST")
+
+
 def test_migration_find_adr_reads_by_source_ref_or_foreign_id():
     item = {key: value for key, value in adr_raw().items() if key != "body"}
     by_ref = ScriptedTracker([receipt_page([item]), adr_raw()])
@@ -2581,7 +2832,8 @@ def test_adr_routes_use_the_server_id_of_the_adr_the_port_id_names_when_ids_are_
         "/adr-authoring/adrs/TRAME-ADR-0013", "/adr-authoring/adrs/TRAME-ADR-0013"]
 
     rel = ScriptedTracker([_swapped_listing(), {
-        "schema_version": "devhub-adr-relationships.v1", "items": [],
+        "schema_version": "devhub-adr-relationships.v1",
+        "adr": {"id": "TRAME-ADR-0013", "version": 4}, "items": [],
         "page": {"returned_count": 0, "cursor": None, "truncation": False}}])
     rel.read_adr_issue_relations(adr_a, project=PROJECT)
     assert rel.calls[1][1].startswith("/adrs/TRAME-ADR-0013/relationships")

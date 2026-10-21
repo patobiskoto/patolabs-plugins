@@ -26,7 +26,7 @@ import sys
 
 import foundry
 from foundry import acceptance_decision, execution_receipts, registry, write
-from foundry.models import TransitionContext
+from foundry.models import AC_OVERRIDE_REASON, TransitionContext
 from foundry.routing import (
     AcceptanceProofStore,
     RoutingConfigError,
@@ -509,7 +509,7 @@ def _ac_override_reason(flags) -> str:
     """Return the validated public reason code of an explicit human AC override."""
     reason = next((value.split("=", 1)[1] for value in flags
                    if value.startswith("--ac-override-reason=")), "")
-    if not reason or not re.fullmatch(r"[a-z0-9_-]{3,80}", reason):
+    if not reason or AC_OVERRIDE_REASON.match(reason) is None:
         raise SystemExit("⛔ Override AC refusé — --ac-override-reason=<code-public> requis.")
     return reason
 
