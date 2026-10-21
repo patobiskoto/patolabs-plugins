@@ -2446,6 +2446,13 @@ class DevHubTracker(Tracker):
     def set_adr_status(
         self, adr: Adr, status: str, project: Project | None = None,
     ) -> None:
+        if status == "superseded":
+            # DEVHUB-116 (`12ca158:src/tracker/store.ts:2365`): the status route answers 409
+            # `invalid_transition` to `superseded`; only the linked route supersedes.
+            raise ValueError(
+                "DevHub refuse superseded sur la route de statut ; "
+                "utilise supersede_adr (adr supersede), qui nomme le remplaçant"
+            )
         if status not in _ADR_STATES - {"proposed"}:
             raise ValueError("statut ADR non supporté par DevHub")
         project_key, raw = self._adr_route_item(adr, project)

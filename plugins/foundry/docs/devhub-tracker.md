@@ -377,9 +377,9 @@ mode once the identity holds: see "Governance mode".
 
 Source: the stable contract `devhub-governance.v1` (`src/tracker/governance-contract.ts:6`
 at DevHub `8028000`) and the refusal `assertFoundryGovernance` (`src/tracker/store.ts:1768-1771`
-at `8028000`), both read in source, not run. DevHub documents the route in `TRACKER_API.md`
-with DEVHUB-116, which was not merged when this section was written: until then the
-documented source is the contract file and the refusal message, which is not a contract.
+at `8028000`), both read in source, not run. DevHub documents the refusal in `TRACKER_API.md`
+since DEVHUB-116 (`12ca158:docs/TRACKER_API.md:320-323`), which was not merged when this
+section was written (PAT-321); that merge is what PAT-326 follows.
 
 A project is in mode `manual` or `foundry`; DevHub refuses Foundry writes (proof-bound
 transitions and the routes of this page) outside `foundry`, with 403 `authority_boundary`.
@@ -405,8 +405,13 @@ That code is shared with other authority refusals (for example a decided ADR, se
   `link_adr_issue` handling of the same code is unchanged. Since DEVHUB-110 (DevHub merge `5782d78`) the five proof-bound routes above, supersede
   included, refuse outside Foundry governance (`assertFoundryGovernance`,
   `8028000:src/tracker/store.ts:1768`, called at `:1782`, `:1864`, `:1914`, `:2357`,
-  `:2393`; observed in source, not run). Whether the import and Epic closure routes check
-  the mode is unknown until DEVHUB-116 (announced, not merged); they are wrapped already.
+  `:2393`; observed in source, not run). Since DEVHUB-116 (`12ca158`), `POST
+  /projects/:key/adrs/import` and `POST /projects/:key/epics/:id/closure` are documented to
+  refuse outside Foundry governance with 403 `authority_boundary` too
+  (`12ca158:docs/TRACKER_API.md:320-323`, route table; read in source, not run); the adapter
+  wraps both already. On the status route governance is checked before the
+  `superseded` refusal (409), so a Manual project gets 403 first (see "Proof-bound ADR
+  supersession").
 - Callers. `registry.verify_existing_project` turns a `TrackerConflictError` of the
   read-back into a `ValueError` carrying its message (any other exception keeps the generic
   message), so a binding fails closed naming the mode; `registry bootstrap devhub` reaches
@@ -462,6 +467,11 @@ raised unchanged). Relations are not sent: use `migration_link_issue`.
 asked (several items, a missing or different `source_ref`, another project, a truncated page)
 is `DevHubTrackerError` `invalid_response`, which is also what a server that ignores the
 filter produces.
+
+**Origin number bound (DEVHUB-116).** An imported ADR keeps its `foreign_id` number as the
+server number only up to 999999 (`MAX_ORIGIN_ADR_NUMBER`, `12ca158:src/tracker/store.ts:2232`, applied by `originAdrNumber`, `:2239-2247`;
+observed in source, not run); beyond it `foreign_id` stays an alias and the number comes from
+the server counter. The adapter sends the same body and reads the answer as before.
 
 **ADRs.** `import_adr` (which `migration_import_adr` calls) sends one `POST
 /projects/:key/adrs/import` with the strict body: `source_ref`, `foreign_id` (the snapshot id),
@@ -559,9 +569,11 @@ listing does.
 
 Source: DEVHUB-108, merge `6721ad8` (`6721ad8:docs/TRACKER_API.md`, "Proof-bound ADR supersession"; `supersedeTrackerAdr`, `6721ad8:src/tracker/store.ts:2350-2404`; observed in source; observed green on a disposable instance built from `6721ad8`: `devhub-requirements.md`, "Live run of PAT-320").
 
-`supersede_adr(adr, replacement_id)` (`trackers/devhub.py`) resolves both port ids to their server item with one project listing (`_adr_route_items`, same rule as `_adr_route_item`). Before any write it raises `TrackerConflictError` when the two are the same ADR, when the source is neither `accepted` nor `superseded`, or when it is `accepted` and the replacement is not. A source already `superseded` returns without a write when `GET /adr-decisions/adrs/:id` already names that replacement as `superseded_by`, whatever the replacement's status now is (checked before the `accepted` test of the replacement), and is a `TrackerConflictError` otherwise. It then sends `POST /api/tracker/v1/adrs/:id/supersede` with the body `replacement` and `replacement_version` (server ids, versions read in the listing), the source version (`X-DevHub-Version` and `If-Match`), an idempotency key and `X-Foundry-Proof`: action `adr-supersede`, `target_status` `superseded`, `resource_id` and `expected_version` of the source, plus `replacement_id` and `replacement_version` (`_proof`, `extra`; fields `6721ad8:src/tracker/contract.ts:300-302`, checked by `consumeProof`, `store.ts:1751`). The proof payload is sorted JSON, base64url, signed by HMAC-SHA256 as for the other actions; the server decodes it as JSON and validates it with a strict schema (`verifyProof`, `6721ad8:src/tracker/contract.ts:408-442`), so key order is not part of the contract. A 409 `version_conflict`, `invalid_transition` or `resource_conflict` becomes `TrackerConflictError`, a 404 `route_unavailable` (server without DEVHUB-108) becomes `TrackerCapabilityUnavailableError` (`adr_supersession`), any other error propagates. After the POST the adapter reads `GET /adr-decisions/adrs/:id` (`devhub-adr-decisions.v1`, scope `tracker:read`) and raises `DevHubTrackerError` (`invalid_response`) when `relations.superseded_by` is not the replacement. The status route (`POST /adrs/:id/status` with `superseded`) is never used: it creates an unlinked supersession (DEVHUB-87, known DevHub limit).
+`supersede_adr(adr, replacement_id)` (`trackers/devhub.py`) resolves both port ids to their server item with one project listing (`_adr_route_items`, same rule as `_adr_route_item`). Before any write it raises `TrackerConflictError` when the two are the same ADR, when the source is neither `accepted` nor `superseded`, or when it is `accepted` and the replacement is not. A source already `superseded` returns without a write when `GET /adr-decisions/adrs/:id` already names that replacement as `superseded_by`, whatever the replacement's status now is (checked before the `accepted` test of the replacement), and is a `TrackerConflictError` otherwise. It then sends `POST /api/tracker/v1/adrs/:id/supersede` with the body `replacement` and `replacement_version` (server ids, versions read in the listing), the source version (`X-DevHub-Version` and `If-Match`), an idempotency key and `X-Foundry-Proof`: action `adr-supersede`, `target_status` `superseded`, `resource_id` and `expected_version` of the source, plus `replacement_id` and `replacement_version` (`_proof`, `extra`; fields `6721ad8:src/tracker/contract.ts:300-302`, checked by `consumeProof`, `store.ts:1751`). The proof payload is sorted JSON, base64url, signed by HMAC-SHA256 as for the other actions; the server decodes it as JSON and validates it with a strict schema (`verifyProof`, `6721ad8:src/tracker/contract.ts:408-442`), so key order is not part of the contract. A 409 `version_conflict`, `invalid_transition` or `resource_conflict` becomes `TrackerConflictError`, a 404 `route_unavailable` (server without DEVHUB-108) becomes `TrackerCapabilityUnavailableError` (`adr_supersession`), any other error propagates. After the POST the adapter reads `GET /adr-decisions/adrs/:id` (`devhub-adr-decisions.v1`, scope `tracker:read`) and raises `DevHubTrackerError` (`invalid_response`) when `relations.superseded_by` is not the replacement. The status route (`POST /adrs/:id/status` with `superseded`) is never used: up to `8028000` it created an unlinked supersession (DEVHUB-87); since `12ca158` it refuses `superseded` (below).
 
-`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (status route) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` stays `unknown`. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (set through the status route, possible up to `8028000`; refused since `12ca158`) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` stays `unknown`. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+
+`DevHubTracker.set_adr_status(adr, "superseded")` raises `ValueError` before any request, naming `supersede_adr` (`adr supersede`) (PAT-326): since DEVHUB-116 the status route answers 409 `invalid_transition` to `superseded` and supersedes nothing (`12ca158:src/tracker/store.ts:2365`, `12ca158:docs/TRACKER_API.md`, route table; observed in source, run by DHN-31). The server checks governance first, so a Manual project gets 403 `authority_boundary`, not the 409 (`12ca158:src/tracker/store.ts:2363-2365`, observed in source, not run). The ADR id parsing of the adapter (`_adr_project_key`: `<KEY>-ADR-` then at least four digits) is unaffected: a number above 999999 is numbered by the server counter and still has at least four digits.
 
 Limits: at `6721ad8` the route did not check the project governance mode; since DEVHUB-110 (`5782d78`) it refuses outside Foundry governance with 403 `authority_boundary` (`8028000:src/tracker/store.ts:2393`, observed in source), reported by the adapter as described in "Governance mode"; the id of an ADR imported with a foreign id that is not shaped `<KEY>-ADR-NNNN` is refused by the binding check before any request, as for the other ADR methods (`_require_adr_binding`).
 

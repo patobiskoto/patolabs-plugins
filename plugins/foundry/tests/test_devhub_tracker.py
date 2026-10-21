@@ -1935,6 +1935,14 @@ def test_supersede_adr_posts_the_named_replacement_with_a_proof_bound_to_both_ad
     assert [call[1] for call in tracker.calls].count("/adrs/TRAME-ADR-0001/status") == 0
 
 
+def test_set_adr_status_refuses_superseded_before_any_http_call():
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError, match="supersede_adr.*adr supersede"):
+        tracker.set_adr_status(Adr(id="TRAME-ADR-0001", title="Boundary"), "superseded",
+                               project=PROJECT)
+    assert tracker.calls == []
+
+
 @pytest.mark.parametrize("old,new", [("accepted", "proposed"), ("proposed", "accepted"),
                                      ("deprecated", "accepted"), ("accepted", "superseded")])
 def test_supersede_adr_refuses_an_unaccepted_side_before_any_write(old, new):

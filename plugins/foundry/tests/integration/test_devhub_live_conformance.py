@@ -700,20 +700,32 @@ def test_dhn_30_adr_status_moves_proposed_to_accepted_to_deprecated(suite):
 
 
 @need("DHN-31")
-def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(suite):
+def test_dhn_31_status_route_refuses_superseded_and_leaves_the_adr_accepted(suite):
     tracker = suite.tracker
-    adr = _new_adr(suite, "live adr superseded")
+    adr = _new_adr(suite, "live adr superseded refused")
     tracker.set_adr_status(adr, "accepted", project=suite.project)
-    tracker.set_adr_status(adr, "superseded", project=suite.project)
+    version = tracker._application_req("GET", f"/adrs/{adr.id}")["version"]
+    # The adapter refuses `superseded` locally (PAT-326); call the server directly.
+    proof = tracker._proof(action="adr-status", project_key=suite.project.key,
+                           resource_id=adr.id, version=version, target_status="superseded")
+    _refused(
+        lambda: tracker._application_req(
+            "POST", f"/adrs/{adr.id}/status", {"status": "superseded"},
+            version=version, proof=proof, idempotent=True,
+        ),
+        statuses={409}, code="invalid_transition",
+    )
     statuses = {item.id: item.status for item in tracker.list_adrs(suite.project)}
-    assert statuses[adr.id] == "superseded"
+    assert statuses[adr.id] == "accepted"
+    assert tracker._application_req("GET", f"/adrs/{adr.id}")["version"] == version
 
 
 @need("DHN-32")
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
-    # Own project: the status-route supersession of DHN-31 leaves an unlinked superseded
-    # ADR in the suite project, which makes every `supersedes` there `unknown` (PAT-320).
+    # Own project: historically (up to DevHub 8028000) the status route could leave an
+    # unlinked superseded ADR in the suite project, which makes every `supersedes` there
+    # `unknown` (PAT-320); kept isolated, the route being refused since DEVHUB-116.
     key = gate.new_project_key()
     repository = f"github.com/foundry-live/{key.lower()}"
     project = tracker.provision_project("Foundry live supersession", key, repository)
@@ -743,18 +755,8 @@ def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     assert relations[new.id]["supersedes"] == [old.id]
     # A replay writes nothing (also once the replacement has left `accepted`, unit-tested).
     tracker.supersede_adr(old, new.id, project=project)
-    # A status-route supersession records no link: its replacement is unknown, so no
-    # entry's `supersedes` is claimed complete any more (PAT-ADR-0008).
-    orphan = _new_adr(own, "live adr unlinked")
-    tracker.set_adr_status(orphan, "accepted", project=project)
-    tracker.set_adr_status(orphan, "superseded", project=project)
-    relations = {
-        entry["adr"].id: entry["relations"]
-        for entry in tracker.migration_export_adrs(project)
-    }
-    assert relations[orphan.id]["superseded_by"] == "unknown"
-    assert relations[new.id]["supersedes"] == "unknown"
-    assert relations[old.id]["superseded_by"] == new.id
+    # An unlinked supersession can no longer be created since DEVHUB-116 (DHN-31); its
+    # `unknown` reading, still possible for ADRs superseded before, is unit-tested.
 
 
 @need("DHN-33")
