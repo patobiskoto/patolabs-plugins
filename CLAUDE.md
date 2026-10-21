@@ -331,7 +331,7 @@ FOUNDRY-ADR-0014), and every other intake write keeps its confirmation.
 
 The rule names no tracker. Its four writes are operations of the portable contract
 `plugins/foundry/docs/tracker-contract.md`, whose table "Core journey" marks the three
-rows below `supported` in each of its three provider columns:
+rows below `supported` in each of its provider columns:
 
 - row "Frame/intake/groom: create, comment" (`create_issue`, `add_comment`) carries
   writes 1 and 3;

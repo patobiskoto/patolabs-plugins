@@ -431,7 +431,7 @@ def test_same_basename_different_owner_refuses_before_any_mutation(monkeypatch):
         extra={"canonical_repo": "github.com/acme/trame"},
     )
     tracker = ScriptedTracker([])
-    monkeypatch.setattr(write.registry, "repo_basename", lambda: "trame")
+    monkeypatch.setattr(write.registry, "repo_basename", lambda *_a, **_k: "trame")
     monkeypatch.setattr(
         write.registry, "checkout_repository_identity",
         lambda: "github.com/other-owner/trame",
@@ -453,7 +453,7 @@ def _foreign_same_basename_tracker(monkeypatch):
     )
     tracker = ScriptedTracker([])
     monkeypatch.setattr(foundry, "tracker", lambda: tracker)
-    monkeypatch.setattr(write.registry, "repo_basename", lambda: "trame")
+    monkeypatch.setattr(write.registry, "repo_basename", lambda *_a, **_k: "trame")
     monkeypatch.setattr(
         write.registry, "checkout_repository_identity",
         lambda: "github.com/other-owner/trame",
@@ -516,7 +516,7 @@ def test_matching_remote_forms_pass_mutation_binding(monkeypatch, checkout):
         "key": "TRAME", "id": "42",
         "extra": {"canonical_repo": "github.com/acme/trame"},
     }])
-    monkeypatch.setattr(write.registry, "repo_basename", lambda: "trame")
+    monkeypatch.setattr(write.registry, "repo_basename", lambda *_a, **_k: "trame")
     monkeypatch.setattr(
         write.registry, "_expand_ssh_alias",
         lambda host: "github.com" if host == "work" else pytest.fail(host),
@@ -527,6 +527,16 @@ def test_matching_remote_forms_pass_mutation_binding(monkeypatch, checkout):
     )
     monkeypatch.setattr(
         "foundry.trackers.devhub.registry.resolve", lambda *_args: registered,
+    )
+    # PAT-323: the checkout is resolved through its V1 binding (no basename pilot path).
+    monkeypatch.setattr(
+        "foundry.registry.repository_tracker_selection",
+        lambda *_a, **_k: {
+            "mode": "v1", "tracker": "devhub",
+            "binding": SimpleNamespace(
+                project=registered, repository="github.com/acme/trame",
+            ),
+        },
     )
 
     project = write.mutation_project(tracker)
@@ -547,7 +557,7 @@ def test_hostile_ssh_hostname_refuses_before_any_tracker_effect(monkeypatch, che
         extra={"canonical_repo": "github.com/acme/trame"},
     )
     tracker = ScriptedTracker([])
-    monkeypatch.setattr(write.registry, "repo_basename", lambda: "trame")
+    monkeypatch.setattr(write.registry, "repo_basename", lambda *_a, **_k: "trame")
     monkeypatch.setattr(
         write.registry, "checkout_repository_identity",
         lambda: write.registry.canonical_repository_identity(checkout),
@@ -1112,7 +1122,7 @@ def test_write_seam_resolves_binding_without_provider_name_branch(monkeypatch):
             ("adr", adr.id, status, project)
         ),
     )
-    monkeypatch.setattr(write.registry, "repo_basename", lambda: "trame")
+    monkeypatch.setattr(write.registry, "repo_basename", lambda *_a, **_k: "trame")
 
     write.set_field(tracker, "TRAME-1", "Priority", "P1")
     write.transition(tracker, "TRAME-1", "ready")
@@ -1136,6 +1146,20 @@ def test_adapter_never_derives_review_proof_from_local_git():
         tracker.set_state("TRAME-1", "review", project=PROJECT)
 
     assert tracker.calls == []
+
+
+@pytest.mark.parametrize("link_type", ["subtask-of", "parent-of"])
+def test_link_reparents_an_existing_issue_with_both_hierarchy_types(link_type):
+    tracker = ScriptedTracker([
+        issue_raw(version=7), issue_raw(id="TRAME-9", version=11), issue_raw(version=8),
+    ])
+
+    tracker.link("TRAME-1", link_type, "TRAME-9", project=PROJECT)
+
+    method, path, body, _kwargs = tracker.calls[-1]
+    assert (method, path) == ("POST", "/issues/TRAME-1/links")
+    assert body["type"] == link_type and body["target"] == "TRAME-9"
+    assert body["target_version"] == 11
 
 
 def test_link_and_comment_send_fresh_if_match_and_propagate_stale_version():
@@ -2931,8 +2955,8 @@ def test_registry_binding_fails_closed_with_the_governance_message(monkeypatch, 
     )
     from foundry.trackers.devhub import DevHubGovernanceModeError
 
-    # `devhub` is not in `registry._V1_TRACKERS` yet: exercise the generic read-back
-    # path with a stand-in adapter that raises the typed refusal.
+    # Exercise the generic read-back path with a stand-in adapter that raises the typed
+    # refusal; `registry bootstrap devhub` reaches it the same way (PAT-323).
     class Refusing:
         def verify_project_identity(self, project):
             raise DevHubGovernanceModeError("TRAME", "manual")

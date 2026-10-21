@@ -1762,12 +1762,13 @@ record the exact source snapshot, migrated IDs, readback digests and cutover bin
 
 ## Repository-scoped activation and atomic cutover
 
-For YouTrack, Linear and GitHub Projects, an absent marker permits only one exact
+For YouTrack, Linear, GitHub Projects and DevHub, an absent marker permits only one exact
 historical basename entry in explicit `legacy` mode. It never turns an unregistered
 repository into a `FOUNDRY_TRACKER`-selected repository. A repository with a V1 binding
 carries `.foundry/tracker.json`; supplying a different provider explicitly from that
-checkout is refused rather than becoming an archive-write escape hatch. DevHub remains
-the separate host-selected pilot outside this three-provider rule.
+checkout is refused rather than becoming an archive-write escape hatch. DevHub is the
+fourth V1 provider since PAT-ADR-0031 and follows the same marker rule (PAT-323); the
+host-selected pilot path is retired.
 
 The marker is resolved from the Git root, including when a command starts in a nested
 directory. Schema 1 remains readable for the historical Linear cutover. Current schema
@@ -1780,7 +1781,7 @@ The marker contains no token or endpoint. Symlinks, files above 16 KiB, malforme
 unknown fields, unsupported providers, moved origins, stale registry data and digest
 divergence fail closed.
 
-For the three V1 providers, bind or upgrade an existing project through the bounded
+For the V1 providers, bind or upgrade an existing project through the bounded
 registry commands documented in [`tracker-contract.md`](tracker-contract.md#5-optional--excluded-scope-and-the-open-graphqlrest-point).
 They perform an exact provider read before local publication and never provision a
 provider project. `registry update` is the only supported mapping-recovery command: it

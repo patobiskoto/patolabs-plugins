@@ -513,10 +513,11 @@ def main(argv=None):
     _print_routing(routing_diagnostics(issue=args.issue, codex_profile=codex_profile))
 
     try:
-        if tracker_name == "devhub":
-            tracker_selection = {"mode": "pilot"}
-        else:
-            tracker_selection = registry.repository_tracker_selection()
+        # DevHub keeps the host-selected name for an unbound checkout only (diagnostics);
+        # every resolution still needs a V1 marker (PAT-323).
+        tracker_selection = registry.repository_tracker_selection(
+            allow_unbound=tracker_name == "devhub",
+        )
     except SystemExit as exc:
         if "checkout Git introuvable" in str(exc):
             tracker_selection = {"mode": "host"}

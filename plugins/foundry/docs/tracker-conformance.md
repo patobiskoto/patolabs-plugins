@@ -30,7 +30,10 @@ the suite does not call a real YouTrack, Linear or GitHub resource.
 - a test cannot label several providers unless it actually executes the reviewed
   shared scenario for each of them;
 - every core `gap` or `to_qualify` cell makes the public conformance command fail,
-  even when it has a PAT owner ticket.
+  even when it has a PAT owner ticket, except for the providers of
+  `_ADMISSION_PENDING_PROVIDERS` in that test file (DevHub, PAT-ADR-0031 and PAT-323): their
+  blocking cells stay in the contract and can never be mapped as passing cases, but they
+  do not fail the aggregate gate until their owner tickets close.
 
 A blocking cell is therefore neither skipped nor represented as a passing case. The
 owner ticket explains what must land; it is not a green exception. When an owner turns
@@ -41,8 +44,11 @@ The manifest contains no dormant `pending_ticket` selectors and never names a te
 is absent from the checkout. The PAT-58, PAT-59, PAT-64, PAT-67 and PAT-69 cases were
 added only after their adapter implementations and tests landed on `main`.
 
-All 57 core provider cells (19 per tracker) are now `supported` and have selected
-executable coverage. The newer cases exercise ADR versions, release scopes, cutover
+All 57 core provider cells of YouTrack, Linear and `ghprojects` (19 per tracker) are
+`supported` and have selected executable coverage. DevHub has 17 of its 19 core cells
+`supported` with selected offline cases (fake transport, `tests/test_devhub_tracker.py`);
+`cross-tracker-adr-import` and `cross-tracker-live-work-copy` are `gap` (no
+`migration_preflight`) and have no case. The newer cases exercise ADR versions, release scopes, cutover
 imports and replay, bounded Epic closure, lifecycle and acceptance receipts, and the
 archived-project write guard through the real adapters with fake transports.
 

@@ -95,12 +95,29 @@ python3 tooling/foundry_cli.py setup_project "My Project" <TICKER> <repo-basenam
 The DevHub capability reads and canonicalizes the checkout's `origin`, resolves an
 existing project by that identity, or creates a minimal project through the tracker API
 with a deterministic idempotency key. It confirms the repository binding before Foundry
-writes the single local registry entry. A retry after provider success but before the
+writes the single local registry entry and, since PAT-323, the repository marker
+(`setup_project.py` calls `registry.bootstrap_repository_binding` for a V1 provider whose
+project carries `canonical_repo`). A retry after provider success but before the
 registry write therefore recovers the same project. No manual REST call or separate
 `registry register` step is required.
 
-`registry register` remains available only for binding a project that was deliberately
-created outside this setup flow. It is not the normal new-project path.
+DevHub is a V1 provider since PAT-ADR-0031 (PAT-323): its binding is the ordinary canonical
+repository marker (`.foundry/tracker.json`), never deduced from a repository name, and the
+former pilot path (basename resolution, `mode=pilot`, host-global selection of a bound
+checkout) is retired. To bind a project that was created outside the setup flow, run
+`python3 tooling/foundry_cli.py registry bootstrap devhub <repo> <KEY> <project-id>` from the
+checkout: it reads the exact project back (`verify_project_identity`, including the
+governance mode, "Governance mode") and publishes the entry and the marker only if both
+hold. `registry register` alone writes an entry without a marker, which fails closed.
+
+An existing DevHub registry entry that carries `canonical_repo` but has no marker (for
+example one written by `registry register` before PAT-323) is classified, deduced from
+`registry.repository_tracker_selection`, as an interrupted V1 publication: every command
+from that checkout refuses with "Binding tracker V1 sans marqueur" and nothing is promoted
+silently. Run the same `registry bootstrap devhub` command with the entry's own key, id and
+`canonical_repo=<host/owner/repo>`; when the entry is identical it only writes the missing
+marker. An entry without `canonical_repo` is legacy and is upgraded with `registry upgrade
+devhub <repo>`. An entry whose repository has no local checkout is untouched.
 
 Run `doctor` before the first write. It resolves the canonical repository remotely and
 compares the credential-free `host/owner/repo` identity of the actual `origin` remote with
@@ -292,7 +309,7 @@ the same reason as `ghprojects.py`). Each direct issue is
 it is not `done` or `dropped`; `unavailable` otherwise, which includes a `done` issue with
 unchecked criteria (no typed override receipt exists to call it `deviated`). Foundry has no
 code that creates a Version or writes the mapping: the registry validates `release_ids` for
-YouTrack and GitHub Projects only (`registry.py`), and DevHub is not a V1 tracker (DHN-40).
+YouTrack, GitHub Projects and, since PAT-323, DevHub (`registry._validated_binding_entry`).
 
 ## Issue creation reconciliation (PAT-313, DHN-37)
 
@@ -352,8 +369,7 @@ Row DHN-24 of `devhub-requirements.md`.
 canonical repository. A missing or non-canonical `canonical_repo` and a 404 return `False`
 without guessing; any other error is raised. It is the read-back that the
 `repository-bootstrap` journey of `tracker-contract.v1.json` asks for before a binding is
-published. `registry bootstrap` does not reach it on DevHub yet: it refuses a tracker
-outside `registry._V1_TRACKERS` first (`registry._validated_binding_entry`, DHN-40).
+published. `registry bootstrap devhub` reaches it since PAT-323 (`devhub` is in `registry._V1_TRACKERS`).
 Row DHN-41 of `devhub-requirements.md`. Since PAT-321 it also reads the project governance
 mode once the identity holds: see "Governance mode".
 
@@ -393,9 +409,8 @@ That code is shared with other authority refusals (for example a decided ADR, se
   the mode is unknown until DEVHUB-116 (announced, not merged); they are wrapped already.
 - Callers. `registry.verify_existing_project` turns a `TrackerConflictError` of the
   read-back into a `ValueError` carrying its message (any other exception keeps the generic
-  message), so a binding fails closed naming the mode; `devhub` is outside
-  `registry._V1_TRACKERS`, so `registry bootstrap` does not reach this path on DevHub yet
-  (DHN-40). `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
+  message), so a binding fails closed naming the mode; `registry bootstrap devhub` reaches
+  this path since PAT-323. `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
   `ghprojects`, so `doctor` does not read the governance mode of a DevHub project.
 
 Tests: `tests/test_devhub_tracker.py`, section "PAT-321" (offline, scripted transport).

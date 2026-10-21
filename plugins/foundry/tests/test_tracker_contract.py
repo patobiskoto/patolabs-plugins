@@ -36,14 +36,14 @@ def _load_contract():
 def test_contract_json_is_versioned_and_names_its_doc():
     contract = _load_contract()
     assert contract["contract"] == "foundry.tracker-contract.v1"
-    assert contract["version"] == 4
+    assert contract["version"] == 5
     assert contract["doc"] == "plugins/foundry/docs/tracker-contract.md"
 
 
 def test_doc_references_the_same_contract_version():
     doc = DOC_PATH.read_text(encoding="utf-8")
     assert "tracker-contract.v1.json" in doc
-    assert "version: 4" in doc
+    assert "version: 5" in doc
     assert "contract **v1**" in doc
 
 
@@ -373,13 +373,43 @@ def test_ghprojects_pat66_pat58_writes_and_pat67_lifecycle_are_real():
     "cross-tracker-adr-import",
     "cross-tracker-live-work-copy",
 ])
-def test_pat64_contract_rows_are_supported_for_all_three_providers(operation_id):
+def test_pat64_contract_rows_are_supported_for_the_three_original_providers(operation_id):
     rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
     cells = rows[operation_id]["cells"]
 
-    assert set(cells) == {"youtrack", "linear", "ghprojects"}
-    assert {cell["status"] for cell in cells.values()} == {"supported"}
-    assert all("ticket" not in cell for cell in cells.values())
+    assert set(cells) == {"youtrack", "linear", "ghprojects", "devhub"}
+    original = {name: cells[name] for name in ("youtrack", "linear", "ghprojects")}
+    assert {cell["status"] for cell in original.values()} == {"supported"}
+    assert all("ticket" not in cell for cell in original.values())
+
+
+def test_devhub_cutover_target_cells_stay_gaps_until_migration_preflight_exists():
+    """PAT-323: DevHub implements the import ports but not the preflight the cutover
+    manifest requires, so both cross-tracker cells stay owned gaps (migration.py)."""
+    from foundry.trackers.base import Tracker
+    from foundry.trackers.devhub import DevHubTracker
+
+    assert "migration_preflight" not in DevHubTracker.__dict__
+    assert DevHubTracker.migration_preflight is Tracker.migration_preflight
+    rows = {operation["id"]: operation for operation in _load_contract()["operations"]}
+    for operation_id in ("cross-tracker-adr-import", "cross-tracker-live-work-copy"):
+        cell = rows[operation_id]["cells"]["devhub"]
+        assert cell["status"] == "gap" and _GAP_TICKET_RE.match(cell["ticket"])
+    tombstone = rows["tombstone-archived-source-after-switch"]["cells"]["devhub"]
+    assert tombstone["status"] == "supported"
+
+
+def test_devhub_is_a_v1_provider_with_one_cell_per_operation():
+    from foundry import registry
+
+    contract = _load_contract()
+    assert contract["providers"]["devhub"]["v1_core"] is True
+    assert "devhub" in registry._V1_TRACKERS
+    declared = {name for name, p in contract["providers"].items() if p["v1_core"] is True}
+    assert declared == set(registry._V1_TRACKERS)
+    assert all("devhub" in operation["cells"] for operation in contract["operations"])
+    assert len(contract["operations"]) == 25
+    assert sum(1 for operation in contract["operations"] if operation["core"]) == 19
 
 
 def test_youtrack_archived_target_tombstone_is_supported_with_native_preflight_evidence():
@@ -411,14 +441,18 @@ def test_switch_rows_separate_adr_import_from_live_work_copy():
         "migration_export_adrs", "migration_find_adr", "migration_prepare_adr",
         "migration_qualify_adrs", "migration_import_adrs",
     }
-    assert {cell["status"] for cell in adr["cells"].values()} == {"supported"}
+    assert {
+        cell["status"] for name, cell in adr["cells"].items() if name != "devhub"
+    } == {"supported"}
     live = rows["cross-tracker-live-work-copy"]
     assert live["core"] is True
     assert set(live["tracker_abc"]) == {
         "migration_preflight", "migration_attribute_exceptions",
         "migration_find_issue", "migration_import_issue", "migration_link_issue",
     }
-    assert {cell["status"] for cell in live["cells"].values()} == {"supported"}
+    assert {
+        cell["status"] for name, cell in live["cells"].items() if name != "devhub"
+    } == {"supported"}
     assert "cross-tracker-live-work-and-adr-copy" not in rows
 
 

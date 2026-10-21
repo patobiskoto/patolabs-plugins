@@ -268,6 +268,8 @@ def test_setup_retry_after_registry_interruption_does_not_duplicate_project_or_b
             },
         },
     }
+    # PAT-323: DevHub is a V1 provider, so setup publishes the marker with the entry.
+    assert registry.repository_tracker_binding().tracker == "devhub"
 
 
 def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch, tmp_path):

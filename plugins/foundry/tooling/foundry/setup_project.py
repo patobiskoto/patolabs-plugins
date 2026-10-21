@@ -147,10 +147,16 @@ def setup(name, short, repo, adr_dir=None):
         raise RuntimeError(
             f"le tracker {tracker.name} a retourné le projet {project.key}, attendu {short}"
         )
-    registry.register(
-        tracker.name, repo, project.key, project.id,
-        require_absent=True, **project.extra,
-    )
+    if tracker.name in registry._V1_TRACKERS and "canonical_repo" in project.extra:
+        # A canonical entry without its marker fails closed (PAT-323): publish both.
+        registry.bootstrap_repository_binding(
+            tracker.name, repo, project.key, project.id, **project.extra,
+        )
+    else:
+        registry.register(
+            tracker.name, repo, project.key, project.id,
+            require_absent=True, **project.extra,
+        )
     print(f"📇 enregistré : {repo} → {project.key} ({project.id}) [{tracker.name}]")
     if adr_dir:
         import_adrs(tracker, project, adr_dir)

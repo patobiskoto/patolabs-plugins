@@ -123,21 +123,112 @@ def test_legacy_selection_beats_global_devhub_in_factory_and_doctor(isolated, mo
     assert doctor._provider_transport_preflight() == ("ghprojects", None)
 
 
-def test_devhub_pilot_requires_unbound_or_its_own_unambiguous_binding(isolated, monkeypatch):
+def test_devhub_canonical_entry_without_marker_fails_closed_until_bootstrap_replay(
+    isolated, monkeypatch,
+):
+    """PAT-323: an existing canonical DevHub entry is V1 state, never the retired pilot."""
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+    registry.register(
+        "devhub", "same", "PILOT", "42", canonical_repo="github.com/acme/same",
+    )
+    with pytest.raises(SystemExit, match="V1 sans marqueur"):
+        foundry.effective_tracker_name()
+    with pytest.raises(SystemExit, match="V1 sans marqueur"):
+        registry.repository_tracker_selection()
+    with pytest.raises(SystemExit, match="marqueur absent"):
+        registry.resolve("devhub", "same")
+    before = (isolated / "state" / "registry.json").read_bytes()
+
+    binding = registry.bootstrap_repository_binding(
+        "devhub", "same", "PILOT", "42", canonical_repo="github.com/acme/same",
+    )
+
+    assert (isolated / "state" / "registry.json").read_bytes() == before
+    assert binding.tracker == "devhub"
+    selected = registry.repository_tracker_selection(require_v1=True)
+    assert selected["mode"] == "v1"
+    assert foundry.effective_tracker_name() == "devhub"
+    registry.register("youtrack", "same", "OTHER", "0-1")
+    with pytest.raises(SystemExit, match="ambigu"):
+        foundry.effective_tracker_name()
+
+
+def test_devhub_unbound_checkout_keeps_the_host_name_but_resolves_nothing(
+    isolated, monkeypatch,
+):
     repo = _repo(isolated, "acme", "same")
     monkeypatch.chdir(repo)
     monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
     assert foundry.effective_tracker_name() == "devhub"
-    registry.register(
-        "devhub", "same", "PILOT", "42", canonical_repo="github.com/acme/same",
+    from foundry.trackers.devhub import DevHubTracker
+
+    tracker = object.__new__(DevHubTracker)
+    with pytest.raises(SystemExit, match="Binding tracker absent"):
+        tracker.resolve_checkout_project()
+
+
+def test_devhub_adapter_refuses_a_checkout_active_on_another_provider(isolated, monkeypatch):
+    from foundry.trackers.devhub import DevHubTracker
+
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    registry.bootstrap_repository_binding(
+        "ghprojects", "same", "ONE", "PVT_1", owner="acme", number="1",
     )
-    assert foundry.effective_tracker_name() == "devhub"
-    assert registry.repository_tracker_selection()["mode"] == "pilot"
-    with pytest.raises(SystemExit, match="V1 requis"):
-        registry.repository_tracker_selection(require_v1=True)
-    registry.register("youtrack", "same", "OTHER", "0-1")
-    with pytest.raises(SystemExit, match="ambigu"):
-        foundry.effective_tracker_name()
+    with pytest.raises(SystemExit, match="actif sur 'ghprojects'"):
+        object.__new__(DevHubTracker).resolve_checkout_project()
+
+
+def test_devhub_bootstrap_publishes_only_a_verified_foundry_governed_project(
+    isolated, monkeypatch, capsys,
+):
+    from foundry.trackers.base import TrackerConflictError
+
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    answers = iter([False, TrackerConflictError("gouvernance refusée"), True])
+
+    class Stand:
+        def verify_project_identity(self, project):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    monkeypatch.setattr(foundry, "tracker", lambda name, cwd=None: Stand())
+    command = ["bootstrap", "devhub", "same", "KEY", "42"]
+    with pytest.raises(SystemExit, match="étrangères ou contradictoires"):
+        registry.main(command)
+    with pytest.raises(SystemExit, match="gouvernance refusée"):
+        registry.main(command)
+    assert registry.load() == {}
+    assert not (repo / ".foundry/tracker.json").exists()
+
+    registry.main(command)
+    published = json.loads(capsys.readouterr().out)
+    assert published["tracker"] == "devhub" and published["mode"] == "v1"
+    assert registry.repository_tracker_selection()["mode"] == "v1"
+    assert registry.load()["devhub"]["same"] == {
+        "key": "KEY", "id": "42", "canonical_repo": "github.com/acme/same",
+    }
+
+
+def test_devhub_binding_accepts_only_the_canonical_repository_and_release_ids(
+    isolated, monkeypatch,
+):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError, match="extra non autorisé"):
+        registry.bootstrap_repository_binding(
+            "devhub", "same", "KEY", "42", owner="acme",
+        )
+    assert registry.load() == {}
+    binding = registry.bootstrap_repository_binding(
+        "devhub", "same", "KEY", "42", release_ids={"1.0.0": "KEY-VERSION-1"},
+    )
+    assert binding.project.extra["release_ids"] == {"1.0.0": "KEY-VERSION-1"}
 
 
 @pytest.mark.parametrize("foreign_mode", ["canonical", "legacy"])
@@ -183,9 +274,7 @@ def test_archived_foreign_provider_does_not_conflict_with_active_marker(isolated
     assert registry.repository_tracker_binding() == binding
 
 
-def test_historical_devhub_marker_is_pilot_and_never_satisfies_v1(
-    isolated, monkeypatch, capsys,
-):
+def test_devhub_marker_is_a_plain_v1_binding(isolated, monkeypatch, capsys):
     repo = _repo(isolated, "acme", "same")
     monkeypatch.chdir(repo)
     registry.register(
@@ -195,13 +284,10 @@ def test_historical_devhub_marker_is_pilot_and_never_satisfies_v1(
         "devhub", "PILOT", "42", migration_manifest_digest="sha256:" + "a" * 64,
     )
     assert registry.repository_tracker_binding() == binding
-    assert registry.repository_tracker_selection()["mode"] == "pilot"
-    with pytest.raises(SystemExit, match="V1 requis"):
-        registry.repository_tracker_selection(require_v1=True)
-    registry.main(["selection"])
-    assert json.loads(capsys.readouterr().out)["mode"] == "pilot"
-    with pytest.raises(SystemExit, match="V1 requis"):
-        registry.main(["selection", "--require-v1"])
+    assert registry.repository_tracker_selection()["mode"] == "v1"
+    assert registry.repository_tracker_selection(require_v1=True)["mode"] == "v1"
+    registry.main(["selection", "--require-v1"])
+    assert json.loads(capsys.readouterr().out)["mode"] == "v1"
 
 
 def test_upgrade_binds_exact_remote_and_ignores_adverse_environment(isolated, monkeypatch):

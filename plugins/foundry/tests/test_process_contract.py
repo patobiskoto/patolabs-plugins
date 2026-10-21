@@ -370,7 +370,7 @@ def test_r9_deferral_names_no_tracker_and_cites_supported_contract_rows():
     contract = _repo_text("plugins/foundry/docs/tracker-contract.md")
     header = next(line for line in contract.splitlines() if line.startswith("| Core journey |"))
     assert [cell.strip() for cell in header.strip("|").split("|")][2:] == [
-        "YouTrack", "Linear", "ghprojects"]
+        "YouTrack", "Linear", "ghprojects", "DevHub"]
     for journey, operations in (
         ("Frame/intake/groom: create, comment", "`create_issue`, `add_comment`"),
         ("Epics/enfants/dépendances: child creation, relations",
@@ -382,7 +382,7 @@ def test_r9_deferral_names_no_tracker_and_cites_supported_contract_rows():
         # the contract escapes the pipes of the operation list inside its table cell
         cells = [cell.strip() for cell in row.strip("|").replace("\\|", "|").split(" | ")]
         assert cells[1] == operations
-        assert len(cells) == 5 and all(cell.startswith("supported") for cell in cells[2:])
+        assert len(cells) == 6 and all(cell.startswith("supported") for cell in cells[2:])
 
 
 def test_r9_states_what_is_not_mechanical_and_what_is_not_coded_yet():
