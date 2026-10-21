@@ -565,6 +565,10 @@ def test_dhn_24_epic_closes_over_a_dropped_child_by_explicit_acceptance(suite, m
     )
     _to_done(suite, done_child.id)
     tracker.set_state(dropped_child.id, "dropped", project=suite.project)
+    # Starting point of the test: both children carry one criterion, the dropped one open.
+    done_read, dropped_read = tracker.get_issue(done_child.id), tracker.get_issue(dropped_child.id)
+    assert (done_read.ac_total, dropped_read.ac_total) == (1, 1)
+    assert dropped_read.ac_done == 0
     monkeypatch.setattr(write, "mutation_project", lambda _tracker: suite.project)
     # PAT-ADR-0030: Foundry refuses before the atomic call until the child is named.
     with pytest.raises(SystemExit, match="doit nommer exactement"):
@@ -708,26 +712,49 @@ def test_dhn_31_accepted_adr_can_be_marked_superseded_through_the_status_route(s
 @need("DHN-32")
 def test_dhn_32_adr_is_superseded_by_a_named_replacement(suite):
     tracker = suite.tracker
-    old, new = _new_adr(suite, "live adr old"), _new_adr(suite, "live adr new")
+    # Own project: the status-route supersession of DHN-31 leaves an unlinked superseded
+    # ADR in the suite project, which makes every `supersedes` there `unknown` (PAT-320).
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live supersession", key, repository)
+    own = replace(suite, project=project, repository=repository)
+    old, new = _new_adr(own, "live adr old"), _new_adr(own, "live adr new")
     # Foundry's order is `adr accept` then `adr supersede`: both ADRs are accepted first,
-    # and the replacement keeps its status and body (the Linear and GitHub Projects
-    # adapters refuse a non-accepted replacement).
-    tracker.set_adr_status(old, "accepted", project=suite.project)
-    tracker.set_adr_status(new, "accepted", project=suite.project)
-    before = {item.id: item for item in tracker.list_adrs(suite.project)}[new.id]
-    tracker.supersede_adr(old, new.id, project=suite.project)
-    after = {item.id: item for item in tracker.list_adrs(suite.project)}
+    # and the replacement keeps its status, body and version (the Linear and GitHub
+    # Projects adapters refuse a non-accepted replacement).
+    tracker.set_adr_status(old, "accepted", project=project)
+    tracker.set_adr_status(new, "accepted", project=project)
+    before = {item.id: item for item in tracker.list_adrs(project)}[new.id]
+    # `Adr` carries no version: the detail route `GET /adrs/:id` does.
+    version_before = tracker._application_req("GET", f"/adrs/{new.id}")["version"]
+    tracker.supersede_adr(old, new.id, project=project)
+    after = {item.id: item for item in tracker.list_adrs(project)}
     assert after[old.id].status == "superseded"
     assert (after[new.id].status, after[new.id].body) == ("accepted", before.body)
+    assert tracker._application_req("GET", f"/adrs/{new.id}")["version"] == version_before
     # `Adr` carries no relation: the narrowest port read of the named link is
     # `migration_export_adrs`, whose `relations` hold `superseded_by` / `supersedes`.
     # The DevHub adapter reads both ends from `GET /adr-decisions/adrs/:id` (PAT-320).
     relations = {
         entry["adr"].id: entry["relations"]
-        for entry in tracker.migration_export_adrs(suite.project)
+        for entry in tracker.migration_export_adrs(project)
     }
     assert relations[old.id]["superseded_by"] == new.id
     assert relations[new.id]["supersedes"] == [old.id]
+    # A replay writes nothing (also once the replacement has left `accepted`, unit-tested).
+    tracker.supersede_adr(old, new.id, project=project)
+    # A status-route supersession records no link: its replacement is unknown, so no
+    # entry's `supersedes` is claimed complete any more (PAT-ADR-0008).
+    orphan = _new_adr(own, "live adr unlinked")
+    tracker.set_adr_status(orphan, "accepted", project=project)
+    tracker.set_adr_status(orphan, "superseded", project=project)
+    relations = {
+        entry["adr"].id: entry["relations"]
+        for entry in tracker.migration_export_adrs(project)
+    }
+    assert relations[orphan.id]["superseded_by"] == "unknown"
+    assert relations[new.id]["supersedes"] == "unknown"
+    assert relations[old.id]["superseded_by"] == new.id
 
 
 @need("DHN-33")

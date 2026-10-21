@@ -219,6 +219,8 @@ ADR source, witness, acceptance proof or lifecycle authority (`create_issue`,
   The message names the workspace usage limit and copies nothing from the response. On `issue.create`
   the effect is known, not created: no read-back follows, the message ends
   `client_id=<UUID> creation=not_created`, and `edit create-issue` does not report `creation: unknown`.
+  The quota check runs first (`_quota_error`, then `_USAGE_LIMIT_CODE`, `trackers/linear.py`): a 400 carrying
+  this code with `x-ratelimit-requests-remaining: 0` is classed as a quota (transient), not as this refusal.
   It is never retried, and `campaign_defer.py::_DURABLE` classes it durable (refused, remarks corrected
   before the merge, R9 (b)). The remaining headroom is not read ahead: Linear does not expose it (unknown).
   Documentation status (R5): this entry updated; no CLI verb or configuration key changed.

@@ -6,8 +6,13 @@ and from these dataclasses, so swapping a provider never touches the pipeline.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
+
+# Public reason code of an explicit human AC override (`issue.py::_ac_override_reason`,
+# DevHub `acceptance_override` receipts): one definition for the CLI and the DevHub adapter.
+AC_OVERRIDE_REASON = re.compile(r"[a-z0-9_-]{3,80}\Z")
 
 
 @dataclass
