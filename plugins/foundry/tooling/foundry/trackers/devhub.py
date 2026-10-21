@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import ipaddress
@@ -46,6 +47,8 @@ _EPIC_CLOSURE_CONTRACT = "devhub-epic-closure.v1"
 _ADR_AUTHORING_CONTRACT = "devhub-adr-authoring.v1"
 _ADR_RELATIONSHIPS_CONTRACT = "devhub-adr-relationships.v1"
 _ADR_DECISIONS_CONTRACT = "devhub-adr-decisions.v1"
+_GOVERNANCE_CONTRACT = "devhub-governance.v1"
+_GOVERNANCE_MODES = frozenset({"manual", "foundry"})
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_SEARCH_ITEMS = 1_000
 _MAX_SEARCH_PAGES = 100
@@ -186,6 +189,23 @@ class AdrRelationFrozenError(TrackerConflictError):
         )
         self.adr_id = adr_id
         self.status = status
+
+
+class DevHubGovernanceModeError(TrackerConflictError):
+    """The DevHub project is not under Foundry governance (PAT-321).
+
+    DevHub refuses Foundry writes on such a project (`assertFoundryGovernance`); the
+    refusal names the governance mode read from ``GET /governance/projects/:key``.
+    """
+
+    def __init__(self, project_key: str, mode: str):
+        super().__init__(
+            f"projet DevHub {project_key} en mode de gouvernance '{mode}' : DevHub refuse "
+            "les écritures Foundry hors gouvernance Foundry ; repasse le projet en mode "
+            "'foundry' dans DevHub ou n'y lie pas ce dépôt"
+        )
+        self.project_key = project_key
+        self.mode = mode
 
 
 def _canonical_loopback(host: str) -> bool:
@@ -877,8 +897,54 @@ class DevHubTracker(Tracker):
             )
         except (TypeError, ValueError):
             return False
-        return (remote.key == project.key and remote.id == project.id
-                and remote_repository == canonical)
+        if not (remote.key == project.key and remote.id == project.id
+                and remote_repository == canonical):
+            return False
+        # Identity holds: refuse a project DevHub does not govern for Foundry (PAT-321).
+        mode = self._governance_mode(project.key)
+        if mode is not None and mode != "foundry":
+            raise DevHubGovernanceModeError(project.key, mode)
+        return True
+
+    def _governance_mode(self, project_key: str) -> str | None:
+        """Read the governance mode (`GET /governance/projects/:key`, `devhub-governance.v1`).
+
+        ``None`` when an older server answers 404 `route_unavailable` (mode unknown, no
+        refusal); a malformed answer is `invalid_response`.
+        """
+        path = f"/governance/projects/{urllib.parse.quote(project_key, safe='')}"
+        try:
+            raw = self._req("GET", path, response_contract=_GOVERNANCE_CONTRACT)
+        except DevHubTrackerError as error:
+            if error.status == 404 and error.code == "route_unavailable":
+                return None
+            raise
+        if (not isinstance(raw, dict)
+                or raw.get("schema_version") != _GOVERNANCE_CONTRACT
+                or raw.get("project") != project_key
+                or raw.get("mode") not in _GOVERNANCE_MODES):
+            raise DevHubTrackerError("GET", "/governance/projects", None, "invalid_response")
+        return raw["mode"]
+
+    @contextlib.contextmanager
+    def _governance_guard(self, project_key: str):
+        """Name a governance refusal behind a 403 `authority_boundary` on a write (PAT-321).
+
+        The code is shared with other authority refusals: re-read the mode once and raise
+        the typed error only when the project is not under Foundry governance; otherwise
+        (or when that read fails) the original error propagates.
+        """
+        try:
+            yield
+        except DevHubTrackerError as error:
+            if error.status == 403 and error.code == "authority_boundary":
+                try:
+                    mode = self._governance_mode(project_key)
+                except DevHubTrackerError:
+                    mode = None
+                if mode is not None and mode != "foundry":
+                    raise DevHubGovernanceModeError(project_key, mode) from None
+            raise
 
     def resolve_checkout_project(
         self,
@@ -995,11 +1061,13 @@ class DevHubTracker(Tracker):
         idempotency_key = (
             f"foundry-epic-close-{hashlib.sha256(encoded).hexdigest()}"
         )
-        outcome = self._to_epic_closure_outcome(
-            self._epic_closure_req(
+        with self._governance_guard(project.key):
+            closed = self._epic_closure_req(
                 "POST", path, request, version=receipt.parent_version,
                 idempotent=True, idempotency_key=idempotency_key,
-            ),
+            )
+        outcome = self._to_epic_closure_outcome(
+            closed,
             project=project, parent_id=receipt.parent_id,
             method="POST", path=path,
         )
@@ -1238,10 +1306,11 @@ class DevHubTracker(Tracker):
             reviews = [item for item in receipts if item["action"] != "acceptance_override"]
             if reviews and self._same_review(reviews[-1], context):
                 return
-            self._application_req(
-                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
-                {"state": "in-progress"}, version=raw["version"], idempotent=True,
-            )
+            with self._governance_guard(project_key):
+                self._application_req(
+                    "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
+                    {"state": "in-progress"}, version=raw["version"], idempotent=True,
+                )
             raw = self._bound_issue_raw(issue_id, project)
         proof = None
         if state == "review":
@@ -1254,10 +1323,11 @@ class DevHubTracker(Tracker):
                 action="done", project_key=project_key,
                 resource_id=issue_id, version=raw["version"], context=context,
             )
-        self._application_req(
-            "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
-            {"state": state}, version=raw["version"], proof=proof, idempotent=True,
-        )
+        with self._governance_guard(project_key):
+            self._application_req(
+                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
+                {"state": state}, version=raw["version"], proof=proof, idempotent=True,
+            )
 
     @staticmethod
     def _stale_error(exc: DevHubTrackerError):
@@ -1322,10 +1392,11 @@ class DevHubTracker(Tracker):
             version=raw["version"], context=context, extra={"reason": reason},
         )
         try:
-            self._application_req(
-                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/acceptance-override",
-                body, version=raw["version"], proof=proof, idempotent=True,
-            )
+            with self._governance_guard(project_key):
+                self._application_req(
+                    "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/acceptance-override",
+                    body, version=raw["version"], proof=proof, idempotent=True,
+                )
         except DevHubTrackerError as exc:
             unavailable = self._route_unavailable(exc, "acceptance_override")
             if unavailable is not None:
@@ -1410,10 +1481,11 @@ class DevHubTracker(Tracker):
             version=raw["version"], extra={"decision_digest": digest},
         )
         try:
-            self._application_req(
-                "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/human-acceptance",
-                {"decision": decision}, version=raw["version"], proof=proof, idempotent=True,
-            )
+            with self._governance_guard(project_key):
+                self._application_req(
+                    "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/human-acceptance",
+                    {"decision": decision}, version=raw["version"], proof=proof, idempotent=True,
+                )
         except DevHubTrackerError as exc:
             unavailable = self._route_unavailable(exc, "human_acceptance")
             if unavailable is not None:
@@ -2129,10 +2201,11 @@ class DevHubTracker(Tracker):
                 )
             request["superseded_by"] = replacement["source_ref"]
         try:
-            raw = self._application_req(
-                "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/adrs/import",
-                request, idempotent=True,
-            )
+            with self._governance_guard(project.key):
+                raw = self._application_req(
+                    "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/adrs/import",
+                    request, idempotent=True,
+                )
         except DevHubTrackerError as error:
             unavailable = self._route_unavailable(error, "migration_adr_import")
             if unavailable is not None:
@@ -2366,10 +2439,11 @@ class DevHubTracker(Tracker):
         proof = self._proof(action="adr-status", project_key=project_key,
                             resource_id=server_id,
                             version=raw["version"], target_status=status)
-        self._application_req(
-            "POST", f"/adrs/{urllib.parse.quote(server_id, safe='')}/status",
-            {"status": status}, version=raw["version"], proof=proof, idempotent=True,
-        )
+        with self._governance_guard(project_key):
+            self._application_req(
+                "POST", f"/adrs/{urllib.parse.quote(server_id, safe='')}/status",
+                {"status": status}, version=raw["version"], proof=proof, idempotent=True,
+            )
 
     def _read_adr_decision_document(self, server_id: str) -> dict:
         """Read the supersession relations of one ADR (`devhub-adr-decisions.v1`, DHN-32).
@@ -2435,12 +2509,13 @@ class DevHubTracker(Tracker):
         )
         path = f"/adrs/{urllib.parse.quote(server_id, safe='')}/supersede"
         try:
-            self._application_req(
-                "POST", path,
-                {"replacement": replacement_server_id,
-                 "replacement_version": replacement["version"]},
-                version=source["version"], proof=proof, idempotent=True,
-            )
+            with self._governance_guard(project_key):
+                self._application_req(
+                    "POST", path,
+                    {"replacement": replacement_server_id,
+                     "replacement_version": replacement["version"]},
+                    version=source["version"], proof=proof, idempotent=True,
+                )
         except DevHubTrackerError as exc:
             unavailable = self._route_unavailable(exc, "adr_supersession")
             if unavailable is not None:
