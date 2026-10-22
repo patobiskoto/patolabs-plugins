@@ -1033,6 +1033,14 @@ def test_relation_reads_refuse_unsupported_native_types_without_partial_issue(
     assert raised.value.operation == operation
     assert raised.value.status is None
     assert raised.value.code == "unsupported_relation_type"
+    # PAT-331: only the history export sets such a relation aside, never get_issue
+    with pytest.raises(LinearTrackerError, match="unsupported_relation_type"):
+        instance.get_issue("LIN-1")
+    issue, uncaptured = instance._export_issue("LIN-1")
+    assert issue.id == "LIN-1" and "LIN-2" not in {link.target for link in issue.links}
+    assert uncaptured == [{
+        "type": relation_type, "target": "LIN-2",
+        "direction": "inward" if collection_name == "inverseRelations" else "outward"}]
 
 
 def test_existing_issue_grooming_is_bounded_while_native_ac_sync_stays_refused(tracker):

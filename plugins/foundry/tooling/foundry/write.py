@@ -1943,6 +1943,7 @@ def close_epic(
         # atomic server call; a named abandoned child owes no acceptance proof.
         named = getattr(tracker, "epic_dropped_closure_supported", False) is True
         atomic_children = []
+        imported_dropped: set[str] = set()
         for child_id in child_ids:
             # PAT-330: a provider may complete the observation of a child accepted by a
             # human decision (DevHub); the default is the plain read.
@@ -1962,6 +1963,12 @@ def close_epic(
                 version=_exact_positive_version(child.version, "version enfant"),
                 state=child.state,
             ))
+            # PAT-331 / PAT-ADR-0032: a child abandoned in the source tracker and imported
+            # as terminal owes no named closure; its provider marks it by a distinct source.
+            if (child.state == "dropped" and child.import_history is not None
+                    and child.acceptance_source
+                    == getattr(tracker, "imported_terminal_acceptance_source", None)):
+                imported_dropped.add(child_id)
             if child.ac_done != child.ac_total and not (named and child.state == "dropped"):
                 raise SystemExit(
                     f"Clôture Epic refusée : les AC de l'enfant {child_id} sont incomplètes ou inconnues."
@@ -1969,7 +1976,8 @@ def close_epic(
         children = tuple(atomic_children)
         if named:
             abandoned = tuple(sorted(
-                child.id for child in children if child.state == "dropped"
+                child.id for child in children
+                if child.state == "dropped" and child.id not in imported_dropped
             ))
             if abandoned != tuple(sorted(dropped_ids)):
                 hint = (

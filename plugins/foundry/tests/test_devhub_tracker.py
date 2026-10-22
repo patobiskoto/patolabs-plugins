@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
@@ -2286,6 +2287,23 @@ def test_migration_link_issue_posts_one_link_then_replays_without_write(monkeypa
     assert [call[0] for call in replay.calls] == ["GET"]
 
 
+def test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions(monkeypatch):
+    # PAT-331 stage 2 (DEVHUB-127): same wire as a living link; stage 3 leaves nothing pending
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    assert DevHubTracker.migration_pending_terminal_items == {}
+    tracker = ScriptedTracker([terminal_raw(version=2), issue_raw(id="TRAME-2", version=6), {"ok": True}])
+    tracker.migration_link_issue(PROJECT, "TRAME-7", "subtask-of", "TRAME-2")
+    method, path, body, kwargs = tracker.calls[-1]
+    assert (method, path) == ("POST", "/issues/TRAME-7/links")
+    assert body == {"type": "subtask-of", "target": "TRAME-2", "target_version": 6}
+    assert kwargs["version"] == 2
+    linked = terminal_raw(version=3, links=[
+        {"type": "subtask-of", "direction": "outward", "target": "TRAME-2"}])
+    replay = ScriptedTracker([linked])
+    replay.migration_link_issue(PROJECT, "TRAME-7", "subtask-of", "TRAME-2")
+    assert [call[0] for call in replay.calls] == ["GET"]
+
+
 def test_migration_link_issue_sees_the_inverse_stored_link_as_present(monkeypatch):
     # The migration links both ends of a relation; the second call must not post.
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
@@ -2972,6 +2990,124 @@ def test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answ
                **change}
         with pytest.raises(TrackerConflictError, match="divergente"):
             ScriptedTracker([raw]).migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
+
+
+# --- PAT-331: terminal issue import (DEVHUB-126, merge defda07) ------------------------
+
+TERMINAL = {
+    "kind": "issue", "source_ref": REF, "id": "PAT-1001", "title": "Done work",
+    "body": "- [x] one\n",
+    "attributes": {"type": "Task", "priority": None, "estimate": 3, "state": "done"},
+    "terminal": {
+        "pr_url": "https://github.com/acme/trame/pull/9",
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000,
+    },
+    "pending": [], "exceptions": [], "links": [],
+}
+
+
+def terminal_raw(**overrides):
+    return issue_raw(
+        id="TRAME-7", title="Done work", body="- [x] one\n", source_ref=REF, state="done",
+        imported_terminal=True, source_created=1000, source_updated=3000,
+        source_completed=2000, **overrides)
+
+
+def test_migration_import_issue_posts_a_terminal_record_to_the_import_route(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([terminal_raw()])
+    issue = tracker.migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/projects/TRAME/issues/import")
+    # the three field keys are always sent (the server digests them as sent), the
+    # milestone and labels never
+    assert body == {
+        "source_ref": REF, "title": "Done work", "body": "- [x] one\n", "state": "done",
+        "fields": {"type": "Task", "priority": None, "estimate": 3},
+        "pr_url": "https://github.com/acme/trame/pull/9",
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000,
+    }
+    assert kwargs["idempotent"] is True and len(tracker.calls) == 1
+    assert issue.import_history == {
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000}
+
+
+def test_migration_import_issue_omits_absent_dates_and_pr_url_of_a_terminal_record(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    bare = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "dropped"},
+            "terminal": {"pr_url": None, "source_created": None,
+                         "source_updated": None, "source_completed": None}}
+    tracker = ScriptedTracker([{
+        **terminal_raw(), "state": "dropped", "source_created": None,
+        "source_updated": None, "source_completed": None}])
+    issue = tracker.migration_import_issue(PROJECT, bare, source_ref=REF)
+    assert set(tracker.calls[0][2]) == {"source_ref", "title", "body", "state", "fields"}
+    assert tracker.calls[0][2]["state"] == "dropped"
+    assert issue.import_history == {
+        "source_created": None, "source_updated": None, "source_completed": None}
+
+
+def test_migration_import_issue_refuses_a_non_terminal_state_for_a_terminal_record(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    wrong = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "ready"}}
+    with pytest.raises(ValueError, match="terminal"):
+        tracker.migration_import_issue(PROJECT, wrong, source_ref=REF)
+    assert tracker.calls == []
+
+
+def test_migration_import_issue_terminal_fails_closed_on_conflict_and_divergent_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    with pytest.raises(TrackerConflictError, match="source_ref"):
+        ScriptedTracker([conflict()]).migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+    unmarked = {**terminal_raw(), "imported_terminal": None}
+    for raw in (unmarked, {**terminal_raw(), "title": "Other"},
+                {**terminal_raw(), "body": "x"}, {**terminal_raw(), "source_ref": "z"}):
+        with pytest.raises(TrackerConflictError, match="divergente"):
+            ScriptedTracker([raw]).migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+
+
+def test_issue_read_exposes_the_import_history_of_an_imported_terminal_issue_only():
+    assert DevHubTracker._to_issue(issue_raw()).import_history is None
+    assert "import_history" not in DevHubTracker._to_issue(issue_raw()).to_dict()
+    issue = DevHubTracker._to_issue(terminal_raw())
+    assert issue.import_history == {
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000}
+    assert issue.to_dict()["import_history"] == issue.import_history
+    for bad in ({"source_created": "1"}, {"source_completed": -1}, {"imported_terminal": "yes"}):
+        with pytest.raises(DevHubTrackerError):
+            DevHubTracker._to_issue({**terminal_raw(), **bad})
+
+
+def test_terminal_record_state_is_not_an_exception_but_a_living_done_state_is():
+    tracker = ScriptedTracker([])
+    assert tracker.migration_attribute_exceptions(PROJECT, TERMINAL) == {}
+    living = {k: v for k, v in TERMINAL.items() if k != "terminal"}
+    assert "state" in tracker.migration_attribute_exceptions(PROJECT, living)
+    ready = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "ready"}}
+    assert "state" in tracker.migration_attribute_exceptions(PROJECT, ready)
+
+
+def test_preflight_refuses_source_dates_the_import_route_would_refuse():
+    tracker = ScriptedTracker([])
+    tracker._preflight_issues([TERMINAL])
+    for terminal in ({"source_updated": 999}, {"source_completed": 999},
+                     {"pr_url": ""}, {"pr_url": "h" * 501}, {"source_created": -1}):
+        bad = {**TERMINAL, "terminal": {**TERMINAL["terminal"], **terminal}}
+        with pytest.raises(TrackerConflictError, match="non reproductible"):
+            tracker._preflight_issues([bad])
+
+
+def test_preflight_does_not_check_links_whose_end_has_pending_links():
+    tracker = ScriptedTracker([])
+    pending = [{"item": "links", "reason": "later"}]
+    done = {**TERMINAL, "pending": pending,
+            "links": [{"type": "subtask-of", "direction": "inward", "target": "PAT-2"}]}
+    living = {"kind": "issue", "id": "PAT-2", "source_ref": "linear:issue:PAT-2",
+              "title": "t", "body": "", "links": [], "exceptions": [],
+              "attributes": {"type": "Task", "priority": None, "estimate": None,
+                             "state": "ready"}}
+    tracker._preflight_issues([done, living])  # parent is not an Epic, yet deferred
 
 
 @pytest.mark.parametrize("ref", ["", "a b", "a\tb", "a\x7fb", "x" * 201, "é\u0085", None])
@@ -3922,5 +4058,211 @@ def test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_prof
     assert exceptions == {
         "PAT-1": {"state": "target creation state unavailable: in-progress"},
         "PAT-2": {"priority": "target value unavailable: Urgent"},
+        "PAT-3": {},
     }
     assert manifest["phase"] == "preflight"
+
+
+def test_preflight_checks_the_workflow_status_of_a_terminal_state(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    record = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "priority": "P2"}}
+    _preflight([record], workflow=workflow_raw(2))
+    with pytest.raises(TrackerConflictError, match="done"):
+        _preflight([record], workflow=workflow_raw(2, statuses_disabled=("done",)))
+    # a living record still checks its creation state, not the terminal one
+    _preflight([{**record, "terminal": None, "attributes": {
+        **record["attributes"], "state": "ready"}}], workflow=workflow_raw(
+            2, statuses_disabled=("done",)))
+
+
+def _imported_child(child_id, state, **over):
+    return issue_raw(
+        id=child_id, state=state, pr_url=None, body="- [ ] old", ac_total=1, ac_done=0,
+        version=4, imported_terminal=True, source_created=1, source_updated=2,
+        source_completed=3 if state == "done" else None, **over)
+
+
+def test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof():
+    # PAT-331 / PAT-ADR-0032: one detail read, no receipt read, a source of its own
+    done = ScriptedTracker([_imported_child("TRAME-3", "done")])
+    child = done.observe_epic_closure_child("TRAME-3")
+    assert (child.acceptance_status, child.ac_done) == ("accepted", 1)
+    assert child.acceptance_source == "devhub-imported-terminal"
+    assert child.acceptance_source != DevHubTracker.human_acceptance_source
+    assert len(done.calls) == 1
+    dropped = ScriptedTracker([_imported_child("TRAME-4", "dropped")])
+    abandoned = dropped.observe_epic_closure_child("TRAME-4")
+    assert abandoned.acceptance_source == "devhub-imported-terminal"
+    assert abandoned.acceptance_status is None and len(dropped.calls) == 1
+
+
+def _close_with_children(monkeypatch, children, **kwargs):
+    epic = issue_raw(
+        id="TRAME-1", type="Epic", state="in-progress", pr_url=None, body="- [ ] validated",
+        ac_total=1, ac_done=1, version=5,
+        links=[{"type": "parent-of", "direction": "outward", "target": raw["id"]}
+               for raw in children])
+    tracker = ScriptedTracker([epic, *children])
+    sent = []
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: PROJECT)
+    monkeypatch.setattr(tracker, "validate_issue_binding", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        tracker, "close_epic", lambda project, receipt: sent.append(receipt) or "closed")
+    monkeypatch.setattr(write, "_validate_epic_outcome", lambda outcome, **_k: outcome)
+    return tracker, sent
+
+
+def test_epic_closure_accepts_imported_terminal_children_without_a_named_closure(monkeypatch):
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), _imported_child("TRAME-4", "dropped")])
+    assert write.close_epic(tracker, "TRAME-1") == "closed"
+    (receipt,) = sent
+    assert [(c.id, c.version, c.state) for c in receipt.children] == [
+        ("TRAME-3", 4, "done"), ("TRAME-4", 4, "dropped")]
+
+
+def test_epic_closure_still_names_a_dropped_child_that_was_not_imported(monkeypatch):
+    plain = issue_raw(id="TRAME-4", state="dropped", pr_url=None, ac_total=1, ac_done=0, version=4)
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), plain])
+    with pytest.raises(SystemExit, match="--accept-dropped=TRAME-4"):
+        write.close_epic(tracker, "TRAME-1")
+    assert sent == []
+    # naming only the non-imported one is exact; naming the imported one is not
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), plain,
+                      _imported_child("TRAME-5", "dropped")])
+    with pytest.raises(SystemExit, match="doit nommer exactement"):
+        write.close_epic(
+            tracker, "TRAME-1", human_verdict="accepted", accept_dropped="TRAME-4,TRAME-5")
+
+
+def test_release_scope_never_reads_an_imported_terminal_issue_as_accepted():
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _imported_child("TRAME-3", "done"),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    (item,) = scope.issues
+    assert item.disposition == "unavailable"
+    assert "imported" in item.references["unavailable_reason"]
+
+
+# --- PAT-331 stage 3: comment import (DEVHUB-128) ---------------------------------------
+
+COMMENT = {
+    "source_ref": "linear:comment:c-1", "text": "  Review passed.\r\n", "source_author": "A. Writer",
+    "source_created": 1_700_000_000_123,
+}
+
+
+def imported_comment(**over):
+    return {**COMMENT, "actor": "svc", "created": 1_800_000_000_000, **over}
+
+
+def test_comment_exception_names_each_limit_without_quoting_the_content():
+    check = DevHubTracker.migration_comment_exception
+    assert check(PROJECT, COMMENT) is None
+    assert check(PROJECT, {**COMMENT, "text": "x" * 50_000}) is None
+    assert check(PROJECT, {**COMMENT, "source_author": " Équipe déploiement "}) is None
+    for change, expected in [
+        ({"text": ""}, "text empty"),
+        ({"text": " \t ﻿\n"}, "text blank"),
+        ({"text": "x" * 50_001}, "longer"),
+        ({"text": "😀" * 25_001}, "longer"),  # UTF-16 units, as the server counts
+        ({"text": "a\x00b"}, "NUL"),
+        ({"text": "a\ud800b"}, "NUL"),
+        ({"source_author": None}, "author absent"),
+        ({"source_author": ""}, "author absent"),
+        ({"source_author": "x" * 201}, "author longer"),
+        ({"source_author": "a\tb"}, "control"),
+        ({"source_author": "a\x85b"}, "control"),
+        ({"source_author": " 　"}, "author blank"),
+        ({"source_created": None}, "date"),
+        ({"source_created": -1}, "date"),
+        ({"source_created": True}, "date"),
+        ({"source_created": 8_640_000_000_000_001}, "date"),
+        ({"source_ref": "a b"}, "source_ref"),
+    ]:
+        reason = check(PROJECT, {**COMMENT, **change})
+        assert reason is not None and expected in reason, change
+        assert "Review" not in reason and "\x00" not in reason
+
+
+def test_migration_import_comment_posts_the_strict_body_with_a_content_bound_key(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([imported_comment(), imported_comment()])
+    tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/issues/TRAME-7/comments/import")
+    assert body == COMMENT and "version" not in kwargs and "proof" not in kwargs
+    assert kwargs["idempotent"] is True
+    assert tracker.calls[1][3]["idempotency_key"] == kwargs["idempotency_key"]
+    assert re.fullmatch(r"[A-Za-z0-9._:-]{8,160}", kwargs["idempotency_key"])
+    other = ScriptedTracker([imported_comment(text="other")])
+    other.migration_import_comment(PROJECT, "TRAME-7", {**COMMENT, "text": "other"})
+    assert other.calls[0][3]["idempotency_key"] != kwargs["idempotency_key"]
+
+
+def test_migration_import_comment_refuses_before_any_request(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError):
+        tracker.migration_import_comment(PROJECT, "TRAME-7", {**COMMENT, "text": ""})
+    with pytest.raises(SystemExit):
+        tracker.migration_import_comment(PROJECT, "OTHER-7", COMMENT)
+    assert tracker.calls == []
+
+
+def test_migration_import_comment_reads_again_on_a_409_and_compares(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    conflict = DevHubTrackerError(
+        "POST", "/issues/TRAME-7/comments/import", 409, "resource_conflict")
+    same = ScriptedTracker([conflict, terminal_raw(comments=[imported_comment()])])
+    same.migration_import_comment(PROJECT, "TRAME-7", COMMENT)  # stored identical: success
+    assert [call[0] for call in same.calls] == ["POST", "GET"]
+    different = ScriptedTracker([
+        conflict, terminal_raw(comments=[imported_comment(text="other")])])
+    with pytest.raises(TrackerConflictError):
+        different.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    other_error = ScriptedTracker([DevHubTrackerError("POST", "/x", 503, "unavailable")])
+    with pytest.raises(DevHubTrackerError):
+        other_error.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+
+
+def test_migration_import_comment_refuses_a_divergent_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([imported_comment(source_author="Someone else")])
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+
+
+def test_issue_read_exposes_the_source_members_of_an_imported_comment_only():
+    native = {"text": "native", "created": 5}
+    issue = DevHubTracker._to_issue(issue_raw(comments=[native, imported_comment()]))
+    assert issue.comments[0] == native
+    assert issue.comments[1] == {
+        "text": COMMENT["text"], "created": 1_800_000_000_000, **{
+            key: COMMENT[key] for key in ("source_ref", "source_author", "source_created")}}
+    for partial in ({"source_ref": "linear:comment:c-1"}, {"source_author": "x"}):
+        with pytest.raises(DevHubTrackerError):
+            DevHubTracker._to_issue(issue_raw(comments=[{**native, **partial}]))
+    with pytest.raises(DevHubTrackerError):
+        DevHubTracker._to_issue(issue_raw(comments=[imported_comment(source_created=-1)]))
+
+
+def test_preflight_refuses_a_comment_the_import_route_would_refuse_and_a_duplicate():
+    tracker = ScriptedTracker([])
+    living = {"kind": "issue", "id": "PAT-2", "source_ref": "linear:issue:PAT-2",
+              "title": "t", "body": "", "links": [], "exceptions": [],
+              "attributes": {"type": "Task", "priority": None, "estimate": None,
+                             "state": "ready"},
+              "comments": [COMMENT]}
+    tracker._preflight_issues([living])
+    for comments in ([{**COMMENT, "text": ""}], [COMMENT, COMMENT]):
+        with pytest.raises(TrackerConflictError, match="commentaire non reproductible"):
+            tracker._preflight_issues([{**living, "comments": comments}])

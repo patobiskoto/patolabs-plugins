@@ -124,6 +124,26 @@ _IMPORT_TYPE_MAX = 80
 _IMPORT_PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
 _IMPORT_ESTIMATES = (1, 21)
 _IMPORT_CREATION_STATES = ("backlog", "ready")
+# DEVHUB-126 (``IMPORTED_TERMINAL_STATES``): the states of the terminal issue import, and
+# the three optional source dates it stores (epoch ms).
+_IMPORT_TERMINAL_STATES = ("done", "dropped")
+_IMPORT_PR_URL_MAX = 500
+_IMPORT_DATES = ("source_created", "source_updated", "source_completed")
+# DEVHUB-128 (``importCommentSchema``, ``MAX_COMMENT_TEXT`` of ``contract.ts`` at ``a57ce72``):
+# the text is 1 to 50000 UTF-16 units with a non-blank character, no NUL, no unpaired
+# surrogate; the author is 1 to 200 units, not blank, no control character
+# (``\p{Cc}``) and no unpaired surrogate; the source date is epoch ms in ``_IMPORT_EPOCH``.
+_IMPORT_COMMENT_MAX = 50_000
+_IMPORT_AUTHOR_MAX = 200
+_IMPORT_EPOCH_MAX = 8_640_000_000_000_000
+_COMMENT_SOURCE_KEYS = ("source_ref", "source_author", "source_created")
+_COMMENT_TEXT_FORBIDDEN = re.compile(r"[\x00\ud800-\udfff]")
+_COMMENT_AUTHOR_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
+# ECMAScript ``String.prototype.trim`` strips exactly these (the server's blank test).
+_JS_WHITESPACE = (
+    "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008"
+    "\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
 _ADR_LINK_MAX = 50
 # DEVHUB-122: an unpaired surrogate is refused too (a Python ``str`` holds no paired one).
 _ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f\ud800-\udfff]+")
@@ -359,6 +379,9 @@ class DevHubTracker(Tracker):
     # `human_acceptance` receipt the proof, `observe_human_acceptance` the status read.
     human_acceptance_supported = True
     human_acceptance_source = "devhub-human-acceptance"
+    # PAT-331: an issue imported as terminal (done or dropped in the source tracker); its
+    # proof lives in the source tracker, so this source is never a DevHub receipt.
+    imported_terminal_acceptance_source = "devhub-imported-terminal"
     human_acceptance_predecessors = _acceptance_decision.FROM_STATES
     # PAT-324: DevHub can be the target of a selective cutover (FOUNDRY-ADR-0026).  The four
     # field attributes are sent by ``migration_import_issue`` (values it cannot reproduce are
@@ -367,6 +390,14 @@ class DevHubTracker(Tracker):
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
+    # PAT-331: terminal issues are imported by ``POST /projects/:key/issues/import``
+    # (DEVHUB-126), linked by ``migration_link_issue`` like a living issue (DEVHUB-127, stage
+    # 2) and their comments, lifecycle receipts included, as those of a living issue are
+    # imported by ``POST /issues/:id/comments/import`` (DEVHUB-128, stage 3): nothing is
+    # pending any more, so ``migration.ready_for_cutover`` no longer waits on this map.
+    migration_terminal_import_supported = True
+    migration_comments_supported = True
+    migration_pending_terminal_items: dict[str, str] = {}
 
     def __init__(
         self,
@@ -690,7 +721,27 @@ class DevHubTracker(Tracker):
             if (not isinstance(item, dict) or not isinstance(item.get("text"), str)
                     or type(item.get("created")) is not int):
                 raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
-            comments.append({"text": item["text"], "created": item["created"]})
+            comment = {"text": item["text"], "created": item["created"]}
+            imported = [key for key in _COMMENT_SOURCE_KEYS if key in item]
+            if imported:
+                # DEVHUB-128: the three members come together on an imported comment only.
+                if (len(imported) != 3 or not DevHubTracker._origin_text(item["source_ref"], _SOURCE_REF_MAX)
+                        or not isinstance(item["source_author"], str)
+                        or type(item["source_created"]) is not int
+                        or item["source_created"] < 0):
+                    raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
+                comment.update({key: item[key] for key in _COMMENT_SOURCE_KEYS})
+            comments.append(comment)
+        history = None
+        if raw.get("imported_terminal") is True:
+            # DEVHUB-126: the three source dates of an imported terminal issue, null when
+            # not sent; an invalid date is refused like any other malformed read.
+            history = {key: raw.get(key) for key in _IMPORT_DATES}
+            if any(value is not None and (type(value) is not int or value < 0)
+                   for value in history.values()):
+                raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
+        elif raw.get("imported_terminal") not in (None, False):
+            raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
         return Issue(
             id=raw["id"], title=raw.get("title", ""), state=raw.get("state"),
             priority=raw.get("priority"), estimate=raw.get("estimate"),
@@ -699,7 +750,7 @@ class DevHubTracker(Tracker):
             ac_total=int(raw.get("ac_total") or 0), links=links,
             pr_url=raw.get("pr_url"), body=raw.get("body"), comments=comments,
             created=raw.get("created"), updated=raw.get("updated"),
-            version=raw["version"],
+            version=raw["version"], import_history=history,
         )
 
     @staticmethod
@@ -1596,6 +1647,21 @@ class DevHubTracker(Tracker):
             ),
         )
 
+    def _with_imported_terminal(self, issue: Issue) -> Issue:
+        """Mark an imported terminal issue; ``done`` counts as accepted, ``dropped`` as abandoned."""
+        marked = dataclasses.replace(
+            issue, native_state=issue.state, projection_status="aligned",
+            acceptance_source=self.imported_terminal_acceptance_source,
+        )
+        if issue.state != "done":
+            return marked
+        return dataclasses.replace(
+            marked, acceptance_status="accepted", ac_done=issue.ac_total,
+            acceptance_coordinates=json.dumps(
+                {"imported_terminal": True}, sort_keys=True, separators=(",", ":"),
+            ),
+        )
+
     def observe_epic_closure_child(self, issue_id: str) -> Issue:
         """Read a direct child for the atomic Epic closure (PAT-330, PAT-ADR-0025).
 
@@ -1605,6 +1671,10 @@ class DevHubTracker(Tracker):
         criterion).  No extra request for any other child.
         """
         issue = self.get_issue(issue_id)
+        if issue.import_history is not None and issue.state in {"done", "dropped"}:
+            # PAT-331 / PAT-ADR-0032: counted terminal without a new proof; the read of
+            # the detail (``imported_terminal``) is the only source of this fact.
+            return self._with_imported_terminal(issue)
         if (issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total
                 or issue.pr_url):
             # An issue with a PR is never accepted by decision (as in `_release_issue`).
@@ -1900,7 +1970,12 @@ class DevHubTracker(Tracker):
         references: dict[str, object] = {}
         if issue.pr_url:
             references["pr_url"] = issue.pr_url
-        if issue.state in _UNFINISHED_STATES:
+        if issue.import_history is not None and issue.state == "done":
+            # PAT-331: imported history, proof kept in the source tracker; never in a
+            # new release's scope, never read as accepted here.
+            references["unavailable_reason"] = "imported terminal issue (PAT-331)"
+            disposition = "unavailable"
+        elif issue.state in _UNFINISHED_STATES:
             disposition = "unfinished"
         elif issue.state == "done":
             # Accepted by the exact done receipt (after a review receipt of the same
@@ -1993,6 +2068,87 @@ class DevHubTracker(Tracker):
         self._post_link(src_id, link_type, dst_id, source_raw, self._issue_raw(dst_id))
 
     @classmethod
+    def migration_comment_exception(cls, project: Project, comment: dict) -> str | None:
+        """Why DevHub cannot store ``comment`` byte for byte, or ``None`` (PAT-331 stage 3).
+
+        The rules are those of ``importCommentSchema`` (see the constants above); a reason
+        never quotes the content.
+        """
+        del project
+        ref, text = comment.get("source_ref"), comment.get("text")
+        author, created = comment.get("source_author"), comment.get("source_created")
+        if not cls._origin_text(ref, _SOURCE_REF_MAX):
+            return "source_ref not reproducible by DevHub"
+        if not isinstance(text, str) or not text:
+            return "text empty"
+        if _COMMENT_TEXT_FORBIDDEN.search(text):
+            return "text holds a NUL or an unpaired surrogate"
+        if _utf16_length(text) > _IMPORT_COMMENT_MAX:
+            return f"text longer than {_IMPORT_COMMENT_MAX} characters"
+        if not text.strip(_JS_WHITESPACE):
+            return "text blank"
+        if not isinstance(author, str) or not author:
+            return "source author absent"
+        if _COMMENT_AUTHOR_FORBIDDEN.search(author):
+            return "source author holds a control character or an unpaired surrogate"
+        if _utf16_length(author) > _IMPORT_AUTHOR_MAX:
+            return f"source author longer than {_IMPORT_AUTHOR_MAX} characters"
+        if not author.strip(_JS_WHITESPACE):
+            return "source author blank"
+        if type(created) is not int or not 0 <= created <= _IMPORT_EPOCH_MAX:
+            return "source date outside the epoch range of DevHub"
+        return None
+
+    def migration_import_comment(
+        self, project: Project, issue_id: str, comment: dict,
+    ) -> None:
+        """Import one source comment (PAT-331 stage 3, DEVHUB-128).
+
+        One ``POST /issues/:id/comments/import`` with a strict four-member body and no
+        version precondition.  The ``Idempotency-Key`` is derived from the issue and the
+        exact content, so a replay sends the same key and a changed content a new one (and
+        gets the server's 409 ``resource_conflict``).  On that 409 the issue is read again:
+        the comment already stored under the ``source_ref`` with the same four members is
+        success (a lost answer, a concurrent replay), anything else is a
+        ``TrackerConflictError`` and nothing is retried.
+        """
+        project = self._require_project(project)
+        registry.require_writable_project(self.name, project)
+        self._require_issue_binding(issue_id, project)
+        reason = self.migration_comment_exception(project, comment)
+        if reason is not None:
+            raise ValueError(f"commentaire de migration DevHubTracker invalide: {reason}")
+        body = {
+            "source_ref": comment["source_ref"], "text": comment["text"],
+            "source_author": comment["source_author"],
+            "source_created": comment["source_created"],
+        }
+        digest = hashlib.sha256(
+            json.dumps([issue_id, body], ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        path = f"/issues/{urllib.parse.quote(issue_id, safe='')}/comments/import"
+        try:
+            raw = self._application_req(
+                "POST", path, body, idempotent=True,
+                idempotency_key=f"foundry-comment-import-{digest[:48]}",
+            )
+        except DevHubTrackerError as error:
+            if error.status == 409 and error.code == "resource_conflict":
+                stored = [
+                    item for item in self._to_issue(self._issue_raw(issue_id)).comments
+                    if item.get("source_ref") == body["source_ref"]
+                ]
+                if len(stored) == 1 and all(stored[0].get(key) == body[key] for key in (
+                        "source_ref", "text", "source_author", "source_created")):
+                    return
+                raise TrackerConflictError(
+                    "commentaire source déjà importé avec un autre contenu ; import refusé"
+                ) from None
+            raise
+        if (not isinstance(raw, dict) or any(raw.get(key) != body[key] for key in body)):
+            raise TrackerConflictError("commentaire de migration DevHub divergent après import")
+
+    @classmethod
     def _source_ref(cls, value) -> str:
         if not cls._origin_text(value, _SOURCE_REF_MAX):
             raise ValueError("source_ref DevHubTracker invalide")
@@ -2043,7 +2199,10 @@ class DevHubTracker(Tracker):
     def migration_import_issue(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
-        """Import one living issue under its source coordinate (DHN-34, PAT-319).
+        """Import one issue under its source coordinate (DHN-34, PAT-319).
+
+        A record carrying ``terminal`` (done or dropped, PAT-331) goes to
+        ``_import_terminal_issue``; the rest of this docstring is the living import.
 
         Always one ``POST /projects/:key/issues`` carrying ``source_ref``: the server
         answers 201 for a first import, 200 with the existing issue for a replay of the same
@@ -2062,6 +2221,8 @@ class DevHubTracker(Tracker):
         if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
             raise ValueError("titre/corps de migration DevHubTracker invalides")
         attributes = snapshot.get("attributes") or {}
+        if snapshot.get("terminal") is not None:
+            return self._import_terminal_issue(project, snapshot, source_ref)
         fields = self._normalize_fields({
             native: attributes[name]
             for native, name in (
@@ -2086,6 +2247,56 @@ class DevHubTracker(Tracker):
         issue = self._to_issue(raw)
         if (raw.get("source_ref") != source_ref or raw.get("body") != body
                 or issue.title != title.strip()
+                or self._project_key(issue.id) != project.key):
+            raise TrackerConflictError("issue migration DevHub divergente après import")
+        return issue
+
+    @staticmethod
+    def _terminal_import_body(snapshot: dict, source_ref: str) -> dict:
+        """The exact body of ``POST /projects/:key/issues/import`` (PAT-331).
+
+        The server digests ``fields`` as sent, so the three keys are always present (``None``
+        for an absent or excepted value) and ``milestone`` / ``labels`` are never sent, as the
+        living import: a replay is the same bytes.  ``pr_url`` and the dates are omitted
+        when ``None``.
+        """
+        attributes = snapshot["attributes"]
+        state = attributes.get("state")
+        if state not in _IMPORT_TERMINAL_STATES:
+            raise ValueError("état terminal de migration DevHubTracker invalide")
+        body = {
+            "source_ref": source_ref, "title": snapshot["title"], "body": snapshot["body"],
+            "state": state,
+            "fields": {name: attributes.get(name) for name in ("type", "priority", "estimate")},
+        }
+        terminal = snapshot["terminal"]
+        if terminal.get("pr_url") is not None:
+            body["pr_url"] = terminal["pr_url"]
+        for key in _IMPORT_DATES:
+            if terminal.get(key) is not None:
+                body[key] = terminal[key]
+        return body
+
+    def _import_terminal_issue(
+        self, project: Project, snapshot: dict, source_ref: str,
+    ) -> Issue:
+        """Import one terminal issue (PAT-331): 201 first, 200 same content, 409 otherwise."""
+        body = self._terminal_import_body(snapshot, source_ref)
+        try:
+            raw = self._application_req(
+                "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/issues/import",
+                body, idempotent=True,
+            )
+        except DevHubTrackerError as error:
+            if error.status == 409 and error.code == "resource_conflict":
+                raise TrackerConflictError(
+                    "source_ref DevHub déjà importé avec un autre contenu "
+                    "ou tenu par une autre issue ; import refusé"
+                ) from None
+            raise
+        issue = self._to_issue(raw)
+        if (raw.get("source_ref") != source_ref or raw.get("body") != body["body"]
+                or raw.get("title") != body["title"] or issue.import_history is None
                 or self._project_key(issue.id) != project.key):
             raise TrackerConflictError("issue migration DevHub divergente après import")
         return issue
@@ -2131,7 +2342,8 @@ class DevHubTracker(Tracker):
         ):
             exceptions["estimate"] = "target value unavailable: estimate"
         state = attributes.get("state")
-        if state not in _IMPORT_CREATION_STATES:
+        terminal = snapshot.get("terminal") is not None
+        if state not in (_IMPORT_TERMINAL_STATES if terminal else _IMPORT_CREATION_STATES):
             # An absent state is omitted by the import and the server creates the issue in
             # ``backlog``: the readback could never equal ``None`` (PAT-325, deduced from
             # ``createTrackerIssue`` at ``3f0cf4b``), so it is excepted like any other state.
@@ -2257,7 +2469,8 @@ class DevHubTracker(Tracker):
                         f"valeur désactivée par le workflow DevHub: {name}="
                         f"{str(value)[:40]!r} ({record['source_ref']})")
             state = None if "state" in excepted else attributes.get("state")
-            state = state if state in _IMPORT_CREATION_STATES else "backlog"
+            creation = _IMPORT_TERMINAL_STATES if record.get("terminal") else _IMPORT_CREATION_STATES
+            state = state if state in creation else "backlog"
             # The server counts every status of the canonical state, enabled or not
             # (``resolveStatus`` of ``workflow-settings.ts`` at ``3f0cf4b``, PAT-325).
             matches = [item for item in statuses if item["canonical"] == state]
@@ -2268,6 +2481,11 @@ class DevHubTracker(Tracker):
 
     def _preflight_issues(self, issues: list[dict]) -> None:
         by_id = {record["id"]: record for record in issues}
+        # A link whose end is a record with pending links is not written yet (PAT-331).
+        deferred = {
+            record["id"] for record in issues
+            if any(entry["item"] == "links" for entry in record.get("pending", []))
+        }
         parents: dict[str, str] = {}
         hierarchy: dict[str, set[str]] = {}
         dependencies: dict[str, set[str]] = {}
@@ -2279,13 +2497,42 @@ class DevHubTracker(Tracker):
                 raise TrackerConflictError(
                     f"titre ou corps non reproductible par DevHub: {record['source_ref']}"
                 )
+            terminal = record.get("terminal")
+            if terminal is not None:
+                created = terminal.get("source_created")
+                dates = [terminal.get(key) for key in _IMPORT_DATES]
+                if (any(value is not None and (type(value) is not int or value < 0)
+                        for value in dates)
+                        or (created is not None and any(
+                            value is not None and value < created for value in dates[1:]))):
+                    # DEVHUB-126: updated and completed may not precede created.
+                    raise TrackerConflictError(
+                        f"dates source non reproductibles par DevHub: {record['source_ref']}")
+                pr_url = terminal.get("pr_url")
+                if pr_url is not None and (
+                        not isinstance(pr_url, str) or not pr_url
+                        or _utf16_length(pr_url) > _IMPORT_PR_URL_MAX):
+                    raise TrackerConflictError(
+                        f"pr_url non reproductible par DevHub: {record['source_ref']}")
+            seen_comments: set[str] = set()
+            for comment in record.get("comments", []):
+                # PAT-331 stage 3: a comment outside DevHub's limits is a named manifest
+                # exception at capture; one that reaches the copy is refused before any write.
+                reason = self.migration_comment_exception(None, comment)
+                if reason is not None or comment["source_ref"] in seen_comments:
+                    raise TrackerConflictError(
+                        "commentaire non reproductible par DevHub: "
+                        f"{record['source_ref']} ({reason or 'source_ref dupliqué'})")
+                seen_comments.add(comment["source_ref"])
             for link in record["links"]:
                 other, kind = link["target"], link["type"]
                 if kind not in _LINK_TYPES:
                     raise TrackerCapabilityUnavailableError(
                         self.name, f"migration_issue_link:{kind}")
                 if other not in by_id:
-                    continue  # outside the living scope, as migration.copy_and_verify does
+                    continue  # not an issue of the manifest, as migration.copy_and_verify does
+                if record["id"] in deferred or other in deferred:
+                    continue
                 if other == record["id"]:
                     raise TrackerConflictError(
                         f"lien vers soi-même refusé par DevHub: {record['source_ref']}")

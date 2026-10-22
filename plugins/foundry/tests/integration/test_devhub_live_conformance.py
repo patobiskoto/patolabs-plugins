@@ -1412,3 +1412,183 @@ def test_dhn_42_service_credential_can_create_and_use_its_project_under_local_ac
         _unique("live local accounts"),
     )
     assert suite.tracker.get_issue(created.id).id == created.id
+
+
+@need("DHN-49")
+def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite, monkeypatch):
+    # PAT-331 stage 1 (DEVHUB-126, merge defda07): done and dropped issues are imported by
+    # ``POST /projects/:key/issues/import`` in their own project.  Stage 2 (DEVHUB-127, merge
+    # bd282fc): their links are copied and read back like a living issue's, and a living Epic
+    # closes over the imported children.  Stage 3 (DEVHUB-128, merge a57ce72): the comments of
+    # every issue, living or terminal, lifecycle receipts included, are imported by
+    # ``POST /issues/:id/comments/import`` and read back exactly; nothing is pending.
+    import copy as copy_module
+
+    from foundry.migration import (
+        capture_manifest, copy_and_verify, ready_for_cutover, verify_targets,
+    )
+    from foundry.models import Issue, Link
+    from test_tracker_migration import FakeTransportTracker
+
+    class Source(FakeTransportTracker):
+        dates = {
+            "PAT-1": (1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000, False),
+            "PAT-2": (1_700_000_000_500, None, None, True),
+            "PAT-3": (1_700_000_000_100, 1_700_000_000_300, None, False),
+        }
+
+        def migration_export_issues(self, project):
+            exported = []
+            for issue in self.issues.values():
+                created, updated, completed, archived = self.dates.get(
+                    issue.id, (1_700_000_000_000, 1_700_000_000_001, None, False))
+                exported.append({
+                    "issue": copy_module.deepcopy(issue), "archived": archived,
+                    "source_created": created, "source_updated": updated,
+                    "source_completed": completed,
+                    "comments": copy_module.deepcopy(self.comments.get(issue.id, [])),
+                })
+            return exported
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live terminal import target", key, repository)
+    done = Issue("PAT-1", "live done issue", state="done", type="Task", priority="P1",
+                 estimate=3, body="- [x] shipped\n",
+                 pr_url="https://github.com/foundry-live/example/pull/1")
+    dropped = Issue("PAT-2", "live dropped issue", state="dropped", body="")
+    living = Issue("PAT-3", "live living issue", state="ready", type="Task", priority="P2",
+                   body="- [ ] open\n", links=[Link("depends-on", "outward", "PAT-1")],
+                   pr_url="https://github.com/foundry-live/example/pull/3")
+    # a living Epic whose two children are imported terminal issues (subtask-of); its own
+    # criterion is checked so that only the children's state decides the closure
+    # a source export carries both ends of a relation, as DevHub reads it back
+    done.links = [Link("subtask-of", "inward", "PAT-4"), Link("blocks", "inward", "PAT-3")]
+    dropped.links = [Link("subtask-of", "inward", "PAT-4")]
+    epic = Issue("PAT-4", "live living epic", state="backlog", type="Epic", priority="P2",
+                 body="- [x] epic criterion\n",
+                 links=[Link("parent-of", "outward", "PAT-1"),
+                        Link("parent-of", "outward", "PAT-2")])
+    # review round 2: a done Epic parent of a done child, both imported terminal (the usual
+    # history), both ends in the corpus; the child also links an issue outside the manifest
+    closed_epic = Issue("PAT-5", "live done epic", state="done", type="Epic", priority="P2",
+                        body="- [x] closed epic criterion\n",
+                        links=[Link("parent-of", "outward", "PAT-6")])
+    closed_child = Issue("PAT-6", "live done child", state="done", type="Task", priority="P3",
+                         body="- [x] closed child criterion\n",
+                         links=[Link("subtask-of", "inward", "PAT-5"),
+                                Link("relates", "outward", "PAT-99")])
+    # comments as the Linear export gives them: a lifecycle receipt (the exact multi-line
+    # shape of the Linear receipts), a text whose leading and trailing whitespace, line
+    # breaks and non-ASCII characters must survive byte for byte, and a living issue's note;
+    # the dates are listed out of order on purpose, DevHub orders by source date.
+    from foundry.trackers.linear import _LIFECYCLE_HEADER, _LIFECYCLE_SCHEMA
+
+    receipt = "\n".join([
+        _LIFECYCLE_HEADER, "marker: live-marker-1",
+        "coordinates: " + json.dumps({
+            "schema": _LIFECYCLE_SCHEMA, "operation": "state-done", "issue": "PAT-1",
+            "payload": {"state": "done", "pr_url": done.pr_url}}, sort_keys=True),
+    ])
+    Source.comments = {
+        "PAT-1": [
+            {"id": "live-c2", "text": "  Merged.\r\n\tcafé 中文 \U0001F600  \n", "author": "Équipe déploiement",
+             "created": 1_700_000_001_500},
+            {"id": "live-c1", "text": receipt, "author": "Live Writer",
+             "created": 1_700_000_001_000},
+        ],
+        "PAT-3": [{"id": "live-c3", "text": "open note", "author": "Live Writer",
+                   "created": 1_700_000_000_200}],
+    }
+    source = Source("linear", issues=[done, dropped, living, epic, closed_epic, closed_child])
+    manifest = capture_manifest(source, Project("T", "source"), tracker, project)
+    by_id = {record["id"]: record for record in manifest["issues"]}
+    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3", "PAT-4", "PAT-5", "PAT-6"}
+    # the link to an issue outside the manifest is a named exception, never dropped silently
+    assert {e["attribute"]: e["reason"] for e in by_id["PAT-6"]["exceptions"]}["links"] == (
+        'not copied; source value: [{"cause": "target outside the manifest", '
+        '"direction": "outward", "target": "PAT-99", "type": "relates"}]')
+    assert by_id["PAT-1"]["pending"] == [] and by_id["PAT-1"]["comment_exceptions"] == []
+    # the manifest keeps the source order; DevHub orders by source date on read
+    assert [c["source_ref"] for c in by_id["PAT-1"]["comments"]] == [
+        "linear:comment:live-c2", "linear:comment:live-c1"]
+    assert [entry["attribute"] for entry in by_id["PAT-2"]["exceptions"]] == ["archived"]
+    # PAT-331 review: the living issue's PR link and source dates are named exceptions
+    living_reasons = {e["attribute"]: e["reason"] for e in by_id["PAT-3"]["exceptions"]}
+    assert living_reasons["pr_url"] == (
+        'not copied; source value: "https://github.com/foundry-live/example/pull/3"')
+    assert living_reasons["source_dates"] == (
+        'not copied; source value: {"created": 1700000000100, "updated": 1700000000300}')
+    copy_and_verify(manifest, tracker, project, lambda: None)
+    verify_targets(manifest, tracker, project)
+    assert ready_for_cutover(manifest)  # no pending item, no unverified record
+    imported = tracker._issue_raw(by_id["PAT-1"]["target_id"])
+    assert imported["imported_terminal"] is True and imported["state"] == "done"
+    assert (imported["source_created"], imported["source_updated"],
+            imported["source_completed"]) == (
+        1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000)
+    assert imported["pr_url"] == done.pr_url and imported["ac_done"] == 1
+    carried = tracker._issue_raw(by_id["PAT-3"]["target_id"])  # the exceptions are really not sent
+    assert carried["pr_url"] is None and not carried.get("imported_terminal")
+    bare = tracker._issue_raw(by_id["PAT-2"]["target_id"])
+    assert (bare["state"], bare["source_updated"], bare["source_completed"]) == (
+        "dropped", None, None)
+    # links of terminal issues are written and read back from the source end
+    ids = {key: record["target_id"] for key, record in by_id.items()}
+    assert _has_link(tracker.get_issue(ids["PAT-3"]), "depends-on", ids["PAT-1"])
+    for child in ("PAT-1", "PAT-2"):
+        assert _has_link(tracker.get_issue(ids[child]), "subtask-of", ids["PAT-4"])
+    # between two imported terminal issues: written, read back from both ends, nothing else
+    assert {(link.type, link.target) for link in tracker.get_issue(ids["PAT-6"]).links} == {
+        ("subtask-of", ids["PAT-5"])}
+    assert _has_link(tracker.get_issue(ids["PAT-5"]), "parent-of", ids["PAT-6"])
+    assert (tracker._issue_raw(ids["PAT-5"])["state"],
+            tracker._issue_raw(ids["PAT-6"])["state"]) == ("done", "done")
+    # the frozen facts still compare exactly after linking (a link bumps versions only)
+    verify_targets(manifest, tracker, project)
+    assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"
+    # DEVHUB-128: the comments of the done issue and of the living one are read back as
+    # imported members (source author and date apart from the importer and the insertion date),
+    # in source order, byte for byte; the done issue stays done
+    for source_id, expected in (("PAT-1", Source.comments["PAT-1"]), ("PAT-3", Source.comments["PAT-3"])):
+        raw = tracker._issue_raw(ids[source_id])
+        imported_comments = [item for item in raw["comments"] if "source_ref" in item]
+        assert [(item["source_ref"], item["text"], item["source_author"], item["source_created"])
+                for item in imported_comments] == [
+            (f"linear:comment:{item['id']}", item["text"], item["author"], item["created"])
+            for item in sorted(expected, key=lambda item: item["created"])]
+        assert all(item["actor"] != "Live Writer" and item["created"] > item["source_created"]
+                   for item in imported_comments)
+    assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"
+    version = tracker._issue_raw(ids["PAT-1"])["version"]
+    first = by_id["PAT-1"]["comments"][0]
+    tracker.migration_import_comment(project, ids["PAT-1"], first)  # identical replay: 200
+    assert tracker._issue_raw(ids["PAT-1"])["version"] == version
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_comment(project, ids["PAT-1"], {**first, "text": first["text"] + "x"})
+    # a native comment of the target does not break the exact comparison
+    tracker.add_comment(ids["PAT-3"], "native note", project)
+    verify_targets(manifest, tracker, project)
+    assert [item for item in tracker._issue_raw(ids["PAT-3"])["comments"]
+            if "source_ref" not in item][0]["text"] == "native note"
+    # an exact replay converges; a divergent replay fails closed; the issue is frozen
+    before = len(tracker.search(project))
+    replay = copy_module.deepcopy(manifest)
+    copy_and_verify(replay, tracker, project, lambda: None)
+    assert len(tracker.search(project)) == before
+    changed = copy_module.deepcopy(by_id["PAT-1"])
+    changed["title"] = "changed title"
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_issue(project, changed, source_ref=changed["source_ref"])
+    with pytest.raises(DevHubTrackerError) as frozen:
+        tracker.update_fields(by_id["PAT-1"]["target_id"], {"Priority": "P3"}, project)
+    assert frozen.value.status == 409 and frozen.value.code == "imported_issue_frozen"
+    # PAT-331 stage 2: the real closure path (`write.close_epic`, as `issue close-epic` runs it),
+    # with the tracker and the project injected so no registry is read or written.  Both
+    # imported children count, and no dropped child is named.
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    outcome = write.close_epic(tracker, ids["PAT-4"])
+    assert {(child.id, child.state) for child in outcome.receipt.children} == {
+        (ids["PAT-1"], "done"), (ids["PAT-2"], "dropped")}
+    assert tracker.get_issue(ids["PAT-4"]).state == "done"

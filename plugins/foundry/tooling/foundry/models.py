@@ -55,9 +55,15 @@ class Issue:
     acceptance_status: Optional[str] = None  # accepted | override | unknown
     acceptance_source: Optional[str] = None
     acceptance_coordinates: Optional[str] = None
+    # PAT-331: set only by a target that read back an imported terminal issue
+    # (``source_created`` / ``source_updated`` / ``source_completed``, epoch ms or None).
+    import_history: Optional[dict] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        if data["import_history"] is None:
+            del data["import_history"]  # keeps every other provider's dict unchanged
+        return data
 
 
 @dataclass

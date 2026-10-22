@@ -693,8 +693,167 @@ document the order it reads relations back in (unknown) and `copy_and_verify` co
 read per ADR, shared with `read_adr_issue_relations`): they are no longer `unknown`, except for an ADR that declared
 them so at import (PAT-327, whose `issues` are then not read). `migration_qualify_adrs`
 is the port default (`None`): the ADR codec needs no qualification, and `migration_import_adrs` refuses one.
-Order of the copy: issues, their links, then the ADRs, each replacement before the ADR it replaces
+Order of the copy: issues, their links, their comments ("Terminal issue import"), then the ADRs, each replacement before the ADR it replaces
 ("ADRs" above).
+
+## Terminal issue import (PAT-331, DHN-49)
+
+The manifest of a cutover toward DevHub covers every issue of the source project, `done` and
+`dropped` ones and archived ones included, because `DevHubTracker.migration_terminal_import_supported` is
+true (`trackers/base.py`, `capture_manifest` in `migration.py`); a target that leaves it false keeps the
+living-only scope of FOUNDRY-ADR-0026. PAT-ADR-0032 frames this and is `proposed` at the time of
+writing. A terminal record carries `terminal` (`pr_url` and the three source dates) and `pending` (an empty list for DevHub since stage 3).
+
+- Source: `migration_export_issues` lists the issues (`trackers/base.py`; Linear overrides it in
+  `trackers/linear.py` with `includeArchived` and the native `completedAt` of a `done` issue or
+  `canceledAt` of a `dropped` one, `None` when Linear has none). An archived issue gets the manifest
+  exception `archived` (the import route has no archived state). Source dates are `Issue.created` and
+  `Issue.updated`.
+- Write: `migration_import_issue` posts a record carrying `terminal` to `POST /projects/:key/issues/import`
+  (`_terminal_import_body`, `_import_terminal_issue`). Request shape and replay rules: the section "Terminal
+  issue import" of the DevHub contract (`TRACKER_API.md`, DEVHUB-126, merge `defda07`). The `fields` object
+  always holds `type`, `priority` and `estimate` (`null` when absent or excepted), because the server
+  digests it as sent; `milestone` and `labels` are never sent, as in the living import; they are named manifest
+  exceptions when the source has a value (see "Labels and milestone, and Epic closure over imported children" below). `pr_url` and each date are omitted when `None`.
+  A replay with the same content converges, other content is `TrackerConflictError`.
+- Readback: `Issue.import_history` holds the three dates of an issue the server marks as an imported terminal
+  issue (`_to_issue`); `copy_and_verify` and `verify_targets` compare state, `pr_url` and the three dates
+  exactly (`_terminal_matches`, `migration.py`).
+- Preflight: dates that the route refuses (updated or completed before created, negative, not an integer)
+  and a `pr_url` over 500 units are refused before any write (`_preflight_issues`); the workflow status of
+  `done` or `dropped` is checked like a creation state (`_preflight_workflow`).
+- Links (PAT-331 stage 2, DEVHUB-127, merge `bd282fc`): the links
+  of a terminal record are copied, replayed and compared like a living issue's, through
+  `migration_link_issue` (same pre-read of the source links, so a replay posts nothing; versions are sent as for
+  a living link) and the `copy_and_verify` / `verify_targets` link loops of `migration.py`. A link bumps the
+  version of both ends and nothing else, so the readback does not compare versions and the frozen facts still
+  compare exactly (`_terminal_matches`). The server's refusal of an existing edge under a new idempotency key
+  is not handled specially: the pre-read makes it unreachable in a sequential run (deduced, not run). Offline
+  tests: `test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions`
+  (`tests/test_devhub_tracker.py`), `test_terminal_copy_links_terminal_records_and_is_not_ready_while_comments_are_pending`
+  (`tests/test_tracker_migration.py`). Run live by DHN-49 (passed at `bd282fc` and `a57ce72`, `devhub-requirements.md`, "Live run of PAT-331").
+- Comments (PAT-331 stage 3, DEVHUB-128, merge `a57ce72`; DevHub reported its production at `a57ce72` on 2026-10-22, not checked here): the
+  comments of every captured issue, living or terminal, Foundry lifecycle receipts included (on Linear they
+  are comments), are copied one by one, for a target that sets `migration_comments_supported` (`trackers/base.py`, `False` by default; `True` on DevHub only). Contract: the section "Comment import" of the DevHub contract
+  (`TRACKER_API.md`). Source: `migration_export_issues` entries carry `comments` (`trackers/base.py`); the port
+  default carries no `comments` key, and `capture_manifest` then records an exception `comments` ("not copied; the
+  source does not export comments") instead of an empty list, which does not keep `ready_for_cutover` false; Linear
+  nests them in the history listing (`_ISSUES_HISTORY_QUERY`, `_history_comments`, `_history_comment` in
+  `trackers/linear.py`), so the export adds no request per issue and one request per further page for an
+  issue with more than `_HISTORY_COMMENTS_PAGE` comments (`_ISSUE_COMMENTS_HISTORY_QUERY`); the listing page
+  is `_HISTORY_ISSUES_PAGE` issues, smaller than before. Whether Linear accepts that nesting under its
+  query-complexity bound, and whether `comments` of an issue includes threaded replies, is unknown until a
+  real run. Author: the `name`, else the `displayName`, of the user, else the bot actor's `name`, else the
+  external user's; none means no author. A comment has the coordinate `<source tracker>:comment:<id>`
+  (`capture_manifest` / `_capture_comments`, `migration.py`) and the four members `source_ref`, `text`,
+  `source_author` and `source_created` (the Linear `createdAt`, whole epoch milliseconds,
+  `_epoch_ms_exact`).
+- Comment exceptions, never approximated: `DevHubTracker.migration_comment_exception` returns a reason for a
+  comment that `importCommentSchema` of DEVHUB-128 would refuse (empty or blank text, text over
+  `_IMPORT_COMMENT_MAX` UTF-16 units, NUL or unpaired surrogate, missing or blank author, author over
+  `_IMPORT_AUTHOR_MAX` units or holding a control character, date outside `0..._IMPORT_EPOCH_MAX`). Such a
+  comment is not written: the record carries a `comment_exceptions` entry with its coordinate, the reason
+  (never the content) and a digest of its content. Like the attribute exceptions (`labels`, `milestone`,
+  `archived`) it does not by itself keep `ready_for_cutover` false. `_preflight_issues` refuses before any write
+  a comment that reaches the copy outside these limits, or a duplicated `source_ref` on one issue.
+- Write: after the issues and their links, `copy_and_verify` reads each issue, imports only the comments not
+  already present with identical members, through `migration_import_comment` (one
+  `POST /issues/:id/comments/import`, no `If-Match`; the `Idempotency-Key` is a hash of the issue and the four
+  members, so a replay sends the same key and a changed content a new one). A 409 `resource_conflict` makes
+  the adapter read the issue again: the same four members under the `source_ref` is success, anything else is
+  `TrackerConflictError`. Each first import raises the version of the issue (no state, field or frozen fact
+  changes, per the contract).
+- Readback: `_to_issue` adds `source_ref`, `source_author` and `source_created` to the entries of
+  `Issue.comments` that carry them (all three or none, else `invalid_response`). `copy_and_verify` and
+  `verify_targets` compare the imported comments of the target (`_imported_comments`, `_comments_match`) as a
+  set keyed by `source_ref` with those of the manifest: equal members, no missing and no extra imported
+  comment; native comments of the target are not compared (observed: `migration.py` and `cutover.py` never call
+  `add_comment`). DevHub orders comments by source date, then
+  insertion, so the comparison does not depend on the import order. The DevHub web timeline shows an imported
+  comment under the importing service at the insertion date (DEVHUB-130, API correct).
+- Nothing is pending any more: `migration_pending_terminal_items` is empty (`DevHubTracker`), and
+  `migration.ready_for_cutover` is true once every record and ADR is verified. The generic mechanism of
+  `migration.py` is unchanged: a target that names an item there still has `ready_for_cutover` false, and one
+  that names `links` has them neither written nor compared (test
+  `test_links_of_terminal_records_stay_unwritten_while_the_target_names_them_pending`). An imported receipt is
+  never a new review or merge proof (PAT-ADR-0032). Offline tests: the `comment` tests of
+  `tests/test_devhub_tracker.py` and `test_manifest_records_comments_of_living_and_terminal_issues_and_names_exceptions`,
+  `test_comment_copy_is_read_back_exactly_idempotent_and_makes_the_cutover_ready`,
+  `test_verify_targets_compares_imported_comments_exactly` and the Linear export tests of
+  `tests/test_tracker_migration.py`.
+- Epic closure and release-scope reads over an imported terminal child: see "Labels and milestone, and Epic
+  closure over imported children" below; the Epic closure over such children passed live in DHN-49.
+- Points to watch in the real-corpus rehearsal (PAT-332): a terminal record whose updated or completed date
+  precedes its created date is refused by `_preflight_issues` (fail closed) instead of becoming a named
+  exception, so one such issue stops the whole copy (deduced from the code, not observed on a real corpus);
+  likewise an issue, living or terminal, whose parent in the manifest is not an `Epic` (or has its `type`
+  excepted), and a cycle of parent or dependency links between issues of the manifest (`_preflight_issues`,
+  deduced from the code, not observed on a real corpus);
+  and the history listing nests `comments` without `includeArchived`, so whether Linear returns the comments of
+  an archived issue, or archived comments, is unknown.
+- Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
+  `migration_terminal_import_supported` is false, as `search` did, so FOUNDRY-ADR-0026's living-only scope
+  is unchanged there. `migration_export_issues` of Linear still reads the comments of every issue whatever
+  the target (they are nested in the listing page, `_ISSUES_HISTORY_QUERY`, with one further request per
+  `_HISTORY_COMMENTS_PAGE` comments beyond the first page of an issue), so that request cost also falls on
+  a target that copies none (`migration_comments_supported` false).
+
+Offline tests: `tests/test_devhub_tracker.py` (terminal import, readback, preflight),
+`tests/test_tracker_migration.py` (manifest, copy, readback, Linear export). Live: DHN-49 in
+`devhub-requirements.md`, `green` ("Live run of PAT-331").
+
+### Labels and milestone, and Epic closure over imported children (PAT-331, decisions of 2026-10-22)
+
+- Living issue PR link and source dates: a living record has no `terminal` member, so its `pr_url` and
+  its `Issue.created` / `Issue.updated` are not sent. `capture_manifest` records an exception `pr_url` and an
+  exception `source_dates` (value `{"created", "updated"}`), each carrying the source value, only when the
+  value is not `None`, for every target. DevHub's living create schema can hold `pr_url` in `fields`
+  (`createIssueSchema`, `src/tracker/contract.ts` at `a57ce72`), but a DevHub issue with a PR link is
+  refused the acceptance-by-decision path ("the issue is linked to a PR; use `issue merge`",
+  `trackers/devhub.py`), so sending it would change how the living issue can be closed (deduced, not run); the create route has no date member. Like labels and milestone these exceptions do not
+  by themselves keep `ready_for_cutover` false. Offline test:
+  `test_manifest_names_pr_url_and_source_dates_of_a_living_issue_as_exceptions`; the live test sets both on
+  its living issue (DHN-49, green live, `devhub-requirements.md`, "Live run of PAT-331").
+- Links that no target writes (PAT-331 review): `capture_manifest` records, for every target, an exception `links`
+  whose reason lists, as JSON `{type, direction, target, cause}`, each link of the issue to an issue outside the
+  manifest (cause `target outside the manifest`: the Linear issue read has no project filter on `parent`,
+  `children`, `relations` and `inverseRelations`, `_ISSUE_FIELDS` in `trackers/linear.py`, and a target without
+  terminal import leaves terminal issues out) and each source relation with no Foundry link type (cause
+  `relation type without a target equivalent`, the `uncaptured_links` of `migration_export_issues`,
+  `trackers/base.py`). The Linear history export reads each issue through `_export_issue`, which sets aside a
+  relation of a type other than `blocks` and `related` (`duplicate`, `similar`) there; every other Linear read
+  still fails with `unsupported_relation_type` (`_relation_link`). These links are neither written nor compared
+  (`copy_and_verify`, `verify_targets`), and the exception does not keep `ready_for_cutover` false. Offline tests:
+  `test_links_outside_the_manifest_and_relations_without_a_link_type_are_named_exceptions`,
+  `test_living_only_target_names_the_links_to_terminal_issues_it_leaves_out` (`tests/test_tracker_migration.py`),
+  `test_relation_reads_refuse_unsupported_native_types_without_partial_issue` (`tests/test_linear_tracker.py`).
+  DHN-49 adds a link outside the manifest and a link between two imported terminal issues (a `done` Epic and
+  its `done` child); that extension is green live (`devhub-requirements.md`, "Live run of PAT-331").
+- Labels and milestone: no target copies them. `capture_manifest` (`migration.py`) records, for every
+  target and every issue (living or terminal), an exception `labels` when `Issue.labels` is not empty and an
+  exception `milestone` when `Issue.milestone` is not `None`, each reason carrying the source value; an
+  issue without them gets neither, so its digest is unchanged. The Linear source fills both fields
+  (`normalize` in `trackers/linear.py`: `labels` without the type labels, `milestone` by the project's
+  `milestone_ids`). Offline test: `test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_has_them`.
+- Epic closure: `observe_epic_closure_child` (`trackers/devhub.py`) reads the detail of a child; when the
+  server marks it `imported_terminal` (`Issue.import_history`) and its state is `done` or `dropped`, it
+  counts without a new proof. A `done` one reads accepted, its criteria counted as satisfied, with the
+  acceptance source `DevHubTracker.imported_terminal_acceptance_source` (`devhub-imported-terminal`), distinct
+  from `devhub-human-acceptance` and from any receipt; its proof stays in the source tracker. A `dropped`
+  one carries the same source and `write.close_epic` leaves it out of the set that `--accept-dropped` must
+  name (PAT-ADR-0030 still applies to every other abandoned child). The detail read is the only way used to
+  know a child is imported: the Epic subgraph read is not consulted for it. The atomic receipt still binds
+  `{id, version, state}` read at closure time. Per the DEVHUB-127 delivery
+  (relayed, tested on the server, and run by Foundry in DHN-49), the server accepts such children, and a link bumps a
+  child's version; the version is read at closure time, so a snapshot taken before linking is not used. The
+  extension of DHN-49 closes a living Epic over an imported `done` and an imported `dropped` child through
+  `write.close_epic`; passed live ("Live run of PAT-331").
+- Release scope: `_release_issue` reads an imported `done` issue as `unavailable`, with a reference
+  `unavailable_reason` naming the import, never as accepted.
+- Offline tests: `tests/test_devhub_tracker.py` (`test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof`,
+  `test_epic_closure_accepts_imported_terminal_children_without_a_named_closure`,
+  `test_epic_closure_still_names_a_dropped_child_that_was_not_imported`,
+  `test_release_scope_never_reads_an_imported_terminal_issue_as_accepted`).
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 

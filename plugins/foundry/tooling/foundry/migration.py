@@ -79,11 +79,101 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
     return snapshot
 
 
+def _capture_comments(
+    record: dict, comments: list[dict], source_tracker: str, target: Tracker,
+    target_project: Project,
+) -> None:
+    """Record the comments of one issue (PAT-331 stage 3), living or terminal alike.
+
+    A comment the target cannot reproduce exactly is not written and not approximated: it
+    becomes a ``comment_exceptions`` entry naming its coordinate, the reason and a digest of
+    its content (so a later change at the source is still seen).  Like the attribute
+    exceptions it does not by itself keep the cutover from being ready.
+    """
+    importable, excepted = [], []
+    for item in comments:
+        comment = {
+            "source_ref": f"{source_tracker}:comment:{item['id']}",
+            "text": item["text"], "source_author": item["author"],
+            "source_created": item["created"],
+        }
+        reason = target.migration_comment_exception(target_project, comment)
+        if reason is None:
+            importable.append(comment)
+        elif not isinstance(reason, str) or not reason:
+            raise MigrationError("exceptions de commentaire cible invalides")
+        else:
+            excepted.append({
+                "source_ref": comment["source_ref"], "reason": reason,
+                "digest": _digest(comment),
+            })
+    record["comments"], record["comment_exceptions"] = importable, excepted
+
+
+def _imported_comments(actual: Issue) -> dict[str, dict]:
+    """The imported comments of a target issue by ``source_ref`` (native ones are ignored)."""
+    keys = ("source_ref", "text", "source_author", "source_created")
+    return {
+        item["source_ref"]: {key: item.get(key) for key in keys}
+        for item in actual.comments if item.get("source_ref") is not None
+    }
+
+
+def _comments_match(record: dict, actual: Issue) -> bool:
+    """Exact readback of the imported comments, as a set keyed by ``source_ref``."""
+    if "comments" not in record:
+        return True  # the target copies no comments, or the source exports none (exception)
+    return _imported_comments(actual) == {
+        item["source_ref"]: item for item in record["comments"]
+    }
+
+
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
-    issues = [source.get_issue(item.id) for item in source.search(source_project)]
-    living = [item for item in issues if (item.normalized_state or item.state) not in _TERMINAL]
-    records = [_issue_snapshot(item, source.name) for item in living]
+    records = []
+    not_copied: dict[str, tuple[list, object, object, object, object, list, bool]] = {}
+    for item in source.migration_export_issues(source_project):
+        issue = item["issue"]
+        record = _issue_snapshot(issue, source.name)
+        if item["archived"] and not target.migration_terminal_import_supported:
+            continue  # living-only scope of FOUNDRY-ADR-0026: ``search`` never listed these
+        living = (issue.normalized_state or issue.state) not in _TERMINAL
+        uncaptured = item.get("uncaptured_links", [])
+        if not isinstance(uncaptured, list) or any(
+            not isinstance(entry, dict) or set(entry) != {"type", "direction", "target"}
+            or any(not isinstance(value, str) or not value for value in entry.values())
+            for entry in uncaptured
+        ):
+            raise MigrationError(f"liens source non capturés invalides: {record['source_ref']}")
+        not_copied[issue.id] = (
+            list(issue.labels or []), issue.milestone,
+            issue.pr_url if living else None,
+            item["source_created"] if living else None,
+            item["source_updated"] if living else None,
+            list(uncaptured),
+            target.migration_comments_supported and "comments" not in item,
+        )
+        if not living:
+            if not target.migration_terminal_import_supported:
+                continue  # living-only scope of FOUNDRY-ADR-0026 for this target
+            # PAT-331: terminal history is imported frozen; ``pending`` names what the
+            # target cannot carry yet (never approximated, never dropped silently).
+            record["terminal"] = {
+                "pr_url": issue.pr_url,
+                "source_created": item["source_created"],
+                "source_updated": item["source_updated"],
+                "source_completed": item["source_completed"],
+            }
+            record["pending"] = [
+                {"item": name, "reason": reason}
+                for name, reason in sorted(target.migration_pending_terminal_items.items())
+            ]
+        if item["archived"]:
+            record["archived"] = True
+        if target.migration_comments_supported and "comments" in item:
+            _capture_comments(record, item["comments"], source.name, target, target_project)
+        records.append(record)
+    captured_ids = {record["id"] for record in records}
     for record in records:
         exceptions = {
             name: "target capability unavailable"
@@ -103,16 +193,57 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         ):
             raise MigrationError("exceptions d'attribut cible invalides")
         exceptions.update(specific)
+        # PAT-ADR-0032: no target copies labels nor milestone; each non-empty source value
+        # is a named exception carrying that value (an issue without them gets none).
+        (labels, milestone, pr_url, created, updated, uncaptured,
+         comments_not_exported) = not_copied[record["id"]]
+        if labels:
+            exceptions["labels"] = (
+                "not copied; source value: " + json.dumps(labels, ensure_ascii=False)
+            )
+        if milestone is not None:
+            exceptions["milestone"] = (
+                "not copied; source value: " + json.dumps(milestone, ensure_ascii=False)
+            )
+        # PAT-331 review: a living issue's PR link and source dates are carried by no target
+        # (a PR link makes a living DevHub issue a PR-bound one); only terminal records carry them.
+        if pr_url is not None:
+            exceptions["pr_url"] = (
+                "not copied; source value: " + json.dumps(pr_url, ensure_ascii=False)
+            )
+        if created is not None or updated is not None:
+            exceptions["source_dates"] = "not copied; source value: " + json.dumps(
+                {"created": created, "updated": updated}, sort_keys=True,
+            )
+        if record.get("archived"):
+            exceptions["archived"] = "target has no archived state for an issue"
+        # PAT-331 review: a link to an issue outside the manifest, and a source relation with
+        # no Foundry link type (``uncaptured_links`` of the export), are written by no target.
+        dropped = [
+            {**entry, "cause": "relation type without a target equivalent"}
+            for entry in uncaptured
+        ] + [
+            {"type": link["type"], "direction": link["direction"], "target": link["target"],
+             "cause": "target outside the manifest"}
+            for link in record["links"] if link["target"] not in captured_ids
+        ]
+        if dropped:
+            exceptions["links"] = "not copied; source value: " + json.dumps(
+                sorted(dropped, key=lambda entry: json.dumps(entry, sort_keys=True)),
+                ensure_ascii=False, sort_keys=True,
+            )
+        if comments_not_exported:
+            exceptions["comments"] = "not copied; the source does not export comments"
         record["exceptions"] = [
             {"attribute": name, "reason": exceptions[name]}
             for name in sorted(exceptions)
         ]
-        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "status", "exceptions"}})
+        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "status", "exceptions", "pending"}})
     adrs = [
         _adr_snapshot(item, source.name)
         for item in source.migration_export_adrs(source_project)
     ]
-    living_ids = {record["id"] for record in records}
+    living_ids = {record["id"] for record in records}  # every captured issue, terminal included
     for record in adrs:
         issue_refs = record["relations"].get("issues")
         source_only = record.get("source_only_issue_refs", [])
@@ -206,6 +337,28 @@ def save_manifest(path: Path, manifest: dict) -> None:
             os.unlink(temporary_name)
 
 
+def _terminal_matches(record: dict, actual: Issue) -> bool:
+    """Exact readback of the history-only facts of a terminal record (PAT-331)."""
+    terminal = record.get("terminal")
+    if terminal is None:
+        return actual.import_history is None
+    return (
+        actual.pr_url == terminal["pr_url"]
+        and actual.import_history == {
+            key: terminal[key]
+            for key in ("source_created", "source_updated", "source_completed")
+        }
+    )
+
+
+def _deferred_links(manifest: dict) -> set[str]:
+    """Ids of the issues whose links the target cannot carry yet (``pending`` links)."""
+    return {
+        record["id"] for record in manifest["issues"]
+        if any(entry["item"] == "links" for entry in record.get("pending", []))
+    }
+
+
 def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, persist: Callable[[], None]) -> None:
     """Complete only missing records and compare every target readback."""
     for record in manifest["issues"]:
@@ -233,26 +386,51 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()
                     if (match := _CHECKBOX.match(line)) is not None
-                ] != record["acceptance"]["checkboxes"]):
+                ] != record["acceptance"]["checkboxes"]
+                or not _terminal_matches(record, actual)):
             raise MigrationError(f"relecture issue divergente: {record['source_ref']}")
         record["target_id"], record["status"] = actual.id, "verified"
         persist()
     ids = {record["id"]: record["target_id"] for record in manifest["issues"]}
+    deferred = _deferred_links(manifest)
     for record in manifest["issues"]:
         for link in record["links"]:
             target_id = ids.get(link["target"])
             if target_id is None:
-                continue  # terminal/external target is explicitly outside living scope.
+                continue  # not an issue of the manifest: exception ``links`` (capture_manifest).
+            if record["id"] in deferred or link["target"] in deferred:
+                continue  # pending: the target cannot write this link yet.
             target.migration_link_issue(
                 target_project, record["target_id"], link["type"], target_id,
             )
         reread = target.migration_find_issue(target_project, record["source_ref"])
         if reread is None:
             raise MigrationError(f"relecture issue absente: {record['source_ref']}")
-        expected = {(link["type"], ids[link["target"]]) for link in record["links"] if link["target"] in ids}
+        expected = {
+            (link["type"], ids[link["target"]]) for link in record["links"]
+            if link["target"] in ids and record["id"] not in deferred
+            and link["target"] not in deferred
+        }
         observed = {(link.type, link.target) for link in reread.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
+    for record in manifest["issues"]:
+        # After the links: DEVHUB-127 raises the versions, DEVHUB-128 needs none.
+        if not record.get("comments"):
+            continue
+        current = target.migration_find_issue(target_project, record["source_ref"])
+        if current is None:
+            raise MigrationError(f"relecture issue absente: {record['source_ref']}")
+        present = _imported_comments(current)
+        for comment in record["comments"]:
+            if present.get(comment["source_ref"]) != comment:
+                target.migration_import_comment(
+                    target_project, record["target_id"], comment,
+                )
+    for record in manifest["issues"]:
+        reread = target.migration_find_issue(target_project, record["source_ref"])
+        if reread is None or not _comments_match(record, reread):
+            raise MigrationError(f"relecture commentaires divergente: {record['source_ref']}")
     target_adr_snapshots = tuple(
         _target_adr_snapshot(target, target_project, record, ids)
         for record in manifest["adrs"]
@@ -328,6 +506,7 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
     ):
         raise MigrationError("manifeste de cutover non vérifié")
     ids: dict[str, str] = {}
+    deferred = _deferred_links(manifest)
     for record in manifest["issues"]:
         found = target.migration_find_issue(target_project, record["source_ref"])
         if found is None or found.id != record["target_id"]:
@@ -345,7 +524,8 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()
                     if (match := _CHECKBOX.match(line)) is not None
-                ] != record["acceptance"]["checkboxes"]):
+                ] != record["acceptance"]["checkboxes"]
+                or not _terminal_matches(record, actual)):
             raise MigrationError(f"relecture issue divergente: {record['source_ref']}")
         ids[record["id"]] = found.id
     for record in manifest["issues"]:
@@ -354,11 +534,15 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
             raise MigrationError(f"relecture issue absente: {record['source_ref']}")
         expected = {
             (link["type"], ids[link["target"]])
-            for link in record["links"] if link["target"] in ids
+            for link in record["links"]
+            if link["target"] in ids and record["id"] not in deferred
+            and link["target"] not in deferred
         }
         observed = {(link.type, link.target) for link in actual.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
+        if not _comments_match(record, actual):
+            raise MigrationError(f"relecture commentaires divergente: {record['source_ref']}")
     # One export per pass: a per-ADR export made the read-back quadratic.
     exported_adrs = target.migration_export_adrs(target_project) if manifest["adrs"] else []
     for record in manifest["adrs"]:
@@ -411,7 +595,9 @@ def _readback_adr(
 
 
 def ready_for_cutover(manifest: dict) -> bool:
-    return (manifest.get("phase") == "verified" and all(item.get("status") == "verified" for item in manifest.get("issues", [])) and all(item.get("copy_status") == "verified" for item in manifest.get("adrs", [])))
+    # A pending item (PAT-331) is history the target cannot carry yet: no cutover.
+    return (manifest.get("phase") == "verified"
+            and not any(item.get("pending") for item in manifest.get("issues", [])) and all(item.get("status") == "verified" for item in manifest.get("issues", [])) and all(item.get("copy_status") == "verified" for item in manifest.get("adrs", [])))
 
 
 def source_is_unchanged(manifest: dict, source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> bool:

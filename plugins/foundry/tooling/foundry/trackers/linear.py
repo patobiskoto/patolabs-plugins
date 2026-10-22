@@ -21,7 +21,7 @@ import base64
 import binascii
 import contextlib
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -258,6 +258,53 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
   ) {{
     nodes {{ {_ISSUE_FIELDS} }}
     pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+
+# PAT-331: the history listing reads archived issues too (``includeArchived``), the native
+# completion / cancellation dates, and the comments of each issue with their author
+# (stage 3), so no per-issue request is added for them.  ``_ISSUES_QUERY`` is unchanged.
+# The page is smaller than ``_ISSUES_QUERY``'s because each issue nests up to
+# ``_HISTORY_COMMENTS_PAGE`` comments (query-complexity bound of Linear: unknown here, to be
+# confirmed by a real run); an issue with more comments continues with
+# ``_ISSUE_COMMENTS_HISTORY_QUERY`` and costs one more request per further page.
+_HISTORY_ISSUES_PAGE = 25
+_HISTORY_COMMENTS_PAGE = 50
+_HISTORY_COMMENT_FIELDS = """
+id body createdAt
+user { name displayName }
+botActor { name }
+externalUser { name displayName }
+"""
+_ISSUES_HISTORY_QUERY = f"""
+query FoundryLinearIssuesHistory($teamId: ID!, $projectId: ID!, $after: String) {{
+  issues(
+    filter: {{ team: {{ id: {{ eq: $teamId }} }}, project: {{ id: {{ eq: $projectId }} }} }}
+    first: {_HISTORY_ISSUES_PAGE}
+    after: $after
+    includeArchived: true
+  ) {{
+    nodes {{
+      id identifier archivedAt completedAt canceledAt
+      comments(first: {_HISTORY_COMMENTS_PAGE}) {{
+        nodes {{ {_HISTORY_COMMENT_FIELDS} }}
+        pageInfo {{ hasNextPage endCursor }}
+      }}
+    }}
+    pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+
+_ISSUE_COMMENTS_HISTORY_QUERY = f"""
+query FoundryLinearIssueCommentsHistory($id: String!, $after: String) {{
+  issue(id: $id) {{
+    id identifier
+    comments(first: 100, after: $after) {{
+      nodes {{ {_HISTORY_COMMENT_FIELDS} }}
+      pageInfo {{ hasNextPage endCursor }}
+    }}
   }}
 }}
 """
@@ -669,6 +716,52 @@ def _epoch_ms(value) -> int | None:
         raise LinearTrackerError("normalize", None, "invalid_response") from None
 
 
+def _epoch_ms_exact(value) -> int:
+    """Whole milliseconds of an ISO-8601 instant, without float rounding (PAT-331)."""
+    if not isinstance(value, str):
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise LinearTrackerError("issue.history", None, "invalid_response") from None
+    if instant.tzinfo is None:
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    return (instant - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(milliseconds=1)
+
+
+def _history_comment(node) -> dict:
+    """One Linear comment as ``{"id", "text", "author", "created"}`` (PAT-331 stage 3).
+
+    ``author`` is the first non-empty text of the user's ``name`` then ``displayName``, the
+    bot actor's ``name``, the external user's ``name`` then ``displayName``; ``None`` when
+    the comment has none of them (a deleted user, for example).
+    """
+    if (not isinstance(node, dict) or not isinstance(node.get("id"), str) or not node["id"]
+            or not isinstance(node.get("body"), str)):
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    author = None
+    for key, names in (
+        ("user", ("name", "displayName")), ("botActor", ("name",)),
+        ("externalUser", ("name", "displayName")),
+    ):
+        actor = node.get(key)
+        if actor is None:
+            continue
+        if not isinstance(actor, dict):
+            raise LinearTrackerError("issue.history", None, "invalid_response")
+        for name in names:
+            value = actor.get(name)
+            if isinstance(value, str) and value.strip():
+                author = value
+                break
+        if author is not None:
+            break
+    return {
+        "id": node["id"], "text": node["body"], "author": author,
+        "created": _epoch_ms_exact(node.get("createdAt")),
+    }
+
+
 def _connection(raw, operation: str) -> list[dict]:
     if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
         raise LinearTrackerError(operation, None, "invalid_response")
@@ -682,17 +775,30 @@ def _connection(raw, operation: str) -> list[dict]:
     return raw["nodes"]
 
 
-def _relation_link(relation: dict, *, inverse: bool) -> Link:
+def _relation_link(
+    relation: dict, *, inverse: bool, uncaptured: list[dict] | None = None,
+) -> Link | None:
+    """One native relation as a Foundry link.
+
+    A type with no Foundry link (``duplicate``, ``similar``) is refused, except when
+    ``uncaptured`` is given (history export, PAT-331): it is then appended there and skipped.
+    """
     operation = "normalize.inverse-relations" if inverse else "normalize.relations"
     relation_type = relation.get("type")
     if not isinstance(relation_type, str):
         raise LinearTrackerError(operation, None, "invalid_response")
-    if relation_type not in {"blocks", "related"}:
+    if relation_type not in {"blocks", "related"} and uncaptured is None:
         raise LinearTrackerError(operation, None, "unsupported_relation_type")
 
     target = relation.get("issue" if inverse else "relatedIssue")
     if not isinstance(target, dict) or not isinstance(target.get("identifier"), str):
         raise LinearTrackerError(operation, None, "invalid_response")
+    if relation_type not in {"blocks", "related"}:
+        uncaptured.append({
+            "type": relation_type, "direction": "inward" if inverse else "outward",
+            "target": target["identifier"],
+        })
+        return None
     if relation_type == "related":
         return Link("relates", "inward" if inverse else "outward", target["identifier"])
     if inverse:
@@ -4964,6 +5070,7 @@ class LinearTracker(Tracker):
         *,
         observe_lifecycle: bool = False,
         project_epic_closure: bool = True,
+        uncaptured_relations: list[dict] | None = None,
     ) -> Issue:
         project = project or self._project()
         binding = self._binding(project)
@@ -5023,11 +5130,15 @@ class LinearTracker(Tracker):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             links.append(Link("parent-of", "outward", child["identifier"]))
         for relation in _connection(raw.get("relations"), "normalize.relations"):
-            links.append(_relation_link(relation, inverse=False))
+            link = _relation_link(relation, inverse=False, uncaptured=uncaptured_relations)
+            if link is not None:
+                links.append(link)
         for relation in _connection(
             raw.get("inverseRelations"), "normalize.inverse-relations"
         ):
-            links.append(_relation_link(relation, inverse=True))
+            link = _relation_link(relation, inverse=True, uncaptured=uncaptured_relations)
+            if link is not None:
+                links.append(link)
 
         milestone = None
         milestone_raw = raw.get("projectMilestone")
@@ -5283,6 +5394,106 @@ class LinearTracker(Tracker):
             seen.add(issue.id)
             out.append(issue)
         return out
+
+    def migration_export_issues(self, project: Project) -> list[dict]:
+        """Every issue of the project for a full-history cutover (PAT-331).
+
+        Archived issues are listed (``_ISSUES_HISTORY_QUERY``) and every issue is then read
+        like ``get_issue`` does (``_export_issue``), except that a relation type with no Foundry
+        link goes to the entry's ``uncaptured_links`` instead of failing the export.  ``source_completed`` is the native ``completedAt`` of a
+        ``done`` issue and ``canceledAt`` of a ``dropped`` one, ``None`` when Linear has none
+        for that state; ``source_created`` and ``source_updated`` are ``Issue.created`` and
+        ``Issue.updated``.
+        """
+        binding = self._activate(project)
+        listed: dict[str, dict] = {}
+        cursor = None
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _ISSUES_HISTORY_QUERY,
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "after": cursor,
+                },
+                "issue.history",
+            )
+            connection = data.get("issues")
+            page = connection.get("pageInfo") if isinstance(connection, dict) else None
+            if (not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list)
+                    or not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            for node in connection["nodes"]:
+                identifier = node.get("identifier") if isinstance(node, dict) else None
+                if not isinstance(identifier, str) or not identifier:
+                    raise LinearTrackerError("issue.history", None, "invalid_response")
+                if identifier in listed:
+                    raise LinearTrackerError("issue.history", None, "pagination_stalled")
+                listed[identifier] = node
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise LinearTrackerError("issue.history", None, "pagination_stalled")
+        else:
+            raise LinearTrackerError("issue.history", None, "pagination_limit")
+        exported = []
+        for identifier, node in listed.items():
+            comments = self._history_comments(identifier, node.get("comments"))
+            issue, uncaptured = self._export_issue(identifier)
+            state = issue.normalized_state or issue.state
+            native = node.get("completedAt") if state == "done" else (
+                node.get("canceledAt") if state == "dropped" else None
+            )
+            exported.append({
+                "issue": issue,
+                "archived": node.get("archivedAt") is not None,
+                "source_created": issue.created,
+                "source_updated": issue.updated,
+                "source_completed": _epoch_ms(native),
+                "comments": comments,
+                "uncaptured_links": uncaptured,
+            })
+        return exported
+
+    def _export_issue(self, identifier: str) -> tuple[Issue, list[dict]]:
+        """Read one issue like ``get_issue``, its relations without a Foundry type set aside."""
+        uncaptured: list[dict] = []
+        issue = self._to_issue(
+            self._read_raw(identifier), self._project(), uncaptured_relations=uncaptured,
+        )
+        return issue, uncaptured
+
+    def _history_comments(self, identifier: str, connection) -> list[dict]:
+        """Every comment of one listed issue: the nested page, then the further pages."""
+        collected: list[dict] = []
+        seen: set[str] = set()
+        cursor = None
+        for _ in range(_MAX_PAGES):
+            page = connection.get("pageInfo") if isinstance(connection, dict) else None
+            if (not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list)
+                    or not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            for node in connection["nodes"]:
+                comment = _history_comment(node)
+                if comment["id"] in seen:
+                    raise LinearTrackerError("issue.history", None, "pagination_stalled")
+                seen.add(comment["id"])
+                collected.append(comment)
+            if not page["hasNextPage"]:
+                return sorted(collected, key=lambda item: (item["created"], item["id"]))
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise LinearTrackerError("issue.history", None, "pagination_stalled")
+            data = self._graphql(
+                _ISSUE_COMMENTS_HISTORY_QUERY, {"id": identifier, "after": cursor},
+                "issue.history.comments",
+            )
+            issue = data.get("issue")
+            if not isinstance(issue, dict):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            connection = issue.get("comments")
+        raise LinearTrackerError("issue.history", None, "pagination_limit")
 
     def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
         binding = self._activate(project)
