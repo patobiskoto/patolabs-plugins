@@ -1078,6 +1078,89 @@ def test_dhn_46_an_adr_corpus_with_a_source_only_reference_and_unknown_relations
             source_only_issue_refs=("linear:issue:PAT-9",), unknown_relations=("issues",))
 
 
+@need("DHN-47")
+def test_dhn_47_a_verified_manifest_is_activated_toward_a_new_devhub_project(
+    suite, tmp_path, monkeypatch,
+):
+    # PAT-329: `cutover preflight`, `copy` and `activate` run through the CLI toward a new
+    # project of the disposable instance, from a temporary git checkout whose canonical
+    # repository is the project's registration.  The registry is isolated in ``tmp_path``
+    # (``FOUNDRY_DATA``, ``registry.data_dir``); the test refuses to run otherwise, and it
+    # never reads or writes the user's own registry.
+    from foundry import cutover as cutover_cli
+    from foundry.migration import load_manifest
+    from foundry.models import Adr, Issue, Link
+    from test_tracker_migration import FakeTransportTracker, _git_checkout
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    real_home_config = os.path.realpath(os.path.expanduser("~/.config/foundry"))
+    resolved = os.path.realpath(registry.path())
+    assert resolved.startswith(os.path.realpath(state) + os.sep)
+    assert not (resolved + os.sep).startswith(real_home_config + os.sep)
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    canonical = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live activation target", key, canonical)
+    assert project.extra["canonical_repo"] == canonical
+    repo = tmp_path / key.lower()
+    _git_checkout(repo, f"https://{canonical}.git")
+    monkeypatch.chdir(repo)
+    assert registry.checkout_repository_identity(str(repo)) == canonical
+
+    # the source is a registered, bootstrapped checkout binding on another provider
+    registry.register("youtrack", repo.name, "SRC", "0-1", canonical_repo=canonical)
+    registry.bootstrap_repository_binding("youtrack", repo.name, "SRC", "0-1", cwd=str(repo))
+    epic = Issue("SRC-1", "live activation epic", state="ready", type="Epic", priority="P1",
+                 estimate=8, body="- [ ] first\n",
+                 links=[Link("parent-of", "outward", "SRC-2")])
+    child = Issue("SRC-2", "live activation child", state="ready", type="Task",
+                  priority="P2", estimate=3, body="- [x] done\n",
+                  links=[Link("subtask-of", "outward", "SRC-1")])
+    adr = Adr("FOUNDRY-ADR-0001", "ADR 1", "accepted", "body 1\n")
+    source = FakeTransportTracker("youtrack", issues=[epic, child], adrs=[adr], adr_relations={
+        adr.id: {"supersedes": [], "superseded_by": None, "issues": ["SRC-2"]}})
+    source.resolve_checkout_project = lambda: Project(
+        "SRC", "0-1", {"canonical_repo": canonical})
+    monkeypatch.setattr(cutover_cli, "_target", lambda _name: tracker)
+    monkeypatch.setattr(cutover_cli.foundry, "tracker", lambda *_a, **_k: source)
+
+    config_path, manifest_path = tmp_path / "target.json", tmp_path / "manifest.json"
+    config_path.write_text(json.dumps({
+        "key": project.key, "id": project.id, "extra": {"canonical_repo": canonical}}))
+    args = ["devhub", str(config_path), str(manifest_path)]
+    cutover_cli.main(["preflight", *args])
+    cutover_cli.main(["copy", *args])
+    manifest = load_manifest(manifest_path)
+    assert manifest["phase"] == "verified"
+    assert registry.repository_tracker_binding(str(repo)).tracker == "youtrack"
+
+    # a manifest for another project is refused before any registry change
+    foreign = json.loads(config_path.read_text())
+    foreign["id"] = project.id + "0"
+    foreign_path = tmp_path / "foreign.json"
+    foreign_path.write_text(json.dumps(foreign))
+    before = registry.load()
+    with pytest.raises(SystemExit):
+        cutover_cli.main(["activate", "devhub", str(foreign_path), str(manifest_path)])
+    assert registry.load() == before
+
+    cutover_cli.main(["activate", *args])
+    assert load_manifest(manifest_path)["phase"] == "activated"
+    binding = registry.repository_tracker_binding(str(repo))
+    assert (binding.tracker, binding.repository) == ("devhub", canonical)
+    assert (binding.project.key, binding.project.id) == (project.key, project.id)
+    assert binding.migration_manifest_digest == manifest["source_digest"]
+    published = [entry for entry in registry.load()["devhub"].values()
+                 if "_staged_cutover" not in entry]
+    assert published == [{"key": project.key, "id": project.id, "canonical_repo": canonical}]
+    assert tracker.verify_project_identity(project) is True
+    # an exact replay converges on the same binding
+    cutover_cli.main(["activate", *args])
+    assert registry.repository_tracker_binding(str(repo)) == binding
+
+
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
 
 @need("DHN-37")

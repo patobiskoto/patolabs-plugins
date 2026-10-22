@@ -674,7 +674,7 @@ moved, ambiguous or stale binding refuses the command. DevHub binds through the 
 marker. `trackers/base.py` and `codehosts/base.py` are the ports.
 YouTrack, Linear, GitHub Projects and DevHub are real V1 adapters; GitHub support is bounded
 to the qualified private personal Project/private-repository shape. All 19 core cells of DevHub
-are `supported`; it can be the target of the `preflight` and `copy` steps of a selective cutover of living work and of ADRs, source-only issue references and `unknown` relations included (PAT-327); `activate` toward DevHub is not qualified (`devhub-tracker.md`, "Selective cutover target").
+are `supported`; it can be the target of the `preflight` and `copy` steps of a selective cutover of living work and of ADRs, source-only issue references and `unknown` relations included (PAT-327); `activate` toward DevHub is qualified offline (PAT-329) and live by DHN-47, green at DevHub `3f0cf4b` (`devhub-requirements.md`, "Live run of PAT-329"; `devhub-tracker.md`, "Selective cutover target").
 See [`docs/linear-tracker.md`](docs/linear-tracker.md) for the Linear adapter, marker,
 and bounded recovery procedure, [`docs/ghprojects-tracker.md`](docs/ghprojects-tracker.md)
 for the GitHub issue/ADR/lifecycle contract, and

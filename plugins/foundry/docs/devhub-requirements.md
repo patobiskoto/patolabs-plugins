@@ -291,8 +291,9 @@ Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-45 | Selective cutover target: the preflight refuses, before any write and naming the ADR, an ADR whose replacement is `proposed`, and accepts an `accepted` or `deprecated` replacement (DEVHUB-118) | `test_dhn_45_the_preflight_refuses_a_proposed_adr_replacement` | green | - | adapter, PAT-328: `_preflight_adrs` of `trackers/devhub.py`. Rule read in DevHub source at `cd23304` (`store.ts:2307-2309`, relayed by the DevHub agent). Green live at `cd23304` ("Live run of PAT-328") |
 
 | DHN-46 | Selective cutover target: an ADR corpus with a source-only issue reference and `unknown` relation families is captured, copied, read back exactly and replayed; the server refuses a family sent both known and unknown (DEVHUB-122; `cross-tracker-adr-import` of `tracker-contract.v1.json`) | `test_dhn_46_an_adr_corpus_with_a_source_only_reference_and_unknown_relations_is_copied` | green | - | adapter, PAT-327: `import_adr`, `_prepare_adr_import`, `_snapshot_import_arguments`, `_preflight_adrs` and `migration_export_adrs` of `trackers/devhub.py` (`devhub-tracker.md`, "Source-only references and unknown relations"); server: `source_only_refs` and `unknown_relations` of `POST /projects/:key/adrs/import`, merge `3f0cf4b98e60a04154cf051e4110cbf29094d381` (DEVHUB-122). Green live at `3f0cf4b` ("Live run of PAT-327") |
+| DHN-47 | Selective cutover target: `cutover preflight`, `copy` and `activate` run toward a new project of the disposable instance from a temporary git checkout whose canonical repository is the project's registration, with the registry isolated in a temporary `FOUNDRY_DATA`; the published registry entry, the marker and the manifest phase are read back, a manifest for another project is refused with the registry unchanged, and an exact replay of `activate` converges (FOUNDRY-ADR-0026, PAT-ADR-0032; `tombstone-archived-source-after-switch` of `tracker-contract.v1.json`) | `test_dhn_47_a_verified_manifest_is_activated_toward_a_new_devhub_project` | green | - | foundry, PAT-329: `cutover.main` (`activate` path), `registry.cutover_repository_tracker`, `registry.stage_repository_cutover_target` and `DevHubTracker.verify_project_identity` (`devhub-tracker.md`, "Selective cutover target"). Green live at `3f0cf4b` ("Live run of PAT-329"); the offline counterpart is `test_activate_toward_devhub_publishes_the_registry_entry_and_the_marker` in `tests/test_tracker_migration.py`. It refuses to run if the resolved registry path is not under its temporary directory or is under `~/.config/foundry`; the source is a fake YouTrack-named transport registered in that temporary registry, the target is the live adapter. No new environment variable ("Live run of PAT-329" below) |
 
-Counts (equal to the table): 46 needs; 0 red; 0 unknown; 46 green (DHN-01 to DHN-46).
+Counts (equal to the table): 47 needs; 0 red; 0 unknown; 47 green (DHN-01 to DHN-47).
 
 ### Live run of PAT-303
 
@@ -390,6 +391,16 @@ instance built from `a314c0c`, which lacks it), with the build procedure of "Liv
 PAT-303" and `DEVHUB_LIVE_WORKFLOW_PUBLISH` as in "Live run of PAT-328": 45 passed, 1 skipped
 (DHN-42, local accounts only), twice. DHN-46 passed in both runs and was then set to `green`.
 The instance was removed (`down -v`).
+
+### Live run of PAT-329
+
+Run on 2026-10-22 (observed) on a fresh disposable instance built from DevHub
+`3f0cf4b98e60a04154cf051e4110cbf29094d381` (merge of DEVHUB-122; never production), build
+procedure of "Live run of PAT-303", `DEVHUB_LIVE_WORKFLOW_PUBLISH` as in "Live run of PAT-328":
+46 passed, 1 skipped (DHN-42, local accounts only), twice. DHN-47 passed in both runs and was
+then set to `green`. It sets `FOUNDRY_DATA` itself to a temporary directory
+(`registry.data_dir`, `registry.py`); the operator's own registry file was checked unchanged
+after the runs (modification time unchanged). The instance was removed (`down -v`).
 
 ### Live run of PAT-324
 
@@ -625,6 +636,7 @@ Decided on the DevHub side on 2026-10-20, in the order of item 18 (DEVHUB-106, D
 | `migration_preflight`, `migration_attribute_exceptions`, `migration_supported_attributes`, `migration_prepare_adr`, the sorted relations and the issue relations of `migration_export_adrs` of `trackers/devhub.py`; DHN-43 (`@need`, `green` in "Live run of PAT-324"), question 19, counts (0 red, 0 unknown, 43 green) (PAT-324) | Updated in "Needs" and "Questions for the DevHub agent"; new section "Selective cutover target" and the DHN-34 and DHN-36 limits of `devhub-tracker.md`; `tracker-contract.md`, `tracker-contract.v1.json` and `tracker-conformance.md` (the DevHub live-work copy cell is `supported`, the ADR import cell stays a `gap` owned by PAT-327, `_ADMISSION_PENDING_PROVIDERS` kept); changelog fragment `changelog.d/PAT-324.md`. |
 | `import_adr`, `_prepare_adr_import`, `_snapshot_import_arguments`, `_preflight_adrs`, `migration_export_adrs`, `_adr_source_relations` and `_ORIGIN_TEXT` of `trackers/devhub.py`; DHN-46 (`@need`, owner `-`, green in "Live run of PAT-327"), question 19 follow-up, counts (0 red, 0 unknown, 46 green) (PAT-327) | Updated in "Needs", the opening paragraph, "Live run of PAT-327" and "Questions for the DevHub agent"; new section "Source-only references and unknown relations" and "Selective cutover target" of `devhub-tracker.md`; `tracker-contract.md` and `tracker-contract.v1.json` (DevHub `cross-tracker-adr-import` cell `supported`), `tracker-conformance.md` (`_ADMISSION_PENDING_PROVIDERS` removed), `README.md` and the two plugin manifests; changelog fragment `changelog.d/PAT-327.md`. |
 | `DevHubTracker.migration_preflight` (third read, `_read_workflow`, `_preflight_workflow`, `api_prefix` of `_req`), refusal of a `proposed` ADR replacement in `_preflight_adrs`; DHN-44 and DHN-45 (`@need`, green in "Live run of PAT-328"), `DEVHUB_LIVE_WORKFLOW_PUBLISH`, question 19, counts (0 red, 0 unknown, 45 green) (PAT-328) | Updated in "Needs", "Environment variables" and "Questions for the DevHub agent"; new section "Live run of PAT-328"; `devhub-tracker.md` ("Selective cutover target"); `tracker-contract.v1.json` (evidence of the DevHub `cross-tracker-live-work-copy` cell); changelog fragment `changelog.d/PAT-328.md`. |
+| `cutover.main` activation toward DevHub, `registry.cutover_repository_tracker`, `registry.stage_repository_cutover_target`; DHN-47 (`@need`, owner `-`, green in "Live run of PAT-329"), counts (0 red, 0 unknown, 47 green) (PAT-329) | Updated in "Needs" (row DHN-47, counts) and "Live run of PAT-329"; `devhub-tracker.md` ("Selective cutover target"); `tracker-contract.md` and `tracker-contract.v1.json` (DevHub `tombstone-archived-source-after-switch` cell and the note of the `cross-tracker-live-work-copy` cell); `README.md`; changelog fragment `changelog.d/PAT-329.md`. |
 
 Mechanical enforcement: `tests/test_devhub_requirements.py` checks that this table and the
 test decorators carry the same ids, tests and red/not-red status, that every `@gap` carries

@@ -569,14 +569,22 @@ cutover target" below. Rows DHN-34 and DHN-36 of `devhub-requirements.md`.
 
 DevHub is a qualified target of `cutover preflight|copy devhub <target-config.json>
 <manifest>` (FOUNDRY-ADR-0026; `tooling/foundry/cutover.py`, `tooling/foundry/migration.py`).
-`cutover activate devhub` is not qualified: no test runs it toward DevHub, offline or live, and it
-publishes a registry entry staged with `canonical_repo` (`registry.cutover_repository_tracker`, `registry.py`).
+`cutover activate devhub` publishes a registry entry staged with `canonical_repo`
+(`registry.cutover_repository_tracker`, `registry.py`) and replaces the repository marker. It is qualified offline
+since PAT-329: `test_activate_toward_devhub_publishes_the_registry_entry_and_the_marker` runs `preflight`, `copy`
+and `activate` through `cutover.main` with `FOUNDRY_DATA` isolated and checks the published entry
+(`{"key", "id", "canonical_repo"}` under `devhub`), the archived source, the marker and the manifest phase; and
+`test_activate_toward_devhub_refuses_a_divergent_manifest_and_publishes_nothing` checks that a manifest for another
+project or tracker, a manifest not `verified` and an edited manifest are refused with the registry unchanged
+(`tests/test_tracker_migration.py`; the target adapter there is a fake transport named `devhub`, so the offline test
+does not exercise `verify_project_identity`). Its live proof is DHN-47 (`tests/integration/test_devhub_live_conformance.py`,
+`devhub-requirements.md`): green at DevHub `3f0cf4b` ("Live run of PAT-329").
 The target configuration is `{"key": "<KEY>", "id": "<project id>", "extra": {"canonical_repo":
 "<host/owner/repo>"}}`: `canonical_repo` is the repository identity of the checkout being switched
 and must be the one the DevHub project is registered under, since `migration_preflight` reads the
 project back with `verify_project_identity`. The procedure below was run offline through
 `capture_manifest` with a scripted transport (`test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile`);
-against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server.
+against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server in that run (DHN-47 of PAT-329 runs them, status in "Live run of PAT-329" of `devhub-requirements.md`).
 
 DevHub is a target for living work and for an ADR corpus, source-only issue references and `unknown` relation families included, since DEVHUB-122 (`3f0cf4b`) and PAT-327 ("Source-only references and unknown relations" above): the contract cell `cross-tracker-adr-import` is `supported` (`tracker-contract.v1.json`), its live proof is DHN-46 (`devhub-requirements.md`, "Live run of PAT-327"). Two corpora stay refused by the preflight because no readback of them could match: a `supersedes` that is known while a `superseded` ADR of the corpus has an unknown replacement (the export gives `unknown` to every other `supersedes`, PAT-ADR-0008), and `issues` declared unknown beside source-only references (the server refuses that combination). For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR; the DevHub preflight no longer refuses those families, but a preflight of this repository toward DevHub has not been run.
 
