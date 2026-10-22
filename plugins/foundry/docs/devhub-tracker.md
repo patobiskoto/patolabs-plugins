@@ -714,7 +714,7 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   issue import" of the DevHub contract (`TRACKER_API.md`, DEVHUB-126, merge `defda07`). The `fields` object
   always holds `type`, `priority` and `estimate` (`null` when absent or excepted), because the server
   digests it as sent; `milestone` and `labels` are never sent, as in the living import; they are named manifest
-  exceptions when the source has a value (see "Labels and milestone" below). `pr_url` and each date are omitted when `None`.
+  exceptions when the source has a value (see "Labels and milestone, and Epic closure over imported children" below). `pr_url` and each date are omitted when `None`.
   A replay with the same content converges, other content is `TrackerConflictError`.
 - Readback: `Issue.import_history` holds the three dates of an issue the server marks as an imported terminal
   issue (`_to_issue`); `copy_and_verify` and `verify_targets` compare state, `pr_url` and the three dates
@@ -731,7 +731,7 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   is not handled specially: the pre-read makes it unreachable in a sequential run (deduced, not run). Offline
   tests: `test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions`
   (`tests/test_devhub_tracker.py`), `test_terminal_copy_links_terminal_records_and_is_not_ready_while_comments_are_pending`
-  (`tests/test_tracker_migration.py`). Not run live (DHN-49 extension).
+  (`tests/test_tracker_migration.py`). Run live by DHN-49 (passed at `bd282fc` and `a57ce72`, `devhub-requirements.md`, "Live run of PAT-331").
 - Comments (PAT-331 stage 3, DEVHUB-128, merge `a57ce72`; DevHub reported its production at `a57ce72` on 2026-10-22, not checked here): the
   comments of every captured issue, living or terminal, Foundry lifecycle receipts included (on Linear they
   are comments), are copied one by one, for a target that sets `migration_comments_supported` (`trackers/base.py`, `False` by default; `True` on DevHub only). Contract: the section "Comment import" of the DevHub contract
@@ -779,12 +779,61 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   `test_comment_copy_is_read_back_exactly_idempotent_and_makes_the_cutover_ready`,
   `test_verify_targets_compares_imported_comments_exactly` and the Linear export tests of
   `tests/test_tracker_migration.py`.
-- Not changed: Epic closure and release-scope reads over an imported terminal child; whether DevHub's
-  Epic closure accepts such a child is an open question to the DevHub side (unknown).
+- Epic closure and release-scope reads over an imported terminal child: see "Labels and milestone, and Epic
+  closure over imported children" below; the Epic closure over such children passed live in DHN-49.
+- Points to watch in the real-corpus rehearsal (PAT-332): a terminal record whose updated or completed date
+  precedes its created date is refused by `_preflight_issues` (fail closed) instead of becoming a named
+  exception, so one such issue stops the whole copy (deduced from the code, not observed on a real corpus);
+  and the history listing nests `comments` without `includeArchived`, so whether Linear returns the comments of
+  an archived issue, or archived comments, is unknown.
+- Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
+  `migration_terminal_import_supported` is false, as `search` did, so FOUNDRY-ADR-0026's living-only scope
+  is unchanged there. `migration_export_issues` of Linear still reads the comments of every issue whatever
+  the target (they are nested in the listing page, `_ISSUES_HISTORY_QUERY`, with one further request per
+  `_HISTORY_COMMENTS_PAGE` comments beyond the first page of an issue), so that request cost also falls on
+  a target that copies none (`migration_comments_supported` false).
 
 Offline tests: `tests/test_devhub_tracker.py` (terminal import, readback, preflight),
-`tests/test_tracker_migration.py` (manifest, copy, readback, Linear export). Live need: DHN-49 in
-`devhub-requirements.md`, `unknown` (not run against an instance).
+`tests/test_tracker_migration.py` (manifest, copy, readback, Linear export). Live: DHN-49 in
+`devhub-requirements.md`, `green` ("Live run of PAT-331").
+
+### Labels and milestone, and Epic closure over imported children (PAT-331, decisions of 2026-10-22)
+
+- Living issue PR link and source dates: a living record has no `terminal` member, so its `pr_url` and
+  its `Issue.created` / `Issue.updated` are not sent. `capture_manifest` records an exception `pr_url` and an
+  exception `source_dates` (value `{"created", "updated"}`), each carrying the source value, only when the
+  value is not `None`, for every target. DevHub's living create schema can hold `pr_url` in `fields`
+  (`createIssueSchema`, `src/tracker/contract.ts` at `a57ce72`), but a DevHub issue with a PR link is
+  refused the acceptance-by-decision path ("the issue is linked to a PR; use `issue merge`",
+  `trackers/devhub.py`), so sending it would change how the living issue can be closed (deduced, not run); the create route has no date member. Like labels and milestone these exceptions do not
+  by themselves keep `ready_for_cutover` false. Offline test:
+  `test_manifest_names_pr_url_and_source_dates_of_a_living_issue_as_exceptions`; the live test sets both on
+  its living issue (DHN-49, green live, `devhub-requirements.md`, "Live run of PAT-331").
+- Labels and milestone: no target copies them. `capture_manifest` (`migration.py`) records, for every
+  target and every issue (living or terminal), an exception `labels` when `Issue.labels` is not empty and an
+  exception `milestone` when `Issue.milestone` is not `None`, each reason carrying the source value; an
+  issue without them gets neither, so its digest is unchanged. The Linear source fills both fields
+  (`normalize` in `trackers/linear.py`: `labels` without the type labels, `milestone` by the project's
+  `milestone_ids`). Offline test: `test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_has_them`.
+- Epic closure: `observe_epic_closure_child` (`trackers/devhub.py`) reads the detail of a child; when the
+  server marks it `imported_terminal` (`Issue.import_history`) and its state is `done` or `dropped`, it
+  counts without a new proof. A `done` one reads accepted, its criteria counted as satisfied, with the
+  acceptance source `DevHubTracker.imported_terminal_acceptance_source` (`devhub-imported-terminal`), distinct
+  from `devhub-human-acceptance` and from any receipt; its proof stays in the source tracker. A `dropped`
+  one carries the same source and `write.close_epic` leaves it out of the set that `--accept-dropped` must
+  name (PAT-ADR-0030 still applies to every other abandoned child). The detail read is the only way used to
+  know a child is imported: the Epic subgraph read is not consulted for it. The atomic receipt still binds
+  `{id, version, state}` read at closure time. Per the DEVHUB-127 delivery
+  (relayed, tested on the server, and run by Foundry in DHN-49), the server accepts such children, and a link bumps a
+  child's version; the version is read at closure time, so a snapshot taken before linking is not used. The
+  extension of DHN-49 closes a living Epic over an imported `done` and an imported `dropped` child through
+  `write.close_epic`; passed live ("Live run of PAT-331").
+- Release scope: `_release_issue` reads an imported `done` issue as `unavailable`, with a reference
+  `unavailable_reason` naming the import, never as accepted.
+- Offline tests: `tests/test_devhub_tracker.py` (`test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof`,
+  `test_epic_closure_accepts_imported_terminal_children_without_a_named_closure`,
+  `test_epic_closure_still_names_a_dropped_child_that_was_not_imported`,
+  `test_release_scope_never_reads_an_imported_terminal_issue_as_accepted`).
 
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
@@ -1034,31 +1083,3 @@ The preserved F89E2E historical fixture has no original closure receipt and no t
 completed event. It therefore remains incomplete and is not a release gate or a
 successful reconciliation example. `campaign-terminal` refuses it before remote
 mutation instead of deriving an original proof from its DEVHUB-32 projection.
-
-### Labels and milestone, and Epic closure over imported children (PAT-331, decisions of 2026-10-22)
-
-- Labels and milestone: no target copies them. `capture_manifest` (`migration.py`) records, for every
-  target and every issue (living or terminal), an exception `labels` when `Issue.labels` is not empty and an
-  exception `milestone` when `Issue.milestone` is not `None`, each reason carrying the source value; an
-  issue without them gets neither, so its digest is unchanged. The Linear source fills both fields
-  (`normalize` in `trackers/linear.py`: `labels` without the type labels, `milestone` by the project's
-  `milestone_ids`). Offline test: `test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_has_them`.
-- Epic closure: `observe_epic_closure_child` (`trackers/devhub.py`) reads the detail of a child; when the
-  server marks it `imported_terminal` (`Issue.import_history`) and its state is `done` or `dropped`, it
-  counts without a new proof. A `done` one reads accepted, its criteria counted as satisfied, with the
-  acceptance source `DevHubTracker.imported_terminal_acceptance_source` (`devhub-imported-terminal`), distinct
-  from `devhub-human-acceptance` and from any receipt; its proof stays in the source tracker. A `dropped`
-  one carries the same source and `write.close_epic` leaves it out of the set that `--accept-dropped` must
-  name (PAT-ADR-0030 still applies to every other abandoned child). The detail read is the only way used to
-  know a child is imported: the Epic subgraph read is not consulted for it. The atomic receipt still binds
-  `{id, version, state}` read at closure time. Per the DEVHUB-127 delivery
-  (relayed, tested on the server, not run by Foundry), the server accepts such children, and a link bumps a
-  child's version; the version is read at closure time, so a snapshot taken before linking is not used. The
-  extension of DHN-49 closes a living Epic over an imported `done` and an imported `dropped` child through
-  `write.close_epic`; not run live yet.
-- Release scope: `_release_issue` reads an imported `done` issue as `unavailable`, with a reference
-  `unavailable_reason` naming the import, never as accepted.
-- Offline tests: `tests/test_devhub_tracker.py` (`test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof`,
-  `test_epic_closure_accepts_imported_terminal_children_without_a_named_closure`,
-  `test_epic_closure_still_names_a_dropped_child_that_was_not_imported`,
-  `test_release_scope_never_reads_an_imported_terminal_issue_as_accepted`).

@@ -131,12 +131,20 @@ def _comments_match(record: dict, actual: Issue) -> bool:
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
     records = []
-    not_copied: dict[str, tuple[list, object]] = {}
+    not_copied: dict[str, tuple[list, object, object, object, object]] = {}
     for item in source.migration_export_issues(source_project):
         issue = item["issue"]
         record = _issue_snapshot(issue, source.name)
-        not_copied[issue.id] = (list(issue.labels or []), issue.milestone)
-        if (issue.normalized_state or issue.state) in _TERMINAL:
+        if item["archived"] and not target.migration_terminal_import_supported:
+            continue  # living-only scope of FOUNDRY-ADR-0026: ``search`` never listed these
+        living = (issue.normalized_state or issue.state) not in _TERMINAL
+        not_copied[issue.id] = (
+            list(issue.labels or []), issue.milestone,
+            issue.pr_url if living else None,
+            item["source_created"] if living else None,
+            item["source_updated"] if living else None,
+        )
+        if not living:
             if not target.migration_terminal_import_supported:
                 continue  # living-only scope of FOUNDRY-ADR-0026 for this target
             # PAT-331: terminal history is imported frozen; ``pending`` names what the
@@ -179,7 +187,7 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         exceptions.update(specific)
         # PAT-ADR-0032: no target copies labels nor milestone; each non-empty source value
         # is a named exception carrying that value (an issue without them gets none).
-        labels, milestone = not_copied[record["id"]]
+        labels, milestone, pr_url, created, updated = not_copied[record["id"]]
         if labels:
             exceptions["labels"] = (
                 "not copied; source value: " + json.dumps(labels, ensure_ascii=False)
@@ -187,6 +195,16 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         if milestone is not None:
             exceptions["milestone"] = (
                 "not copied; source value: " + json.dumps(milestone, ensure_ascii=False)
+            )
+        # PAT-331 review: a living issue's PR link and source dates are carried by no target
+        # (a PR link makes a living DevHub issue a PR-bound one); only terminal records carry them.
+        if pr_url is not None:
+            exceptions["pr_url"] = (
+                "not copied; source value: " + json.dumps(pr_url, ensure_ascii=False)
+            )
+        if created is not None or updated is not None:
+            exceptions["source_dates"] = "not copied; source value: " + json.dumps(
+                {"created": created, "updated": updated}, sort_keys=True,
             )
         if record.get("archived"):
             exceptions["archived"] = "target has no archived state for an issue"

@@ -1826,6 +1826,41 @@ def test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_
     assert not {"labels", "milestone"} & {item["attribute"] for item in second["exceptions"]}
 
 
+def test_manifest_names_pr_url_and_source_dates_of_a_living_issue_as_exceptions():
+    # PAT-331 review: a living record carries neither, so each present value is a named exception
+    source = FakeTransportTracker("youtrack", [
+        Issue("T-1", "x", state="ready", body="body", type="Task",
+              pr_url="https://example.test/pr/1", created=10, updated=20),
+        Issue("T-2", "y", state="ready", body="body", type="Task"),
+    ])
+    for target in (FakeTransportTracker("linear"), _TerminalCapableTracker("devhub")):
+        manifest = capture_manifest(source, Project("T", "a"), target, Project("T", "b"))
+        first, second = manifest["issues"]
+        reasons = {item["attribute"]: item["reason"] for item in first["exceptions"]}
+        assert reasons["pr_url"] == 'not copied; source value: "https://example.test/pr/1"'
+        assert reasons["source_dates"] == (
+            'not copied; source value: {"created": 10, "updated": 20}')
+        assert not {"pr_url", "source_dates"} & {i["attribute"] for i in second["exceptions"]}
+    # named exceptions do not hold the cutover back (as labels and milestone)
+    assert "pending" not in first
+
+
+def test_archived_living_issue_is_excepted_by_a_terminal_target_and_left_out_by_the_others():
+    class Source(FakeTransportTracker):
+        def migration_export_issues(self, project):
+            return [{"issue": copy.deepcopy(i), "archived": True, "source_created": None,
+                     "source_updated": None, "source_completed": None}
+                    for i in self.issues.values()]
+
+    source = Source("linear", [Issue("A-1", "x", state="ready", body="b", type="Task")])
+    left_out = capture_manifest(
+        source, Project("A", "a"), FakeTransportTracker("youtrack"), Project("B", "b"))
+    assert left_out["issues"] == []
+    kept = capture_manifest(
+        source, Project("A", "a"), _TerminalCapableTracker("devhub"), Project("B", "b"))
+    assert [e["attribute"] for e in kept["issues"][0]["exceptions"]] == ["archived"]
+
+
 # --- PAT-331 stage 3: comments of every issue ------------------------------------------
 
 def _comment_node(ident, body="text", created="2026-01-02T03:04:05.678Z", **actors):

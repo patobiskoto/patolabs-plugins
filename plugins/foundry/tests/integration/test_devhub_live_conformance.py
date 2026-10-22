@@ -1434,6 +1434,7 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
         dates = {
             "PAT-1": (1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000, False),
             "PAT-2": (1_700_000_000_500, None, None, True),
+            "PAT-3": (1_700_000_000_100, 1_700_000_000_300, None, False),
         }
 
         def migration_export_issues(self, project):
@@ -1458,7 +1459,8 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
                  pr_url="https://github.com/foundry-live/example/pull/1")
     dropped = Issue("PAT-2", "live dropped issue", state="dropped", body="")
     living = Issue("PAT-3", "live living issue", state="ready", type="Task", priority="P2",
-                   body="- [ ] open\n", links=[Link("depends-on", "outward", "PAT-1")])
+                   body="- [ ] open\n", links=[Link("depends-on", "outward", "PAT-1")],
+                   pr_url="https://github.com/foundry-live/example/pull/3")
     # a living Epic whose two children are imported terminal issues (subtask-of); its own
     # criterion is checked so that only the children's state decides the closure
     # a source export carries both ends of a relation, as DevHub reads it back
@@ -1499,6 +1501,12 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     assert [c["source_ref"] for c in by_id["PAT-1"]["comments"]] == [
         "linear:comment:live-c2", "linear:comment:live-c1"]
     assert [entry["attribute"] for entry in by_id["PAT-2"]["exceptions"]] == ["archived"]
+    # PAT-331 review: the living issue's PR link and source dates are named exceptions
+    living_reasons = {e["attribute"]: e["reason"] for e in by_id["PAT-3"]["exceptions"]}
+    assert living_reasons["pr_url"] == (
+        'not copied; source value: "https://github.com/foundry-live/example/pull/3"')
+    assert living_reasons["source_dates"] == (
+        'not copied; source value: {"created": 1700000000100, "updated": 1700000000300}')
     copy_and_verify(manifest, tracker, project, lambda: None)
     verify_targets(manifest, tracker, project)
     assert ready_for_cutover(manifest)  # no pending item, no unverified record
@@ -1508,6 +1516,8 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
             imported["source_completed"]) == (
         1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000)
     assert imported["pr_url"] == done.pr_url and imported["ac_done"] == 1
+    carried = tracker._issue_raw(by_id["PAT-3"]["target_id"])  # the exceptions are really not sent
+    assert carried["pr_url"] is None and not carried.get("imported_terminal")
     bare = tracker._issue_raw(by_id["PAT-2"]["target_id"])
     assert (bare["state"], bare["source_updated"], bare["source_completed"]) == (
         "dropped", None, None)
