@@ -775,17 +775,30 @@ def _connection(raw, operation: str) -> list[dict]:
     return raw["nodes"]
 
 
-def _relation_link(relation: dict, *, inverse: bool) -> Link:
+def _relation_link(
+    relation: dict, *, inverse: bool, uncaptured: list[dict] | None = None,
+) -> Link | None:
+    """One native relation as a Foundry link.
+
+    A type with no Foundry link (``duplicate``, ``similar``) is refused, except when
+    ``uncaptured`` is given (history export, PAT-331): it is then appended there and skipped.
+    """
     operation = "normalize.inverse-relations" if inverse else "normalize.relations"
     relation_type = relation.get("type")
     if not isinstance(relation_type, str):
         raise LinearTrackerError(operation, None, "invalid_response")
-    if relation_type not in {"blocks", "related"}:
+    if relation_type not in {"blocks", "related"} and uncaptured is None:
         raise LinearTrackerError(operation, None, "unsupported_relation_type")
 
     target = relation.get("issue" if inverse else "relatedIssue")
     if not isinstance(target, dict) or not isinstance(target.get("identifier"), str):
         raise LinearTrackerError(operation, None, "invalid_response")
+    if relation_type not in {"blocks", "related"}:
+        uncaptured.append({
+            "type": relation_type, "direction": "inward" if inverse else "outward",
+            "target": target["identifier"],
+        })
+        return None
     if relation_type == "related":
         return Link("relates", "inward" if inverse else "outward", target["identifier"])
     if inverse:
@@ -5057,6 +5070,7 @@ class LinearTracker(Tracker):
         *,
         observe_lifecycle: bool = False,
         project_epic_closure: bool = True,
+        uncaptured_relations: list[dict] | None = None,
     ) -> Issue:
         project = project or self._project()
         binding = self._binding(project)
@@ -5116,11 +5130,15 @@ class LinearTracker(Tracker):
                 raise LinearTrackerError("normalize", None, "invalid_response")
             links.append(Link("parent-of", "outward", child["identifier"]))
         for relation in _connection(raw.get("relations"), "normalize.relations"):
-            links.append(_relation_link(relation, inverse=False))
+            link = _relation_link(relation, inverse=False, uncaptured=uncaptured_relations)
+            if link is not None:
+                links.append(link)
         for relation in _connection(
             raw.get("inverseRelations"), "normalize.inverse-relations"
         ):
-            links.append(_relation_link(relation, inverse=True))
+            link = _relation_link(relation, inverse=True, uncaptured=uncaptured_relations)
+            if link is not None:
+                links.append(link)
 
         milestone = None
         milestone_raw = raw.get("projectMilestone")
@@ -5381,7 +5399,8 @@ class LinearTracker(Tracker):
         """Every issue of the project for a full-history cutover (PAT-331).
 
         Archived issues are listed (``_ISSUES_HISTORY_QUERY``) and every issue is then read
-        like ``get_issue`` does.  ``source_completed`` is the native ``completedAt`` of a
+        like ``get_issue`` does (``_export_issue``), except that a relation type with no Foundry
+        link goes to the entry's ``uncaptured_links`` instead of failing the export.  ``source_completed`` is the native ``completedAt`` of a
         ``done`` issue and ``canceledAt`` of a ``dropped`` one, ``None`` when Linear has none
         for that state; ``source_created`` and ``source_updated`` are ``Issue.created`` and
         ``Issue.updated``.
@@ -5421,7 +5440,7 @@ class LinearTracker(Tracker):
         exported = []
         for identifier, node in listed.items():
             comments = self._history_comments(identifier, node.get("comments"))
-            issue = self.get_issue(identifier)
+            issue, uncaptured = self._export_issue(identifier)
             state = issue.normalized_state or issue.state
             native = node.get("completedAt") if state == "done" else (
                 node.get("canceledAt") if state == "dropped" else None
@@ -5433,8 +5452,17 @@ class LinearTracker(Tracker):
                 "source_updated": issue.updated,
                 "source_completed": _epoch_ms(native),
                 "comments": comments,
+                "uncaptured_links": uncaptured,
             })
         return exported
+
+    def _export_issue(self, identifier: str) -> tuple[Issue, list[dict]]:
+        """Read one issue like ``get_issue``, its relations without a Foundry type set aside."""
+        uncaptured: list[dict] = []
+        issue = self._to_issue(
+            self._read_raw(identifier), self._project(), uncaptured_relations=uncaptured,
+        )
+        return issue, uncaptured
 
     def _history_comments(self, identifier: str, connection) -> list[dict]:
         """Every comment of one listed issue: the nested page, then the further pages."""

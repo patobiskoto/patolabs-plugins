@@ -44,6 +44,9 @@ class FakeTransportTracker(Tracker):
             raise MigrationError("unqualified fake target")
         return {"kind": f"{self.name}-qualified-test-profile"}
     def search(self, project, query=""): return list(self.issues.values())
+    def migration_export_issues(self, project):
+        # The in-memory issues carry no source comment: this source exports an empty list.
+        return [{**entry, "comments": []} for entry in super().migration_export_issues(project)]
     def get_issue(self, issue_id): return copy.deepcopy(self.issues[issue_id])
     def create_issue(self, *args, **kwargs): raise AssertionError("migration port required")
     def update_fields(self, *args, **kwargs): raise AssertionError
@@ -1801,8 +1804,8 @@ def test_linear_export_lists_archived_issues_and_reads_the_native_completion_dat
         tracker, "_graphql", lambda query, variables, op: seen.append((query, op)) or pages.pop(0))
     states = {"L-1": "done", "L-2": "dropped", "L-3": "ready"}
     monkeypatch.setattr(
-        tracker, "get_issue",
-        lambda ident: Issue(ident, "t", state=states[ident], created=1, updated=2))
+        tracker, "_export_issue",
+        lambda ident: (Issue(ident, "t", state=states[ident], created=1, updated=2), []))
     exported = tracker.migration_export_issues(Project("L", "p"))
     assert "includeArchived: true" in seen[0][0]
     assert [(e["issue"].id, e["archived"], e["source_created"], e["source_updated"])
@@ -1841,8 +1844,9 @@ def test_manifest_names_pr_url_and_source_dates_of_a_living_issue_as_exceptions(
         assert reasons["source_dates"] == (
             'not copied; source value: {"created": 10, "updated": 20}')
         assert not {"pr_url", "source_dates"} & {i["attribute"] for i in second["exceptions"]}
-    # named exceptions do not hold the cutover back (as labels and milestone)
-    assert "pending" not in first
+        # named exceptions do not hold the cutover back (as labels and milestone)
+        copy_and_verify(manifest, target, Project("T", "b"), lambda: None)
+        assert ready_for_cutover(manifest)
 
 
 def test_archived_living_issue_is_excepted_by_a_terminal_target_and_left_out_by_the_others():
@@ -1878,8 +1882,8 @@ def _linear_export(monkeypatch, pages):
         tracker, "_graphql",
         lambda query, variables, op: seen.append((op, variables)) or pages.pop(0))
     monkeypatch.setattr(
-        tracker, "get_issue",
-        lambda ident: Issue(ident, "t", state="done", created=1, updated=2))
+        tracker, "_export_issue",
+        lambda ident: (Issue(ident, "t", state="done", created=1, updated=2), []))
     return tracker, seen
 
 
@@ -2070,3 +2074,84 @@ def test_a_conflicting_comment_already_on_the_target_stops_the_copy():
     target.issue_refs["linear:issue:SRC-2"].comments[0]["text"] = "changed on target"
     with pytest.raises(TrackerConflictError):
         copy_and_verify(manifest, target, project, lambda: None)
+
+
+# --- PAT-331 review round 2: links and comments that no target receives ----------------
+
+def test_links_outside_the_manifest_and_relations_without_a_link_type_are_named_exceptions():
+    class Source(FakeTransportTracker):
+        def migration_export_issues(self, project):
+            exported = super().migration_export_issues(project)
+            exported[0]["uncaptured_links"] = [
+                {"type": "duplicate", "direction": "outward", "target": "X-9"}]
+            return exported
+
+    source = Source("linear", [
+        Issue("A-1", "x", state="ready", body="b", type="Task", links=[
+            Link("relates", "outward", "X-7"), Link("depends-on", "outward", "A-2")]),
+        Issue("A-2", "y", state="ready", body="b", type="Task"),
+    ])
+    for target in (FakeTransportTracker("youtrack"), _CommentCapableTracker("devhub")):
+        project = Project("B", "b")
+        manifest = capture_manifest(source, Project("A", "a"), target, project)
+        first, second = manifest["issues"]
+        reasons = {item["attribute"]: item["reason"] for item in first["exceptions"]}
+        assert json.loads(reasons["links"].removeprefix("not copied; source value: ")) == [
+            {"cause": "relation type without a target equivalent", "direction": "outward",
+             "target": "X-9", "type": "duplicate"},
+            {"cause": "target outside the manifest", "direction": "outward", "target": "X-7",
+             "type": "relates"},
+        ]
+        assert "links" not in {item["attribute"] for item in second["exceptions"]}
+        copy_and_verify(manifest, target, project, lambda: None)
+        verify_targets(manifest, target, project)  # readback still passes
+        assert [(link.type, link.target) for link in target.issues["import-A-1"].links] == [
+            ("depends-on", "import-A-2")]
+        assert ready_for_cutover(manifest)  # a named exception, never pending
+
+
+def test_living_only_target_names_the_links_to_terminal_issues_it_leaves_out():
+    manifest = capture_manifest(
+        _history_source(), Project("SRC", "source"), FakeTransportTracker("linear"),
+        Project("DST", "target"))
+    (record,) = manifest["issues"]
+    assert {item["attribute"]: item["reason"] for item in record["exceptions"]}["links"] == (
+        'not copied; source value: [{"cause": "target outside the manifest", '
+        '"direction": "outward", "target": "SRC-2", "type": "depends-on"}]')
+
+
+@pytest.mark.parametrize("bad", [
+    "duplicate", [{"type": "duplicate", "target": "X"}],
+    [{"type": "duplicate", "direction": "outward", "target": ""}],
+])
+def test_malformed_uncaptured_links_fail_before_any_target_effect(bad):
+    class Source(FakeTransportTracker):
+        def migration_export_issues(self, project):
+            return [{**entry, "uncaptured_links": bad}
+                    for entry in super().migration_export_issues(project)]
+
+    target = FakeTransportTracker("devhub")
+    with pytest.raises(MigrationError, match="liens source non capturés invalides"):
+        capture_manifest(Source("linear", [Issue("A-1", "x", state="ready", body="b")]),
+                         Project("A", "a"), target, Project("B", "b"))
+    assert target.effects == 0
+
+
+def test_a_source_that_exports_no_comments_is_a_named_exception_not_an_empty_copy():
+    class Silent(FakeTransportTracker):
+        migration_export_issues = Tracker.migration_export_issues  # the port default
+
+    source = Silent("youtrack", [Issue("Y-1", "x", state="ready", body="b", type="Task")])
+    assert "comments" not in source.migration_export_issues(Project("Y", "a"))[0]
+    target, project = _CommentCapableTracker("devhub"), Project("B", "b")
+    manifest = capture_manifest(source, Project("Y", "a"), target, project)
+    (record,) = manifest["issues"]
+    assert "comments" not in record and "comment_exceptions" not in record
+    assert record["exceptions"] == [{
+        "attribute": "comments", "reason": "not copied; the source does not export comments"}]
+    copy_and_verify(manifest, target, project, lambda: None)
+    assert ready_for_cutover(manifest)
+    # a target that copies no comments names nothing
+    other = capture_manifest(source, Project("Y", "a"), FakeTransportTracker("linear"), project)
+    assert other["issues"][0]["exceptions"] == []
+

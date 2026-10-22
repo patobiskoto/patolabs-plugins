@@ -735,7 +735,9 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Comments (PAT-331 stage 3, DEVHUB-128, merge `a57ce72`; DevHub reported its production at `a57ce72` on 2026-10-22, not checked here): the
   comments of every captured issue, living or terminal, Foundry lifecycle receipts included (on Linear they
   are comments), are copied one by one, for a target that sets `migration_comments_supported` (`trackers/base.py`, `False` by default; `True` on DevHub only). Contract: the section "Comment import" of the DevHub contract
-  (`TRACKER_API.md`). Source: `migration_export_issues` entries carry `comments` (`trackers/base.py`); Linear
+  (`TRACKER_API.md`). Source: `migration_export_issues` entries carry `comments` (`trackers/base.py`); the port
+  default carries no `comments` key, and `capture_manifest` then records an exception `comments` ("not copied; the
+  source does not export comments") instead of an empty list, which does not keep `ready_for_cutover` false; Linear
   nests them in the history listing (`_ISSUES_HISTORY_QUERY`, `_history_comments`, `_history_comment` in
   `trackers/linear.py`), so the export adds no request per issue and one request per further page for an
   issue with more than `_HISTORY_COMMENTS_PAGE` comments (`_ISSUE_COMMENTS_HISTORY_QUERY`); the listing page
@@ -784,6 +786,9 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Points to watch in the real-corpus rehearsal (PAT-332): a terminal record whose updated or completed date
   precedes its created date is refused by `_preflight_issues` (fail closed) instead of becoming a named
   exception, so one such issue stops the whole copy (deduced from the code, not observed on a real corpus);
+  likewise an issue, living or terminal, whose parent in the manifest is not an `Epic` (or has its `type`
+  excepted), and a cycle of parent or dependency links between issues of the manifest (`_preflight_issues`,
+  deduced from the code, not observed on a real corpus);
   and the history listing nests `comments` without `includeArchived`, so whether Linear returns the comments of
   an archived issue, or archived comments, is unknown.
 - Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
@@ -809,6 +814,21 @@ Offline tests: `tests/test_devhub_tracker.py` (terminal import, readback, prefli
   by themselves keep `ready_for_cutover` false. Offline test:
   `test_manifest_names_pr_url_and_source_dates_of_a_living_issue_as_exceptions`; the live test sets both on
   its living issue (DHN-49, green live, `devhub-requirements.md`, "Live run of PAT-331").
+- Links that no target writes (PAT-331 review): `capture_manifest` records, for every target, an exception `links`
+  whose reason lists, as JSON `{type, direction, target, cause}`, each link of the issue to an issue outside the
+  manifest (cause `target outside the manifest`: the Linear issue read has no project filter on `parent`,
+  `children`, `relations` and `inverseRelations`, `_ISSUE_FIELDS` in `trackers/linear.py`, and a target without
+  terminal import leaves terminal issues out) and each source relation with no Foundry link type (cause
+  `relation type without a target equivalent`, the `uncaptured_links` of `migration_export_issues`,
+  `trackers/base.py`). The Linear history export reads each issue through `_export_issue`, which sets aside a
+  relation of a type other than `blocks` and `related` (`duplicate`, `similar`) there; every other Linear read
+  still fails with `unsupported_relation_type` (`_relation_link`). These links are neither written nor compared
+  (`copy_and_verify`, `verify_targets`), and the exception does not keep `ready_for_cutover` false. Offline tests:
+  `test_links_outside_the_manifest_and_relations_without_a_link_type_are_named_exceptions`,
+  `test_living_only_target_names_the_links_to_terminal_issues_it_leaves_out` (`tests/test_tracker_migration.py`),
+  `test_relation_reads_refuse_unsupported_native_types_without_partial_issue` (`tests/test_linear_tracker.py`).
+  DHN-49 adds a link outside the manifest and a link between two imported terminal issues (a `done` Epic and
+  its `done` child); that extension is green live (`devhub-requirements.md`, "Live run of PAT-331").
 - Labels and milestone: no target copies them. `capture_manifest` (`migration.py`) records, for every
   target and every issue (living or terminal), an exception `labels` when `Issue.labels` is not empty and an
   exception `milestone` when `Issue.milestone` is not `None`, each reason carrying the source value; an

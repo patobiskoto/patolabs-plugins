@@ -1470,6 +1470,15 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
                  body="- [x] epic criterion\n",
                  links=[Link("parent-of", "outward", "PAT-1"),
                         Link("parent-of", "outward", "PAT-2")])
+    # review round 2: a done Epic parent of a done child, both imported terminal (the usual
+    # history), both ends in the corpus; the child also links an issue outside the manifest
+    closed_epic = Issue("PAT-5", "live done epic", state="done", type="Epic", priority="P2",
+                        body="- [x] closed epic criterion\n",
+                        links=[Link("parent-of", "outward", "PAT-6")])
+    closed_child = Issue("PAT-6", "live done child", state="done", type="Task", priority="P3",
+                         body="- [x] closed child criterion\n",
+                         links=[Link("subtask-of", "inward", "PAT-5"),
+                                Link("relates", "outward", "PAT-99")])
     # comments as the Linear export gives them: a lifecycle receipt (the exact multi-line
     # shape of the Linear receipts), a text whose leading and trailing whitespace, line
     # breaks and non-ASCII characters must survive byte for byte, and a living issue's note;
@@ -1492,10 +1501,14 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
         "PAT-3": [{"id": "live-c3", "text": "open note", "author": "Live Writer",
                    "created": 1_700_000_000_200}],
     }
-    source = Source("linear", issues=[done, dropped, living, epic])
+    source = Source("linear", issues=[done, dropped, living, epic, closed_epic, closed_child])
     manifest = capture_manifest(source, Project("T", "source"), tracker, project)
     by_id = {record["id"]: record for record in manifest["issues"]}
-    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3", "PAT-4"}
+    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3", "PAT-4", "PAT-5", "PAT-6"}
+    # the link to an issue outside the manifest is a named exception, never dropped silently
+    assert {e["attribute"]: e["reason"] for e in by_id["PAT-6"]["exceptions"]}["links"] == (
+        'not copied; source value: [{"cause": "target outside the manifest", '
+        '"direction": "outward", "target": "PAT-99", "type": "relates"}]')
     assert by_id["PAT-1"]["pending"] == [] and by_id["PAT-1"]["comment_exceptions"] == []
     # the manifest keeps the source order; DevHub orders by source date on read
     assert [c["source_ref"] for c in by_id["PAT-1"]["comments"]] == [
@@ -1526,6 +1539,12 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     assert _has_link(tracker.get_issue(ids["PAT-3"]), "depends-on", ids["PAT-1"])
     for child in ("PAT-1", "PAT-2"):
         assert _has_link(tracker.get_issue(ids[child]), "subtask-of", ids["PAT-4"])
+    # between two imported terminal issues: written, read back from both ends, nothing else
+    assert {(link.type, link.target) for link in tracker.get_issue(ids["PAT-6"]).links} == {
+        ("subtask-of", ids["PAT-5"])}
+    assert _has_link(tracker.get_issue(ids["PAT-5"]), "parent-of", ids["PAT-6"])
+    assert (tracker._issue_raw(ids["PAT-5"])["state"],
+            tracker._issue_raw(ids["PAT-6"])["state"]) == ("done", "done")
     # the frozen facts still compare exactly after linking (a link bumps versions only)
     verify_targets(manifest, tracker, project)
     assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"

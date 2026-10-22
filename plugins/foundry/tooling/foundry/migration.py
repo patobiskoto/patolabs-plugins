@@ -122,7 +122,7 @@ def _imported_comments(actual: Issue) -> dict[str, dict]:
 def _comments_match(record: dict, actual: Issue) -> bool:
     """Exact readback of the imported comments, as a set keyed by ``source_ref``."""
     if "comments" not in record:
-        return True  # the target carries no comments (living-only scope)
+        return True  # the target copies no comments, or the source exports none (exception)
     return _imported_comments(actual) == {
         item["source_ref"]: item for item in record["comments"]
     }
@@ -131,18 +131,27 @@ def _comments_match(record: dict, actual: Issue) -> bool:
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
     records = []
-    not_copied: dict[str, tuple[list, object, object, object, object]] = {}
+    not_copied: dict[str, tuple[list, object, object, object, object, list, bool]] = {}
     for item in source.migration_export_issues(source_project):
         issue = item["issue"]
         record = _issue_snapshot(issue, source.name)
         if item["archived"] and not target.migration_terminal_import_supported:
             continue  # living-only scope of FOUNDRY-ADR-0026: ``search`` never listed these
         living = (issue.normalized_state or issue.state) not in _TERMINAL
+        uncaptured = item.get("uncaptured_links", [])
+        if not isinstance(uncaptured, list) or any(
+            not isinstance(entry, dict) or set(entry) != {"type", "direction", "target"}
+            or any(not isinstance(value, str) or not value for value in entry.values())
+            for entry in uncaptured
+        ):
+            raise MigrationError(f"liens source non capturés invalides: {record['source_ref']}")
         not_copied[issue.id] = (
             list(issue.labels or []), issue.milestone,
             issue.pr_url if living else None,
             item["source_created"] if living else None,
             item["source_updated"] if living else None,
+            list(uncaptured),
+            target.migration_comments_supported and "comments" not in item,
         )
         if not living:
             if not target.migration_terminal_import_supported:
@@ -161,11 +170,10 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
             ]
         if item["archived"]:
             record["archived"] = True
-        if target.migration_comments_supported:
-            _capture_comments(
-                record, item.get("comments", []), source.name, target, target_project,
-            )
+        if target.migration_comments_supported and "comments" in item:
+            _capture_comments(record, item["comments"], source.name, target, target_project)
         records.append(record)
+    captured_ids = {record["id"] for record in records}
     for record in records:
         exceptions = {
             name: "target capability unavailable"
@@ -187,7 +195,8 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         exceptions.update(specific)
         # PAT-ADR-0032: no target copies labels nor milestone; each non-empty source value
         # is a named exception carrying that value (an issue without them gets none).
-        labels, milestone, pr_url, created, updated = not_copied[record["id"]]
+        (labels, milestone, pr_url, created, updated, uncaptured,
+         comments_not_exported) = not_copied[record["id"]]
         if labels:
             exceptions["labels"] = (
                 "not copied; source value: " + json.dumps(labels, ensure_ascii=False)
@@ -208,6 +217,23 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
             )
         if record.get("archived"):
             exceptions["archived"] = "target has no archived state for an issue"
+        # PAT-331 review: a link to an issue outside the manifest, and a source relation with
+        # no Foundry link type (``uncaptured_links`` of the export), are written by no target.
+        dropped = [
+            {**entry, "cause": "relation type without a target equivalent"}
+            for entry in uncaptured
+        ] + [
+            {"type": link["type"], "direction": link["direction"], "target": link["target"],
+             "cause": "target outside the manifest"}
+            for link in record["links"] if link["target"] not in captured_ids
+        ]
+        if dropped:
+            exceptions["links"] = "not copied; source value: " + json.dumps(
+                sorted(dropped, key=lambda entry: json.dumps(entry, sort_keys=True)),
+                ensure_ascii=False, sort_keys=True,
+            )
+        if comments_not_exported:
+            exceptions["comments"] = "not copied; the source does not export comments"
         record["exceptions"] = [
             {"attribute": name, "reason": exceptions[name]}
             for name in sorted(exceptions)
@@ -371,7 +397,7 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
         for link in record["links"]:
             target_id = ids.get(link["target"])
             if target_id is None:
-                continue  # external target (not an issue of the manifest).
+                continue  # not an issue of the manifest: exception ``links`` (capture_manifest).
             if record["id"] in deferred or link["target"] in deferred:
                 continue  # pending: the target cannot write this link yet.
             target.migration_link_issue(

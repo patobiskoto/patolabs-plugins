@@ -238,13 +238,17 @@ class Tracker(ABC):
         better overrides it.  An entry may also carry ``"comments"``, the complete list of
         the issue's comments as ``{"id", "text", "author", "created"}`` (``author`` text or
         ``None`` when the source cannot name one, ``created`` epoch ms); the default carries
-        none, a provider that exports comments overrides it.
+        no ``comments`` key, so ``capture_manifest`` names an exception ``comments`` toward a
+        target that copies them, and a provider that exports comments overrides it.  An entry
+        may carry ``"uncaptured_links"``: ``{"type", "direction", "target"}`` of each source
+        relation that has no Foundry link type (the default carries none); ``capture_manifest``
+        names them in an exception ``links``.
         """
         return [
             {
                 "issue": issue, "archived": False,
                 "source_created": issue.created, "source_updated": issue.updated,
-                "source_completed": None, "comments": [],
+                "source_completed": None,
             }
             for issue in (self.get_issue(item.id) for item in self.search(project))
         ]
