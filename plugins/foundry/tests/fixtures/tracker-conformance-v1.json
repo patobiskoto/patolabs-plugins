@@ -1516,7 +1516,35 @@
     },
     {
       "id": "devhub-migration-preflight",
-      "test": "test_devhub_tracker.py::test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_write",
+      "test": "test_devhub_tracker.py::test_migration_preflight_qualifies_a_closed_corpus_with_three_reads_and_no_write",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "capabilities"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-preflight-workflow",
+      "test": "test_devhub_tracker.py::test_migration_preflight_refuses_a_value_the_published_workflow_disables",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations",
+        "capabilities"
+      ],
+      "operations": [
+        "cross-tracker-live-work-copy"
+      ]
+    },
+    {
+      "id": "devhub-migration-preflight-proposed-replacement",
+      "test": "test_devhub_tracker.py::test_migration_preflight_refuses_a_proposed_replacement_naming_the_adr_before_any_read",
       "providers": [
         "devhub"
       ],

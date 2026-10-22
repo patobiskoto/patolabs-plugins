@@ -3077,8 +3077,48 @@ def _migration_adr(number, *, status="accepted", supersedes=(), superseded_by=No
     }
 
 
-def _preflight(records, *, project=BOUND):
-    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw()])
+def _workflow_entries(field, values, disabled=()):
+    return [
+        {"id": f"{field}.{index}", "value": value, "label": str(value), "order": index,
+         "enabled": value not in disabled}
+        for index, value in enumerate([None, *values])
+    ]
+
+
+def workflow_raw(version=1, *, disabled=None, statuses_disabled=(), extra_status=None, **overrides):
+    """A ``devhub-workflow.v1`` read; ``disabled`` maps a field to its disabled values."""
+    disabled = disabled or {}
+    states = ("backlog", "ready", "in-progress", "review", "blocked", "done", "dropped")
+    statuses = [
+        {"id": f"status.{state}", "canonical": state, "label": state, "order": index,
+         "enabled": state not in statuses_disabled}
+        for index, state in enumerate(states)
+    ]
+    if extra_status:
+        statuses.append({"id": "status.extra", "canonical": extra_status, "label": "x",
+                         "order": 9, "enabled": True})
+    raw = {
+        "schema_version": "devhub-workflow.v1", "project": "TRAME", "version": version,
+        "project_version": 1, "governance_version": 1, "can_administer": False,
+        "history": [], "history_truncated": False,
+        "settings": {
+            "fields": {
+                "type": _workflow_entries(
+                    "type", ["Epic", "Feature", "Bug", "Task"], disabled.get("type", ())),
+                "estimate": _workflow_entries(
+                    "estimate", [1, 2, 3, 5, 8, 13, 21], disabled.get("estimate", ())),
+                "priority": _workflow_entries(
+                    "priority", ["P0", "P1", "P2", "P3"], disabled.get("priority", ())),
+            },
+            "statuses": statuses, "transitions": [],
+        },
+    }
+    raw.update(overrides)
+    return raw
+
+
+def _preflight(records, *, project=BOUND, workflow=None):
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), workflow or workflow_raw()])
     return tracker, tracker.migration_preflight(project, tuple(records))
 
 
@@ -3088,7 +3128,7 @@ def test_devhub_advertises_every_issue_attribute_of_the_cutover_path():
     assert set(_ISSUE_ATTRIBUTES) == DevHubTracker.migration_supported_attributes
 
 
-def test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_write():
+def test_migration_preflight_qualifies_a_closed_corpus_with_three_reads_and_no_write():
     records = [
         _migration_issue(1, type="Epic", links=[("parent-of", 2)]),
         _migration_issue(2, links=[("subtask-of", 1), ("depends-on", 3), ("relates", 99)]),
@@ -3103,7 +3143,11 @@ def test_migration_preflight_qualifies_a_closed_corpus_with_two_reads_and_no_wri
     }
     assert [call[:2] for call in tracker.calls] == [
         ("GET", "/projects/resolve?repo=github.com%2Facme%2Ftrame"),
-        ("GET", "/governance/projects/TRAME")]
+        ("GET", "/governance/projects/TRAME"),
+        ("GET", "/projects/TRAME")]
+    assert tracker.calls[2][3] == {
+        "response_contract": "devhub-workflow.v1", "api_prefix": "/api/tracker/workflow/v1"}
+    assert all(call[0] == "GET" and call[2] is None for call in tracker.calls)
     # the profile is part of the source digest: a second preflight returns the same value
     assert _preflight(records)[1] == profile
 
@@ -3185,6 +3229,128 @@ def test_migration_preflight_never_turns_an_unknown_adr_relation_into_a_known_on
         ScriptedTracker([]).migration_preflight(BOUND, (record,))
 
 
+def test_migration_preflight_accepts_a_replacement_that_is_not_proposed():
+    for status in ("accepted", "superseded", "deprecated"):
+        records = [
+            _migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+            _migration_adr(2, status=status, supersedes=["FOUNDRY-ADR-0001"],
+                           superseded_by="FOUNDRY-ADR-0003" if status == "superseded" else None),
+        ]
+        if status == "superseded":
+            records.append(_migration_adr(3, supersedes=["FOUNDRY-ADR-0002"]))
+        _preflight(records)
+
+
+def test_migration_preflight_refuses_a_proposed_replacement_naming_the_adr_before_any_read():
+    records = [
+        _migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+        _migration_adr(2, status="proposed", supersedes=["FOUNDRY-ADR-0001"]),
+    ]
+    tracker = ScriptedTracker([])
+    with pytest.raises(TrackerConflictError, match=r"proposed.*linear:adr:1.*FOUNDRY-ADR-0002"):
+        tracker.migration_preflight(BOUND, tuple(records))
+    assert tracker.calls == []
+
+
+def test_migration_preflight_checks_nothing_while_the_workflow_was_never_published():
+    # version 1: the server checks no assignment, even a value its read does not list
+    records = [_migration_issue(1, type="Spike", estimate=4)]
+    _preflight(records, workflow=workflow_raw(1, disabled={"type": ["Task"]}))
+
+
+def test_migration_preflight_accepts_values_a_published_workflow_enables():
+    records = [_migration_issue(1, state="ready"), _migration_issue(2, priority=None, estimate=None)]
+    _preflight(records, workflow=workflow_raw(2, disabled={"priority": ["P0"]}))
+
+
+@pytest.mark.parametrize(("disabled", "issue", "value"), (
+    ({"type": ["Bug"]}, {"type": "Bug"}, "type='Bug'"),
+    ({"priority": ["P1"]}, {"priority": "P1"}, "priority='P1'"),
+    ({"estimate": [8]}, {"estimate": 8}, "estimate='8'"),
+    ({"priority": [None]}, {"priority": None}, "priority='None'"),   # omitted counts as null
+    ({"type": ["Task"]}, {"type": "task"}, "type='task'"),            # strict, case-sensitive
+))
+def test_migration_preflight_refuses_a_value_the_published_workflow_disables(
+        disabled, issue, value):
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), workflow_raw(2, disabled=disabled)])
+    with pytest.raises(TrackerConflictError, match="valeur désactivée par le workflow") as caught:
+        tracker.migration_preflight(BOUND, (_migration_issue(1, **issue),))
+    assert value in str(caught.value) and "linear:issue:PAT-1" in str(caught.value)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def test_migration_preflight_refuses_a_value_the_published_workflow_does_not_list():
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), workflow_raw(2)])
+    with pytest.raises(TrackerConflictError, match="type='Spike'"):
+        tracker.migration_preflight(BOUND, (_migration_issue(1, type="Spike"),))
+
+
+def test_migration_preflight_treats_an_excepted_attribute_as_the_null_the_copy_sends():
+    excepted = _migration_issue(1, priority="Major")
+    excepted["exceptions"] = [{"attribute": "priority", "reason": "target value unavailable: Major"}]
+    _preflight([excepted], workflow=workflow_raw(2))  # null is enabled: accepted
+    tracker = ScriptedTracker(
+        [_BOUND_REMOTE, governance_raw(), workflow_raw(2, disabled={"priority": [None]})])
+    with pytest.raises(TrackerConflictError, match="priority='None'"):
+        tracker.migration_preflight(BOUND, (excepted,))
+
+
+@pytest.mark.parametrize(("kwargs", "issue"), (
+    ({"statuses_disabled": ("backlog",)}, {}),
+    ({"statuses_disabled": ("ready",)}, {"state": "ready"}),
+    ({"extra_status": "backlog"}, {}),  # two statuses for the canonical state: ambiguous
+    ({"statuses_disabled": ("backlog",)}, {"state": "in-progress"}),  # excepted: created in backlog
+))
+def test_migration_preflight_refuses_a_disabled_or_ambiguous_creation_state(kwargs, issue):
+    record = _migration_issue(1, **issue)
+    if issue.get("state") == "in-progress":
+        record["exceptions"] = [{"attribute": "state", "reason": "unavailable"}]
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), workflow_raw(2, **kwargs)])
+    with pytest.raises(TrackerConflictError, match="état de création"):
+        tracker.migration_preflight(BOUND, (record,))
+
+
+@pytest.mark.parametrize("failure", (
+    DevHubTrackerError("GET", "/projects/TRAME", 403, "authority_boundary"),
+    DevHubTrackerError("GET", "/projects/TRAME", 404, "route_unavailable"),
+    DevHubTrackerError("GET", "/projects/TRAME", None, "tracker_unavailable"),
+))
+def test_migration_preflight_refuses_naming_the_cause_when_the_workflow_read_is_refused(failure):
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), failure])
+    with pytest.raises(TrackerConflictError, match="workflow DevHub illisible") as caught:
+        tracker.migration_preflight(BOUND, (_migration_issue(1),))
+    assert failure.code in str(caught.value)
+
+
+def _with_settings(mutate, version=2):
+    raw = workflow_raw(version)
+    mutate(raw)
+    return raw
+
+
+@pytest.mark.parametrize("raw", (
+    None, [], workflow_raw(2, schema_version="devhub-workflow.v2"),
+    workflow_raw(2, project="OTHER"), workflow_raw(0), workflow_raw(True), workflow_raw("2"),
+    workflow_raw(2, settings=None), workflow_raw(2, settings={"fields": {}, "statuses": []}),
+    _with_settings(lambda r: r["settings"]["fields"].pop("estimate")),
+    _with_settings(lambda r: r["settings"]["fields"].__setitem__("type", "Epic")),
+    _with_settings(lambda r: r["settings"]["fields"]["type"].append({"value": "X", "enabled": 1})),
+    _with_settings(lambda r: r["settings"]["fields"]["type"].append({"enabled": True})),
+    _with_settings(lambda r: r["settings"]["fields"]["estimate"].append(
+        {"value": 3.0, "enabled": True})),
+    _with_settings(lambda r: r["settings"]["fields"]["estimate"].append(
+        {"value": True, "enabled": True})),
+    _with_settings(lambda r: r["settings"]["fields"]["type"].append(
+        {"value": 3, "enabled": True})),
+    _with_settings(lambda r: r["settings"]["statuses"].append({"canonical": 1, "enabled": True})),
+    _with_settings(lambda r: r["settings"]["statuses"].append({"canonical": "x"})),
+))
+def test_migration_preflight_refuses_a_malformed_workflow_read(raw):
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), raw])
+    with pytest.raises(TrackerConflictError, match="workflow DevHub illisible.*invalid_response"):
+        tracker.migration_preflight(BOUND, (_migration_issue(1),))
+
+
 def test_migration_attribute_exceptions_name_each_value_devhub_cannot_reproduce():
     tracker = ScriptedTracker([])
     exact = _migration_issue(1, type="Epic", state="ready", priority="P0", estimate=21)
@@ -3235,7 +3401,7 @@ def test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_prof
         Issue("PAT-3", "Closed", state="done", type="Task"),
     ], adrs=[Adr("FOUNDRY-ADR-0001", "ADR 1", "accepted", "body")], adr_relations={
         "FOUNDRY-ADR-0001": {"supersedes": [], "superseded_by": None, "issues": ["PAT-1"]}})
-    target = ScriptedTracker([_BOUND_REMOTE, governance_raw()])
+    target = ScriptedTracker([_BOUND_REMOTE, governance_raw(), workflow_raw()])
     manifest = capture_manifest(source, Project("T", "source"), target, BOUND)
     assert manifest["target"]["migration_profile"]["kind"] == "devhub-source-ref-v1"
     exceptions = {record["id"]: {item["attribute"]: item["reason"]

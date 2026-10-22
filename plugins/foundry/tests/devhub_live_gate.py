@@ -42,6 +42,9 @@ ENV_TOKEN = "DEVHUB_LIVE_TOKEN"
 ENV_PROOF_SECRET = "DEVHUB_LIVE_PROOF_SECRET"
 # Declaration (never detection) that the target runs with local accounts: only DHN-42 reads it.
 ENV_LOCAL_ACCOUNTS = "DEVHUB_LIVE_LOCAL_ACCOUNTS"
+# PAT-328: path of an executable that publishes a workflow on the disposable instance (the
+# service credential cannot: ``publishWorkflow`` requires a human actor).  Only DHN-44 reads it.
+ENV_WORKFLOW_PUBLISH = "DEVHUB_LIVE_WORKFLOW_PUBLISH"
 
 # Names of the variables the everyday adapter reads (``DevHubTracker.__init__``).  The
 # live suite compares against them, never the other way round, so that a production

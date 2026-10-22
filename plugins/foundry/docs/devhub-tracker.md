@@ -552,7 +552,7 @@ DevHub is a target for living work and for an ADR corpus whose relations it can 
 same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
 "source_ref+foreign_id", "creation_states": ["backlog", "ready"]}`. The value is part of the manifest
 digest (`migration._source_view`), which `source_is_unchanged` compares again at activation, so it
-holds no timestamp and no server value. It first decides locally, before its two reads, what the
+holds no timestamp and no server value. It first decides locally, before its three reads, what the
 server would refuse only after the first write (limits from `issueFieldsSchema`, `createIssueSchema`
 and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIssue`,
 `createTrackerLink` of `12ca158:src/tracker/store.ts`, observed in source):
@@ -570,12 +570,32 @@ and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIs
   PAT-ADR-0003 and PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
   the reverse, a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
   more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
-  (body digest, shapes).
+  (body digest, shapes);
+- an ADR whose replacement (`superseded_by`) is `proposed` in the corpus: DevHub refuses it with 409
+  `invalid_transition` (DEVHUB-118, `store.ts:2307-2309` at `cd23304`, relayed by the DevHub agent), and the refusal
+  names the ADR; an `accepted`, `superseded` or `deprecated` replacement is accepted (PAT-328).
 
 Then it calls `verify_project_identity` (one `GET /projects/resolve`, then one `GET /governance/projects/:key`):
 a project that is not the exact key, id and repository, or that is outside Foundry governance
-(`DevHubGovernanceModeError`), is refused. It does not probe whether the server carries DEVHUB-105
-(an older server refuses the first import) nor the workflow catalogue (below); both are unknown at preflight.
+(`DevHubGovernanceModeError`), is refused. Third read (PAT-328): `GET /api/tracker/workflow/v1/projects/:key`
+(`devhub-workflow.v1`, `_read_workflow`, `_preflight_workflow` of `trackers/devhub.py`; the route, its shape and the
+import rule are DevHub's, read in source at `cd23304` and relayed by the DevHub agent, `devhub-requirements.md`
+question 19). The adapter validates the answer fail closed (unknown `schema_version`, other project, malformed
+lists: refusal naming `invalid_response`), and a refused read (403, 404, unavailable) is a refusal naming the cause.
+It then copies the import rule: while `version` is 1 (never published) nothing is checked, because the server checks
+nothing; above 1 every issue of the manifest must have each of `type`, `priority` and `estimate` strictly equal
+(case-sensitive, no trim, `estimate` an integer) to an `enabled` entry of the field, an omitted or excepted
+attribute counting as `null` (which needs an enabled `null` entry), and its creation state (`state` if it is
+`backlog` or `ready`, otherwise `backlog`) must be the one status of that canonical state, enabled. Otherwise the
+preflight refuses, before any write, naming the field, the value and the source coordinate. A disabled value is a
+preflight refusal, not an exception of the manifest (`migration_attribute_exceptions`): an exception records a value
+the target cannot represent and the copy sends `null` instead, whereas the workflow is an administrator's choice
+the cutover must not silently approximate (PAT-ADR-0003, PAT-ADR-0008). It does not probe whether the server carries
+DEVHUB-105 (an older server refuses the first import): unknown at preflight.
+Limits that stay (DevHub agent, `cd23304`): a replay of an already imported `source_ref` with the same content returns
+the existing issue before any check, and a workflow published between this read and the write can change the
+outcome (create has no workflow-version precondition, deduced), so the check is best effort against a concurrent
+publish. The preflight is a gate before the first effect, not a lock.
 
 **`migration_supported_attributes`** is the seven attributes of `migration._ISSUE_ATTRIBUTES`; the four
 field values are sent by `migration_import_issue`, and `parent`, `children` and `dependencies` are the links
@@ -584,13 +604,9 @@ cannot reproduce, so the manifest records it and `copy_and_verify` neither sends
 `priority` outside `P0` to `P3`, `estimate` that is not an integer from 1 to 21, `type` empty or longer than
 80 UTF-16 units, and a `state` other than `backlog` or `ready` (the server creates an issue in those two
 states only, `createTrackerIssue`: an imported `in-progress` or `review` issue is therefore created in
-`backlog`, with the exception recorded). A published project workflow may disable a value
-(`assertWorkflowAssignments`, 409 `value_disabled`, returned as `resource_conflict`): the service credential
-has no read route for that catalogue, so such a value is refused at copy time and is unknown at preflight
-(`devhub-requirements.md`, question 19). This is below what the other providers do: they name every
-unavailable value as an exception in the manifest before the first effect, whereas DevHub refuses a
-workflow-disabled value only at copy time, after partial writes. The live-work copy cell stays
-`supported` with that named gap; question 19 is the follow-up.
+`backlog`, with the exception recorded). A value that a published project workflow disables is not an exception: the preflight above refuses it
+(PAT-328), as the other providers refuse theirs before the first effect. The live-work copy cell is `supported`;
+DHN-44 and DHN-45 (`devhub-requirements.md`) are the live proof, green at `cd23304` ("Live run of PAT-328").
 
 **ADR readback.** `migration_prepare_adr` returns the snapshot with `supersedes` sorted and the issue relations
 sorted by key then number, and `migration_export_adrs` returns the same order, because DevHub does not

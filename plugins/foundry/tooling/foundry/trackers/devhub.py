@@ -49,6 +49,8 @@ _ADR_AUTHORING_CONTRACT = "devhub-adr-authoring.v1"
 _ADR_RELATIONSHIPS_CONTRACT = "devhub-adr-relationships.v1"
 _ADR_DECISIONS_CONTRACT = "devhub-adr-decisions.v1"
 _GOVERNANCE_CONTRACT = "devhub-governance.v1"
+_WORKFLOW_CONTRACT = "devhub-workflow.v1"
+_WORKFLOW_API_PREFIX = "/api/tracker/workflow/v1"
 _GOVERNANCE_MODES = frozenset({"manual", "foundry"})
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_SEARCH_ITEMS = 1_000
@@ -387,10 +389,11 @@ class DevHubTracker(Tracker):
     def _req(
         self, method, path, body=None, *, version=None, proof=None,
         idempotent=False, idempotency_key=None, response_contract=_CONTRACT,
+        api_prefix="/api/tracker/v1",
     ):
         validate_base_url(self.url)
         data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode() if body is not None else None
-        req = urllib.request.Request(f"{self.url}/api/tracker/v1{path}", data=data, method=method)
+        req = urllib.request.Request(f"{self.url}{api_prefix}{path}", data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.token}")
         req.add_header("Accept", "application/json")
         if data is not None:
@@ -1998,9 +2001,9 @@ class DevHubTracker(Tracker):
         ``src/tracker/adr-relationships-contract.ts``, requires ``min(1)``, so an empty type is
         excepted), and a new issue
         is created in ``backlog`` or ``ready`` only (409 ``invalid_transition`` otherwise).  A
-        value outside these is excepted, never approximated.  The project workflow catalogue
-        (a published workflow may disable a value, 409 ``value_disabled``) is not readable by
-        the service credential: such a value is refused by the server at copy time, unknown here.
+        value outside these is excepted, never approximated.  A value the published project
+        workflow disables is not an exception: ``migration_preflight`` reads the workflow and
+        refuses it before any write (PAT-328), so the manifest never records it.
         """
         self._require_project(project)
         attributes = snapshot.get("attributes")
@@ -2031,17 +2034,27 @@ class DevHubTracker(Tracker):
     ) -> dict:
         """Qualify a DevHub target before the first effect (PAT-324).
 
-        No request writes anything.  Two reads (``verify_project_identity``: ``GET
+        No request writes anything.  Three reads: two (``verify_project_identity``: ``GET
         /projects/resolve`` then ``GET /governance/projects/:key``) prove the key, id and
         canonical repository of the target and refuse a project outside Foundry governance
-        (``DevHubGovernanceModeError``).  Everything else is decided locally on
+        (``DevHubGovernanceModeError``); the third (``GET /api/tracker/workflow/v1/projects/:key``,
+        ``devhub-workflow.v1``, ``_read_workflow``) gives the published workflow, and every
+        ``type``, ``priority`` and ``estimate`` value, and every creation state, that the first
+        import would refuse as disabled is refused here, naming it (PAT-328); a refused or
+        malformed workflow read is a refusal naming the cause.  The rule copies
+        ``assertWorkflowAssignments`` and ``createTrackerIssue`` of ``cd23304`` (observed in
+        source): nothing is checked while the workflow ``version`` is 1 (never published),
+        otherwise an omitted value counts as ``null`` and must equal an enabled entry.  It is
+        best effort: a publish between this read and the write, or a replay of an already
+        imported ``source_ref``, can change the server's answer (no workflow-version
+        precondition on create).  Everything else is decided locally on
         the closed manifest, because ``migration_import_issue`` and ``migration_import_adrs``
         run only after the issues are written: the source coordinates (valid and unique), the
         issue texts, the living graph (every parent an exact ``Epic`` with at most one parent,
         no hierarchy or dependency cycle: the server refuses the others on the link) and the
-        ADR corpus (status, relations that DevHub can record, reciprocal supersession).  A
-        route missing on an older server and a disabled workflow value are not probed
-        (unknown); the first copy request would refuse them.
+        ADR corpus (status, relations that DevHub can record, reciprocal supersession, a
+        replacement that is not ``proposed``).  A route missing on an older server (DEVHUB-105)
+        is not probed (unknown); the first copy request would refuse it.
         """
         project = self._require_project(project)
         refs = [record["source_ref"] for record in records]
@@ -2060,12 +2073,86 @@ class DevHubTracker(Tracker):
         self._preflight_adrs(project, adrs)
         if not self.verify_project_identity(project):
             raise TrackerConflictError("profil migration DevHub hors projet")
+        self._preflight_workflow(project, issues)
         return {
             "kind": "devhub-source-ref-v1",
             "issue_coordinate": "source_ref",
             "adr_coordinate": "source_ref+foreign_id",
             "creation_states": list(_IMPORT_CREATION_STATES),
         }
+
+    def _read_workflow(self, project: Project) -> tuple[int, dict, list]:
+        """Read the published workflow (``GET /api/tracker/workflow/v1/projects/:key``).
+
+        Returns ``(version, enabled values by field, statuses)``; any shape the import rule
+        cannot rely on is ``invalid_response`` (fail closed).  ``version == 1`` means never
+        published (observed in source at ``cd23304``: ``workflowRevision`` default).
+        """
+        path = f"/projects/{urllib.parse.quote(project.key, safe='')}"
+        raw = self._req("GET", path, response_contract=_WORKFLOW_CONTRACT,
+                        api_prefix=_WORKFLOW_API_PREFIX)
+        invalid = DevHubTrackerError("GET", "/workflow/projects", None, "invalid_response")
+        if (not isinstance(raw, dict) or raw.get("schema_version") != _WORKFLOW_CONTRACT
+                or raw.get("project") != project.key):
+            raise invalid
+        version, settings = raw.get("version"), raw.get("settings")
+        if type(version) is not int or version < 1 or not isinstance(settings, dict):
+            raise invalid
+        fields, statuses = settings.get("fields"), settings.get("statuses")
+        if not isinstance(fields, dict) or not isinstance(statuses, list):
+            raise invalid
+        enabled: dict[str, list] = {}
+        for name in ("type", "estimate", "priority"):
+            entries = fields.get(name)
+            if not isinstance(entries, list):
+                raise invalid
+            enabled[name] = []
+            for entry in entries:
+                if (not isinstance(entry, dict) or type(entry.get("enabled")) is not bool
+                        or "value" not in entry
+                        or not (entry["value"] is None or type(entry["value"]) is (
+                            int if name == "estimate" else str))):
+                    raise invalid
+                if entry["enabled"]:
+                    enabled[name].append(entry["value"])
+        for status in statuses:
+            if (not isinstance(status, dict) or type(status.get("enabled")) is not bool
+                    or not isinstance(status.get("canonical"), str)):
+                raise invalid
+        return version, enabled, statuses
+
+    def _preflight_workflow(self, project: Project, issues: list[dict]) -> None:
+        """Refuse a value or creation state the published workflow disables (PAT-328).
+
+        Mirrors ``assertWorkflowAssignments`` (creating) and the initial-status check of
+        ``createTrackerIssue`` at ``cd23304``: the match is strict (case, type), an omitted
+        or excepted attribute counts as ``null``, and an unpublished workflow
+        (``version`` 1) checks nothing.
+        """
+        try:
+            version, enabled, statuses = self._read_workflow(project)
+        except DevHubTrackerError as error:
+            raise TrackerConflictError(
+                f"workflow DevHub illisible, valeurs désactivées non vérifiables: {error}"
+            ) from None
+        if version == 1:
+            return
+        for record in issues:
+            excepted = {item["attribute"] for item in record.get("exceptions", [])}
+            attributes = record["attributes"]
+            for name in ("type", "priority", "estimate"):
+                value = None if name in excepted else attributes.get(name)
+                if not any(type(item) is type(value) and item == value for item in enabled[name]):
+                    raise TrackerConflictError(
+                        f"valeur désactivée par le workflow DevHub: {name}="
+                        f"{str(value)[:40]!r} ({record['source_ref']})")
+            state = None if "state" in excepted else attributes.get("state")
+            state = state if state in _IMPORT_CREATION_STATES else "backlog"
+            matches = [item for item in statuses if item["canonical"] == state]
+            if len(matches) != 1 or not matches[0]["enabled"]:
+                raise TrackerConflictError(
+                    f"état de création désactivé ou ambigu dans le workflow DevHub: {state} "
+                    f"({record['source_ref']})")
 
     def _preflight_issues(self, issues: list[dict]) -> None:
         by_id = {record["id"]: record for record in issues}
@@ -2134,6 +2221,12 @@ class DevHubTracker(Tracker):
                 raise TrackerConflictError(f"ADR de remplacement hors corpus: {ref}")
             if (record["status"] == "superseded") != (replacement is not None):
                 raise TrackerConflictError(f"supersession ADR sans lien réciproque: {ref}")
+            if replacement is not None and by_id[replacement]["status"] == "proposed":
+                # DevHub refuses the import with 409 invalid_transition (``cd23304``, PAT-328);
+                # a replacement that is accepted, superseded or deprecated is taken.
+                raise TrackerConflictError(
+                    f"ADR de remplacement proposed refusée par DevHub: {ref} "
+                    f"(remplaçant {replacement})")
             expected = sorted(
                 other["id"] for other in adrs if other["relations"]["superseded_by"] == record["id"])
             if sorted(relations["supersedes"]) != expected:
