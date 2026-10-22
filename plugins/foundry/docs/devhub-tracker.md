@@ -722,9 +722,20 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Preflight: dates that the route refuses (updated or completed before created, negative, not an integer)
   and a `pr_url` over 500 units are refused before any write (`_preflight_issues`); the workflow status of
   `done` or `dropped` is checked like a creation state (`_preflight_workflow`).
-- Pending, never approximated: `migration_pending_terminal_items` names the links (DEVHUB-127) and the
-  comments with their lifecycle receipts (DEVHUB-128) as pending on every terminal record. Links with an
-  end on a record whose links are pending are neither written nor compared, and
+- Links (PAT-331 stage 2, DEVHUB-127, merge `bd282fc`, not in production at the time of writing): the links
+  of a terminal record are copied, replayed and compared like a living issue's, through
+  `migration_link_issue` (same pre-read of the source links, so a replay posts nothing; versions are sent as for
+  a living link) and the `copy_and_verify` / `verify_targets` link loops of `migration.py`. A link bumps the
+  version of both ends and nothing else, so the readback does not compare versions and the frozen facts still
+  compare exactly (`_terminal_matches`). The server's refusal of an existing edge under a new idempotency key
+  is not handled specially: the pre-read makes it unreachable in a sequential run (deduced, not run). Offline
+  tests: `test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions`
+  (`tests/test_devhub_tracker.py`), `test_terminal_copy_links_terminal_records_and_is_not_ready_while_comments_are_pending`
+  (`tests/test_tracker_migration.py`). Not run live (DHN-49 extension).
+- Pending, never approximated: `migration_pending_terminal_items` names the comments with their lifecycle
+  receipts (DEVHUB-128) as pending on every terminal record. The generic mechanism of `migration.py` is
+  unchanged: a target that names `links` there still has them neither written nor compared (test
+  `test_links_of_terminal_records_stay_unwritten_while_the_target_names_them_pending`).
   `migration.ready_for_cutover` is false while any record has a pending item, so `activate` is refused.
   An imported receipt is never a new review or merge proof (PAT-ADR-0032).
 - Not changed: Epic closure and release-scope reads over an imported terminal child; whether DevHub's
@@ -999,8 +1010,11 @@ mutation instead of deriving an original proof from its DEVHUB-32 projection.
   one carries the same source and `write.close_epic` leaves it out of the set that `--accept-dropped` must
   name (PAT-ADR-0030 still applies to every other abandoned child). The detail read is the only way used to
   know a child is imported: the Epic subgraph read is not consulted for it. The atomic receipt still binds
-  `{id, version, state}` read at closure time. Deduced from the DevHub store, not run: the server accepts
-  such children, and importing links bumps a child's version. Not run live: it waits for DEVHUB-127.
+  `{id, version, state}` read at closure time. Per the DEVHUB-127 delivery
+  (relayed, tested on the server, not run by Foundry), the server accepts such children, and a link bumps a
+  child's version; the version is read at closure time, so a snapshot taken before linking is not used. The
+  extension of DHN-49 closes a living Epic over an imported `done` and an imported `dropped` child through
+  `write.close_epic`; not run live yet.
 - Release scope: `_release_issue` reads an imported `done` issue as `unavailable`, with a reference
   `unavailable_reason` naming the import, never as accepted.
 - Offline tests: `tests/test_devhub_tracker.py` (`test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof`,

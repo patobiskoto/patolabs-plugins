@@ -1665,9 +1665,9 @@ def test_github_adr_migration_uses_explicit_target_and_incomplete_graph_mode(
 # --- PAT-331 stage 1: terminal issues (history import) ---------------------------------
 
 class _TerminalCapableTracker(FakeTransportTracker):
-    """Target that imports terminal records frozen and cannot write their links yet."""
+    """Target that imports terminal records frozen and links them; comments stay pending."""
     migration_terminal_import_supported = True
-    migration_pending_terminal_items = {"links": "later", "comments": "later"}
+    migration_pending_terminal_items = {"comments": "later"}
 
     def migration_import_issue(self, project, snapshot, *, source_ref):
         existing = self.issue_refs.get(source_ref)
@@ -1710,8 +1710,13 @@ def _history_source():
     ])
 
 
-def _terminal_manifest():
-    target, project = _TerminalCapableTracker("devhub"), Project("DST", "target")
+class _LinksPendingTracker(_TerminalCapableTracker):
+    """Target that cannot write the links of a terminal record (generic pending mechanism)."""
+    migration_pending_terminal_items = {"links": "later", "comments": "later"}
+
+
+def _terminal_manifest(tracker_class=_TerminalCapableTracker):
+    target, project = tracker_class("devhub"), Project("DST", "target")
     manifest = capture_manifest(_history_source(), Project("SRC", "source"), target, project)
     return manifest, target, project
 
@@ -1725,7 +1730,7 @@ def test_manifest_covers_terminal_and_archived_issues_with_named_pending_items()
         "pr_url": "https://example.test/pr/2",
         "source_created": 10, "source_updated": 30, "source_completed": 20,
     }
-    assert [e["item"] for e in by_id["SRC-2"]["pending"]] == ["comments", "links"]
+    assert [e["item"] for e in by_id["SRC-2"]["pending"]] == ["comments"]
     assert by_id["SRC-3"]["archived"] is True
     assert by_id["SRC-3"]["exceptions"] == [
         {"attribute": "archived", "reason": "target has no archived state for an issue"}]
@@ -1739,18 +1744,28 @@ def test_terminal_issues_are_left_out_for_a_target_without_terminal_import():
     assert [item["id"] for item in manifest["issues"]] == ["SRC-1"]
 
 
-def test_terminal_copy_is_exact_idempotent_and_not_ready_while_items_are_pending():
+def test_terminal_copy_links_terminal_records_and_is_not_ready_while_comments_are_pending():
     manifest, target, project = _terminal_manifest()
     copy_and_verify(manifest, target, project, lambda: None)
     verify_targets(manifest, target, project)
     effects = target.effects
     copy_and_verify(manifest, target, project, lambda: None)
     assert target.effects == effects
-    assert target.issues["import-SRC-1"].links == []  # link to a terminal issue: pending
+    # PAT-331 stage 2: the link of a living issue to a terminal one is written and read back
+    assert ("depends-on", "import-SRC-2") in {
+        (link.type, link.target) for link in target.issues["import-SRC-1"].links}
     assert not ready_for_cutover(manifest)
     for record in manifest["issues"]:
         record.pop("pending", None)
     assert ready_for_cutover(manifest)
+
+
+def test_links_of_terminal_records_stay_unwritten_while_the_target_names_them_pending():
+    manifest, target, project = _terminal_manifest(_LinksPendingTracker)
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    assert target.issues["import-SRC-1"].links == []
+    assert not ready_for_cutover(manifest)
 
 
 @pytest.mark.parametrize("change", [

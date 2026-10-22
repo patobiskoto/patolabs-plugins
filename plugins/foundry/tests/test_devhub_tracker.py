@@ -2286,6 +2286,23 @@ def test_migration_link_issue_posts_one_link_then_replays_without_write(monkeypa
     assert [call[0] for call in replay.calls] == ["GET"]
 
 
+def test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions(monkeypatch):
+    # PAT-331 stage 2 (DEVHUB-127): same wire as a living link; only comments stay pending
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    assert set(DevHubTracker.migration_pending_terminal_items) == {"comments"}
+    tracker = ScriptedTracker([terminal_raw(version=2), issue_raw(id="TRAME-2", version=6), {"ok": True}])
+    tracker.migration_link_issue(PROJECT, "TRAME-7", "subtask-of", "TRAME-2")
+    method, path, body, kwargs = tracker.calls[-1]
+    assert (method, path) == ("POST", "/issues/TRAME-7/links")
+    assert body == {"type": "subtask-of", "target": "TRAME-2", "target_version": 6}
+    assert kwargs["version"] == 2
+    linked = terminal_raw(version=3, links=[
+        {"type": "subtask-of", "direction": "outward", "target": "TRAME-2"}])
+    replay = ScriptedTracker([linked])
+    replay.migration_link_issue(PROJECT, "TRAME-7", "subtask-of", "TRAME-2")
+    assert [call[0] for call in replay.calls] == ["GET"]
+
+
 def test_migration_link_issue_sees_the_inverse_stored_link_as_present(monkeypatch):
     # The migration links both ends of a relation; the second call must not post.
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})

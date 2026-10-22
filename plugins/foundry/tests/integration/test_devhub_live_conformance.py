@@ -1415,10 +1415,12 @@ def test_dhn_42_service_credential_can_create_and_use_its_project_under_local_ac
 
 
 @need("DHN-49")
-def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite):
+def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite, monkeypatch):
     # PAT-331 stage 1 (DEVHUB-126, merge defda07): done and dropped issues are imported by
-    # ``POST /projects/:key/issues/import`` in their own project.  Their links (DEVHUB-127)
-    # and comments (DEVHUB-128) are pending items of the manifest, not written here.
+    # ``POST /projects/:key/issues/import`` in their own project.  Stage 2 (DEVHUB-127, merge
+    # bd282fc): their links are copied and read back like a living issue's, and a living Epic
+    # closes over the imported children.  Their comments (DEVHUB-128) are a pending item of
+    # the manifest, not written here.
     import copy as copy_module
 
     from foundry.migration import (
@@ -1455,15 +1457,24 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite)
     dropped = Issue("PAT-2", "live dropped issue", state="dropped", body="")
     living = Issue("PAT-3", "live living issue", state="ready", type="Task", priority="P2",
                    body="- [ ] open\n", links=[Link("depends-on", "outward", "PAT-1")])
-    source = Source("linear", issues=[done, dropped, living])
+    # a living Epic whose two children are imported terminal issues (subtask-of); its own
+    # criterion is checked so that only the children's state decides the closure
+    # a source export carries both ends of a relation, as DevHub reads it back
+    done.links = [Link("subtask-of", "inward", "PAT-4"), Link("blocks", "inward", "PAT-3")]
+    dropped.links = [Link("subtask-of", "inward", "PAT-4")]
+    epic = Issue("PAT-4", "live living epic", state="backlog", type="Epic", priority="P2",
+                 body="- [x] epic criterion\n",
+                 links=[Link("parent-of", "outward", "PAT-1"),
+                        Link("parent-of", "outward", "PAT-2")])
+    source = Source("linear", issues=[done, dropped, living, epic])
     manifest = capture_manifest(source, Project("T", "source"), tracker, project)
     by_id = {record["id"]: record for record in manifest["issues"]}
-    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3"}
-    assert [entry["item"] for entry in by_id["PAT-1"]["pending"]] == ["comments", "links"]
+    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3", "PAT-4"}
+    assert [entry["item"] for entry in by_id["PAT-1"]["pending"]] == ["comments"]
     assert [entry["attribute"] for entry in by_id["PAT-2"]["exceptions"]] == ["archived"]
     copy_and_verify(manifest, tracker, project, lambda: None)
     verify_targets(manifest, tracker, project)
-    assert not ready_for_cutover(manifest)  # pending links and comments: no cutover yet
+    assert not ready_for_cutover(manifest)  # pending comments: no cutover yet
     imported = tracker._issue_raw(by_id["PAT-1"]["target_id"])
     assert imported["imported_terminal"] is True and imported["state"] == "done"
     assert (imported["source_created"], imported["source_updated"],
@@ -1473,8 +1484,14 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite)
     bare = tracker._issue_raw(by_id["PAT-2"]["target_id"])
     assert (bare["state"], bare["source_updated"], bare["source_completed"]) == (
         "dropped", None, None)
-    # the link to a terminal issue is pending: the living issue carries none yet
-    assert tracker.get_issue(by_id["PAT-3"]["target_id"]).links == []
+    # links of terminal issues are written and read back from the source end
+    ids = {key: record["target_id"] for key, record in by_id.items()}
+    assert _has_link(tracker.get_issue(ids["PAT-3"]), "depends-on", ids["PAT-1"])
+    for child in ("PAT-1", "PAT-2"):
+        assert _has_link(tracker.get_issue(ids[child]), "subtask-of", ids["PAT-4"])
+    # the frozen facts still compare exactly after linking (a link bumps versions only)
+    verify_targets(manifest, tracker, project)
+    assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"
     # an exact replay converges; a divergent replay fails closed; the issue is frozen
     before = len(tracker.search(project))
     replay = copy_module.deepcopy(manifest)
@@ -1487,3 +1504,11 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite)
     with pytest.raises(DevHubTrackerError) as frozen:
         tracker.update_fields(by_id["PAT-1"]["target_id"], {"Priority": "P3"}, project)
     assert frozen.value.status == 409 and frozen.value.code == "imported_issue_frozen"
+    # PAT-331 stage 2: the real closure path (`write.close_epic`, as `issue close-epic` runs it),
+    # with the tracker and the project injected so no registry is read or written.  Both
+    # imported children count, and no dropped child is named.
+    monkeypatch.setattr(write, "mutation_project", lambda _tracker: project)
+    outcome = write.close_epic(tracker, ids["PAT-4"])
+    assert {(child.id, child.state) for child in outcome.receipt.children} == {
+        (ids["PAT-1"], "done"), (ids["PAT-2"], "dropped")}
+    assert tracker.get_issue(ids["PAT-4"]).state == "done"

@@ -376,12 +376,12 @@ class DevHubTracker(Tracker):
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
     # PAT-331: terminal issues are imported by ``POST /projects/:key/issues/import``
-    # (DEVHUB-126).  Their links and their comments / lifecycle receipts are not written yet:
-    # the manifest names them as pending and ``migration.ready_for_cutover`` refuses until
-    # this map is empty (PAT-331 stages 2 and 3).
+    # (DEVHUB-126) and linked by ``migration_link_issue`` like a living issue (DEVHUB-127,
+    # PAT-331 stage 2).  Their comments / lifecycle receipts are not written yet: the manifest
+    # names them as pending and ``migration.ready_for_cutover`` refuses until this map is
+    # empty (PAT-331 stage 3).
     migration_terminal_import_supported = True
     migration_pending_terminal_items = {
-        "links": "target links of a terminal issue not available yet (DEVHUB-127)",
         "comments": "target comments and lifecycle receipts not available yet (DEVHUB-128)",
     }
 
