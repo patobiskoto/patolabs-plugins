@@ -655,6 +655,60 @@ def test_dhn_26_non_code_issue_is_accepted_by_a_human_decision_without_a_pr(suit
         suite.tracker.accept_issue(issue.id, other, project=suite.project)
 
 
+@need("DHN-48")
+def test_dhn_48_the_issue_accept_command_and_its_status_run_against_the_live_adapter(
+    suite, tmp_path, monkeypatch, capsys,
+):
+    # PAT-330 / PAT-ADR-0033: the `issue accept` command path (flag parsing, local
+    # validation, `write.accept_issue`, the adapter, the printed result) and its read-only
+    # `--status`, against the live adapter; DHN-26 covers the port operation alone.  The
+    # tracker and the project binding are injected, so no registry is read or written.
+    import foundry
+    from foundry import issue as issue_cli
+
+    tracker = suite.tracker
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: tracker)
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: suite.project)
+
+    body = "- [ ] decided through the command"
+    issue = _create(suite, _unique("live accept command"), body)
+    cited = _create(suite, _unique("live accept evidence"), "")
+    decision = _human_decision(issue.id, body, cited.id)
+    path = tmp_path / "decision.json"
+    path.write_text(json.dumps(decision))
+    accept = ["--human-verdict=accepted", f"--decision-file={path}"]
+
+    issue_cli.accept(issue.id, flags=["--status"])
+    assert f"aucune acceptation humaine · {issue.id}" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="verdict humain explicite"):
+        issue_cli.accept(issue.id, flags=[f"--decision-file={path}"])
+    assert tracker.get_issue(issue.id).state == "backlog"  # refused before any write
+
+    issue_cli.accept(issue.id, flags=accept)
+    assert f"{issue.id} → done · acceptation humaine · devhub-human-acceptance" in (
+        capsys.readouterr().out)
+    (receipt,) = tracker.read_proof_receipts(issue.id, project=suite.project)
+    assert receipt["action"] == "human_acceptance" and receipt["decision"] == decision
+    issue_cli.accept(issue.id, flags=["--status"])
+    assert (f"accepté · {issue.id} · décision {receipt['decision_digest']} · done aligné"
+            in capsys.readouterr().out)
+
+    # the read used by Epic closure counts the criteria as satisfied (PAT-ADR-0025: closure
+    # reads the decision as acceptance); the source is set only when the server did not
+    # check the boxes itself, so only the counts are asserted
+    child = tracker.observe_epic_closure_child(issue.id)
+    assert (child.state, child.ac_done, child.ac_total) == ("done", 1, 1)
+
+    # an exact replay converges without a second receipt; another decision is refused
+    issue_cli.accept(issue.id, flags=accept)
+    capsys.readouterr()
+    assert len(tracker.read_proof_receipts(issue.id, project=suite.project)) == 1
+    path.write_text(json.dumps({**decision, "decided_on": "2026-10-21"}))
+    with pytest.raises(SystemExit, match="Acceptation interrompue ou refusée"):
+        issue_cli.accept(issue.id, flags=accept)
+    assert len(tracker.read_proof_receipts(issue.id, project=suite.project)) == 1
+
+
 @need("DHN-27")
 def test_dhn_27_started_issue_can_be_abandoned(suite):
     issue = _create(suite, _unique("live abandon"), "")

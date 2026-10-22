@@ -569,8 +569,8 @@
           "evidence": "human_acceptance_supported is False (base.py); write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read and Tracker.accept_issue refuses (PAT-206, PAT-ADR-0025)"
         },
         "devhub": {
-          "status": "refused",
-          "evidence": "human_acceptance_supported is False for DevHub (base.py; devhub.py comment): write.validate_acceptance_request raises TrackerCapabilityUnavailableError before any read, so issue accept stays Linear-only (PAT-ADR-0025). The port operation accept_issue exists (PAT-318, DHN-26 live) but no command enables it"
+          "status": "supported",
+          "evidence": "human_acceptance_supported = True, human_acceptance_source = devhub-human-acceptance and human_acceptance_predecessors = acceptance_decision.FROM_STATES (devhub.py, PAT-330, PAT-ADR-0033); write.validate_acceptance_request refuses locally before any read, as for Linear, and accept_issue (devhub.py, PAT-318) reads the issue and the receipts, refuses an Epic, an issue with children, zero criteria, a PR, any PR receipt, a state other than the decision's from_state, any body or criteria drift and any invalid cited evidence, then posts POST /issues/:id/human-acceptance (one server transaction: done, version + 1, typed human_acceptance receipt) and reads back done and one receipt whose decision recomputes the digest. observe_human_acceptance backs issue accept --status; observe_epic_closure_child (one receipt read, only for a done child with unchecked criteria) lets the atomic Epic closure count a child accepted by decision, and read_release_scope reads it accepted with acceptance_decision_digest. Exact replay converges without a second POST, a different decision is refused, nothing is retried. Offline: test_devhub_tracker.py; live: DHN-26 (port) green, DHN-48 (command and --status) green at 3f0cf4b (devhub-requirements.md)"
         }
       }
     },

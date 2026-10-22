@@ -175,8 +175,10 @@ class Tracker(ABC):
     guarded_backlog_return_supported: bool = False
     backlog_return_predecessors: frozenset[str] = frozenset()
     # PAT-206 / PAT-ADR-0025: acceptance of a non-code issue by an explicit human
-    # decision, without a PR; only Linear declares it, with the native states it admits.
+    # decision, without a PR; Linear and, since PAT-330 (PAT-ADR-0033), DevHub declare it,
+    # with the native states they admit and the `acceptance_source` their receipt carries.
     human_acceptance_supported: bool = False
+    human_acceptance_source: str | None = None
     human_acceptance_predecessors: frozenset[str] = frozenset()
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
@@ -295,6 +297,15 @@ class Tracker(ABC):
         normalized disagreement without treating it as a successful transition.
         """
         return self.get_issue(issue_id)
+
+    def observe_human_acceptance(self, issue_id: str) -> Issue:
+        """Read-only observation behind `issue accept --status` (PAT-330).
+
+        A provider that declares ``human_acceptance_supported`` returns the issue with
+        ``acceptance_source == human_acceptance_source`` and the decision digest in
+        ``acceptance_coordinates`` when a human-acceptance receipt exists.
+        """
+        return self.observe_issue(issue_id)
 
     def recover_done_projection(
         self, issue_id: str, *, pr_url: str, head_sha: str, base_sha: str,
