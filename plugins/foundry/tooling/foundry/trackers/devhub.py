@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import copy
+import dataclasses
 import hashlib
 import hmac
 import ipaddress
@@ -16,6 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from foundry import acceptance_decision as _acceptance_decision
 from foundry import config, registry
 from foundry.models import (
     AC_OVERRIDE_REASON,
@@ -350,10 +352,14 @@ class DevHubTracker(Tracker):
     append_only_lifecycle_supported = True
     # PAT-318 / DHN-25: `project_acceptance_override` appends the typed
     # `acceptance_override` receipt through the DEVHUB-106 route (announced by DevHub on
-    # 2026-10-20, merged as `f347f38`) before the merge.  `human_acceptance_supported` stays
-    # `False`: `issue accept` and `--status` are Linear-only (PAT-ADR-0025) and read
-    # `linear-human-acceptance`; `accept_issue` below is the port-level operation.
+    # 2026-10-20, merged as `f347f38`) before the merge.
     acceptance_override_projection_supported = True
+    # PAT-330 / PAT-ADR-0033: `issue accept` and `--status` run on DevHub with the
+    # PAT-ADR-0025 conditions; `accept_issue` is the port operation, the typed
+    # `human_acceptance` receipt the proof, `observe_human_acceptance` the status read.
+    human_acceptance_supported = True
+    human_acceptance_source = "devhub-human-acceptance"
+    human_acceptance_predecessors = _acceptance_decision.FROM_STATES
     # PAT-324: DevHub can be the target of a selective cutover (FOUNDRY-ADR-0026).  The four
     # field attributes are sent by ``migration_import_issue`` (values it cannot reproduce are
     # named by ``migration_attribute_exceptions``); the three graph attributes are written by
@@ -1507,7 +1513,9 @@ class DevHubTracker(Tracker):
         validation, then a fresh read and every refusal, then the cited-evidence check,
         then one POST (done, version + 1 and the receipt in one server transaction), then
         a read-back that recomputes the digest.  An exact replay converges without a
-        second POST; a different decision is refused.  No automatic retry.
+        second POST while the issue is ``done`` and its one decision receipt still matches
+        the body (``_valid_human_decision``); a different decision is refused.  No
+        automatic retry.
         """
         from foundry import acceptance_decision as decisions
 
@@ -1527,9 +1535,12 @@ class DevHubTracker(Tracker):
         if recorded:
             if recorded[0]["decision_digest"] != digest:
                 refuse("a different decision is already recorded for this issue")
+            if not isinstance(self._valid_human_decision(issue, receipts), dict):
+                refuse("the recorded decision sits next to another receipt, or the body "
+                       "or criteria changed after it")
             if issue.state != "done" or recorded[0]["decision"] != decision:
                 raise TrackerConflictError("DevHub acceptance read-back divergent")
-            return issue
+            return self._with_human_acceptance(issue, digest, raw["state"])
         if raw.get("state") != decision["from_state"]:
             refuse(f"native state is {raw.get('state')}, the decision was made from "
                    f"{decision['from_state']}")
@@ -1573,7 +1584,79 @@ class DevHubTracker(Tracker):
         if (fresh.state != "done" or len(after) != 1
                 or after[0]["decision_digest"] != digest or after[0]["decision"] != decision):
             raise TrackerConflictError("DevHub acceptance read-back divergent")
-        return fresh
+        return self._with_human_acceptance(fresh, digest, fresh.state)
+
+    def _with_human_acceptance(self, issue: Issue, digest: str, native_state: str) -> Issue:
+        """Mark an issue read from DevHub as accepted by the receipt of this digest."""
+        return dataclasses.replace(
+            issue, native_state=native_state, projection_status="aligned",
+            acceptance_status="accepted", acceptance_source=self.human_acceptance_source,
+            acceptance_coordinates=json.dumps(
+                {"decision_digest": digest}, sort_keys=True, separators=(",", ":"),
+            ),
+        )
+
+    def observe_epic_closure_child(self, issue_id: str) -> Issue:
+        """Read a direct child for the atomic Epic closure (PAT-330, PAT-ADR-0025).
+
+        ``get_issue`` plus one receipt read, made only for a ``done`` issue whose criteria
+        are not all checked: exactly one ``human_acceptance`` receipt then marks it accepted
+        by the decision and counts its criteria as satisfied (the decision passed every
+        criterion).  No extra request for any other child.
+        """
+        issue = self.get_issue(issue_id)
+        if issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total:
+            return issue
+        decided = self._valid_human_decision(issue, self.read_proof_receipts(issue_id))
+        if not isinstance(decided, dict):
+            return issue
+        return dataclasses.replace(
+            self._with_human_acceptance(issue, decided["decision_digest"], issue.state),
+            ac_done=issue.ac_total,
+        )
+
+    @staticmethod
+    def _valid_human_decision(issue: Issue, receipts: list[dict]) -> dict | str | None:
+        """The one decision receipt of an issue, ``None`` if there is none, ``"conflict"``.
+
+        Conflict (as Linear's, ``docs/linear-tracker.md`` "Reading"): two decisions, a
+        decision next to a PR-bound receipt (``review``, ``done``, ``acceptance_override``),
+        or a body or criteria changed after the decision (PAT-ADR-0025, PAT-ADR-0033).
+        """
+        recorded = [item for item in receipts if item["action"] == "human_acceptance"]
+        if not recorded:
+            return None
+        if len(recorded) != 1 or len(receipts) != 1:
+            return "conflict"
+        try:
+            _acceptance_decision.check_against_body(recorded[0]["decision"], issue.body or "")
+        except _acceptance_decision.AcceptanceDecisionError:
+            return "conflict"
+        return recorded[0]
+
+    def observe_human_acceptance(self, issue_id: str) -> Issue:
+        """Read-only status of `issue accept` (PAT-330): the issue and its receipt.
+
+        ``acceptance_source`` is set only when exactly one ``human_acceptance`` receipt
+        exists; a read that fails with a DevHub error is ``projection_status`` ``unknown``.
+        """
+        issue = self.get_issue(issue_id)
+        try:
+            receipts = self.read_proof_receipts(issue_id)
+        except DevHubTrackerError:
+            return dataclasses.replace(
+                issue, native_state=issue.state, projection_status="unknown",
+            )
+        decided = self._valid_human_decision(issue, receipts)
+        if decided == "conflict":
+            return dataclasses.replace(
+                issue, native_state=issue.state, projection_status="unknown",
+            )
+        if decided is None:
+            return dataclasses.replace(
+                issue, native_state=issue.state, projection_status="aligned",
+            )
+        return self._with_human_acceptance(issue, decided["decision_digest"], issue.state)
 
     @staticmethod
     def _same_review(receipt: dict, context: TransitionContext) -> bool:
@@ -1818,11 +1901,12 @@ class DevHubTracker(Tracker):
         if issue.state in _UNFINISHED_STATES:
             disposition = "unfinished"
         elif issue.state == "done":
-            # Accepted only with the exact done receipt and all criteria checked; a
-            # done issue with unchecked criteria could be an audited override, which
+            # Accepted by the exact done receipt (after a review receipt of the same
+            # coordinates) with all criteria checked, or by one valid decision receipt
+            # below; a done issue with unchecked criteria could be an audited override, which
             # DevHub records as a typed `acceptance_override` receipt (DEVHUB-106, PAT-318);
             # that receipt is not read here: such an issue stays unavailable until a release
-            # rule reads it.
+            # rule reads it.  A human decision (`human_acceptance`) is read below.
             disposition = "unavailable"
             receipts = self.read_proof_receipts(issue.id, project=project)
             done = [receipt for receipt in receipts if receipt["action"] == "done"]
@@ -1839,6 +1923,15 @@ class DevHubTracker(Tracker):
                     key: done[0][key] for key in (*_RECEIPT_COORDINATES, "merge_sha")
                 })
                 references["proof_receipt_id"] = done[0]["id"]
+            else:
+                # PAT-330 / PAT-ADR-0025: a decision receipt without PR or `done` receipt;
+                # the reference key is the one Linear emits.
+                decided = self._valid_human_decision(issue, receipts)
+                if (isinstance(decided, dict) and not issue.pr_url
+                        and issue.ac_total >= 1):
+                    disposition = "accepted"
+                    references["acceptance_decision_digest"] = decided["decision_digest"]
+                    references["proof_receipt_id"] = decided["id"]
         else:
             disposition = "unavailable"
         return ReleaseIssue(

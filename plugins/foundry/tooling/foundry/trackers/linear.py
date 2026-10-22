@@ -3152,6 +3152,7 @@ class LinearTracker(Tracker):
     guarded_backlog_return_supported = True
     backlog_return_predecessors = _BACKLOG_RETURN_PREDECESSORS
     human_acceptance_supported = True
+    human_acceptance_source = "linear-human-acceptance"
     human_acceptance_predecessors = _HUMAN_ACCEPTANCE_PREDECESSORS
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",

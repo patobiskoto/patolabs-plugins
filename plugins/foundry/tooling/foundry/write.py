@@ -529,8 +529,8 @@ def issue_acceptance_state(tracker, issue_id: str) -> AcceptanceState:
     if not getattr(tracker, "human_acceptance_supported", False):
         raise TrackerCapabilityUnavailableError(tracker.name, "human-acceptance")
     issue_binding(tracker, issue_id)
-    issue = tracker.observe_issue(issue_id)
-    if issue.acceptance_source != "linear-human-acceptance":
+    issue = tracker.observe_human_acceptance(issue_id)
+    if issue.acceptance_source is None or issue.acceptance_source != tracker.human_acceptance_source:
         return AcceptanceState(
             "unknown" if issue.projection_status == "unknown" else "none",
             native_state=issue.native_state,
@@ -1941,7 +1941,9 @@ def close_epic(
         named = getattr(tracker, "epic_dropped_closure_supported", False) is True
         atomic_children = []
         for child_id in child_ids:
-            child = tracker.get_issue(child_id)
+            # PAT-330: a provider may complete the observation of a child accepted by a
+            # human decision (DevHub); the default is the plain read.
+            child = getattr(tracker, "observe_epic_closure_child", tracker.get_issue)(child_id)
             if child.id != child_id:
                 raise SystemExit("Clôture Epic refusée : identité enfant contradictoire.")
             if child.state not in EPIC_CHILD_TERMINAL_STATES:

@@ -13,8 +13,8 @@ CLI: python3 -m foundry.issue <start|openpr|merge|close-epic|accept|wait-ci> [IS
              ci_gate verdict (PAT-274, docs/ci-wait.md); exit 0 green, 2 red or not
              provably green, 3 timeout.
      accept: `accept <ID> --human-verdict=accepted --decision-file=<path>` accepts a
-             non-code issue without a PR (Linear only, PAT-ADR-0025); `accept <ID>
-             --status` reads its state and takes no other flag.
+             non-code issue without a PR (Linear and DevHub, PAT-ADR-0025, PAT-ADR-0033);
+             `accept <ID> --status` reads its state and takes no other flag.
 """
 from __future__ import annotations
 
@@ -1305,7 +1305,7 @@ def _accept_status(tracker, issue_id):
     except TrackerCapabilityUnavailableError:
         raise SystemExit(
             f"⛔ Acceptation humaine indisponible pour le tracker {tracker.name} : "
-            "seul Linear est qualifié."
+            "seuls Linear et DevHub sont qualifiés."
         ) from None
     if state.kind == "accepted":
         print(f"accepté · {issue_id} · décision {state.decision_digest} · done aligné")
@@ -1316,6 +1316,11 @@ def _accept_status(tracker, issue_id):
         )
         if state.native_state == "done":
             tail = "relance exactement la même commande `issue accept` (aucun second reçu)"
+        elif getattr(tracker, "name", None) == "devhub":
+            tail = (
+                "DevHub écrit l'état done et le reçu ensemble : toute relance de "
+                "`issue accept` sans état done y est refusée ; lis la cause avant d'agir"
+            )
         elif state.native_state in _ACCEPT_RETRY_STATES:
             tail = (
                 "relance exactement la même commande `issue accept` (aucun second reçu) "
@@ -1372,7 +1377,7 @@ def accept(issue_id, flags=()):
     except TrackerCapabilityUnavailableError:
         raise SystemExit(
             f"⛔ Acceptation humaine indisponible pour le tracker {tracker.name} : "
-            "seul Linear est qualifié."
+            "seuls Linear et DevHub sont qualifiés."
         ) from None
     except SystemExit:
         raise

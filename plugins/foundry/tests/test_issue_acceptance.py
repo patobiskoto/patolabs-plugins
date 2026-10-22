@@ -245,20 +245,22 @@ def test_the_document_issue_must_be_the_argument_issue(monkeypatch):
     assert len(wire.calls) == before
 
 
-@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker, DevHubTracker))
+@pytest.mark.parametrize("provider", (YouTrackTracker, GitHubProjectsTracker))
 def test_other_providers_refuse_before_any_read(provider):
     assert provider.human_acceptance_supported is False
     assert provider.human_acceptance_predecessors == frozenset()
     with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
         write.validate_acceptance_request(provider, "LIN-5", "accepted", _data(_doc("LIN-5")))
-    if provider is not DevHubTracker:
-        # PAT-318: DevHub implements the port operation (not the `issue accept` command).
-        with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
-            provider.accept_issue(object.__new__(provider), "LIN-5", {})
+    with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
+        provider.accept_issue(object.__new__(provider), "LIN-5", {})
     with pytest.raises(TrackerCapabilityUnavailableError, match="human-acceptance"):
         write.issue_acceptance_state(provider, "LIN-5")
     assert Tracker.human_acceptance_supported is False
     assert LinearTracker.human_acceptance_supported is True
+    # PAT-330 / PAT-ADR-0033: DevHub is qualified too (tests/test_devhub_tracker.py).
+    assert DevHubTracker.human_acceptance_supported is True
+    assert Tracker.human_acceptance_source is None
+    assert LinearTracker.human_acceptance_source == SOURCE
     assert LinearTracker.human_acceptance_predecessors == frozenset(
         {"backlog", "ready", "in-progress"}
     )
@@ -758,8 +760,9 @@ def test_cli_flag_filter_knows_the_accept_flags():
 
 
 def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, capsys):
-    """PAT-239 (206-1): `relance` is unconditional only for `done`."""
-    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: object())
+    """PAT-239 (206-1): `relance` is unconditional only for `done` (Linear)."""
+    linear = type("LinearStub", (), {"name": "linear"})()
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: linear)
     for native, hint in (
         ("blocked", "pas un état de reprise"),
         ("in-progress", "encore celui de la décision"),
@@ -774,6 +777,29 @@ def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, caps
         assert hint in out
         assert ("encore celui de la décision" in out) is (native == "in-progress")
         assert ("pas un état de reprise" in out) is (native == "blocked")
+        assert "DevHub" not in out
+
+
+def test_cli_status_gives_devhub_its_own_replay_hint(monkeypatch, capsys):
+    """PAT-330: on DevHub every replay without `done` is refused; Linear keeps its text."""
+    devhub = type("DevHubStub", (), {"name": "devhub"})()
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: devhub)
+    for native in ("in-progress", "blocked"):
+        monkeypatch.setattr(
+            write, "issue_acceptance_state",
+            lambda *_a, native=native: write.AcceptanceState("receipt-only", "d" * 64, native),
+        )
+        issue_cli.accept("TRAME-5", flags=["--status"])
+        out = capsys.readouterr().out
+        assert "sans état done y est refusée" in out
+        assert "encore celui de la décision" not in out
+        assert "pas un état de reprise" not in out
+    monkeypatch.setattr(
+        write, "issue_acceptance_state",
+        lambda *_a: write.AcceptanceState("receipt-only", "d" * 64, "done"),
+    )
+    issue_cli.accept("TRAME-5", flags=["--status"])
+    assert "aucun second reçu)" in capsys.readouterr().out
 
 
 def test_replay_refuses_a_native_state_other_than_the_decision_from_state(monkeypatch):

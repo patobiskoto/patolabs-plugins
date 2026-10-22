@@ -2525,7 +2525,10 @@ def test_accept_issue_posts_the_decision_and_verifies_the_recomputed_digest():
         "expected_version": 7, "expires_at": 1_300_000, "nonce": "canonical_nonce_123456",
         "project_key": "TRAME", "resource_id": "TRAME-1", "decision_digest": digest,
     }
-    assert tracker.human_acceptance_supported is False  # `issue accept` stays Linear-only
+    # PAT-330: the returned issue carries the DevHub source and the decision digest.
+    assert accepted.acceptance_source == "devhub-human-acceptance"
+    assert accepted.acceptance_status == "accepted"
+    assert json.loads(accepted.acceptance_coordinates) == {"decision_digest": digest}
 
 
 def test_accept_issue_exact_replay_converges_without_a_post_and_a_different_one_is_refused():
@@ -2538,6 +2541,29 @@ def test_accept_issue_exact_replay_converges_without_a_post_and_a_different_one_
     tracker = ScriptedTracker([done, receipt_page([human_receipt(1, decision)])])
     with pytest.raises(TrackerConflictError, match="different decision"):
         tracker.accept_issue("TRAME-1", different, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def test_accept_issue_replay_refuses_a_body_changed_after_the_decision():
+    """PAT-330 review: the replay never converges on a decision `--status` reads `inconnu`."""
+    decision = human_decision()
+    drifted = ready_issue(state="done", version=9, body=HUMAN_BODY + "\n- [ ] drift")
+    tracker = ScriptedTracker([drifted, receipt_page([human_receipt(1, decision)])])
+    with pytest.raises(TrackerConflictError, match="body or criteria changed"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+@pytest.mark.parametrize("receipts", [
+    lambda d: [human_receipt(1, d), human_receipt(2, d)],
+    lambda d: [human_receipt(1, d), receipt_raw(2)],
+], ids=["two decisions", "next to a PR receipt"])
+def test_accept_issue_replay_refuses_an_abnormal_receipt_set(receipts):
+    decision = human_decision()
+    done = ready_issue(state="done", version=8)
+    tracker = ScriptedTracker([done, receipt_page(receipts(decision))])
+    with pytest.raises(TrackerConflictError, match="next to another receipt"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
     assert all(call[0] == "GET" for call in tracker.calls)
 
 
@@ -2596,6 +2622,231 @@ def test_a_server_older_than_devhub_106_is_a_named_unavailable_capability():
     tracker = ScriptedTracker([ready_issue(), receipt_page([]), absent])
     with pytest.raises(TrackerCapabilityUnavailableError, match="devhub.human_acceptance"):
         tracker.accept_issue("TRAME-1", human_decision(), project=PROJECT)
+
+
+# --- PAT-330: `issue accept` and `--status` on DevHub (PAT-ADR-0033) ------------------
+
+def test_devhub_declares_the_human_acceptance_command_with_the_decision_predecessors():
+    assert DevHubTracker.human_acceptance_supported is True
+    assert DevHubTracker.human_acceptance_source == "devhub-human-acceptance"
+    assert DevHubTracker.human_acceptance_predecessors == decisions.FROM_STATES
+
+
+def test_accept_request_validation_is_local_and_refuses_what_linear_refuses():
+    tracker = ScriptedTracker([])
+    data = json.dumps(human_decision()).encode()
+    assert write.validate_acceptance_request(tracker, "TRAME-1", "accepted", data)
+    with pytest.raises(SystemExit, match="verdict humain explicite"):
+        write.validate_acceptance_request(tracker, "TRAME-1", None, data)
+    with pytest.raises(SystemExit, match="pas TRAME-9"):
+        write.validate_acceptance_request(tracker, "TRAME-9", "accepted", data)
+    with pytest.raises(SystemExit, match="non admis"):
+        write.validate_acceptance_request(
+            tracker, "TRAME-1", "accepted",
+            json.dumps(human_decision(from_state="done")).encode())
+    assert tracker.calls == []
+
+
+def _cli_tracker(monkeypatch, responses):
+    from foundry import issue as issue_cli
+    tracker = ScriptedTracker(responses)
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: tracker)
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: PROJECT)
+    monkeypatch.setattr(tracker, "validate_issue_binding", lambda *_a, **_k: None)
+    return issue_cli, tracker
+
+
+def test_cli_accepts_a_devhub_issue_then_reads_the_status(monkeypatch, tmp_path, capsys):
+    decision = human_decision()
+    digest = decisions.decision_digest(decision)
+    path = tmp_path / "decision.json"
+    path.write_text(json.dumps(decision))
+    issue_cli, tracker = _cli_tracker(monkeypatch, [
+        ready_issue(), receipt_page([]), {"ok": True},
+        ready_issue(state="done", version=8), receipt_page([human_receipt(1, decision)]),
+    ])
+    issue_cli.accept(
+        "TRAME-1", flags=["--human-verdict=accepted", f"--decision-file={path}"])
+    assert "TRAME-1 → done · acceptation humaine · devhub-human-acceptance" in (
+        capsys.readouterr().out)
+    assert [call[0] for call in tracker.calls] == ["GET", "GET", "POST", "GET", "GET"]
+    issue_cli, tracker = _cli_tracker(monkeypatch, [
+        ready_issue(state="done", version=8), receipt_page([human_receipt(1, decision)]),
+    ])
+    issue_cli.accept("TRAME-1", flags=["--status"])
+    assert f"accepté · TRAME-1 · décision {digest} · done aligné" in capsys.readouterr().out
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def test_cli_status_of_a_devhub_issue_without_receipt_or_with_an_unreadable_read(
+    monkeypatch, capsys,
+):
+    issue_cli, tracker = _cli_tracker(monkeypatch, [ready_issue(), receipt_page([])])
+    issue_cli.accept("TRAME-1", flags=["--status"])
+    assert "aucune acceptation humaine · TRAME-1 · état natif ready" in capsys.readouterr().out
+    issue_cli, tracker = _cli_tracker(monkeypatch, [
+        ready_issue(), DevHubTrackerError("GET", "/x", 500, "internal_error")])
+    issue_cli.accept("TRAME-1", flags=["--status"])
+    assert "inconnu · TRAME-1" in capsys.readouterr().out
+
+
+def test_cli_status_takes_no_other_flag_on_devhub(monkeypatch):
+    issue_cli, tracker = _cli_tracker(monkeypatch, [])
+    with pytest.raises(SystemExit, match="lecture seule"):
+        issue_cli.accept("TRAME-1", flags=["--status", "--human-verdict=accepted"])
+    assert tracker.calls == []
+
+
+def test_cli_devhub_accept_refusal_names_the_status_command(monkeypatch, tmp_path):
+    path = tmp_path / "decision.json"
+    path.write_text(json.dumps(human_decision()))
+    issue_cli, tracker = _cli_tracker(
+        monkeypatch, [ready_issue(state="in-progress"), receipt_page([])])
+    with pytest.raises(SystemExit, match="issue accept TRAME-1 --status"):
+        issue_cli.accept(
+            "TRAME-1", flags=["--human-verdict=accepted", f"--decision-file={path}"])
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+def _accepted_child(**over):
+    return issue_raw(
+        id="TRAME-3", state="done", pr_url=None, body=HUMAN_BODY, ac_total=2, ac_done=0,
+        version=8, **over)
+
+
+def test_closure_child_read_marks_a_human_accepted_child_with_one_extra_request():
+    decision = human_decision(issue="TRAME-3")
+    tracker = ScriptedTracker([_accepted_child(), receipt_page([
+        human_receipt(1, decision, issue="TRAME-3")])])
+    child = tracker.observe_epic_closure_child("TRAME-3")
+    assert (child.ac_done, child.ac_total) == (2, 2)
+    assert child.acceptance_status == "accepted"
+    assert child.acceptance_source == "devhub-human-acceptance"
+    assert json.loads(child.acceptance_coordinates) == {
+        "decision_digest": decisions.decision_digest(decision)}
+    assert len(tracker.calls) == 2
+    # no extra request when the criteria are all checked, nor for an issue not done,
+    # and an unaccepted done child stays incomplete
+    checked = ScriptedTracker([issue_raw(id="TRAME-3", state="done", ac_done=1, ac_total=1)])
+    assert checked.observe_epic_closure_child("TRAME-3").acceptance_source is None
+    assert len(checked.calls) == 1
+    started = ScriptedTracker([issue_raw(id="TRAME-3", state="review", ac_total=2)])
+    assert started.observe_epic_closure_child("TRAME-3").state == "review"
+    assert len(started.calls) == 1
+    bare = ScriptedTracker([_accepted_child(), receipt_page([])])
+    assert bare.observe_epic_closure_child("TRAME-3").ac_done == 0
+
+
+def test_epic_closure_over_a_child_accepted_by_a_human_decision(monkeypatch):
+    decision = human_decision(issue="TRAME-3")
+    epic = issue_raw(
+        id="TRAME-1", type="Epic", state="in-progress", pr_url=None, body="- [ ] validated",
+        ac_total=1, ac_done=1, version=5,
+        links=[{"type": "parent-of", "direction": "outward", "target": "TRAME-3"}])
+    tracker = ScriptedTracker([
+        epic, _accepted_child(), receipt_page([human_receipt(1, decision, issue="TRAME-3")]),
+    ])
+    sent = []
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: PROJECT)
+    monkeypatch.setattr(tracker, "validate_issue_binding", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        tracker, "close_epic", lambda project, receipt: sent.append(receipt) or "closed")
+    monkeypatch.setattr(write, "_validate_epic_outcome", lambda outcome, **_k: outcome)
+    assert write.close_epic(tracker, "TRAME-1") == "closed"
+    (receipt,) = sent
+    assert [(c.id, c.version, c.state) for c in receipt.children] == [("TRAME-3", 8, "done")]
+    # the atomic receipt binds id, version and state only: it carries no source
+    assert receipt.children[0].acceptance_source is None
+
+
+def test_release_scope_reads_a_human_accepted_issue_with_its_decision_reference():
+    decision = human_decision(issue="TRAME-3")
+    digest = decisions.decision_digest(decision)
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3", "TRAME-4"], "direct_count": 2,
+                           "total_count": 2, "complete": True}),
+        _accepted_child(), receipt_page([human_receipt(1, decision, issue="TRAME-3")]),
+        issue_raw(id="TRAME-4", state="done", pr_url=None, ac_done=0, ac_total=1),
+        receipt_page([]),
+        version_raw(scope={"direct": ["TRAME-3", "TRAME-4"], "direct_count": 2,
+                           "total_count": 2, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    accepted, bare = scope.issues
+    assert (accepted.id, accepted.disposition) == ("TRAME-3", "accepted")
+    assert accepted.references == {
+        "acceptance_decision_digest": digest, "proof_receipt_id": "1"}
+    assert (bare.id, bare.disposition) == ("TRAME-4", "unavailable")
+
+
+
+def _drifted_child():
+    return issue_raw(
+        id="TRAME-3", state="done", pr_url=None, body=HUMAN_BODY + "\n- [ ] drift",
+        ac_total=3, ac_done=0, version=8)
+
+
+def _abnormal_receipt_sets():
+    decision = human_decision(issue="TRAME-3")
+    return {
+        "two decisions": [human_receipt(1, decision, issue="TRAME-3"),
+                          human_receipt(2, decision, issue="TRAME-3")],
+        "next to a PR receipt": [receipt_raw(1, issue="TRAME-3"),
+                                 human_receipt(2, decision, issue="TRAME-3")],
+    }
+
+
+def test_human_decision_drift_is_not_accepted_on_the_three_read_paths():
+    decision = human_decision(issue="TRAME-3")
+    page = lambda: receipt_page([human_receipt(1, decision, issue="TRAME-3")])  # noqa: E731
+    closure = ScriptedTracker([_drifted_child(), page()]).observe_epic_closure_child("TRAME-3")
+    assert closure.acceptance_source is None and closure.ac_done == 0
+    status = ScriptedTracker([_drifted_child(), page()]).observe_human_acceptance("TRAME-3")
+    assert status.acceptance_source is None and status.projection_status == "unknown"
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _drifted_child(), page(),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert scope.issues[0].disposition == "unavailable"
+
+
+@pytest.mark.parametrize("name", ["two decisions", "next to a PR receipt"])
+def test_abnormal_human_receipt_sets_read_as_a_conflict_on_the_three_read_paths(name):
+    receipts = _abnormal_receipt_sets()[name]
+    closure = ScriptedTracker([_accepted_child(), receipt_page(receipts)])
+    assert closure.observe_epic_closure_child("TRAME-3").acceptance_source is None
+    status = ScriptedTracker([_accepted_child(), receipt_page(receipts)])
+    status = status.observe_human_acceptance("TRAME-3")
+    assert status.acceptance_source is None and status.projection_status == "unknown"
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _accepted_child(), receipt_page(receipts),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert scope.issues[0].disposition == "unavailable"
+
+
+def test_release_scope_refuses_a_decision_on_an_issue_with_a_pr_or_without_criterion():
+    decision = human_decision(issue="TRAME-3")
+    for over in ({"pr_url": "https://github.com/acme/trame/pull/1"},
+                 {"ac_total": 0, "body": ""}):
+        raw = {**_accepted_child(), **over}
+        tracker = ScriptedTracker([
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+            raw, receipt_page([human_receipt(1, decision, issue="TRAME-3")]),
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+        ])
+        scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+        assert scope.issues[0].disposition == "unavailable"
 
 
 # --- PAT-319: DHN-34 selective issue import and DHN-36 ADR import ---------------------
