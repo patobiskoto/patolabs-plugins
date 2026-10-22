@@ -1784,13 +1784,15 @@ def test_verify_targets_compares_terminal_facts_exactly(change):
 
 def test_linear_export_lists_archived_issues_and_reads_the_native_completion_date(monkeypatch):
     tracker = LinearTracker(token="t", transport=lambda *a, **k: None)
+    none = {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}
     pages = [
         {"issues": {"nodes": [
             {"identifier": "L-1", "archivedAt": None, "completedAt": "2026-01-02T00:00:00.000Z",
-             "canceledAt": None},
+             "canceledAt": None, "comments": none},
             {"identifier": "L-2", "archivedAt": "2026-02-01T00:00:00.000Z",
-             "completedAt": None, "canceledAt": "2026-01-03T00:00:00.000Z"},
-            {"identifier": "L-3", "archivedAt": None, "completedAt": None, "canceledAt": None},
+             "completedAt": None, "canceledAt": "2026-01-03T00:00:00.000Z", "comments": none},
+            {"identifier": "L-3", "archivedAt": None, "completedAt": None, "canceledAt": None,
+             "comments": none},
         ], "pageInfo": {"hasNextPage": False, "endCursor": None}}},
     ]
     seen = []
@@ -1822,3 +1824,214 @@ def test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_
     assert reasons["labels"] == 'not copied; source value: ["backend", "ui"]'
     assert reasons["milestone"] == 'not copied; source value: "v1"'
     assert not {"labels", "milestone"} & {item["attribute"] for item in second["exceptions"]}
+
+
+# --- PAT-331 stage 3: comments of every issue ------------------------------------------
+
+def _comment_node(ident, body="text", created="2026-01-02T03:04:05.678Z", **actors):
+    node = {"id": ident, "body": body, "createdAt": created,
+            "user": None, "botActor": None, "externalUser": None}
+    node.update(actors)
+    return node
+
+
+def _linear_export(monkeypatch, pages):
+    tracker = LinearTracker(token="t", transport=lambda *a, **k: None)
+    seen = []
+    monkeypatch.setattr(tracker, "_activate", lambda _p: {"team_id": "t", "project_id": "p"})
+    monkeypatch.setattr(
+        tracker, "_graphql",
+        lambda query, variables, op: seen.append((op, variables)) or pages.pop(0))
+    monkeypatch.setattr(
+        tracker, "get_issue",
+        lambda ident: Issue(ident, "t", state="done", created=1, updated=2))
+    return tracker, seen
+
+
+def _history_page(nodes, more=False, cursor=None):
+    return {"issues": {"nodes": nodes,
+                       "pageInfo": {"hasNextPage": more, "endCursor": cursor}}}
+
+
+def _connection_page(nodes, more=False, cursor=None):
+    return {"nodes": nodes, "pageInfo": {"hasNextPage": more, "endCursor": cursor}}
+
+
+def test_linear_export_carries_the_comments_of_each_issue_with_their_author(monkeypatch):
+    nodes = [
+        _comment_node("c2", "second", "2026-01-02T03:04:06.001Z",
+                      user={"name": "", "displayName": "handle"}),
+        _comment_node("c1", "first\n", "2026-01-02T03:04:05.678Z",
+                      user={"name": "Full Name", "displayName": "handle"}),
+        _comment_node("c3", "bot", botActor={"name": "A Bot"}),
+        _comment_node("c4", "ext", externalUser={"name": None, "displayName": "ext handle"}),
+        _comment_node("c5", "gone"),
+    ]
+    page = _history_page([{
+        "identifier": "L-1", "archivedAt": None, "completedAt": None, "canceledAt": None,
+        "comments": _connection_page(nodes)}])
+    tracker, seen = _linear_export(monkeypatch, [page])
+    (entry,) = tracker.migration_export_issues(Project("L", "p"))
+    assert [(c["id"], c["text"], c["author"], c["created"]) for c in entry["comments"]] == [
+        ("c1", "first\n", "Full Name", 1767323045678),
+        ("c3", "bot", "A Bot", 1767323045678),
+        ("c4", "ext", "ext handle", 1767323045678),
+        ("c5", "gone", None, 1767323045678),
+        ("c2", "second", "handle", 1767323046001),
+    ]
+    assert [op for op, _ in seen] == ["issue.history"]  # no request beyond the listing
+
+
+def test_linear_export_continues_only_the_issues_with_more_comments(monkeypatch):
+    first = _history_page([
+        {"identifier": "L-1", "archivedAt": None, "completedAt": None, "canceledAt": None,
+         "comments": _connection_page([_comment_node("a", user={"name": "N"})], True, "cur-1")},
+        {"identifier": "L-2", "archivedAt": None, "completedAt": None, "canceledAt": None,
+         "comments": _connection_page([])},
+    ])
+    more = {"issue": {"comments": _connection_page([_comment_node("b", user={"name": "N"})])}}
+    tracker, seen = _linear_export(monkeypatch, [first, more])
+    exported = tracker.migration_export_issues(Project("L", "p"))
+    assert [[c["id"] for c in e["comments"]] for e in exported] == [["a", "b"], []]
+    assert [op for op, _ in seen] == ["issue.history", "issue.history.comments"]
+    assert seen[1][1] == {"id": "L-1", "after": "cur-1"}
+
+
+@pytest.mark.parametrize("bad", [
+    None, {"nodes": []},
+    _connection_page([{"id": "x", "body": None, "createdAt": "2026-01-01T00:00:00Z"}]),
+    _connection_page([_comment_node("x", created="not a date")]),
+    _connection_page([_comment_node("x", created="2026-01-01T00:00:00")]),
+    _connection_page([_comment_node("x"), _comment_node("x")]),
+    _connection_page([_comment_node("x", user="nope")]),
+])
+def test_linear_export_refuses_a_malformed_comment_connection(monkeypatch, bad):
+    page = _history_page([{"identifier": "L-1", "archivedAt": None, "completedAt": None,
+                           "canceledAt": None, "comments": bad}])
+    tracker, _seen = _linear_export(monkeypatch, [page])
+    with pytest.raises(LinearTrackerError):
+        tracker.migration_export_issues(Project("L", "p"))
+
+
+class _CommentCapableTracker(_TerminalCapableTracker):
+    """Target that imports comments of every issue and reads them back; nothing pending."""
+    migration_pending_terminal_items = {}
+    migration_comments_supported = True
+
+    def migration_comment_exception(self, project, comment):
+        if not comment["text"].strip():
+            return "text blank"
+        return None if comment["source_author"] else "source author absent"
+
+    def migration_import_comment(self, project, issue_id, comment):
+        issue = self.issues[issue_id]
+        for item in issue.comments:
+            if item.get("source_ref") == comment["source_ref"]:
+                if {k: item[k] for k in comment} != comment:
+                    raise TrackerConflictError("different content")
+                return
+        issue.comments.append({**comment, "created": 999})
+        self.effects += 1
+
+
+def _comment_source(extra=()):
+    comments = {
+        "SRC-1": [{"id": "a", "text": "living note", "author": "W", "created": 7}],
+        "SRC-2": [
+            {"id": "b", "text": "review receipt", "author": "W", "created": 8},
+            {"id": "c", "text": "done receipt", "author": "W", "created": 9},
+            *extra,
+        ],
+    }
+    base = _history_source()
+    export = base.migration_export_issues
+    base.migration_export_issues = lambda project: [
+        {**entry, "comments": comments.get(entry["issue"].id, [])} for entry in export(project)
+    ]
+    return base
+
+
+def _comment_manifest(extra=(), tracker_class=_CommentCapableTracker):
+    target, project = tracker_class("devhub"), Project("DST", "target")
+    manifest = capture_manifest(
+        _comment_source(extra), Project("SRC", "source"), target, project)
+    return manifest, target, project
+
+
+def test_manifest_records_comments_of_living_and_terminal_issues_and_names_exceptions():
+    manifest, _target, _project = _comment_manifest(extra=[
+        {"id": "d", "text": "  ", "author": "W", "created": 10},
+        {"id": "e", "text": "orphan", "author": None, "created": 11},
+    ])
+    by_id = {item["id"]: item for item in manifest["issues"]}
+    assert by_id["SRC-1"]["comments"] == [{
+        "source_ref": "linear:comment:a", "text": "living note", "source_author": "W",
+        "source_created": 7}]
+    assert [c["source_ref"] for c in by_id["SRC-2"]["comments"]] == [
+        "linear:comment:b", "linear:comment:c"]
+    assert [(e["source_ref"], e["reason"]) for e in by_id["SRC-2"]["comment_exceptions"]] == [
+        ("linear:comment:d", "text blank"), ("linear:comment:e", "source author absent")]
+    assert all(e["digest"].startswith("sha256:") for e in by_id["SRC-2"]["comment_exceptions"])
+    assert "text" not in by_id["SRC-2"]["comment_exceptions"][0]
+    assert by_id["SRC-3"]["comments"] == [] and by_id["SRC-2"]["pending"] == []
+
+
+def test_a_target_without_comment_support_gets_no_comments_in_the_manifest():
+    target, project = _TerminalCapableTracker("devhub"), Project("DST", "target")
+    manifest = capture_manifest(_comment_source(), Project("SRC", "source"), target, project)
+    assert all("comments" not in item for item in manifest["issues"])
+
+
+def test_comment_copy_is_read_back_exactly_idempotent_and_makes_the_cutover_ready():
+    manifest, target, project = _comment_manifest(extra=[
+        {"id": "e", "text": "orphan", "author": None, "created": 11}])
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    effects = target.effects
+    copy_and_verify(manifest, target, project, lambda: None)
+    assert target.effects == effects  # a resume imports nothing again
+    assert [c["source_ref"] for c in target.issues["import-SRC-2"].comments] == [
+        "linear:comment:b", "linear:comment:c"]
+    assert ready_for_cutover(manifest)  # a named exception does not block, as attribute ones
+
+
+@pytest.mark.parametrize("tamper", ["text", "author", "date", "missing", "extra"])
+def test_verify_targets_compares_imported_comments_exactly(tamper):
+    manifest, target, project = _comment_manifest()
+    copy_and_verify(manifest, target, project, lambda: None)
+    comments = target.issue_refs["linear:issue:SRC-2"].comments
+    if tamper == "text":
+        comments[0]["text"] += " "
+    elif tamper == "author":
+        comments[0]["source_author"] = "Other"
+    elif tamper == "date":
+        comments[0]["source_created"] += 1
+    elif tamper == "missing":
+        comments.pop()
+    else:
+        comments.append({"text": "x", "created": 1, "source_ref": "linear:comment:z",
+                         "source_author": "W", "source_created": 1})
+    with pytest.raises(MigrationError, match="relecture commentaires divergente"):
+        verify_targets(manifest, target, project)
+
+
+def test_native_comments_of_the_target_do_not_break_the_comparison():
+    manifest, target, project = _comment_manifest()
+    copy_and_verify(manifest, target, project, lambda: None)
+    target.issue_refs["linear:issue:SRC-2"].comments.append({"text": "native", "created": 1})
+    verify_targets(manifest, target, project)
+
+
+def test_a_source_comment_change_changes_the_source_digest():
+    first, _t, _p = _comment_manifest()
+    second, _t, _p = _comment_manifest(extra=[
+        {"id": "f", "text": "new", "author": "W", "created": 12}])
+    assert first["source_digest"] != second["source_digest"]
+
+
+def test_a_conflicting_comment_already_on_the_target_stops_the_copy():
+    manifest, target, project = _comment_manifest()
+    copy_and_verify(manifest, target, project, lambda: None)
+    target.issue_refs["linear:issue:SRC-2"].comments[0]["text"] = "changed on target"
+    with pytest.raises(TrackerConflictError):
+        copy_and_verify(manifest, target, project, lambda: None)

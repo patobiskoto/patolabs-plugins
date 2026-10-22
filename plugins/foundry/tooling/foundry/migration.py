@@ -79,6 +79,55 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
     return snapshot
 
 
+def _capture_comments(
+    record: dict, comments: list[dict], source_tracker: str, target: Tracker,
+    target_project: Project,
+) -> None:
+    """Record the comments of one issue (PAT-331 stage 3), living or terminal alike.
+
+    A comment the target cannot reproduce exactly is not written and not approximated: it
+    becomes a ``comment_exceptions`` entry naming its coordinate, the reason and a digest of
+    its content (so a later change at the source is still seen).  Like the attribute
+    exceptions it does not by itself keep the cutover from being ready.
+    """
+    importable, excepted = [], []
+    for item in comments:
+        comment = {
+            "source_ref": f"{source_tracker}:comment:{item['id']}",
+            "text": item["text"], "source_author": item["author"],
+            "source_created": item["created"],
+        }
+        reason = target.migration_comment_exception(target_project, comment)
+        if reason is None:
+            importable.append(comment)
+        elif not isinstance(reason, str) or not reason:
+            raise MigrationError("exceptions de commentaire cible invalides")
+        else:
+            excepted.append({
+                "source_ref": comment["source_ref"], "reason": reason,
+                "digest": _digest(comment),
+            })
+    record["comments"], record["comment_exceptions"] = importable, excepted
+
+
+def _imported_comments(actual: Issue) -> dict[str, dict]:
+    """The imported comments of a target issue by ``source_ref`` (native ones are ignored)."""
+    keys = ("source_ref", "text", "source_author", "source_created")
+    return {
+        item["source_ref"]: {key: item.get(key) for key in keys}
+        for item in actual.comments if item.get("source_ref") is not None
+    }
+
+
+def _comments_match(record: dict, actual: Issue) -> bool:
+    """Exact readback of the imported comments, as a set keyed by ``source_ref``."""
+    if "comments" not in record:
+        return True  # the target carries no comments (living-only scope)
+    return _imported_comments(actual) == {
+        item["source_ref"]: item for item in record["comments"]
+    }
+
+
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
     records = []
@@ -104,6 +153,10 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
             ]
         if item["archived"]:
             record["archived"] = True
+        if target.migration_comments_supported:
+            _capture_comments(
+                record, item.get("comments", []), source.name, target, target_project,
+            )
         records.append(record)
     for record in records:
         exceptions = {
@@ -317,6 +370,23 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
         observed = {(link.type, link.target) for link in reread.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
+    for record in manifest["issues"]:
+        # After the links: DEVHUB-127 raises the versions, DEVHUB-128 needs none.
+        if not record.get("comments"):
+            continue
+        current = target.migration_find_issue(target_project, record["source_ref"])
+        if current is None:
+            raise MigrationError(f"relecture issue absente: {record['source_ref']}")
+        present = _imported_comments(current)
+        for comment in record["comments"]:
+            if present.get(comment["source_ref"]) != comment:
+                target.migration_import_comment(
+                    target_project, record["target_id"], comment,
+                )
+    for record in manifest["issues"]:
+        reread = target.migration_find_issue(target_project, record["source_ref"])
+        if reread is None or not _comments_match(record, reread):
+            raise MigrationError(f"relecture commentaires divergente: {record['source_ref']}")
     target_adr_snapshots = tuple(
         _target_adr_snapshot(target, target_project, record, ids)
         for record in manifest["adrs"]
@@ -427,6 +497,8 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
         observed = {(link.type, link.target) for link in actual.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
+        if not _comments_match(record, actual):
+            raise MigrationError(f"relecture commentaires divergente: {record['source_ref']}")
     # One export per pass: a per-ADR export made the read-back quadratic.
     exported_adrs = target.migration_export_adrs(target_project) if manifest["adrs"] else []
     for record in manifest["adrs"]:

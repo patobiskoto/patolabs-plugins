@@ -223,6 +223,11 @@ class Tracker(ABC):
     # dropped issue, frozen).  A target that does not keeps the living-only scope of
     # FOUNDRY-ADR-0026: ``capture_manifest`` leaves terminal issues out for it.
     migration_terminal_import_supported: bool = False
+    # PAT-331 stage 3: whether the target writes the comments of every captured issue
+    # (``migration_import_comment``) and reads them back on ``migration_find_issue`` as
+    # ``Issue.comments`` entries carrying ``source_ref``, ``source_author`` and
+    # ``source_created``.  A target that does not keeps comments out of the manifest.
+    migration_comments_supported: bool = False
 
     def migration_export_issues(self, project: Project) -> list[dict]:
         """Return every issue of the project, terminal and archived ones included (PAT-331).
@@ -230,13 +235,16 @@ class Tracker(ABC):
         Each entry is ``{"issue", "archived", "source_created", "source_updated",
         "source_completed"}``; the dates are epoch milliseconds or ``None``.  The default
         lists ``search`` (no archived issue, no completion date): a provider that can do
-        better overrides it.
+        better overrides it.  An entry may also carry ``"comments"``, the complete list of
+        the issue's comments as ``{"id", "text", "author", "created"}`` (``author`` text or
+        ``None`` when the source cannot name one, ``created`` epoch ms); the default carries
+        none, a provider that exports comments overrides it.
         """
         return [
             {
                 "issue": issue, "archived": False,
                 "source_created": issue.created, "source_updated": issue.updated,
-                "source_completed": None,
+                "source_completed": None, "comments": [],
             }
             for issue in (self.get_issue(item.id) for item in self.search(project))
         ]
@@ -701,6 +709,27 @@ class Tracker(ABC):
         """Create one relation through an explicitly staged migration target."""
         del project, src_id, link_type, dst_id
         raise TrackerCapabilityUnavailableError(self.name, "migration_issue_link")
+
+    def migration_comment_exception(self, project: Project, comment: dict) -> str | None:
+        """Return why this target cannot reproduce ``comment`` exactly, or ``None`` (PAT-331).
+
+        ``comment`` is ``{"source_ref", "text", "source_author", "source_created"}``.  A
+        reason makes the comment a named manifest exception: it is never written nor
+        approximated.  Only consulted when ``migration_comments_supported`` is true.
+        """
+        del project, comment
+        return None
+
+    def migration_import_comment(
+        self, project: Project, issue_id: str, comment: dict,
+    ) -> None:
+        """Write one source comment on an imported issue, replay-safe (PAT-331 stage 3).
+
+        An identical replay changes nothing; a different content under the same
+        ``source_ref`` raises ``TrackerConflictError``.
+        """
+        del project, issue_id, comment
+        raise TrackerCapabilityUnavailableError(self.name, "migration_comment_import")
 
     def migration_find_adr(self, project: Project, source_ref: str) -> Adr | None:
         """Return the prior imported ADR for an exact source coordinate."""

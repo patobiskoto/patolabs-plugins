@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
@@ -2287,9 +2288,9 @@ def test_migration_link_issue_posts_one_link_then_replays_without_write(monkeypa
 
 
 def test_migration_link_issue_links_an_imported_terminal_issue_with_current_versions(monkeypatch):
-    # PAT-331 stage 2 (DEVHUB-127): same wire as a living link; only comments stay pending
+    # PAT-331 stage 2 (DEVHUB-127): same wire as a living link; stage 3 leaves nothing pending
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
-    assert set(DevHubTracker.migration_pending_terminal_items) == {"comments"}
+    assert DevHubTracker.migration_pending_terminal_items == {}
     tracker = ScriptedTracker([terminal_raw(version=2), issue_raw(id="TRAME-2", version=6), {"ok": True}])
     tracker.migration_link_issue(PROJECT, "TRAME-7", "subtask-of", "TRAME-2")
     method, path, body, kwargs = tracker.calls[-1]
@@ -4148,3 +4149,120 @@ def test_release_scope_never_reads_an_imported_terminal_issue_as_accepted():
     (item,) = scope.issues
     assert item.disposition == "unavailable"
     assert "imported" in item.references["unavailable_reason"]
+
+
+# --- PAT-331 stage 3: comment import (DEVHUB-128) ---------------------------------------
+
+COMMENT = {
+    "source_ref": "linear:comment:c-1", "text": "  Review passed.\r\n", "source_author": "A. Writer",
+    "source_created": 1_700_000_000_123,
+}
+
+
+def imported_comment(**over):
+    return {**COMMENT, "actor": "svc", "created": 1_800_000_000_000, **over}
+
+
+def test_comment_exception_names_each_limit_without_quoting_the_content():
+    check = DevHubTracker.migration_comment_exception
+    assert check(PROJECT, COMMENT) is None
+    assert check(PROJECT, {**COMMENT, "text": "x" * 50_000}) is None
+    assert check(PROJECT, {**COMMENT, "source_author": " Équipe déploiement "}) is None
+    for change, expected in [
+        ({"text": ""}, "text empty"),
+        ({"text": " \t ﻿\n"}, "text blank"),
+        ({"text": "x" * 50_001}, "longer"),
+        ({"text": "😀" * 25_001}, "longer"),  # UTF-16 units, as the server counts
+        ({"text": "a\x00b"}, "NUL"),
+        ({"text": "a\ud800b"}, "NUL"),
+        ({"source_author": None}, "author absent"),
+        ({"source_author": ""}, "author absent"),
+        ({"source_author": "x" * 201}, "author longer"),
+        ({"source_author": "a\tb"}, "control"),
+        ({"source_author": "a\x85b"}, "control"),
+        ({"source_author": " 　"}, "author blank"),
+        ({"source_created": None}, "date"),
+        ({"source_created": -1}, "date"),
+        ({"source_created": True}, "date"),
+        ({"source_created": 8_640_000_000_000_001}, "date"),
+        ({"source_ref": "a b"}, "source_ref"),
+    ]:
+        reason = check(PROJECT, {**COMMENT, **change})
+        assert reason is not None and expected in reason, change
+        assert "Review" not in reason and "\x00" not in reason
+
+
+def test_migration_import_comment_posts_the_strict_body_with_a_content_bound_key(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([imported_comment(), imported_comment()])
+    tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/issues/TRAME-7/comments/import")
+    assert body == COMMENT and "version" not in kwargs and "proof" not in kwargs
+    assert kwargs["idempotent"] is True
+    assert tracker.calls[1][3]["idempotency_key"] == kwargs["idempotency_key"]
+    assert re.fullmatch(r"[A-Za-z0-9._:-]{8,160}", kwargs["idempotency_key"])
+    other = ScriptedTracker([imported_comment(text="other")])
+    other.migration_import_comment(PROJECT, "TRAME-7", {**COMMENT, "text": "other"})
+    assert other.calls[0][3]["idempotency_key"] != kwargs["idempotency_key"]
+
+
+def test_migration_import_comment_refuses_before_any_request(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError):
+        tracker.migration_import_comment(PROJECT, "TRAME-7", {**COMMENT, "text": ""})
+    with pytest.raises(SystemExit):
+        tracker.migration_import_comment(PROJECT, "OTHER-7", COMMENT)
+    assert tracker.calls == []
+
+
+def test_migration_import_comment_reads_again_on_a_409_and_compares(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    conflict = DevHubTrackerError(
+        "POST", "/issues/TRAME-7/comments/import", 409, "resource_conflict")
+    same = ScriptedTracker([conflict, terminal_raw(comments=[imported_comment()])])
+    same.migration_import_comment(PROJECT, "TRAME-7", COMMENT)  # stored identical: success
+    assert [call[0] for call in same.calls] == ["POST", "GET"]
+    different = ScriptedTracker([
+        conflict, terminal_raw(comments=[imported_comment(text="other")])])
+    with pytest.raises(TrackerConflictError):
+        different.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+    other_error = ScriptedTracker([DevHubTrackerError("POST", "/x", 503, "unavailable")])
+    with pytest.raises(DevHubTrackerError):
+        other_error.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+
+
+def test_migration_import_comment_refuses_a_divergent_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([imported_comment(source_author="Someone else")])
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_comment(PROJECT, "TRAME-7", COMMENT)
+
+
+def test_issue_read_exposes_the_source_members_of_an_imported_comment_only():
+    native = {"text": "native", "created": 5}
+    issue = DevHubTracker._to_issue(issue_raw(comments=[native, imported_comment()]))
+    assert issue.comments[0] == native
+    assert issue.comments[1] == {
+        "text": COMMENT["text"], "created": 1_800_000_000_000, **{
+            key: COMMENT[key] for key in ("source_ref", "source_author", "source_created")}}
+    for partial in ({"source_ref": "linear:comment:c-1"}, {"source_author": "x"}):
+        with pytest.raises(DevHubTrackerError):
+            DevHubTracker._to_issue(issue_raw(comments=[{**native, **partial}]))
+    with pytest.raises(DevHubTrackerError):
+        DevHubTracker._to_issue(issue_raw(comments=[imported_comment(source_created=-1)]))
+
+
+def test_preflight_refuses_a_comment_the_import_route_would_refuse_and_a_duplicate():
+    tracker = ScriptedTracker([])
+    living = {"kind": "issue", "id": "PAT-2", "source_ref": "linear:issue:PAT-2",
+              "title": "t", "body": "", "links": [], "exceptions": [],
+              "attributes": {"type": "Task", "priority": None, "estimate": None,
+                             "state": "ready"},
+              "comments": [COMMENT]}
+    tracker._preflight_issues([living])
+    for comments in ([{**COMMENT, "text": ""}], [COMMENT, COMMENT]):
+        with pytest.raises(TrackerConflictError, match="commentaire non reproductible"):
+            tracker._preflight_issues([{**living, "comments": comments}])

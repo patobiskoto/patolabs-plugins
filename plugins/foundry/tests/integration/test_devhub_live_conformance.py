@@ -1419,8 +1419,9 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     # PAT-331 stage 1 (DEVHUB-126, merge defda07): done and dropped issues are imported by
     # ``POST /projects/:key/issues/import`` in their own project.  Stage 2 (DEVHUB-127, merge
     # bd282fc): their links are copied and read back like a living issue's, and a living Epic
-    # closes over the imported children.  Their comments (DEVHUB-128) are a pending item of
-    # the manifest, not written here.
+    # closes over the imported children.  Stage 3 (DEVHUB-128, merge a57ce72): the comments of
+    # every issue, living or terminal, lifecycle receipts included, are imported by
+    # ``POST /issues/:id/comments/import`` and read back exactly; nothing is pending.
     import copy as copy_module
 
     from foundry.migration import (
@@ -1444,6 +1445,7 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
                     "issue": copy_module.deepcopy(issue), "archived": archived,
                     "source_created": created, "source_updated": updated,
                     "source_completed": completed,
+                    "comments": copy_module.deepcopy(self.comments.get(issue.id, [])),
                 })
             return exported
 
@@ -1466,15 +1468,40 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
                  body="- [x] epic criterion\n",
                  links=[Link("parent-of", "outward", "PAT-1"),
                         Link("parent-of", "outward", "PAT-2")])
+    # comments as the Linear export gives them: a lifecycle receipt (the exact multi-line
+    # shape of the Linear receipts), a text whose leading and trailing whitespace, line
+    # breaks and non-ASCII characters must survive byte for byte, and a living issue's note;
+    # the dates are listed out of order on purpose, DevHub orders by source date.
+    from foundry.trackers.linear import _LIFECYCLE_HEADER, _LIFECYCLE_SCHEMA
+
+    receipt = "\n".join([
+        _LIFECYCLE_HEADER, "marker: live-marker-1",
+        "coordinates: " + json.dumps({
+            "schema": _LIFECYCLE_SCHEMA, "operation": "state-done", "issue": "PAT-1",
+            "payload": {"state": "done", "pr_url": done.pr_url}}, sort_keys=True),
+    ])
+    Source.comments = {
+        "PAT-1": [
+            {"id": "live-c2", "text": "  Merged.\r\n\tcafé 中文 \U0001F600  \n", "author": "Équipe déploiement",
+             "created": 1_700_000_001_500},
+            {"id": "live-c1", "text": receipt, "author": "Live Writer",
+             "created": 1_700_000_001_000},
+        ],
+        "PAT-3": [{"id": "live-c3", "text": "open note", "author": "Live Writer",
+                   "created": 1_700_000_000_200}],
+    }
     source = Source("linear", issues=[done, dropped, living, epic])
     manifest = capture_manifest(source, Project("T", "source"), tracker, project)
     by_id = {record["id"]: record for record in manifest["issues"]}
     assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3", "PAT-4"}
-    assert [entry["item"] for entry in by_id["PAT-1"]["pending"]] == ["comments"]
+    assert by_id["PAT-1"]["pending"] == [] and by_id["PAT-1"]["comment_exceptions"] == []
+    # the manifest keeps the source order; DevHub orders by source date on read
+    assert [c["source_ref"] for c in by_id["PAT-1"]["comments"]] == [
+        "linear:comment:live-c2", "linear:comment:live-c1"]
     assert [entry["attribute"] for entry in by_id["PAT-2"]["exceptions"]] == ["archived"]
     copy_and_verify(manifest, tracker, project, lambda: None)
     verify_targets(manifest, tracker, project)
-    assert not ready_for_cutover(manifest)  # pending comments: no cutover yet
+    assert ready_for_cutover(manifest)  # no pending item, no unverified record
     imported = tracker._issue_raw(by_id["PAT-1"]["target_id"])
     assert imported["imported_terminal"] is True and imported["state"] == "done"
     assert (imported["source_created"], imported["source_updated"],
@@ -1492,6 +1519,30 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     # the frozen facts still compare exactly after linking (a link bumps versions only)
     verify_targets(manifest, tracker, project)
     assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"
+    # DEVHUB-128: the comments of the done issue and of the living one are read back as
+    # imported members (source author and date apart from the importer and the insertion date),
+    # in source order, byte for byte; the done issue stays done
+    for source_id, expected in (("PAT-1", Source.comments["PAT-1"]), ("PAT-3", Source.comments["PAT-3"])):
+        raw = tracker._issue_raw(ids[source_id])
+        imported_comments = [item for item in raw["comments"] if "source_ref" in item]
+        assert [(item["source_ref"], item["text"], item["source_author"], item["source_created"])
+                for item in imported_comments] == [
+            (f"linear:comment:{item['id']}", item["text"], item["author"], item["created"])
+            for item in sorted(expected, key=lambda item: item["created"])]
+        assert all(item["actor"] != "Live Writer" and item["created"] > item["source_created"]
+                   for item in imported_comments)
+    assert tracker._issue_raw(ids["PAT-1"])["state"] == "done"
+    version = tracker._issue_raw(ids["PAT-1"])["version"]
+    first = by_id["PAT-1"]["comments"][0]
+    tracker.migration_import_comment(project, ids["PAT-1"], first)  # identical replay: 200
+    assert tracker._issue_raw(ids["PAT-1"])["version"] == version
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_comment(project, ids["PAT-1"], {**first, "text": first["text"] + "x"})
+    # a native comment of the target does not break the exact comparison
+    tracker.add_comment(ids["PAT-3"], "native note", project)
+    verify_targets(manifest, tracker, project)
+    assert [item for item in tracker._issue_raw(ids["PAT-3"])["comments"]
+            if "source_ref" not in item][0]["text"] == "native note"
     # an exact replay converges; a divergent replay fails closed; the issue is frozen
     before = len(tracker.search(project))
     replay = copy_module.deepcopy(manifest)

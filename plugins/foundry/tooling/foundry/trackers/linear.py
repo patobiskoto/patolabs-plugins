@@ -21,7 +21,7 @@ import base64
 import binascii
 import contextlib
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -262,20 +262,51 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
 }}
 """
 
-# PAT-331: the history listing reads archived issues too (``includeArchived``) and the
-# native completion / cancellation dates; ``_ISSUES_QUERY`` is unchanged.
-_ISSUES_HISTORY_QUERY = """
-query FoundryLinearIssuesHistory($teamId: ID!, $projectId: ID!, $after: String) {
+# PAT-331: the history listing reads archived issues too (``includeArchived``), the native
+# completion / cancellation dates, and the comments of each issue with their author
+# (stage 3), so no per-issue request is added for them.  ``_ISSUES_QUERY`` is unchanged.
+# The page is smaller than ``_ISSUES_QUERY``'s because each issue nests up to
+# ``_HISTORY_COMMENTS_PAGE`` comments (query-complexity bound of Linear: unknown here, to be
+# confirmed by a real run); an issue with more comments continues with
+# ``_ISSUE_COMMENTS_HISTORY_QUERY`` and costs one more request per further page.
+_HISTORY_ISSUES_PAGE = 25
+_HISTORY_COMMENTS_PAGE = 50
+_HISTORY_COMMENT_FIELDS = """
+id body createdAt
+user { name displayName }
+botActor { name }
+externalUser { name displayName }
+"""
+_ISSUES_HISTORY_QUERY = f"""
+query FoundryLinearIssuesHistory($teamId: ID!, $projectId: ID!, $after: String) {{
   issues(
-    filter: { team: { id: { eq: $teamId } }, project: { id: { eq: $projectId } } }
-    first: 100
+    filter: {{ team: {{ id: {{ eq: $teamId }} }}, project: {{ id: {{ eq: $projectId }} }} }}
+    first: {_HISTORY_ISSUES_PAGE}
     after: $after
     includeArchived: true
-  ) {
-    nodes { id identifier archivedAt completedAt canceledAt }
-    pageInfo { hasNextPage endCursor }
-  }
-}
+  ) {{
+    nodes {{
+      id identifier archivedAt completedAt canceledAt
+      comments(first: {_HISTORY_COMMENTS_PAGE}) {{
+        nodes {{ {_HISTORY_COMMENT_FIELDS} }}
+        pageInfo {{ hasNextPage endCursor }}
+      }}
+    }}
+    pageInfo {{ hasNextPage endCursor }}
+  }}
+}}
+"""
+
+_ISSUE_COMMENTS_HISTORY_QUERY = f"""
+query FoundryLinearIssueCommentsHistory($id: String!, $after: String) {{
+  issue(id: $id) {{
+    id identifier
+    comments(first: 100, after: $after) {{
+      nodes {{ {_HISTORY_COMMENT_FIELDS} }}
+      pageInfo {{ hasNextPage endCursor }}
+    }}
+  }}
+}}
 """
 
 _PROJECT_RELEASES_QUERY = """
@@ -683,6 +714,52 @@ def _epoch_ms(value) -> int | None:
         )
     except ValueError:
         raise LinearTrackerError("normalize", None, "invalid_response") from None
+
+
+def _epoch_ms_exact(value) -> int:
+    """Whole milliseconds of an ISO-8601 instant, without float rounding (PAT-331)."""
+    if not isinstance(value, str):
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise LinearTrackerError("issue.history", None, "invalid_response") from None
+    if instant.tzinfo is None:
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    return (instant - datetime(1970, 1, 1, tzinfo=timezone.utc)) // timedelta(milliseconds=1)
+
+
+def _history_comment(node) -> dict:
+    """One Linear comment as ``{"id", "text", "author", "created"}`` (PAT-331 stage 3).
+
+    ``author`` is the first non-empty text of the user's ``name`` then ``displayName``, the
+    bot actor's ``name``, the external user's ``name`` then ``displayName``; ``None`` when
+    the comment has none of them (a deleted user, for example).
+    """
+    if (not isinstance(node, dict) or not isinstance(node.get("id"), str) or not node["id"]
+            or not isinstance(node.get("body"), str)):
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    author = None
+    for key, names in (
+        ("user", ("name", "displayName")), ("botActor", ("name",)),
+        ("externalUser", ("name", "displayName")),
+    ):
+        actor = node.get(key)
+        if actor is None:
+            continue
+        if not isinstance(actor, dict):
+            raise LinearTrackerError("issue.history", None, "invalid_response")
+        for name in names:
+            value = actor.get(name)
+            if isinstance(value, str) and value.strip():
+                author = value
+                break
+        if author is not None:
+            break
+    return {
+        "id": node["id"], "text": node["body"], "author": author,
+        "created": _epoch_ms_exact(node.get("createdAt")),
+    }
 
 
 def _connection(raw, operation: str) -> list[dict]:
@@ -5343,6 +5420,7 @@ class LinearTracker(Tracker):
             raise LinearTrackerError("issue.history", None, "pagination_limit")
         exported = []
         for identifier, node in listed.items():
+            comments = self._history_comments(identifier, node.get("comments"))
             issue = self.get_issue(identifier)
             state = issue.normalized_state or issue.state
             native = node.get("completedAt") if state == "done" else (
@@ -5354,8 +5432,40 @@ class LinearTracker(Tracker):
                 "source_created": issue.created,
                 "source_updated": issue.updated,
                 "source_completed": _epoch_ms(native),
+                "comments": comments,
             })
         return exported
+
+    def _history_comments(self, identifier: str, connection) -> list[dict]:
+        """Every comment of one listed issue: the nested page, then the further pages."""
+        collected: list[dict] = []
+        seen: set[str] = set()
+        cursor = None
+        for _ in range(_MAX_PAGES):
+            page = connection.get("pageInfo") if isinstance(connection, dict) else None
+            if (not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list)
+                    or not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            for node in connection["nodes"]:
+                comment = _history_comment(node)
+                if comment["id"] in seen:
+                    raise LinearTrackerError("issue.history", None, "pagination_stalled")
+                seen.add(comment["id"])
+                collected.append(comment)
+            if not page["hasNextPage"]:
+                return sorted(collected, key=lambda item: (item["created"], item["id"]))
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise LinearTrackerError("issue.history", None, "pagination_stalled")
+            data = self._graphql(
+                _ISSUE_COMMENTS_HISTORY_QUERY, {"id": identifier, "after": cursor},
+                "issue.history.comments",
+            )
+            issue = data.get("issue")
+            if not isinstance(issue, dict):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            connection = issue.get("comments")
+        raise LinearTrackerError("issue.history", None, "pagination_limit")
 
     def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
         binding = self._activate(project)
