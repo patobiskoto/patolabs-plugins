@@ -696,7 +696,7 @@ is the port default (`None`): the ADR codec needs no qualification, and `migrati
 Order of the copy: issues, their links, their comments ("Terminal issue import"), then the ADRs, each replacement before the ADR it replaces
 ("ADRs" above).
 
-## Terminal issue import (PAT-331 stage 1, DHN-49)
+## Terminal issue import (PAT-331, DHN-49)
 
 The manifest of a cutover toward DevHub covers every issue of the source project, `done` and
 `dropped` ones and archived ones included, because `DevHubTracker.migration_terminal_import_supported` is
@@ -734,7 +734,7 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   (`tests/test_tracker_migration.py`). Not run live (DHN-49 extension).
 - Comments (PAT-331 stage 3, DEVHUB-128, merge `a57ce72`; DevHub reported its production at `a57ce72` on 2026-10-22, not checked here): the
   comments of every captured issue, living or terminal, Foundry lifecycle receipts included (on Linear they
-  are comments), are copied one by one. Contract: the section "Comment import" of the DevHub contract
+  are comments), are copied one by one, for a target that sets `migration_comments_supported` (`trackers/base.py`, `False` by default; `True` on DevHub only). Contract: the section "Comment import" of the DevHub contract
   (`TRACKER_API.md`). Source: `migration_export_issues` entries carry `comments` (`trackers/base.py`); Linear
   nests them in the history listing (`_ISSUES_HISTORY_QUERY`, `_history_comments`, `_history_comment` in
   `trackers/linear.py`), so the export adds no request per issue and one request per further page for an
