@@ -1580,6 +1580,45 @@
       ]
     },
     {
+      "id": "devhub-migration-adr-import-source-relations",
+      "test": "test_devhub_tracker.py::test_import_adr_sends_source_only_refs_and_unknown_relations_only_when_non_empty",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
+      "id": "devhub-migration-adr-export-source-relations",
+      "test": "test_devhub_tracker.py::test_migration_export_adrs_returns_source_only_refs_and_unknown_relations_as_stored",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
+      "id": "devhub-migration-adr-preflight-source-relations",
+      "test": "test_devhub_tracker.py::test_migration_preflight_accepts_source_only_references_and_unknown_relations",
+      "providers": [
+        "devhub"
+      ],
+      "categories": [
+        "core-operations"
+      ],
+      "operations": [
+        "cross-tracker-adr-import"
+      ]
+    },
+    {
       "id": "devhub-migration-issue-import-conflict",
       "test": "test_devhub_tracker.py::test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answer",
       "providers": [

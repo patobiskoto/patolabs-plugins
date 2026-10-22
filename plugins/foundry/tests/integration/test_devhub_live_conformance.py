@@ -1006,6 +1006,78 @@ def test_dhn_45_the_preflight_refuses_a_proposed_adr_replacement(suite):
     assert tracker.list_adrs(project) == []  # refused before any write
 
 
+@need("DHN-46")
+def test_dhn_46_an_adr_corpus_with_a_source_only_reference_and_unknown_relations_is_copied(suite):
+    # PAT-327 (DEVHUB-122): ``source_only_refs`` and ``unknown_relations`` of the ADR import
+    # route.  The source holds an ADR with an issue left behind (a source-only reference) and
+    # an ADR whose three relation families are unknown; both must read back exactly.
+    import copy as copy_module
+
+    from foundry.migration import capture_manifest, copy_and_verify, verify_targets
+    from foundry.models import Adr, Issue
+    from test_tracker_migration import FakeTransportTracker
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live source relations target", key, repository)
+    child = Issue("PAT-2", "live relations child", state="ready", type="Task", priority="P2",
+                  estimate=3, body="- [ ] open\n")
+    adrs = [Adr(f"FOUNDRY-ADR-{number:04d}", f"ADR {number}", "accepted", f"body {number}\n")
+            for number in (1, 2)]
+    source = FakeTransportTracker("linear", issues=[child], adrs=adrs, adr_relations={
+        # PAT-9 is not in the living scope: it becomes a source-only reference
+        adrs[0].id: {"supersedes": [], "superseded_by": None, "issues": ["PAT-2", "PAT-9"]},
+        adrs[1].id: {"supersedes": "unknown", "superseded_by": "unknown", "issues": "unknown"},
+    })
+    manifest = capture_manifest(source, Project("T", "source"), tracker, project)
+    by_id = {record["id"]: record for record in manifest["adrs"]}
+    assert by_id[adrs[0].id]["source_only_issue_refs"] == ["linear:issue:PAT-9"]
+    assert by_id[adrs[1].id]["relations"] == {
+        "supersedes": "unknown", "superseded_by": "unknown", "issues": "unknown"}
+    copy_and_verify(manifest, tracker, project, lambda: None)
+    verify_targets(manifest, tracker, project)
+    exported = {item["adr"].id: item for item in tracker.migration_export_adrs(project)}
+    assert exported[adrs[0].id]["source_only_issue_refs"] == ["linear:issue:PAT-9"]
+    assert exported[adrs[1].id]["relations"] == {
+        "supersedes": "unknown", "superseded_by": "unknown", "issues": "unknown"}
+    assert "source_only_issue_refs" not in exported[adrs[1].id]
+    # the stored bytes, order included (``GET /adrs/:id``), and ``[]`` when none was sent
+    stored = {}
+    for adr in adrs:
+        item = tracker._adr_lookup(project, foreign_id=adr.id)
+        stored[adr.id] = tracker._application_req("GET", f"/adrs/{item['id']}")
+    assert stored[adrs[0].id]["source_only_refs"] == ["linear:issue:PAT-9"]
+    assert stored[adrs[0].id]["unknown_relations"] == []
+    assert stored[adrs[1].id]["source_only_refs"] == []
+    assert stored[adrs[1].id]["unknown_relations"] == ["issues", "supersedes", "superseded_by"]
+    # a replay converges; the server refuses a family sent both known and unknown (400), the
+    # adapter refuses it before the request, and neither writes
+    before = len(tracker.list_adrs(project))
+    copy_and_verify(copy_module.deepcopy(manifest), tracker, project, lambda: None)
+    assert len(tracker.list_adrs(project)) == before
+    body = "conflict\n"
+    request = {
+        "source_ref": "linear:adr:live-conflict", "foreign_id": "FOUNDRY-ADR-9999",
+        "title": "conflict", "body": body,
+        "body_sha256": hashlib.sha256(body.encode()).hexdigest(),
+        "status": "accepted", "source_only_refs": ["linear:issue:PAT-9"],
+        "unknown_relations": ["issues"],
+    }
+    with pytest.raises(DevHubTrackerError) as refused, tracker._governance_guard(key):
+        tracker._application_req(
+            "POST", f"/projects/{key}/adrs/import", request, idempotent=True)
+    assert refused.value.status == 400
+    assert len(tracker.list_adrs(project)) == before
+    with pytest.raises(ValueError):
+        tracker.import_adr(
+            project, adr_id="FOUNDRY-ADR-9999", title="conflict", body=body,
+            historical_status="accepted", source_ref="linear:adr:live-conflict",
+            source_created=None, source_updated=None,
+            expected_source_sha256=request["body_sha256"],
+            source_only_issue_refs=("linear:issue:PAT-9",), unknown_relations=("issues",))
+
+
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
 
 @need("DHN-37")

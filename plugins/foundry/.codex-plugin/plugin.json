@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Foundry",
     "shortDescription": "Frame, plan, execute, and merge with durable project memory.",
-    "longDescription": "Frame ADR-backed issues and deliver through review, exact-SHA CI and human gates with Lupin, Eiffel, Maigret, and Vauban. V1 covers YouTrack, Linear, DevHub, and private personal GitHub Projects bound to a private repository. Bounded grooming writes and audited non-atomic Epic closure claim no provider CAS or concurrency exclusion. Linear uses an append-only lifecycle projection with targeted native state synchronization and witness-bound project Documents; native AC checkbox replacement remains unavailable. DevHub is the fourth V1 provider but has one core gap (cross-tracker ADR import, PAT-327), so a corpus of ADRs with source-only issue references or unknown relations cannot be switched to it.",
+    "longDescription": "Frame ADR-backed issues and deliver through review, exact-SHA CI and human gates with Lupin, Eiffel, Maigret, and Vauban. V1 covers YouTrack, Linear, DevHub, and private personal GitHub Projects bound to a private repository. Bounded grooming writes and audited non-atomic Epic closure claim no provider CAS or concurrency exclusion. Linear uses an append-only lifecycle projection with targeted native state synchronization and witness-bound project Documents; native AC checkbox replacement remains unavailable. DevHub is the fourth V1 provider; its 19 core cells are supported, and its ADR import carries source-only issue references and unknown relations since DEVHUB-122 (PAT-327).",
     "developerName": "patolabs",
     "category": "Productivity",
     "capabilities": [

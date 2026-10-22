@@ -123,9 +123,13 @@ _IMPORT_PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
 _IMPORT_ESTIMATES = (1, 21)
 _IMPORT_CREATION_STATES = ("backlog", "ready")
 _ADR_LINK_MAX = 50
-_ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f]+")
+# DEVHUB-122: an unpaired surrogate is refused too (a Python ``str`` holds no paired one).
+_ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f\ud800-\udfff]+")
 _SOURCE_REF_MAX = 200
 _FOREIGN_ID_MAX = 120
+# DEVHUB-122 (``MAX_ADR_SOURCE_ONLY_REFS``, ``ADR_RELATION_FAMILIES``, ``contract.ts`` of ``3f0cf4b``).
+_ADR_SOURCE_ONLY_MAX = 200
+_ADR_UNKNOWN_FAMILIES = ("issues", "supersedes", "superseded_by")
 _PROJECT_KEY = re.compile(r"[A-Z][A-Z0-9]{1,15}")
 _PROJECT_ID = re.compile(r"[1-9][0-9]*")
 _ISSUE_ID = re.compile(r"[A-Z][A-Z0-9]{1,15}-[0-9]+")
@@ -2200,38 +2204,48 @@ class DevHubTracker(Tracker):
     def _preflight_adrs(self, project: Project, adrs: list[dict]) -> None:
         ordered, by_id = self._replacement_order(tuple(adrs))
         del ordered  # only the cycle and duplicate refusals matter here
+        unlinked = {
+            record["id"] for record in adrs
+            if record["status"] == "superseded"
+            and record["relations"]["superseded_by"] == "unknown"
+        }
         for record in adrs:
             ref, relations = record["source_ref"], record["relations"]
-            for name in ("supersedes", "superseded_by", "issues"):
-                if relations.get(name) == "unknown":
-                    # DevHub records no "unknown" relation: the readback would be a known
-                    # value, a different claim (PAT-ADR-0003, PAT-ADR-0008).
-                    raise TrackerConflictError(
-                        f"relation ADR inconnue non reproductible par DevHub: {ref} ({name})")
-            if record.get("source_only_issue_refs"):
-                raise TrackerConflictError(
-                    f"références d'issue source-seule sans porteur DevHub: {ref}")
+            # An ``unknown`` family and the source-only issue references are carried by
+            # ``unknown_relations`` and ``source_only_refs`` (DEVHUB-122, PAT-327); the
+            # combinations the server refuses are refused by ``_prepare_adr_import`` below.
             title, body = record["title"], record["body"]
             if (not isinstance(title, str) or title != title.strip()
                     or _utf16_length(title) > _IMPORT_TITLE_MAX
                     or not isinstance(body, str) or _utf16_length(body) > _IMPORT_BODY_MAX):
                 raise TrackerConflictError(f"titre ou corps ADR non reproductible: {ref}")
             replacement = relations["superseded_by"]
-            if replacement is not None and replacement not in by_id:
-                raise TrackerConflictError(f"ADR de remplacement hors corpus: {ref}")
-            if (record["status"] == "superseded") != (replacement is not None):
-                raise TrackerConflictError(f"supersession ADR sans lien réciproque: {ref}")
-            if replacement is not None and by_id[replacement]["status"] == "proposed":
+            if replacement != "unknown":
+                if replacement is not None and replacement not in by_id:
+                    raise TrackerConflictError(f"ADR de remplacement hors corpus: {ref}")
+                if (record["status"] == "superseded") != (replacement is not None):
+                    raise TrackerConflictError(f"supersession ADR sans lien réciproque: {ref}")
+            if replacement not in (None, "unknown") and (
+                    by_id[replacement]["status"] == "proposed"):
                 # DevHub refuses the import with 409 invalid_transition (``cd23304``, PAT-328);
                 # a replacement that is accepted, superseded or deprecated is taken.
                 raise TrackerConflictError(
                     f"ADR de remplacement proposed refusée par DevHub: {ref} "
                     f"(remplaçant {replacement})")
-            expected = sorted(
-                other["id"] for other in adrs if other["relations"]["superseded_by"] == record["id"])
-            if sorted(relations["supersedes"]) != expected:
-                raise TrackerConflictError(f"supersession ADR non réciproque: {ref}")
-            if len(relations["issues"]) > _ADR_LINK_MAX:
+            if relations["supersedes"] != "unknown":
+                expected = sorted(
+                    other["id"] for other in adrs
+                    if other["relations"]["superseded_by"] == record["id"])
+                if sorted(relations["supersedes"]) != expected:
+                    raise TrackerConflictError(f"supersession ADR non réciproque: {ref}")
+                if unlinked - {record["id"]}:
+                    # The export gives ``unknown`` to every other ADR's ``supersedes`` while
+                    # a superseded ADR has no recorded replacement (PAT-ADR-0008): a known
+                    # list would never read back.
+                    raise TrackerConflictError(
+                        f"supersedes connu illisible tant qu'une ADR superseded a un "
+                        f"remplaçant inconnu: {ref}")
+            if relations["issues"] != "unknown" and len(relations["issues"]) > _ADR_LINK_MAX:
                 raise TrackerConflictError(f"trop de relations d'issue pour DevHub: {ref}")
             arguments = self._snapshot_import_arguments(record, ref, by_id)
             arguments.setdefault("supersedes", _UNSPECIFIED_ADR_RELATION)
@@ -2434,7 +2448,7 @@ class DevHubTracker(Tracker):
     def _prepare_adr_import(
         self, project: Project, *, adr_id, title, body, historical_status, source_ref,
         source_created, source_updated, expected_source_sha256, supersedes, superseded_by,
-        issue_refs, source_only_issue_refs,
+        issue_refs, source_only_issue_refs, unknown_relations=(),
     ) -> dict:
         """Validate one ADR import locally and build its request, without any request.
 
@@ -2448,10 +2462,20 @@ class DevHubTracker(Tracker):
         if (not isinstance(title, str) or not title.strip() or not isinstance(body, str)
                 or historical_status not in _ADR_STATES):
             raise ValueError("ADR d'import DevHubTracker invalide")
-        if source_only_issue_refs:
-            raise TrackerCapabilityUnavailableError(
-                self.name, "adr_source_only_issue_refs",
-            )
+        source_only = list(source_only_issue_refs)
+        if (len(source_only) > _ADR_SOURCE_ONLY_MAX or len(set(source_only)) != len(source_only)
+                or any(not self._origin_text(ref, _SOURCE_REF_MAX) for ref in source_only)):
+            raise ValueError("références source ADR DevHub invalides")
+        unknown = list(unknown_relations)
+        if (len(set(unknown)) != len(unknown)
+                or any(name not in _ADR_UNKNOWN_FAMILIES for name in unknown)):
+            raise ValueError("familles de relations ADR inconnues invalides")
+        if "issues" in unknown and (
+                source_only or (issue_refs is not _UNSPECIFIED_ADR_RELATION and list(issue_refs))):
+            raise ValueError("relation issues déclarée inconnue mais des valeurs sont fournies")
+        if "superseded_by" in unknown and (
+                superseded_by is not _UNSPECIFIED_ADR_RELATION and superseded_by is not None):
+            raise ValueError("relation superseded_by déclarée inconnue mais une valeur est fournie")
         if supersedes is not _UNSPECIFIED_ADR_RELATION and supersedes:
             raise TrackerCapabilityUnavailableError(
                 self.name, "adr_import_supersedes",
@@ -2478,6 +2502,12 @@ class DevHubTracker(Tracker):
                         or self._project_key(ref) != project.key):
                     raise ValueError("référence d'issue ADR DevHub invalide")
             request["linked_issue_ids"] = linked
+        # Absent when empty: an empty list is the same content, and leaving the key out keeps
+        # the request hash an older server knows (DEVHUB-122).
+        if source_only:
+            request["source_only_refs"] = source_only
+        if unknown:
+            request["unknown_relations"] = unknown
         return request
 
     def import_adr(
@@ -2496,6 +2526,7 @@ class DevHubTracker(Tracker):
         superseded_by: str | None | object = _UNSPECIFIED_ADR_RELATION,
         issue_refs: tuple[str, ...] | object = _UNSPECIFIED_ADR_RELATION,
         source_only_issue_refs: tuple[str, ...] = (),
+        unknown_relations: tuple[str, ...] = (),
     ) -> Adr:
         """Import one historical ADR through ``POST /projects/:key/adrs/import`` (DHN-36).
 
@@ -2505,12 +2536,18 @@ class DevHubTracker(Tracker):
         replacement of this project by its foreign id, imported first; the server takes its
         ``source_ref``.  A non-empty ``supersedes`` is refused (DevHub stores the
         edge from the replaced ADR, written when that ADR is imported with its
-        ``superseded_by``).  A status DevHub lacks (``rejected``) and source-only issue
-        references are refused.  A ``foreign_id`` equal to the server id of a native ADR of
+        ``superseded_by``).  A status DevHub lacks (``rejected``) is refused.  A ``foreign_id`` equal to the server id of a native ADR of
         the project (no ``foreign_id``) is refused before the write.  Replay 200, divergence
         or a taken ``foreign_id`` 409 (``TrackerConflictError``).  The answer does not echo
         ``superseded_by`` or ``linked_issue_ids`` (``6721ad8:src/tracker/store.ts:374-386``,
         ``publicAdr``); the server compares them in the replay digest (``:2244-2248``).
+
+        ``source_only_issue_refs`` is sent as ``source_only_refs`` and ``unknown_relations``
+        as such (DEVHUB-122, PAT-327, ``3f0cf4b``), each only when non-empty.  The answer
+        must carry both exactly as sent (an answer without them counts as empty), otherwise
+        ``TrackerConflictError``.  A server older than DEVHUB-122 answers 400 to a request
+        that carries either key.  A family named in ``unknown_relations`` with a value for it
+        in the same request is refused here, as the server refuses it (400).
         """
         project = self._require_project(project)
         registry.require_writable_project(self.name, project)
@@ -2521,6 +2558,7 @@ class DevHubTracker(Tracker):
             expected_source_sha256=expected_source_sha256, supersedes=supersedes,
             superseded_by=superseded_by, issue_refs=issue_refs,
             source_only_issue_refs=source_only_issue_refs,
+            unknown_relations=unknown_relations,
         )
         if self._server_adr_key(adr_id) == project.key:
             # A foreign id of the form `<KEY>-ADR-NNNN` equal to the server id of a native
@@ -2564,7 +2602,9 @@ class DevHubTracker(Tracker):
                 or adr.title != title.strip()
                 or self._server_adr_key(raw["id"]) != project.key
                 or any(raw.get(key) != request.get(key)
-                       for key in ("source_created", "source_updated"))):
+                       for key in ("source_created", "source_updated"))
+                or any(raw.get(key, []) != request.get(key, [])
+                       for key in ("source_only_refs", "unknown_relations"))):
             raise TrackerConflictError("ADR migration DevHub divergente après import")
         return adr
 
@@ -2600,6 +2640,8 @@ class DevHubTracker(Tracker):
             optional["superseded_by"] = relations["superseded_by"]
         if relations.get("issues") != "unknown":
             optional["issue_refs"] = tuple(relations["issues"])
+        unknown = tuple(
+            name for name in _ADR_UNKNOWN_FAMILIES if relations.get(name) == "unknown")
         return {
             "adr_id": snapshot["id"], "title": snapshot["title"], "body": snapshot["body"],
             "historical_status": snapshot["status"], "source_ref": source_ref,
@@ -2609,6 +2651,7 @@ class DevHubTracker(Tracker):
                 snapshot["body"].encode("utf-8")
             ).hexdigest(),
             "source_only_issue_refs": tuple(snapshot.get("source_only_issue_refs", [])),
+            "unknown_relations": unknown,
             **optional,
         }
 
@@ -2902,21 +2945,29 @@ class DevHubTracker(Tracker):
         ``GET /adrs/:id/relationships`` (one more read per ADR, PAT-324): a complete empty page is
         a known empty list.  ``supersedes`` and ``issues`` are sorted, the order
         ``migration_prepare_adr`` gives the expected side, so a readback comparison is by set.
+        A family named in the ADR's ``unknown_relations`` is exported as ``unknown`` whatever
+        later writes added to it (an import-time declaration, DEVHUB-122, PAT-327), and
+        its ``source_only_refs`` come back, in the order stored, as ``source_only_issue_refs``
+        (key absent when none).
         """
         items = self._list_adr_items(project)
         port_id = {item["id"]: self._to_adr(item).id for item in items}
         entries = []
         for item in items:
-            adr = self._to_adr(self._application_req(
-                "GET", f"/adrs/{urllib.parse.quote(item['id'], safe='')}"))
+            raw = self._application_req(
+                "GET", f"/adrs/{urllib.parse.quote(item['id'], safe='')}")
+            adr = self._to_adr(raw)
+            source_only, declared = self._adr_source_relations(raw)
             relations = self._read_adr_decision_document(item["id"])["relations"]
-            entries.append((adr, relations, self._adr_relationship_ids(item["id"])))
+            # A family declared unknown at import is not read: the declaration is the answer.
+            issues = [] if "issues" in declared else self._adr_relationship_ids(item["id"])
+            entries.append((adr, relations, issues, source_only, declared))
         unlinked = {
-            adr.id for adr, relations, _issues in entries
+            adr.id for adr, relations, *_rest in entries
             if adr.status == "superseded" and relations.get("superseded_by") is None
         }
         exported = []
-        for adr, relations, issues in entries:
+        for adr, relations, issues, source_only, declared in entries:
             entry_relations = {
                 "supersedes": "unknown", "superseded_by": "unknown",
                 "issues": sorted(issues, key=_issue_order)}
@@ -2938,11 +2989,32 @@ class DevHubTracker(Tracker):
             except KeyError:
                 raise DevHubTrackerError(
                     "GET", "/adr-decisions/adrs", None, "invalid_response") from None
+            for name in declared:
+                entry_relations[name] = "unknown"
             exported.append({
                 "adr": adr, "relations": entry_relations,
                 "source_created": None, "source_updated": None,
+                **({"source_only_issue_refs": source_only} if source_only else {}),
             })
         return exported
+
+    @staticmethod
+    def _adr_source_relations(raw: dict) -> tuple[list[str], list[str]]:
+        """``source_only_refs`` and ``unknown_relations`` of an ADR detail (DEVHUB-122).
+
+        Both are additive keys: absent on a server older than ``3f0cf4b`` and ``[]`` when
+        none was sent.  Any other shape is ``invalid_response`` (fail closed).
+        """
+        source_only = raw.get("source_only_refs", [])
+        declared = raw.get("unknown_relations", [])
+        if (not isinstance(source_only, list)
+                or any(not isinstance(ref, str) for ref in source_only)
+                or len(set(source_only)) != len(source_only)
+                or not isinstance(declared, list)
+                or any(name not in _ADR_UNKNOWN_FAMILIES for name in declared)
+                or len(set(declared)) != len(declared)):
+            raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
+        return list(source_only), list(declared)
 
     def _read_adr_document(self, adr_id: str) -> dict:
         """Read one ADR with its `linked_issue_ids` (`devhub-adr-authoring.v1`)."""

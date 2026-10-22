@@ -2085,6 +2085,82 @@ def test_migration_export_adrs_never_claims_supersedes_while_a_superseded_adr_is
         broken.migration_export_adrs(PROJECT)
 
 
+def test_migration_export_adrs_returns_source_only_refs_and_unknown_relations_as_stored():
+    refs = ["linear:issue:PAT-9", "Linear:issue:PAT-10", "linear:issue:PAT-10"[:-1] + "1"]
+    items = [
+        {"id": "TRAME-ADR-0001", "title": "A", "status": "accepted", "version": 1},
+        {"id": "TRAME-ADR-0002", "title": "B", "status": "accepted", "version": 1},
+    ]
+    responses = [
+        receipt_page(items),
+        # A: source-only references, known issues read from the relationships route
+        dict(items[0], body="b", source_only_refs=refs, unknown_relations=[]),
+        _decision_document("TRAME-ADR-0001"),
+        _relationships_page("TRAME-ADR-0001", ["TRAME-3"]),
+        # B: issues and supersedes declared unknown (no relationships read), key order kept
+        dict(items[1], body="b", source_only_refs=[],
+             unknown_relations=["supersedes", "issues"]),
+        _decision_document("TRAME-ADR-0002", supersedes="TRAME-ADR-0001",
+                           supersedes_all=["TRAME-ADR-0001"]),
+    ]
+    tracker = ScriptedTracker(responses)
+    exported = {entry["adr"].id: entry for entry in tracker.migration_export_adrs(PROJECT)}
+    first, second = exported["TRAME-ADR-0001"], exported["TRAME-ADR-0002"]
+    assert first["source_only_issue_refs"] == refs  # order and case unchanged
+    assert first["relations"] == {"supersedes": [], "superseded_by": None, "issues": ["TRAME-3"]}
+    assert "source_only_issue_refs" not in second
+    # declared unknown stays unknown although the server now holds an edge
+    assert second["relations"] == {
+        "supersedes": "unknown", "superseded_by": None, "issues": "unknown"}
+    assert not any(call[1].startswith("/adrs/TRAME-ADR-0002/relationships")
+                   for call in tracker.calls)
+
+
+def test_migration_export_adrs_reads_an_older_server_without_the_two_keys_as_empty():
+    items = [{"id": "TRAME-ADR-0001", "title": "A", "status": "accepted", "version": 1}]
+    tracker = _export_tracker(items, [_decision_document("TRAME-ADR-0001")])
+    entry = tracker.migration_export_adrs(PROJECT)[0]
+    assert "source_only_issue_refs" not in entry and entry["relations"]["issues"] == []
+
+
+@pytest.mark.parametrize("detail", (
+    {"source_only_refs": "x"}, {"source_only_refs": [1]}, {"source_only_refs": ["a", "a"]},
+    {"unknown_relations": ["owner"]}, {"unknown_relations": ["issues", "issues"]},
+    {"unknown_relations": "issues"},
+))
+def test_migration_export_adrs_fails_closed_on_a_malformed_declaration(detail):
+    items = [{"id": "TRAME-ADR-0001", "title": "A", "status": "accepted", "version": 1}]
+    tracker = ScriptedTracker([receipt_page(items), dict(items[0], body="b", **detail)])
+    with pytest.raises(DevHubTrackerError, match="invalid_response"):
+        tracker.migration_export_adrs(PROJECT)
+
+
+def test_a_declared_unknown_replacement_of_a_superseded_adr_still_makes_the_others_unknown():
+    items = [
+        {"id": "TRAME-ADR-0001", "title": "A", "status": "superseded", "version": 1},
+        {"id": "TRAME-ADR-0002", "title": "B", "status": "accepted", "version": 1},
+    ]
+    tracker = ScriptedTracker([
+        receipt_page(items),
+        dict(items[0], body="b", unknown_relations=["superseded_by"]),
+        _decision_document("TRAME-ADR-0001"), _relationships_page("TRAME-ADR-0001"),
+        dict(items[1], body="b"), _decision_document("TRAME-ADR-0002"),
+        _relationships_page("TRAME-ADR-0002"),
+    ])
+    relations = {entry["adr"].id: entry["relations"] for entry in tracker.migration_export_adrs(PROJECT)}
+    assert relations["TRAME-ADR-0001"]["superseded_by"] == "unknown"
+    assert relations["TRAME-ADR-0002"]["supersedes"] == "unknown"
+
+
+def test_a_source_ref_or_foreign_id_with_an_unpaired_surrogate_is_refused_unsent(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    for overrides in ({"source_ref": "linear:adr:\ud800"}, {"adr_id": "FOUNDRY-ADR-\udfff"}):
+        tracker = ScriptedTracker([])
+        with pytest.raises(ValueError):
+            import_adr(tracker, **overrides)
+        assert tracker.calls == []
+
+
 def created_raw(**overrides):
     value = dict(
         id="TRAME-7", title="Created", state="backlog", priority="P3", type="Task",
@@ -2720,7 +2796,19 @@ def test_import_adr_sends_the_replacement_source_ref_and_the_issue_links(monkeyp
     ({"issue_refs": ("OTHER-1",)}, ValueError),
     ({"source_created": -1}, ValueError),
     ({"expected_source_sha256": "0" * 64}, TrackerConflictError),
-    ({"source_only_issue_refs": ("linear:issue:PAT-1",)}, TrackerCapabilityUnavailableError),
+    # DEVHUB-122 / PAT-327: what the server would answer 400 to is refused unsent
+    ({"source_only_issue_refs": ("a b",)}, ValueError),
+    ({"source_only_issue_refs": ("linear:issue:PAT-1", "linear:issue:PAT-1")}, ValueError),
+    ({"source_only_issue_refs": tuple(f"linear:issue:PAT-{n}" for n in range(201))}, ValueError),
+    ({"source_only_issue_refs": ("x" * 201,)}, ValueError),
+    ({"source_only_issue_refs": ("bad\ud800",)}, ValueError),
+    ({"unknown_relations": ("owner",)}, ValueError),
+    ({"unknown_relations": ("issues", "issues")}, ValueError),
+    ({"unknown_relations": ("issues",), "issue_refs": ("TRAME-1",)}, ValueError),
+    ({"unknown_relations": ("issues",),
+      "source_only_issue_refs": ("linear:issue:PAT-1",)}, ValueError),
+    ({"unknown_relations": ("superseded_by",), "historical_status": "superseded",
+      "superseded_by": "FOUNDRY-ADR-0030"}, ValueError),
 ])
 def test_import_adr_refuses_before_any_request(monkeypatch, overrides, error):
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
@@ -2728,6 +2816,34 @@ def test_import_adr_refuses_before_any_request(monkeypatch, overrides, error):
     with pytest.raises(error):
         import_adr(tracker, **overrides)
     assert tracker.calls == []
+
+
+def test_import_adr_sends_source_only_refs_and_unknown_relations_only_when_non_empty(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    refs = ["linear:issue:PAT-9", "linear:issue:PAT-10", "Linear:issue:PAT-9"]
+    tracker = ScriptedTracker([adr_raw(source_only_refs=refs, unknown_relations=["supersedes"])])
+    import_adr(tracker, source_only_issue_refs=tuple(refs), unknown_relations=("supersedes",),
+               issue_refs=("TRAME-1",))
+    body = tracker.calls[0][2]
+    assert body["source_only_refs"] == refs  # order and case kept
+    assert body["unknown_relations"] == ["supersedes"]
+    assert body["linked_issue_ids"] == ["TRAME-1"]
+    # an empty list is not sent: the request hash an older server knows is unchanged
+    plain = ScriptedTracker([adr_raw()])
+    import_adr(plain)
+    assert "source_only_refs" not in plain.calls[0][2]
+    assert "unknown_relations" not in plain.calls[0][2]
+    # an empty known issues list next to an unknown family is no value
+    empty = ScriptedTracker([adr_raw(unknown_relations=["issues"])])
+    import_adr(empty, unknown_relations=("issues",), issue_refs=())
+    # the answer must carry both exactly as sent; a missing key counts as empty
+    for answer in (adr_raw(), adr_raw(source_only_refs=refs[::-1], unknown_relations=["supersedes"]),
+                   adr_raw(source_only_refs=refs, unknown_relations=[])):
+        with pytest.raises(TrackerConflictError, match="divergente"):
+            import_adr(ScriptedTracker([answer]), source_only_issue_refs=tuple(refs),
+                       unknown_relations=("supersedes",))
+    with pytest.raises(TrackerConflictError, match="divergente"):
+        import_adr(ScriptedTracker([adr_raw(source_only_refs=["linear:issue:PAT-1"])]))
 
 
 def test_import_adr_maps_conflict_and_missing_route_and_checks_the_answer(monkeypatch):
@@ -2795,7 +2911,7 @@ def test_migration_import_adr_refuses_a_known_supersedes_and_a_corpus_checks_it_
     assert single.calls == []
     # the whole corpus is refused before its first write
     for bad in (snap(3, status="rejected"),
-                snap(3, source_only_issue_refs=["linear:issue:PAT-1"]),
+                snap(3, source_only_issue_refs=["linear:issue:PAT-1", "linear:issue:PAT-1"]),
                 snap(3, supersedes=["FOUNDRY-ADR-0001"]),        # not named by that ADR
                 snap(3, supersedes=["FOUNDRY-ADR-0099"])):       # outside the corpus
         tracker = ScriptedTracker([])
@@ -2810,7 +2926,8 @@ def test_migration_import_adr_refuses_a_known_supersedes_and_a_corpus_checks_it_
         return adr_raw(
             id=f"TRAME-ADR-{number:04d}", title=f"ADR {number}", body=f"body {number}\n",
             status=status, source_ref=f"linear:adr:{number}",
-            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None)
+            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None,
+            unknown_relations=["supersedes"] if number == 1 else [])
 
     tracker = ScriptedTracker([answer(2), receipt_page([answer(2)]), answer(1, "superseded")])
     assert len(tracker.migration_import_adrs(PROJECT, (old, new))) == 2
@@ -2851,7 +2968,8 @@ def test_migration_import_adrs_writes_replacements_first_and_answers_in_input_or
         return adr_raw(
             id=f"TRAME-ADR-{number:04d}", title=f"ADR {number}", body=f"body {number}\n",
             status=status, source_ref=f"linear:adr:{number}",
-            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None)
+            foreign_id=f"FOUNDRY-ADR-{number:04d}", source_created=None, source_updated=None,
+            unknown_relations=["supersedes"])
 
     old, new = snapshot(1, "superseded", "FOUNDRY-ADR-0002"), snapshot(2)
     tracker = ScriptedTracker([
@@ -3071,8 +3189,10 @@ def _migration_adr(number, *, status="accepted", supersedes=(), superseded_by=No
     return {
         "kind": "adr", "source_ref": f"linear:adr:{number}", "id": f"FOUNDRY-ADR-{number:04d}",
         "title": f"ADR {number}", "body": f"body {number}\n", "status": status,
-        "relations": {"supersedes": list(supersedes), "superseded_by": superseded_by,
-                      "issues": list(issues)},
+        "relations": {
+            "supersedes": supersedes if supersedes == "unknown" else list(supersedes),
+            "superseded_by": superseded_by,
+            "issues": issues if issues == "unknown" else list(issues)},
         "source_created": None, "source_updated": None, **extra,
     }
 
@@ -3199,7 +3319,11 @@ def test_migration_preflight_refuses_a_parent_whose_type_is_excepted():
 
 @pytest.mark.parametrize(("records", "message"), (
     ([_migration_adr(1, status="rejected")], "non importable"),
-    ([_migration_adr(1, **{"source_only_issue_refs": ["linear:issue:PAT-9"]})], "source-seule"),
+    ([_migration_adr(1, **{"source_only_issue_refs": ["linear:issue:PAT-9"] * 2})], "non importable"),
+    ([_migration_adr(1, **{"source_only_issue_refs": [f"linear:issue:PAT-{n}" for n in range(201)]})],
+     "non importable"),
+    ([_migration_adr(1, issues="unknown", **{"source_only_issue_refs": ["linear:issue:PAT-9"]})],
+     "non importable.*déclarée inconnue"),
     ([_migration_adr(1, superseded_by="FOUNDRY-ADR-0002"),
       _migration_adr(2, supersedes=["FOUNDRY-ADR-0001"])], "sans lien réciproque"),
     ([_migration_adr(1, status="superseded")], "sans lien réciproque"),
@@ -3220,13 +3344,48 @@ def test_migration_preflight_refuses_an_adr_corpus_devhub_cannot_record(records,
     assert tracker.calls == []
 
 
-@pytest.mark.parametrize("name", ("supersedes", "superseded_by", "issues"))
-def test_migration_preflight_never_turns_an_unknown_adr_relation_into_a_known_one(name):
-    # PAT-ADR-0003 / PAT-ADR-0008: DevHub reads back a known value, never "unknown".
-    record = _migration_adr(1)
-    record["relations"][name] = "unknown"
-    with pytest.raises(TrackerConflictError, match=f"inconnue.*{name}"):
-        ScriptedTracker([]).migration_preflight(BOUND, (record,))
+def test_migration_preflight_accepts_source_only_references_and_unknown_relations():
+    # DEVHUB-122 / PAT-327: DevHub carries both, the combinations it refuses stay refused
+    records = [
+        _migration_adr(1, **{"source_only_issue_refs": ["linear:issue:PAT-9", "linear:issue:PAT-10"]},
+                       issues=["PAT-2"], supersedes="unknown"),
+        _migration_adr(2, issues="unknown", supersedes="unknown"),
+        _migration_adr(3, status="superseded", superseded_by="unknown", supersedes="unknown"),
+        _migration_adr(4, status="accepted", superseded_by="unknown", supersedes="unknown"),
+    ]
+    _preflight(records)
+
+
+def test_migration_preflight_refuses_a_known_supersedes_no_readback_could_confirm():
+    # a superseded ADR with an unknown replacement makes every other `supersedes` unknown on
+    # export (PAT-ADR-0008): a known list, `[]` included, would never read back
+    unlinked = _migration_adr(1, status="superseded", superseded_by="unknown")
+    with pytest.raises(TrackerConflictError, match="supersedes connu illisible"):
+        ScriptedTracker([]).migration_preflight(BOUND, (unlinked, _migration_adr(2)))
+    _preflight([unlinked, _migration_adr(2, supersedes="unknown")])
+    _preflight([unlinked])  # the entry itself is exported with its own list
+
+
+def test_migration_preflight_skips_the_reciprocity_of_an_unknown_supersedes_only():
+    # the predecessor's import writes the edge; the declaration is what reads back
+    _preflight([_migration_adr(1, status="superseded", superseded_by="FOUNDRY-ADR-0002"),
+                _migration_adr(2, supersedes="unknown")])
+    with pytest.raises(TrackerConflictError, match="non réciproque"):
+        ScriptedTracker([]).migration_preflight(BOUND, (
+            _migration_adr(1, status="superseded", superseded_by="unknown"),
+            _migration_adr(2, supersedes=["FOUNDRY-ADR-0001"]),
+        ))
+
+
+def test_snapshot_import_arguments_declares_exactly_the_unknown_families_in_a_fixed_order():
+    record = _migration_adr(1, status="superseded", superseded_by="unknown",
+                            issues="unknown", supersedes="unknown")
+    arguments = DevHubTracker._snapshot_import_arguments(record, record["source_ref"])
+    assert arguments["unknown_relations"] == ("issues", "supersedes", "superseded_by")
+    assert "superseded_by" not in arguments and "issue_refs" not in arguments
+    known = _migration_adr(2, issues=["PAT-1"])
+    assert DevHubTracker._snapshot_import_arguments(
+        known, known["source_ref"])["unknown_relations"] == ()
 
 
 def test_migration_preflight_accepts_a_replacement_that_is_not_proposed():

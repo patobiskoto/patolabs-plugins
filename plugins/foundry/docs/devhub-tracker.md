@@ -476,7 +476,8 @@ the server counter. The adapter sends the same body and reads the answer as befo
 **ADRs.** `import_adr` (which `migration_import_adr` calls) sends one `POST
 /projects/:key/adrs/import` with the strict body: `source_ref`, `foreign_id` (the snapshot id),
 `title`, `body`, `body_sha256`, `status` and the optional `source_created`, `source_updated`,
-`superseded_by`, `linked_issue_ids`. The sha-256 of the UTF-8 body is compared with
+`superseded_by`, `linked_issue_ids`, and, since DEVHUB-122 (merge `3f0cf4b98e60a04154cf051e4110cbf29094d381`,
+"Source-only references and unknown relations" below), `source_only_refs` and `unknown_relations`. The sha-256 of the UTF-8 body is compared with
 `expected_source_sha256` before any request (`TrackerConflictError`); the server checks it
 again (422 `invalid_request`). The status must be one of `proposed`, `accepted`, `deprecated`,
 `superseded`; any other (for example `rejected`) is a `ValueError`. `superseded_by` is the foreign
@@ -489,8 +490,8 @@ edge from the replaced ADR, so it is written when that ADR is imported with its 
 `migration_import_adr`, which passes a known `supersedes` of the snapshot to `import_adr`, is
 refused the same way; `migration_import_adrs` leaves it out only when every predecessor it names
 is in the corpus and names this ADR as its `superseded_by`.
-Source-only issue references have no DevHub carrier and raise
-`TrackerCapabilityUnavailableError`. The call carries a scope `tracker:adr` credential and no
+Source-only issue references and unknown relation families are carried by DEVHUB-122
+("Source-only references and unknown relations" below). The call carries a scope `tracker:adr` credential and no
 `X-Foundry-Proof` header (a deviation declared by DevHub). Replay is 200; a divergent content, or a
 `foreign_id` held by another `source_ref`, is 409 `resource_conflict` (`TrackerConflictError`);
 a 404 `route_unavailable` is `TrackerCapabilityUnavailableError` (`migration_adr_import`). The
@@ -509,8 +510,8 @@ older server a native creation later taking a number already used as a foreign i
 prevented (`devhub-requirements.md`, row DHN-36). `migration_import_adrs` writes
 each replacement before the ADR it replaces (the server refuses a replacement not yet imported)
 and returns the ADRs in input order; a cycle is `TrackerConflictError`. Before its first write it
-validates every snapshot locally (status, source-only issue references, `supersedes`, body digest,
-shapes: `_prepare_adr_import`), so a corpus with one invalid ADR writes nothing.
+validates every snapshot locally (status, source-only references, declared unknown families,
+`supersedes`, body digest, shapes: `_prepare_adr_import`), so a corpus with one invalid ADR writes nothing.
 
 **Reading.** `_to_adr` reads the additive keys `source_ref`, `foreign_id`, `source_created`,
 `source_updated` (absent or null on an ADR created normally; a wrongly typed value is
@@ -530,6 +531,37 @@ project (observed possible: the server checks a `foreign_id` for shape and uniqu
 `b0231d9:src/tracker/store.ts:2256-2259`) therefore reaches its own ADR, and an id absent from the
 listing is `invalid_response`, nothing written. Cost: one listing before each of the three routes.
 
+### Source-only references and unknown relations (PAT-327, DEVHUB-122)
+
+Source: DEVHUB-122, merge `3f0cf4b98e60a04154cf051e4110cbf29094d381` (`docs/TRACKER_API.md`, "ADR import" > "Source-only
+references and unknown relations"; `importAdrSchema`, `MAX_ADR_SOURCE_ONLY_REFS`, `ADR_RELATION_FAMILIES` of
+`3f0cf4b:src/tracker/contract.ts:94-134`; `publicAdr`, `3f0cf4b:src/tracker/store.ts:377-391`; observed in source, and green live
+in DHN-46 at `3f0cf4b`, "Live run of PAT-327" of `devhub-requirements.md`). The DevHub agent reported production at
+`a314c0c`, without DEVHUB-122 (relayed, not verified here), so an older server is possible (below).
+
+- `import_adr` takes `source_only_issue_refs` and `unknown_relations`. It sends them as `source_only_refs` and
+  `unknown_relations`, each only when non-empty (an empty list is the same content on the server, and omitting the key keeps
+  the request hash and replay digest of an older client). The references are opaque and kept in the order sent, byte
+  for byte; `migration_export_adrs` returns them as `source_only_issue_refs` in the order stored (key absent when none).
+- `_snapshot_import_arguments` declares a family unknown when the snapshot's relation is exactly `unknown`, in the order
+  `issues`, `supersedes`, `superseded_by`. An unknown family sends no value for itself (`supersedes` has no field on a
+  single import, `superseded_by` and `issue_refs` are left out).
+- Refused locally, before any request, what the server answers 400 `invalid_request` to (`_prepare_adr_import`, so also
+  by `migration_preflight` and before the first write of `migration_import_adrs`): more than 200 references (`_ADR_SOURCE_ONLY_MAX`),
+  a repeated one, one the origin text rule refuses (1 to 200 UTF-16 units, no whitespace, control character or unpaired
+  surrogate: `_ORIGIN_TEXT`, `_SOURCE_REF_MAX`), a family named twice or other than the three of `_ADR_UNKNOWN_FAMILIES`, `issues` declared
+  unknown beside a non-empty `issue_refs` or `source_only_issue_refs`, and `superseded_by` declared unknown beside a value.
+  `_ORIGIN_TEXT` also refuses an unpaired surrogate in a `source_ref` or `foreign_id` since DEVHUB-122.
+- The answer must carry both fields exactly as sent, an absent key counting as empty; otherwise `TrackerConflictError`.
+- A server older than DEVHUB-122 answers 400 to a request that carries either key (strict schema, deduced from the
+  `.strict()` of `importAdrSchema` at `12ca158`): the preflight does not probe it (unknown at preflight), the first such
+  import fails with that `DevHubTrackerError`.
+- Limit: `unknown_relations` is a declaration fixed at import time. DevHub does not keep it consistent with later writes (a later
+  import naming the ADR in `superseded_by`, `supersede_adr`, a revision of the `linked_issue_ids` of a `proposed`
+  imported ADR: deduced by DevHub from its code, not tested). `migration_export_adrs` exports a declared family as `unknown`
+  whatever it holds now and does not read its values, so the readback of a cutover compares the declaration, not
+  the later state.
+
 The whole-repository path (preflight, attributes, expected relations) is described in "Selective
 cutover target" below. Rows DHN-34 and DHN-36 of `devhub-requirements.md`.
 
@@ -546,7 +578,7 @@ project back with `verify_project_identity`. The procedure below was run offline
 `capture_manifest` with a scripted transport (`test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile`);
 against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server.
 
-DevHub is a target for living work and for an ADR corpus whose relations it can record, not for every ADR corpus: the contract cell `cross-tracker-adr-import` stays a `gap` owned by PAT-327, because DevHub at `12ca158` has no carrier for source-only issue references nor for an `unknown` relation (observed in source; `devhub-requirements.md`, question 19) and the target must keep both (PAT-ADR-0008, PAT-ADR-0003). The preflight below refuses such a corpus, so the cutover fails closed. For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR, so a preflight of this repository toward DevHub would be refused.
+DevHub is a target for living work and for an ADR corpus, source-only issue references and `unknown` relation families included, since DEVHUB-122 (`3f0cf4b`) and PAT-327 ("Source-only references and unknown relations" above): the contract cell `cross-tracker-adr-import` is `supported` (`tracker-contract.v1.json`), its live proof is DHN-46 (`devhub-requirements.md`, "Live run of PAT-327"). Two corpora stay refused by the preflight because no readback of them could match: a `supersedes` that is known while a `superseded` ADR of the corpus has an unknown replacement (the export gives `unknown` to every other `supersedes`, PAT-ADR-0008), and `issues` declared unknown beside source-only references (the server refuses that combination). For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR; the DevHub preflight no longer refuses those families, but a preflight of this repository toward DevHub has not been run.
 
 **`migration_preflight`** (`trackers/devhub.py`) writes nothing and returns the same value for the
 same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
@@ -565,9 +597,9 @@ and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIs
   parents, a parent whose `type` is not exactly `Epic` (or whose `type` is excepted), a hierarchy cycle and
   a dependency cycle are refused (`createTrackerLink`: "parent must be an Epic", "issue already has a
   parent", "hierarchy cycle refused", "dependency cycle refused");
-- the ADR corpus: a status DevHub lacks (`rejected`), source-only issue references (no carrier,
-  `devhub-requirements.md`, question 19; PAT-327), a relation that is `unknown` at the source (DevHub reads back a known value, never `unknown`,
-  PAT-ADR-0003 and PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
+- the ADR corpus: a status DevHub lacks (`rejected`), a source-only reference list or an unknown-family declaration the
+  server would refuse (PAT-327, "Source-only references and unknown relations" above), a known `supersedes` while a
+  `superseded` ADR of the corpus has an unknown replacement (PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
   the reverse, a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
   more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
   (body digest, shapes);
@@ -612,7 +644,8 @@ DHN-44 and DHN-45 (`devhub-requirements.md`) are the live proof, green at `cd233
 sorted by key then number, and `migration_export_adrs` returns the same order, because DevHub does not
 document the order it reads relations back in (unknown) and `copy_and_verify` compares lists. Since PAT-324
 `migration_export_adrs` also reads the issue relations of each ADR (`GET /adrs/:id/relationships`, one more
-read per ADR, shared with `read_adr_issue_relations`): they are no longer `unknown`. `migration_qualify_adrs`
+read per ADR, shared with `read_adr_issue_relations`): they are no longer `unknown`, except for an ADR that declared
+them so at import (PAT-327, whose `issues` are then not read). `migration_qualify_adrs`
 is the port default (`None`): the ADR codec needs no qualification, and `migration_import_adrs` refuses one.
 Order of the copy: issues, their links, then the ADRs, each replacement before the ADR it replaces
 ("ADRs" above).
@@ -654,7 +687,8 @@ Source: DEVHUB-108, merge `6721ad8` (`6721ad8:docs/TRACKER_API.md`, "Proof-bound
 
 `supersede_adr(adr, replacement_id)` (`trackers/devhub.py`) resolves both port ids to their server item with one project listing (`_adr_route_items`, same rule as `_adr_route_item`). Before any write it raises `TrackerConflictError` when the two are the same ADR, when the source is neither `accepted` nor `superseded`, or when it is `accepted` and the replacement is not. A source already `superseded` returns without a write when `GET /adr-decisions/adrs/:id` already names that replacement as `superseded_by`, whatever the replacement's status now is (checked before the `accepted` test of the replacement), and is a `TrackerConflictError` otherwise. It then sends `POST /api/tracker/v1/adrs/:id/supersede` with the body `replacement` and `replacement_version` (server ids, versions read in the listing), the source version (`X-DevHub-Version` and `If-Match`), an idempotency key and `X-Foundry-Proof`: action `adr-supersede`, `target_status` `superseded`, `resource_id` and `expected_version` of the source, plus `replacement_id` and `replacement_version` (`_proof`, `extra`; fields `6721ad8:src/tracker/contract.ts:300-302`, checked by `consumeProof`, `store.ts:1751`). The proof payload is sorted JSON, base64url, signed by HMAC-SHA256 as for the other actions; the server decodes it as JSON and validates it with a strict schema (`verifyProof`, `6721ad8:src/tracker/contract.ts:408-442`), so key order is not part of the contract. A 409 `version_conflict`, `invalid_transition` or `resource_conflict` becomes `TrackerConflictError`, a 404 `route_unavailable` (server without DEVHUB-108) becomes `TrackerCapabilityUnavailableError` (`adr_supersession`), any other error propagates. After the POST the adapter reads `GET /adr-decisions/adrs/:id` (`devhub-adr-decisions.v1`, scope `tracker:read`) and raises `DevHubTrackerError` (`invalid_response`) when `relations.superseded_by` is not the replacement. The status route (`POST /adrs/:id/status` with `superseded`) is never used: up to `8028000` it created an unlinked supersession (DEVHUB-87); since `12ca158` it refuses `superseded` (below).
 
-`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (set through the status route, possible up to `8028000`; refused since `12ca158`) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` is read from `GET /adrs/:id/relationships` (PAT-324, "Selective cutover target"); `supersedes` and `issues` are sorted. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
+`migration_export_adrs(project)` reads one project listing, then the same document for each ADR, and returns `superseded_by` and `supersedes` (the latter from `supersedes_all` when present, else from `supersedes`, as port ids: the foreign id for an imported ADR). A non-superseded ADR without a link reports `superseded_by: None`; a `superseded` ADR with no recorded link (set through the status route, possible up to `8028000`; refused since `12ca158`) keeps `unknown` (PAT-ADR-0003). While the project holds such an ADR other than the entry itself, its replacement is unknown and could be any ADR, so `supersedes` of the entry is `unknown`, not `[]` and not a partial list (PAT-ADR-0008); otherwise it is the list read. `issues` is read from `GET /adrs/:id/relationships` (PAT-324, "Selective cutover target"); `supersedes` and `issues` are sorted. A family the ADR declared unknown at import (DEVHUB-122, PAT-327) is exported as `unknown`
+whatever the document holds. N to 1 reads back as several entries in `supersedes_all` of the replacement (`6721ad8:src/tracker/adr-decisions-store.ts:20-22`).
 
 `DevHubTracker.set_adr_status(adr, "superseded")` raises `ValueError` before any request, naming `supersede_adr` (`adr supersede`) (PAT-326): since DEVHUB-116 the status route answers 409 `invalid_transition` to `superseded` and supersedes nothing (`12ca158:src/tracker/store.ts:2365`, `12ca158:docs/TRACKER_API.md`, route table; observed in source, run by DHN-31). The server checks governance first, so a Manual project gets 403 `authority_boundary`, not the 409 (`12ca158:src/tracker/store.ts:2363-2365`, observed in source, not run). The ADR id parsing of the adapter (`_adr_project_key`: `<KEY>-ADR-` then at least four digits) is unaffected: a number above 999999 is numbered by the server counter and still has at least four digits.
 
