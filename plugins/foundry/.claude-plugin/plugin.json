@@ -50,7 +50,7 @@
     "FOUNDRY_TRACKER": {
       "type": "string",
       "title": "Tracker provider",
-      "description": "youtrack (default) | linear | ghprojects (qualified private personal Project and private repository only) | devhub (optional, outside V1 qualification). Explicit checkout binding selects one tracker. V1 supports bounded writes and audited non-atomic Epic closure; Linear lifecycle and AC authority remain proof-bound.",
+      "description": "youtrack (default) | linear | ghprojects (qualified private personal Project and private repository only) | devhub (fourth V1 provider, PAT-ADR-0031; a repository is bound to it explicitly). Explicit checkout binding selects one tracker. V1 supports bounded writes and audited non-atomic Epic closure; Linear lifecycle and AC authority remain proof-bound.",
       "default": "youtrack"
     },
     "FOUNDRY_CODEHOST": {

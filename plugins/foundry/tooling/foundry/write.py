@@ -530,7 +530,10 @@ def issue_acceptance_state(tracker, issue_id: str) -> AcceptanceState:
         raise TrackerCapabilityUnavailableError(tracker.name, "human-acceptance")
     issue_binding(tracker, issue_id)
     issue = tracker.observe_human_acceptance(issue_id)
-    if issue.acceptance_source is None or issue.acceptance_source != tracker.human_acceptance_source:
+    # `human_acceptance_source` defaults to None on the port: a provider that declares the
+    # support without naming its source never reads as accepted (None would equal None).
+    expected_source = tracker.human_acceptance_source
+    if not expected_source or issue.acceptance_source != expected_source:
         return AcceptanceState(
             "unknown" if issue.projection_status == "unknown" else "none",
             native_state=issue.native_state,

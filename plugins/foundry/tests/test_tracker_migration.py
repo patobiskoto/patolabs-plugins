@@ -1151,6 +1151,16 @@ def _git_checkout(path, remote):
         subprocess.run(args, cwd=path, check=True, capture_output=True)
 
 
+def test_cutover_target_is_constructed_outside_the_checkout(monkeypatch):
+    """PAT-325: the tests of `activate` replace `cutover._target`; this runs its construction."""
+    import foundry
+
+    calls = []
+    monkeypatch.setattr(foundry, "tracker", lambda name, cwd=None: calls.append((name, cwd)) or "built")
+    assert cutover_cli._target("devhub") == "built"
+    assert calls == [("devhub", "/")]
+
+
 def _devhub_activation_fixture(monkeypatch, tmp_path):
     """PAT-329: a git checkout bound to a YouTrack source, an isolated registry, a DevHub target."""
     state, repo = tmp_path / "state", tmp_path / "public"
@@ -1159,7 +1169,7 @@ def _devhub_activation_fixture(monkeypatch, tmp_path):
     monkeypatch.chdir(repo)
     canonical = "github.com/acme/public"
     registry = cutover_cli.registry
-    assert os.path.realpath(registry.path()).startswith(os.path.realpath(state))
+    assert os.path.realpath(registry.path()).startswith(os.path.realpath(state) + os.sep)
     registry.register("youtrack", "public", "SRC", "0-1", canonical_repo=canonical)
     registry.bootstrap_repository_binding("youtrack", "public", "SRC", "0-1", cwd=str(repo))
     source = FakeTransportTracker("youtrack", issues=[

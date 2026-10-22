@@ -1599,13 +1599,15 @@ class DevHubTracker(Tracker):
     def observe_epic_closure_child(self, issue_id: str) -> Issue:
         """Read a direct child for the atomic Epic closure (PAT-330, PAT-ADR-0025).
 
-        ``get_issue`` plus one receipt read, made only for a ``done`` issue whose criteria
-        are not all checked: exactly one ``human_acceptance`` receipt then marks it accepted
+        ``get_issue`` plus one receipt read, made only for a ``done`` issue without a
+        ``pr_url`` whose criteria are not all checked: exactly one ``human_acceptance`` receipt then marks it accepted
         by the decision and counts its criteria as satisfied (the decision passed every
         criterion).  No extra request for any other child.
         """
         issue = self.get_issue(issue_id)
-        if issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total:
+        if (issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total
+                or issue.pr_url):
+            # An issue with a PR is never accepted by decision (as in `_release_issue`).
             return issue
         decided = self._valid_human_decision(issue, self.read_proof_receipts(issue_id))
         if not isinstance(decided, dict):
@@ -1910,7 +1912,11 @@ class DevHubTracker(Tracker):
             disposition = "unavailable"
             receipts = self.read_proof_receipts(issue.id, project=project)
             done = [receipt for receipt in receipts if receipt["action"] == "done"]
+            # A `human_acceptance` receipt next to the PR-bound ones is a conflict, as in
+            # `_valid_human_decision` and on Linear: the issue stays unavailable (PAT-325).
             if (len(done) == 1 and done[0]["pr_url"] == issue.pr_url
+                    and not any(receipt["action"] == "human_acceptance"
+                                for receipt in receipts)
                     and issue.ac_total >= 1 and issue.ac_done == issue.ac_total
                     and any(
                         receipt["action"] == "review"
@@ -2098,7 +2104,10 @@ class DevHubTracker(Tracker):
         ``src/tracker/adr-relationships-contract.ts``, requires ``min(1)``, so an empty type is
         excepted), and a new issue
         is created in ``backlog`` or ``ready`` only (409 ``invalid_transition`` otherwise).  A
-        value outside these is excepted, never approximated.  A value the published project
+        value outside these is excepted, never approximated.  An absent (``None``) ``type``,
+        ``priority`` or ``estimate`` is not excepted: the import omits it and the server
+        stores ``null`` (``fields.priority ?? null`` of ``createTrackerIssue`` at ``3f0cf4b``,
+        deduced from source, PAT-325); an absent ``state`` is excepted (see below).  A value the published project
         workflow disables is not an exception: ``migration_preflight`` reads the workflow and
         refuses it before any write (PAT-328), so the manifest never records it.
         """
@@ -2122,7 +2131,10 @@ class DevHubTracker(Tracker):
         ):
             exceptions["estimate"] = "target value unavailable: estimate"
         state = attributes.get("state")
-        if state is not None and state not in _IMPORT_CREATION_STATES:
+        if state not in _IMPORT_CREATION_STATES:
+            # An absent state is omitted by the import and the server creates the issue in
+            # ``backlog``: the readback could never equal ``None`` (PAT-325, deduced from
+            # ``createTrackerIssue`` at ``3f0cf4b``), so it is excepted like any other state.
             exceptions["state"] = f"target creation state unavailable: {str(state)[:40]}"
         return exceptions
 
@@ -2188,7 +2200,8 @@ class DevHubTracker(Tracker):
         path = f"/projects/{urllib.parse.quote(project.key, safe='')}"
         raw = self._req("GET", path, response_contract=_WORKFLOW_CONTRACT,
                         api_prefix=_WORKFLOW_API_PREFIX)
-        invalid = DevHubTrackerError("GET", "/workflow/projects", None, "invalid_response")
+        invalid = DevHubTrackerError(
+            "GET", f"{_WORKFLOW_API_PREFIX}{path}", None, "invalid_response")
         if (not isinstance(raw, dict) or raw.get("schema_version") != _WORKFLOW_CONTRACT
                 or raw.get("project") != project.key):
             raise invalid
@@ -2245,6 +2258,8 @@ class DevHubTracker(Tracker):
                         f"{str(value)[:40]!r} ({record['source_ref']})")
             state = None if "state" in excepted else attributes.get("state")
             state = state if state in _IMPORT_CREATION_STATES else "backlog"
+            # The server counts every status of the canonical state, enabled or not
+            # (``resolveStatus`` of ``workflow-settings.ts`` at ``3f0cf4b``, PAT-325).
             matches = [item for item in statuses if item["canonical"] == state]
             if len(matches) != 1 or not matches[0]["enabled"]:
                 raise TrackerConflictError(
@@ -2975,8 +2990,9 @@ class DevHubTracker(Tracker):
         already superseded with a link naming that same replacement, a no-write replay
         (checked first, whatever the replacement's status now is): otherwise
         `TrackerConflictError` before any write. The route is `POST /adrs/:id/supersede` (`6721ad8:docs/TRACKER_API.md`,
-        "Proof-bound ADR supersession"), never the status route, which creates an
-        unlinked supersession.  The proof is bound to both server ids and versions; the
+        "Proof-bound ADR supersession"), never the status route.  Up to DevHub ``8028000``
+        that route created an unlinked supersession; since ``12ca158`` it refuses
+        ``superseded``.  The proof is bound to both server ids and versions; the
         link is read back from `GET /adr-decisions/adrs/:id`.
         """
         project_key, (source, replacement) = self._adr_route_items(
@@ -3031,7 +3047,8 @@ class DevHubTracker(Tracker):
 
         One project listing feeds the ADR reads and the id maps.  `superseded_by` and
         `supersedes` come from `GET /adr-decisions/adrs/:id`, mapped to port ids.  A
-        superseded ADR with no recorded link (the status route creates one) keeps `unknown`
+        superseded ADR with no recorded link (up to DevHub ``8028000`` the status route created
+        one; since ``12ca158`` it refuses it, but such an ADR may still exist) keeps `unknown`
         (PAT-ADR-0003).  Its replacement is unknown too, so while the project holds such an
         ADR other than the entry itself, no entry's `supersedes` is known complete: it is
         `unknown`, never `[]` or a partial list (PAT-ADR-0008).  `issues` is read from

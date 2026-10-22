@@ -306,8 +306,8 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   whose only receipt is one `human_acceptance` receipt, still matching the body, as `accepted`, with the references `acceptance_decision_digest`
   (the key Linear emits) and `proof_receipt_id`. For the atomic Epic closure,
   `write.close_epic` reads each direct child through `observe_epic_closure_child` (default:
-  `get_issue`); DevHub adds one receipt read only for a `done` child whose criteria are not all
-  checked, and a single `human_acceptance` receipt (the only receipt, still matching the body, else
+  `get_issue`); DevHub adds one receipt read only for a `done` child with no `pr_url` whose criteria are not all
+  checked (a child with a PR is returned unchanged, as `_release_issue` does not take a decision for it either, PAT-325), and a single `human_acceptance` receipt (the only receipt, still matching the body, else
   the issue is returned unchanged) then marks it accepted
   (`acceptance_source` `devhub-human-acceptance`) and counts its criteria as satisfied, as the
   decision passed each one. The server does not check the boxes on a human acceptance: at `3f0cf4b`
@@ -317,7 +317,13 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   PAT-ADR-0025 ("Lecture") that the Epic closure audit binds the acceptance source, which on
   DevHub only Foundry's read before the call checks. Still not done: a `done` issue
   merged under an override (`acceptance_override` receipt) stays `unavailable` in a release
-  scope.
+  scope. A `done` issue whose PR-bound `review` and `done` receipts match but that also carries a
+  `human_acceptance` receipt is `unavailable` in a release scope, as Linear and `_valid_human_decision`
+  read that mix as a conflict (PAT-325). The whole closure, a child accepted by decision included, runs
+  offline through the real `write.close_epic` and `DevHubTracker.close_epic` with only HTTP faked
+  (`test_epic_closure_end_to_end_over_a_child_accepted_by_a_human_decision`); no live test closes an Epic over
+  such a child. Decision of PAT-325: `observe_issue` keeps not exposing the acceptance (one more receipt
+  read per issue), the two limits above being the ones PAT-ADR-0033 "Conséquences" accepts.
 - Known limit announced by DevHub (DEVHUB-87, deferred): a decision string with U+0000 or a
   lone surrogate passes validation and fails at insert (a server error, not a 400).
 
@@ -409,7 +415,7 @@ mode once the identity holds: see "Governance mode".
 Source: the stable contract `devhub-governance.v1` (`src/tracker/governance-contract.ts:6`
 at DevHub `8028000`) and the refusal `assertFoundryGovernance` (`src/tracker/store.ts:1768-1771`
 at `8028000`), both read in source, not run. DevHub documents the refusal in `TRACKER_API.md`
-since DEVHUB-116 (`12ca158:docs/TRACKER_API.md:320-323`), which was not merged when this
+since DEVHUB-116 (`12ca158:docs/TRACKER_API.md`, route table rows of the Epic closure and of the import, lines 320 and 322), which was not merged when this
 section was written (PAT-321); that merge is what PAT-326 follows.
 
 A project is in mode `manual` or `foundry`; DevHub refuses Foundry writes (proof-bound
@@ -439,7 +445,7 @@ That code is shared with other authority refusals (for example a decided ADR, se
   `:2393`; observed in source, not run). Since DEVHUB-116 (`12ca158`), `POST
   /projects/:key/adrs/import` and `POST /projects/:key/epics/:id/closure` are documented to
   refuse outside Foundry governance with 403 `authority_boundary` too
-  (`12ca158:docs/TRACKER_API.md:320-323`, route table; read in source, not run); the adapter
+  (`12ca158:docs/TRACKER_API.md`, route table rows at lines 320 and 322; read in source, not run); the adapter
   wraps both already. On the status route governance is checked before the
   `superseded` refusal (409), so a Manual project gets 403 first (see "Proof-bound ADR
   supersession").
@@ -478,7 +484,7 @@ Row DHN-35 of `devhub-requirements.md`.
 Routes of DEVHUB-105, merged in DevHub as `b0231d9` (its page `docs/TRACKER_API.md`, section
 "Selective import (DEVHUB-105)"). The adapter is `trackers/devhub.py`; the offline tests are in
 `tests/test_devhub_tracker.py` (PAT-319 block). A `source_ref` is 1 to 200 characters, a
-`foreign_id` 1 to 120, both without whitespace or control character
+`foreign_id` 1 to 120, both without whitespace, control character or unpaired surrogate
 (`_ORIGIN_TEXT`, `_SOURCE_REF_MAX`, `_FOREIGN_ID_MAX`); an invalid one is a `ValueError` before any
 request.
 
@@ -587,6 +593,7 @@ in DHN-46 at `3f0cf4b`, "Live run of PAT-327" of `devhub-requirements.md`). The 
 - A server older than DEVHUB-122 answers 400 to a request that carries either key (strict schema, deduced from the
   `.strict()` of `importAdrSchema` at `12ca158`): the preflight does not probe it (unknown at preflight), the first such
   import fails with that `DevHubTrackerError`.
+- A `superseded` ADR whose replacement is `unknown` is accepted by the preflight and imported as `superseded` without `superseded_by` (`unknown_relations` names `superseded_by`). That the server accepts it (201) was relayed by the DevHub agent on 2026-10-22 and deduced from its code at `3f0cf4b`, with no dedicated server test; Foundry's own proof is the offline test `test_migration_preflight_accepts_source_only_references_and_unknown_relations` (`tests/test_devhub_tracker.py`, which has such an ADR) and the last part of the live test of DHN-46, added by PAT-325 and observed green at `3f0cf4b` (`devhub-requirements.md`, "Live run of PAT-325").
 - Limit: `unknown_relations` is a declaration fixed at import time. DevHub does not keep it consistent with later writes (a later
   import naming the ADR in `superseded_by`, `supersede_adr`, a revision of the `linked_issue_ids` of a `proposed`
   imported ADR: deduced by DevHub from its code, not tested). `migration_export_adrs` exports a declared family as `unknown`
@@ -609,7 +616,7 @@ and `activate` through `cutover.main` with `FOUNDRY_DATA` isolated and checks th
 project or tracker, a manifest not `verified` and an edited manifest are refused with the registry unchanged
 (`tests/test_tracker_migration.py`; the target adapter there is a fake transport named `devhub`, so the offline test
 does not exercise `verify_project_identity`). Its live proof is DHN-47 (`tests/integration/test_devhub_live_conformance.py`,
-`devhub-requirements.md`): green at DevHub `3f0cf4b` ("Live run of PAT-329").
+`devhub-requirements.md`): green at DevHub `3f0cf4b` ("Live run of PAT-329"). Both the offline test and DHN-47 replace `cutover._target`; the real construction `foundry.tracker("devhub", cwd="/")` is covered separately, offline, by `test_cutover_target_is_constructed_outside_the_checkout`.
 The target configuration is `{"key": "<KEY>", "id": "<project id>", "extra": {"canonical_repo":
 "<host/owner/repo>"}}`: `canonical_repo` is the repository identity of the checkout being switched
 and must be the one the DevHub project is registered under, since `migration_preflight` reads the
@@ -617,7 +624,7 @@ project back with `verify_project_identity`. The procedure below was run offline
 `capture_manifest` with a scripted transport (`test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_profile`);
 against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_verify` and `verify_targets` from a scripted source on a disposable instance at `12ca158` (observed, "Live run of PAT-324" in `devhub-requirements.md`); the `cutover` CLI commands and `activate` were not run against a server in that run (DHN-47 of PAT-329 runs them, status in "Live run of PAT-329" of `devhub-requirements.md`).
 
-DevHub is a target for living work and for an ADR corpus, source-only issue references and `unknown` relation families included, since DEVHUB-122 (`3f0cf4b`) and PAT-327 ("Source-only references and unknown relations" above): the contract cell `cross-tracker-adr-import` is `supported` (`tracker-contract.v1.json`), its live proof is DHN-46 (`devhub-requirements.md`, "Live run of PAT-327"). Two corpora stay refused by the preflight because no readback of them could match: a `supersedes` that is known while a `superseded` ADR of the corpus has an unknown replacement (the export gives `unknown` to every other `supersedes`, PAT-ADR-0008), and `issues` declared unknown beside source-only references (the server refuses that combination). For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR; the DevHub preflight no longer refuses those families, but a preflight of this repository toward DevHub has not been run.
+DevHub is a target for living work and for an ADR corpus, source-only issue references and `unknown` relation families included, since DEVHUB-122 (`3f0cf4b`) and PAT-327 ("Source-only references and unknown relations" above): the contract cell `cross-tracker-adr-import` is `supported` (`tracker-contract.v1.json`), its live proof is DHN-46 (`devhub-requirements.md`, "Live run of PAT-327"). Two corpora stay refused by the preflight for two different reasons: a `supersedes` that is known while a `superseded` ADR of the corpus has an unknown replacement is refused because no readback of it could match (the export gives `unknown` to every other `supersedes`, PAT-ADR-0008), whereas `issues` declared unknown beside source-only references is refused because the server refuses that combination (it is not a readback matter). For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR; the DevHub preflight no longer refuses those families, but a preflight of this repository toward DevHub has not been run.
 
 **`migration_preflight`** (`trackers/devhub.py`) writes nothing and returns the same value for the
 same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
@@ -638,8 +645,8 @@ and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIs
   parent", "hierarchy cycle refused", "dependency cycle refused");
 - the ADR corpus: a status DevHub lacks (`rejected`), a source-only reference list or an unknown-family declaration the
   server would refuse (PAT-327, "Source-only references and unknown relations" above), a known `supersedes` while a
-  `superseded` ADR of the corpus has an unknown replacement (PAT-ADR-0008), a replacement outside the corpus, a `superseded` status without a replacement or
-  the reverse, a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
+  `superseded` ADR of the corpus has an unknown replacement (PAT-ADR-0008), a replacement outside the corpus, a `superseded` status with a replacement known to be absent (`None`) or
+  the reverse (a known replacement on an ADR whose status is not `superseded`); a `superseded` ADR whose replacement is `unknown` is accepted (`_preflight_adrs`), a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
   more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
   (body digest, shapes);
 - an ADR whose replacement (`superseded_by`) is `proposed` in the corpus: DevHub refuses it with 409
@@ -657,7 +664,7 @@ It then copies the import rule: while `version` is 1 (never published) nothing i
 nothing; above 1 every issue of the manifest must have each of `type`, `priority` and `estimate` strictly equal
 (case-sensitive, no trim, `estimate` an integer) to an `enabled` entry of the field, an omitted or excepted
 attribute counting as `null` (which needs an enabled `null` entry), and its creation state (`state` if it is
-`backlog` or `ready`, otherwise `backlog`) must be the one status of that canonical state, enabled. Otherwise the
+`backlog` or `ready`, otherwise `backlog`) must be the one status of that canonical state, enabled. Exactly one is counted among all the statuses of the workflow, enabled or not: a canonical state with one enabled and one disabled status is refused too, because the server counts both (`resolveStatus` of `src/tracker/workflow-settings.ts` at `3f0cf4b`, read in source, not run; `test_migration_preflight_refuses_a_creation_state_with_one_enabled_and_one_disabled_status`). Otherwise the
 preflight refuses, before any write, naming the field, the value and the source coordinate. A disabled value is a
 preflight refusal, not an exception of the manifest (`migration_attribute_exceptions`): an exception records a value
 the target cannot represent and the copy sends `null` instead, whereas the workflow is an administrator's choice
@@ -675,8 +682,8 @@ cannot reproduce, so the manifest records it and `copy_and_verify` neither sends
 `priority` outside `P0` to `P3`, `estimate` that is not an integer from 1 to 21, `type` empty or longer than
 80 UTF-16 units, and a `state` other than `backlog` or `ready` (the server creates an issue in those two
 states only, `createTrackerIssue`: an imported `in-progress` or `review` issue is therefore created in
-`backlog`, with the exception recorded). A value that a published project workflow disables is not an exception: the preflight above refuses it
-(PAT-328), as the other providers refuse theirs before the first effect. The live-work copy cell is `supported`;
+`backlog`, with the exception recorded; an absent `state` is excepted the same way, since the server would create the issue in `backlog` and no readback equals `None`, PAT-325). An absent (`None`) `type`, `priority` or `estimate` is not excepted: `migration_import_issue` omits it and the server stores `null` for an omitted field (`fields.priority ?? null` and its two siblings in `createTrackerIssue`, `src/tracker/store.ts` at `3f0cf4b`; deduced from source, not run), which is what the readback compares; `test_migration_import_issue_omits_every_absent_attribute` and `test_migration_attribute_exceptions_name_each_value_devhub_cannot_reproduce` (`tests/test_devhub_tracker.py`) cover that path offline, and no live test exercises an absent attribute. A value that a published project workflow disables is not an exception: the preflight above refuses it
+(PAT-328). The other providers do otherwise: a value their target cannot represent is a manifest exception (for example Linear, `migration_attribute_exceptions` of `trackers/linear.py`). The live-work copy cell is `supported`;
 DHN-44 and DHN-45 (`devhub-requirements.md`) are the live proof, green at `cd23304` ("Live run of PAT-328").
 
 **ADR readback.** `migration_prepare_adr` returns the snapshot with `supersedes` sorted and the issue relations

@@ -14,6 +14,7 @@ import sys
 
 import foundry
 from foundry import registry
+from foundry.trackers.base import TrackerConflictError
 
 
 def _parse_adr_md(text: str, filename: str):
@@ -152,8 +153,15 @@ def setup(name, short, repo, adr_dir=None):
         # Same read-back as `registry bootstrap`: exact identity, governance mode (PAT-321).
         try:
             verified = tracker.verify_project_identity(project)
-        except Exception as exc:
+        except TrackerConflictError as exc:
+            # A typed refusal (for example DevHub governance mode) names its cause;
+            # any other error stays generic, as in `registry.verify_existing_project`.
             raise SystemExit(f"Setup tracker refusé : {exc}") from None
+        except Exception:
+            raise SystemExit(
+                "Setup tracker refusé : coordonnées du projet "
+                f"'{tracker.name}' indisponibles à la relecture."
+            ) from None
         if verified is not True:
             raise SystemExit(
                 "Setup tracker refusé : coordonnées du projet "
