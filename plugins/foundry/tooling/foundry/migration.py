@@ -82,9 +82,11 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
     records = []
+    not_copied: dict[str, tuple[list, object]] = {}
     for item in source.migration_export_issues(source_project):
         issue = item["issue"]
         record = _issue_snapshot(issue, source.name)
+        not_copied[issue.id] = (list(issue.labels or []), issue.milestone)
         if (issue.normalized_state or issue.state) in _TERMINAL:
             if not target.migration_terminal_import_supported:
                 continue  # living-only scope of FOUNDRY-ADR-0026 for this target
@@ -122,6 +124,17 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         ):
             raise MigrationError("exceptions d'attribut cible invalides")
         exceptions.update(specific)
+        # PAT-ADR-0032: no target copies labels nor milestone; each non-empty source value
+        # is a named exception carrying that value (an issue without them gets none).
+        labels, milestone = not_copied[record["id"]]
+        if labels:
+            exceptions["labels"] = (
+                "not copied; source value: " + json.dumps(labels, ensure_ascii=False)
+            )
+        if milestone is not None:
+            exceptions["milestone"] = (
+                "not copied; source value: " + json.dumps(milestone, ensure_ascii=False)
+            )
         if record.get("archived"):
             exceptions["archived"] = "target has no archived state for an issue"
         record["exceptions"] = [

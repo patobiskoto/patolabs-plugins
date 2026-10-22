@@ -713,8 +713,8 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   (`_terminal_import_body`, `_import_terminal_issue`). Request shape and replay rules: the section "Terminal
   issue import" of the DevHub contract (`TRACKER_API.md`, DEVHUB-126, merge `defda07`). The `fields` object
   always holds `type`, `priority` and `estimate` (`null` when absent or excepted), because the server
-  digests it as sent; `milestone` and `labels` are never sent, as in the living import, and are not
-  manifest exceptions (they are not in `_ISSUE_ATTRIBUTES`). `pr_url` and each date are omitted when `None`.
+  digests it as sent; `milestone` and `labels` are never sent, as in the living import; they are named manifest
+  exceptions when the source has a value (see "Labels and milestone" below). `pr_url` and each date are omitted when `None`.
   A replay with the same content converges, other content is `TrackerConflictError`.
 - Readback: `Issue.import_history` holds the three dates of an issue the server marks as an imported terminal
   issue (`_to_issue`); `copy_and_verify` and `verify_targets` compare state, `pr_url` and the three dates
@@ -982,3 +982,28 @@ The preserved F89E2E historical fixture has no original closure receipt and no t
 completed event. It therefore remains incomplete and is not a release gate or a
 successful reconciliation example. `campaign-terminal` refuses it before remote
 mutation instead of deriving an original proof from its DEVHUB-32 projection.
+
+### Labels and milestone, and Epic closure over imported children (PAT-331, decisions of 2026-10-22)
+
+- Labels and milestone: no target copies them. `capture_manifest` (`migration.py`) records, for every
+  target and every issue (living or terminal), an exception `labels` when `Issue.labels` is not empty and an
+  exception `milestone` when `Issue.milestone` is not `None`, each reason carrying the source value; an
+  issue without them gets neither, so its digest is unchanged. The Linear source fills both fields
+  (`normalize` in `trackers/linear.py`: `labels` without the type labels, `milestone` by the project's
+  `milestone_ids`). Offline test: `test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_has_them`.
+- Epic closure: `observe_epic_closure_child` (`trackers/devhub.py`) reads the detail of a child; when the
+  server marks it `imported_terminal` (`Issue.import_history`) and its state is `done` or `dropped`, it
+  counts without a new proof. A `done` one reads accepted, its criteria counted as satisfied, with the
+  acceptance source `DevHubTracker.imported_terminal_acceptance_source` (`devhub-imported-terminal`), distinct
+  from `devhub-human-acceptance` and from any receipt; its proof stays in the source tracker. A `dropped`
+  one carries the same source and `write.close_epic` leaves it out of the set that `--accept-dropped` must
+  name (PAT-ADR-0030 still applies to every other abandoned child). The detail read is the only way used to
+  know a child is imported: the Epic subgraph read is not consulted for it. The atomic receipt still binds
+  `{id, version, state}` read at closure time. Deduced from the DevHub store, not run: the server accepts
+  such children, and importing links bumps a child's version. Not run live: it waits for DEVHUB-127.
+- Release scope: `_release_issue` reads an imported `done` issue as `unavailable`, with a reference
+  `unavailable_reason` naming the import, never as accepted.
+- Offline tests: `tests/test_devhub_tracker.py` (`test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof`,
+  `test_epic_closure_accepts_imported_terminal_children_without_a_named_closure`,
+  `test_epic_closure_still_names_a_dropped_child_that_was_not_imported`,
+  `test_release_scope_never_reads_an_imported_terminal_issue_as_accepted`).

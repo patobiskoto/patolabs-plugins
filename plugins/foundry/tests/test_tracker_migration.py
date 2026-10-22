@@ -1791,3 +1791,19 @@ def test_linear_export_lists_archived_issues_and_reads_the_native_completion_dat
     assert [(e["issue"].id, e["archived"], e["source_created"], e["source_updated"])
             for e in exported] == [("L-1", False, 1, 2), ("L-2", True, 1, 2), ("L-3", False, 1, 2)]
     assert [e["source_completed"] for e in exported] == [1767312000000, 1767398400000, None]
+
+
+def test_manifest_names_labels_and_milestone_as_exceptions_only_when_the_source_has_them():
+    # PAT-ADR-0032: no target copies them; an issue without them keeps its exceptions
+    source = FakeTransportTracker("youtrack", [
+        Issue("T-1", "x", state="ready", body="body", type="Task",
+              labels=["backend", "ui"], milestone="v1"),
+        Issue("T-2", "y", state="ready", body="body", type="Task"),
+    ])
+    target = FakeTransportTracker("linear")
+    manifest = capture_manifest(source, Project("T", "a"), target, Project("T", "b"))
+    first, second = manifest["issues"]
+    reasons = {item["attribute"]: item["reason"] for item in first["exceptions"]}
+    assert reasons["labels"] == 'not copied; source value: ["backend", "ui"]'
+    assert reasons["milestone"] == 'not copied; source value: "v1"'
+    assert not {"labels", "milestone"} & {item["attribute"] for item in second["exceptions"]}

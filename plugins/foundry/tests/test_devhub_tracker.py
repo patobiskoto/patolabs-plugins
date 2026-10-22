@@ -4055,3 +4055,79 @@ def test_preflight_checks_the_workflow_status_of_a_terminal_state(monkeypatch):
     _preflight([{**record, "terminal": None, "attributes": {
         **record["attributes"], "state": "ready"}}], workflow=workflow_raw(
             2, statuses_disabled=("done",)))
+
+
+def _imported_child(child_id, state, **over):
+    return issue_raw(
+        id=child_id, state=state, pr_url=None, body="- [ ] old", ac_total=1, ac_done=0,
+        version=4, imported_terminal=True, source_created=1, source_updated=2,
+        source_completed=3 if state == "done" else None, **over)
+
+
+def test_closure_child_read_counts_an_imported_terminal_child_without_a_new_proof():
+    # PAT-331 / PAT-ADR-0032: one detail read, no receipt read, a source of its own
+    done = ScriptedTracker([_imported_child("TRAME-3", "done")])
+    child = done.observe_epic_closure_child("TRAME-3")
+    assert (child.acceptance_status, child.ac_done) == ("accepted", 1)
+    assert child.acceptance_source == "devhub-imported-terminal"
+    assert child.acceptance_source != DevHubTracker.human_acceptance_source
+    assert len(done.calls) == 1
+    dropped = ScriptedTracker([_imported_child("TRAME-4", "dropped")])
+    abandoned = dropped.observe_epic_closure_child("TRAME-4")
+    assert abandoned.acceptance_source == "devhub-imported-terminal"
+    assert abandoned.acceptance_status is None and len(dropped.calls) == 1
+
+
+def _close_with_children(monkeypatch, children, **kwargs):
+    epic = issue_raw(
+        id="TRAME-1", type="Epic", state="in-progress", pr_url=None, body="- [ ] validated",
+        ac_total=1, ac_done=1, version=5,
+        links=[{"type": "parent-of", "direction": "outward", "target": raw["id"]}
+               for raw in children])
+    tracker = ScriptedTracker([epic, *children])
+    sent = []
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: PROJECT)
+    monkeypatch.setattr(tracker, "validate_issue_binding", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        tracker, "close_epic", lambda project, receipt: sent.append(receipt) or "closed")
+    monkeypatch.setattr(write, "_validate_epic_outcome", lambda outcome, **_k: outcome)
+    return tracker, sent
+
+
+def test_epic_closure_accepts_imported_terminal_children_without_a_named_closure(monkeypatch):
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), _imported_child("TRAME-4", "dropped")])
+    assert write.close_epic(tracker, "TRAME-1") == "closed"
+    (receipt,) = sent
+    assert [(c.id, c.version, c.state) for c in receipt.children] == [
+        ("TRAME-3", 4, "done"), ("TRAME-4", 4, "dropped")]
+
+
+def test_epic_closure_still_names_a_dropped_child_that_was_not_imported(monkeypatch):
+    plain = issue_raw(id="TRAME-4", state="dropped", pr_url=None, ac_total=1, ac_done=0, version=4)
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), plain])
+    with pytest.raises(SystemExit, match="--accept-dropped=TRAME-4"):
+        write.close_epic(tracker, "TRAME-1")
+    assert sent == []
+    # naming only the non-imported one is exact; naming the imported one is not
+    tracker, sent = _close_with_children(
+        monkeypatch, [_imported_child("TRAME-3", "done"), plain,
+                      _imported_child("TRAME-5", "dropped")])
+    with pytest.raises(SystemExit, match="doit nommer exactement"):
+        write.close_epic(
+            tracker, "TRAME-1", human_verdict="accepted", accept_dropped="TRAME-4,TRAME-5")
+
+
+def test_release_scope_never_reads_an_imported_terminal_issue_as_accepted():
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _imported_child("TRAME-3", "done"),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    (item,) = scope.issues
+    assert item.disposition == "unavailable"
+    assert "imported" in item.references["unavailable_reason"]

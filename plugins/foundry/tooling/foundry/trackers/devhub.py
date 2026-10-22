@@ -364,6 +364,9 @@ class DevHubTracker(Tracker):
     # `human_acceptance` receipt the proof, `observe_human_acceptance` the status read.
     human_acceptance_supported = True
     human_acceptance_source = "devhub-human-acceptance"
+    # PAT-331: an issue imported as terminal (done or dropped in the source tracker); its
+    # proof lives in the source tracker, so this source is never a DevHub receipt.
+    imported_terminal_acceptance_source = "devhub-imported-terminal"
     human_acceptance_predecessors = _acceptance_decision.FROM_STATES
     # PAT-324: DevHub can be the target of a selective cutover (FOUNDRY-ADR-0026).  The four
     # field attributes are sent by ``migration_import_issue`` (values it cannot reproduce are
@@ -1620,6 +1623,21 @@ class DevHubTracker(Tracker):
             ),
         )
 
+    def _with_imported_terminal(self, issue: Issue) -> Issue:
+        """Mark an imported terminal issue; ``done`` counts as accepted, ``dropped`` as abandoned."""
+        marked = dataclasses.replace(
+            issue, native_state=issue.state, projection_status="aligned",
+            acceptance_source=self.imported_terminal_acceptance_source,
+        )
+        if issue.state != "done":
+            return marked
+        return dataclasses.replace(
+            marked, acceptance_status="accepted", ac_done=issue.ac_total,
+            acceptance_coordinates=json.dumps(
+                {"imported_terminal": True}, sort_keys=True, separators=(",", ":"),
+            ),
+        )
+
     def observe_epic_closure_child(self, issue_id: str) -> Issue:
         """Read a direct child for the atomic Epic closure (PAT-330, PAT-ADR-0025).
 
@@ -1629,6 +1647,10 @@ class DevHubTracker(Tracker):
         criterion).  No extra request for any other child.
         """
         issue = self.get_issue(issue_id)
+        if issue.import_history is not None and issue.state in {"done", "dropped"}:
+            # PAT-331 / PAT-ADR-0032: counted terminal without a new proof; the read of
+            # the detail (``imported_terminal``) is the only source of this fact.
+            return self._with_imported_terminal(issue)
         if (issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total
                 or issue.pr_url):
             # An issue with a PR is never accepted by decision (as in `_release_issue`).
@@ -1924,7 +1946,12 @@ class DevHubTracker(Tracker):
         references: dict[str, object] = {}
         if issue.pr_url:
             references["pr_url"] = issue.pr_url
-        if issue.state in _UNFINISHED_STATES:
+        if issue.import_history is not None and issue.state == "done":
+            # PAT-331: imported history, proof kept in the source tracker; never in a
+            # new release's scope, never read as accepted here.
+            references["unavailable_reason"] = "imported terminal issue (PAT-331)"
+            disposition = "unavailable"
+        elif issue.state in _UNFINISHED_STATES:
             disposition = "unfinished"
         elif issue.state == "done":
             # Accepted by the exact done receipt (after a review receipt of the same
