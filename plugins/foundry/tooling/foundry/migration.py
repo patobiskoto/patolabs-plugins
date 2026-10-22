@@ -81,9 +81,28 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
 
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
-    issues = [source.get_issue(item.id) for item in source.search(source_project)]
-    living = [item for item in issues if (item.normalized_state or item.state) not in _TERMINAL]
-    records = [_issue_snapshot(item, source.name) for item in living]
+    records = []
+    for item in source.migration_export_issues(source_project):
+        issue = item["issue"]
+        record = _issue_snapshot(issue, source.name)
+        if (issue.normalized_state or issue.state) in _TERMINAL:
+            if not target.migration_terminal_import_supported:
+                continue  # living-only scope of FOUNDRY-ADR-0026 for this target
+            # PAT-331: terminal history is imported frozen; ``pending`` names what the
+            # target cannot carry yet (never approximated, never dropped silently).
+            record["terminal"] = {
+                "pr_url": issue.pr_url,
+                "source_created": item["source_created"],
+                "source_updated": item["source_updated"],
+                "source_completed": item["source_completed"],
+            }
+            record["pending"] = [
+                {"item": name, "reason": reason}
+                for name, reason in sorted(target.migration_pending_terminal_items.items())
+            ]
+        if item["archived"]:
+            record["archived"] = True
+        records.append(record)
     for record in records:
         exceptions = {
             name: "target capability unavailable"
@@ -103,16 +122,18 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         ):
             raise MigrationError("exceptions d'attribut cible invalides")
         exceptions.update(specific)
+        if record.get("archived"):
+            exceptions["archived"] = "target has no archived state for an issue"
         record["exceptions"] = [
             {"attribute": name, "reason": exceptions[name]}
             for name in sorted(exceptions)
         ]
-        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "status", "exceptions"}})
+        record["digest"] = _digest({k: v for k, v in record.items() if k not in {"digest", "target_id", "status", "exceptions", "pending"}})
     adrs = [
         _adr_snapshot(item, source.name)
         for item in source.migration_export_adrs(source_project)
     ]
-    living_ids = {record["id"] for record in records}
+    living_ids = {record["id"] for record in records}  # every captured issue, terminal included
     for record in adrs:
         issue_refs = record["relations"].get("issues")
         source_only = record.get("source_only_issue_refs", [])
@@ -206,6 +227,28 @@ def save_manifest(path: Path, manifest: dict) -> None:
             os.unlink(temporary_name)
 
 
+def _terminal_matches(record: dict, actual: Issue) -> bool:
+    """Exact readback of the history-only facts of a terminal record (PAT-331)."""
+    terminal = record.get("terminal")
+    if terminal is None:
+        return actual.import_history is None
+    return (
+        actual.pr_url == terminal["pr_url"]
+        and actual.import_history == {
+            key: terminal[key]
+            for key in ("source_created", "source_updated", "source_completed")
+        }
+    )
+
+
+def _deferred_links(manifest: dict) -> set[str]:
+    """Ids of the issues whose links the target cannot carry yet (``pending`` links)."""
+    return {
+        record["id"] for record in manifest["issues"]
+        if any(entry["item"] == "links" for entry in record.get("pending", []))
+    }
+
+
 def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, persist: Callable[[], None]) -> None:
     """Complete only missing records and compare every target readback."""
     for record in manifest["issues"]:
@@ -233,23 +276,31 @@ def copy_and_verify(manifest: dict, target: Tracker, target_project: Project, pe
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()
                     if (match := _CHECKBOX.match(line)) is not None
-                ] != record["acceptance"]["checkboxes"]):
+                ] != record["acceptance"]["checkboxes"]
+                or not _terminal_matches(record, actual)):
             raise MigrationError(f"relecture issue divergente: {record['source_ref']}")
         record["target_id"], record["status"] = actual.id, "verified"
         persist()
     ids = {record["id"]: record["target_id"] for record in manifest["issues"]}
+    deferred = _deferred_links(manifest)
     for record in manifest["issues"]:
         for link in record["links"]:
             target_id = ids.get(link["target"])
             if target_id is None:
-                continue  # terminal/external target is explicitly outside living scope.
+                continue  # external target (not an issue of the manifest).
+            if record["id"] in deferred or link["target"] in deferred:
+                continue  # pending: the target cannot write this link yet.
             target.migration_link_issue(
                 target_project, record["target_id"], link["type"], target_id,
             )
         reread = target.migration_find_issue(target_project, record["source_ref"])
         if reread is None:
             raise MigrationError(f"relecture issue absente: {record['source_ref']}")
-        expected = {(link["type"], ids[link["target"]]) for link in record["links"] if link["target"] in ids}
+        expected = {
+            (link["type"], ids[link["target"]]) for link in record["links"]
+            if link["target"] in ids and record["id"] not in deferred
+            and link["target"] not in deferred
+        }
         observed = {(link.type, link.target) for link in reread.links}
         if expected != observed:
             raise MigrationError(f"relecture liens divergente: {record['source_ref']}")
@@ -328,6 +379,7 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
     ):
         raise MigrationError("manifeste de cutover non vérifié")
     ids: dict[str, str] = {}
+    deferred = _deferred_links(manifest)
     for record in manifest["issues"]:
         found = target.migration_find_issue(target_project, record["source_ref"])
         if found is None or found.id != record["target_id"]:
@@ -345,7 +397,8 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
                     match.group(1).casefold()
                     for line in (actual.body or "").splitlines()
                     if (match := _CHECKBOX.match(line)) is not None
-                ] != record["acceptance"]["checkboxes"]):
+                ] != record["acceptance"]["checkboxes"]
+                or not _terminal_matches(record, actual)):
             raise MigrationError(f"relecture issue divergente: {record['source_ref']}")
         ids[record["id"]] = found.id
     for record in manifest["issues"]:
@@ -354,7 +407,9 @@ def verify_targets(manifest: dict, target: Tracker, target_project: Project) -> 
             raise MigrationError(f"relecture issue absente: {record['source_ref']}")
         expected = {
             (link["type"], ids[link["target"]])
-            for link in record["links"] if link["target"] in ids
+            for link in record["links"]
+            if link["target"] in ids and record["id"] not in deferred
+            and link["target"] not in deferred
         }
         observed = {(link.type, link.target) for link in actual.links}
         if expected != observed:
@@ -411,7 +466,9 @@ def _readback_adr(
 
 
 def ready_for_cutover(manifest: dict) -> bool:
-    return (manifest.get("phase") == "verified" and all(item.get("status") == "verified" for item in manifest.get("issues", [])) and all(item.get("copy_status") == "verified" for item in manifest.get("adrs", [])))
+    # A pending item (PAT-331) is history the target cannot carry yet: no cutover.
+    return (manifest.get("phase") == "verified"
+            and not any(item.get("pending") for item in manifest.get("issues", [])) and all(item.get("status") == "verified" for item in manifest.get("issues", [])) and all(item.get("copy_status") == "verified" for item in manifest.get("adrs", [])))
 
 
 def source_is_unchanged(manifest: dict, source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> bool:

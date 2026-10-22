@@ -1660,3 +1660,134 @@ def test_github_adr_migration_uses_explicit_target_and_incomplete_graph_mode(
     assert calls["_allow_incomplete_graph"] is True
     assert calls["_migration"]["source_ref"] == "youtrack:adr:SRC-ADR-0002"
     assert calls["_migration"]["relations"] == snapshot["relations"]
+
+
+# --- PAT-331 stage 1: terminal issues (history import) ---------------------------------
+
+class _TerminalCapableTracker(FakeTransportTracker):
+    """Target that imports terminal records frozen and cannot write their links yet."""
+    migration_terminal_import_supported = True
+    migration_pending_terminal_items = {"links": "later", "comments": "later"}
+
+    def migration_import_issue(self, project, snapshot, *, source_ref):
+        existing = self.issue_refs.get(source_ref)
+        if existing:
+            return copy.deepcopy(existing)
+        super().migration_import_issue(project, snapshot, source_ref=source_ref)
+        terminal = snapshot.get("terminal")
+        stored = self.issue_refs[source_ref]
+        if terminal is not None:
+            stored.pr_url = terminal["pr_url"]
+            stored.import_history = {
+                key: terminal[key]
+                for key in ("source_created", "source_updated", "source_completed")
+            }
+        return copy.deepcopy(stored)
+
+
+def _history_source():
+    class Source(FakeTransportTracker):
+        def migration_export_issues(self, project):
+            dates = {
+                "SRC-2": (10, 30, 20, False), "SRC-3": (11, None, None, True),
+            }
+            out = []
+            for issue in self.issues.values():
+                created, updated, completed, archived = dates.get(
+                    issue.id, (5, 6, None, False))
+                out.append({
+                    "issue": copy.deepcopy(issue), "archived": archived,
+                    "source_created": created, "source_updated": updated,
+                    "source_completed": completed,
+                })
+            return out
+    return Source("linear", [
+        Issue("SRC-1", "living", state="ready", body="- [ ] a\n", type="Task",
+              links=[Link("depends-on", "outward", "SRC-2")]),
+        Issue("SRC-2", "done", state="done", body="- [x] b\n", type="Task",
+              priority="P1", pr_url="https://example.test/pr/2"),
+        Issue("SRC-3", "dropped", state="dropped", body="", type="Task"),
+    ])
+
+
+def _terminal_manifest():
+    target, project = _TerminalCapableTracker("devhub"), Project("DST", "target")
+    manifest = capture_manifest(_history_source(), Project("SRC", "source"), target, project)
+    return manifest, target, project
+
+
+def test_manifest_covers_terminal_and_archived_issues_with_named_pending_items():
+    manifest, _target, _project = _terminal_manifest()
+    by_id = {item["id"]: item for item in manifest["issues"]}
+    assert set(by_id) == {"SRC-1", "SRC-2", "SRC-3"}
+    assert "terminal" not in by_id["SRC-1"] and "pending" not in by_id["SRC-1"]
+    assert by_id["SRC-2"]["terminal"] == {
+        "pr_url": "https://example.test/pr/2",
+        "source_created": 10, "source_updated": 30, "source_completed": 20,
+    }
+    assert [e["item"] for e in by_id["SRC-2"]["pending"]] == ["comments", "links"]
+    assert by_id["SRC-3"]["archived"] is True
+    assert by_id["SRC-3"]["exceptions"] == [
+        {"attribute": "archived", "reason": "target has no archived state for an issue"}]
+    assert by_id["SRC-2"]["exceptions"] == []
+
+
+def test_terminal_issues_are_left_out_for_a_target_without_terminal_import():
+    target = FakeTransportTracker("linear")
+    manifest = capture_manifest(
+        _history_source(), Project("SRC", "source"), target, Project("DST", "target"))
+    assert [item["id"] for item in manifest["issues"]] == ["SRC-1"]
+
+
+def test_terminal_copy_is_exact_idempotent_and_not_ready_while_items_are_pending():
+    manifest, target, project = _terminal_manifest()
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    effects = target.effects
+    copy_and_verify(manifest, target, project, lambda: None)
+    assert target.effects == effects
+    assert target.issues["import-SRC-1"].links == []  # link to a terminal issue: pending
+    assert not ready_for_cutover(manifest)
+    for record in manifest["issues"]:
+        record.pop("pending", None)
+    assert ready_for_cutover(manifest)
+
+
+@pytest.mark.parametrize("change", [
+    {"pr_url": "https://example.test/pr/other"},
+    {"import_history": {"source_created": 10, "source_updated": 31, "source_completed": 20}},
+    {"import_history": None},
+])
+def test_verify_targets_compares_terminal_facts_exactly(change):
+    manifest, target, project = _terminal_manifest()
+    copy_and_verify(manifest, target, project, lambda: None)
+    for key, value in change.items():
+        setattr(target.issue_refs["linear:issue:SRC-2"], key, value)
+    with pytest.raises(MigrationError, match="relecture issue divergente"):
+        verify_targets(manifest, target, project)
+
+
+def test_linear_export_lists_archived_issues_and_reads_the_native_completion_date(monkeypatch):
+    tracker = LinearTracker(token="t", transport=lambda *a, **k: None)
+    pages = [
+        {"issues": {"nodes": [
+            {"identifier": "L-1", "archivedAt": None, "completedAt": "2026-01-02T00:00:00.000Z",
+             "canceledAt": None},
+            {"identifier": "L-2", "archivedAt": "2026-02-01T00:00:00.000Z",
+             "completedAt": None, "canceledAt": "2026-01-03T00:00:00.000Z"},
+            {"identifier": "L-3", "archivedAt": None, "completedAt": None, "canceledAt": None},
+        ], "pageInfo": {"hasNextPage": False, "endCursor": None}}},
+    ]
+    seen = []
+    monkeypatch.setattr(tracker, "_activate", lambda _p: {"team_id": "t", "project_id": "p"})
+    monkeypatch.setattr(
+        tracker, "_graphql", lambda query, variables, op: seen.append((query, op)) or pages.pop(0))
+    states = {"L-1": "done", "L-2": "dropped", "L-3": "ready"}
+    monkeypatch.setattr(
+        tracker, "get_issue",
+        lambda ident: Issue(ident, "t", state=states[ident], created=1, updated=2))
+    exported = tracker.migration_export_issues(Project("L", "p"))
+    assert "includeArchived: true" in seen[0][0]
+    assert [(e["issue"].id, e["archived"], e["source_created"], e["source_updated"])
+            for e in exported] == [("L-1", False, 1, 2), ("L-2", True, 1, 2), ("L-3", False, 1, 2)]
+    assert [e["source_completed"] for e in exported] == [1767312000000, 1767398400000, None]

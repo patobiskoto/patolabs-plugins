@@ -1412,3 +1412,78 @@ def test_dhn_42_service_credential_can_create_and_use_its_project_under_local_ac
         _unique("live local accounts"),
     )
     assert suite.tracker.get_issue(created.id).id == created.id
+
+
+@need("DHN-49")
+def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite):
+    # PAT-331 stage 1 (DEVHUB-126, merge defda07): done and dropped issues are imported by
+    # ``POST /projects/:key/issues/import`` in their own project.  Their links (DEVHUB-127)
+    # and comments (DEVHUB-128) are pending items of the manifest, not written here.
+    import copy as copy_module
+
+    from foundry.migration import (
+        capture_manifest, copy_and_verify, ready_for_cutover, verify_targets,
+    )
+    from foundry.models import Issue, Link
+    from test_tracker_migration import FakeTransportTracker
+
+    class Source(FakeTransportTracker):
+        dates = {
+            "PAT-1": (1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000, False),
+            "PAT-2": (1_700_000_000_500, None, None, True),
+        }
+
+        def migration_export_issues(self, project):
+            exported = []
+            for issue in self.issues.values():
+                created, updated, completed, archived = self.dates.get(
+                    issue.id, (1_700_000_000_000, 1_700_000_000_001, None, False))
+                exported.append({
+                    "issue": copy_module.deepcopy(issue), "archived": archived,
+                    "source_created": created, "source_updated": updated,
+                    "source_completed": completed,
+                })
+            return exported
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    repository = f"github.com/foundry-live/{key.lower()}"
+    project = tracker.provision_project("Foundry live terminal import target", key, repository)
+    done = Issue("PAT-1", "live done issue", state="done", type="Task", priority="P1",
+                 estimate=3, body="- [x] shipped\n",
+                 pr_url="https://github.com/foundry-live/example/pull/1")
+    dropped = Issue("PAT-2", "live dropped issue", state="dropped", body="")
+    living = Issue("PAT-3", "live living issue", state="ready", type="Task", priority="P2",
+                   body="- [ ] open\n", links=[Link("depends-on", "outward", "PAT-1")])
+    source = Source("linear", issues=[done, dropped, living])
+    manifest = capture_manifest(source, Project("T", "source"), tracker, project)
+    by_id = {record["id"]: record for record in manifest["issues"]}
+    assert set(by_id) == {"PAT-1", "PAT-2", "PAT-3"}
+    assert [entry["item"] for entry in by_id["PAT-1"]["pending"]] == ["comments", "links"]
+    assert [entry["attribute"] for entry in by_id["PAT-2"]["exceptions"]] == ["archived"]
+    copy_and_verify(manifest, tracker, project, lambda: None)
+    verify_targets(manifest, tracker, project)
+    assert not ready_for_cutover(manifest)  # pending links and comments: no cutover yet
+    imported = tracker._issue_raw(by_id["PAT-1"]["target_id"])
+    assert imported["imported_terminal"] is True and imported["state"] == "done"
+    assert (imported["source_created"], imported["source_updated"],
+            imported["source_completed"]) == (
+        1_700_000_000_000, 1_700_000_002_000, 1_700_000_001_000)
+    assert imported["pr_url"] == done.pr_url and imported["ac_done"] == 1
+    bare = tracker._issue_raw(by_id["PAT-2"]["target_id"])
+    assert (bare["state"], bare["source_updated"], bare["source_completed"]) == (
+        "dropped", None, None)
+    # the link to a terminal issue is pending: the living issue carries none yet
+    assert tracker.get_issue(by_id["PAT-3"]["target_id"]).links == []
+    # an exact replay converges; a divergent replay fails closed; the issue is frozen
+    before = len(tracker.search(project))
+    replay = copy_module.deepcopy(manifest)
+    copy_and_verify(replay, tracker, project, lambda: None)
+    assert len(tracker.search(project)) == before
+    changed = copy_module.deepcopy(by_id["PAT-1"])
+    changed["title"] = "changed title"
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_issue(project, changed, source_ref=changed["source_ref"])
+    with pytest.raises(DevHubTrackerError) as frozen:
+        tracker.update_fields(by_id["PAT-1"]["target_id"], {"Priority": "P3"}, project)
+    assert frozen.value.status == 409 and frozen.value.code == "imported_issue_frozen"

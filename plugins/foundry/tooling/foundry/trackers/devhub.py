@@ -124,6 +124,11 @@ _IMPORT_TYPE_MAX = 80
 _IMPORT_PRIORITIES = frozenset({"P0", "P1", "P2", "P3"})
 _IMPORT_ESTIMATES = (1, 21)
 _IMPORT_CREATION_STATES = ("backlog", "ready")
+# DEVHUB-126 (``IMPORTED_TERMINAL_STATES``): the states of the terminal issue import, and
+# the three optional source dates it stores (epoch ms).
+_IMPORT_TERMINAL_STATES = ("done", "dropped")
+_IMPORT_PR_URL_MAX = 500
+_IMPORT_DATES = ("source_created", "source_updated", "source_completed")
 _ADR_LINK_MAX = 50
 # DEVHUB-122: an unpaired surrogate is refused too (a Python ``str`` holds no paired one).
 _ORIGIN_TEXT = re.compile(r"[^\s\x00-\x1f\x7f-\x9f\ud800-\udfff]+")
@@ -367,6 +372,15 @@ class DevHubTracker(Tracker):
     migration_supported_attributes = frozenset({
         "type", "priority", "estimate", "state", "parent", "children", "dependencies",
     })
+    # PAT-331: terminal issues are imported by ``POST /projects/:key/issues/import``
+    # (DEVHUB-126).  Their links and their comments / lifecycle receipts are not written yet:
+    # the manifest names them as pending and ``migration.ready_for_cutover`` refuses until
+    # this map is empty (PAT-331 stages 2 and 3).
+    migration_terminal_import_supported = True
+    migration_pending_terminal_items = {
+        "links": "target links of a terminal issue not available yet (DEVHUB-127)",
+        "comments": "target comments and lifecycle receipts not available yet (DEVHUB-128)",
+    }
 
     def __init__(
         self,
@@ -691,6 +705,16 @@ class DevHubTracker(Tracker):
                     or type(item.get("created")) is not int):
                 raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
             comments.append({"text": item["text"], "created": item["created"]})
+        history = None
+        if raw.get("imported_terminal") is True:
+            # DEVHUB-126: the three source dates of an imported terminal issue, null when
+            # not sent; an invalid date is refused like any other malformed read.
+            history = {key: raw.get(key) for key in _IMPORT_DATES}
+            if any(value is not None and (type(value) is not int or value < 0)
+                   for value in history.values()):
+                raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
+        elif raw.get("imported_terminal") not in (None, False):
+            raise DevHubTrackerError("GET", "/issues", None, "invalid_response")
         return Issue(
             id=raw["id"], title=raw.get("title", ""), state=raw.get("state"),
             priority=raw.get("priority"), estimate=raw.get("estimate"),
@@ -699,7 +723,7 @@ class DevHubTracker(Tracker):
             ac_total=int(raw.get("ac_total") or 0), links=links,
             pr_url=raw.get("pr_url"), body=raw.get("body"), comments=comments,
             created=raw.get("created"), updated=raw.get("updated"),
-            version=raw["version"],
+            version=raw["version"], import_history=history,
         )
 
     @staticmethod
@@ -2043,7 +2067,10 @@ class DevHubTracker(Tracker):
     def migration_import_issue(
         self, project: Project, snapshot: dict, *, source_ref: str,
     ) -> Issue:
-        """Import one living issue under its source coordinate (DHN-34, PAT-319).
+        """Import one issue under its source coordinate (DHN-34, PAT-319).
+
+        A record carrying ``terminal`` (done or dropped, PAT-331) goes to
+        ``_import_terminal_issue``; the rest of this docstring is the living import.
 
         Always one ``POST /projects/:key/issues`` carrying ``source_ref``: the server
         answers 201 for a first import, 200 with the existing issue for a replay of the same
@@ -2062,6 +2089,8 @@ class DevHubTracker(Tracker):
         if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
             raise ValueError("titre/corps de migration DevHubTracker invalides")
         attributes = snapshot.get("attributes") or {}
+        if snapshot.get("terminal") is not None:
+            return self._import_terminal_issue(project, snapshot, source_ref)
         fields = self._normalize_fields({
             native: attributes[name]
             for native, name in (
@@ -2086,6 +2115,56 @@ class DevHubTracker(Tracker):
         issue = self._to_issue(raw)
         if (raw.get("source_ref") != source_ref or raw.get("body") != body
                 or issue.title != title.strip()
+                or self._project_key(issue.id) != project.key):
+            raise TrackerConflictError("issue migration DevHub divergente après import")
+        return issue
+
+    @staticmethod
+    def _terminal_import_body(snapshot: dict, source_ref: str) -> dict:
+        """The exact body of ``POST /projects/:key/issues/import`` (PAT-331).
+
+        The server digests ``fields`` as sent, so the three keys are always present (``None``
+        for an absent or excepted value) and ``milestone`` / ``labels`` are never sent, as the
+        living import: a replay is the same bytes.  ``pr_url`` and the dates are omitted
+        when ``None``.
+        """
+        attributes = snapshot["attributes"]
+        state = attributes.get("state")
+        if state not in _IMPORT_TERMINAL_STATES:
+            raise ValueError("état terminal de migration DevHubTracker invalide")
+        body = {
+            "source_ref": source_ref, "title": snapshot["title"], "body": snapshot["body"],
+            "state": state,
+            "fields": {name: attributes.get(name) for name in ("type", "priority", "estimate")},
+        }
+        terminal = snapshot["terminal"]
+        if terminal.get("pr_url") is not None:
+            body["pr_url"] = terminal["pr_url"]
+        for key in _IMPORT_DATES:
+            if terminal.get(key) is not None:
+                body[key] = terminal[key]
+        return body
+
+    def _import_terminal_issue(
+        self, project: Project, snapshot: dict, source_ref: str,
+    ) -> Issue:
+        """Import one terminal issue (PAT-331): 201 first, 200 same content, 409 otherwise."""
+        body = self._terminal_import_body(snapshot, source_ref)
+        try:
+            raw = self._application_req(
+                "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/issues/import",
+                body, idempotent=True,
+            )
+        except DevHubTrackerError as error:
+            if error.status == 409 and error.code == "resource_conflict":
+                raise TrackerConflictError(
+                    "source_ref DevHub déjà importé avec un autre contenu "
+                    "ou tenu par une autre issue ; import refusé"
+                ) from None
+            raise
+        issue = self._to_issue(raw)
+        if (raw.get("source_ref") != source_ref or raw.get("body") != body["body"]
+                or raw.get("title") != body["title"] or issue.import_history is None
                 or self._project_key(issue.id) != project.key):
             raise TrackerConflictError("issue migration DevHub divergente après import")
         return issue
@@ -2131,7 +2210,8 @@ class DevHubTracker(Tracker):
         ):
             exceptions["estimate"] = "target value unavailable: estimate"
         state = attributes.get("state")
-        if state not in _IMPORT_CREATION_STATES:
+        terminal = snapshot.get("terminal") is not None
+        if state not in (_IMPORT_TERMINAL_STATES if terminal else _IMPORT_CREATION_STATES):
             # An absent state is omitted by the import and the server creates the issue in
             # ``backlog``: the readback could never equal ``None`` (PAT-325, deduced from
             # ``createTrackerIssue`` at ``3f0cf4b``), so it is excepted like any other state.
@@ -2257,7 +2337,8 @@ class DevHubTracker(Tracker):
                         f"valeur désactivée par le workflow DevHub: {name}="
                         f"{str(value)[:40]!r} ({record['source_ref']})")
             state = None if "state" in excepted else attributes.get("state")
-            state = state if state in _IMPORT_CREATION_STATES else "backlog"
+            creation = _IMPORT_TERMINAL_STATES if record.get("terminal") else _IMPORT_CREATION_STATES
+            state = state if state in creation else "backlog"
             # The server counts every status of the canonical state, enabled or not
             # (``resolveStatus`` of ``workflow-settings.ts`` at ``3f0cf4b``, PAT-325).
             matches = [item for item in statuses if item["canonical"] == state]
@@ -2268,6 +2349,11 @@ class DevHubTracker(Tracker):
 
     def _preflight_issues(self, issues: list[dict]) -> None:
         by_id = {record["id"]: record for record in issues}
+        # A link whose end is a record with pending links is not written yet (PAT-331).
+        deferred = {
+            record["id"] for record in issues
+            if any(entry["item"] == "links" for entry in record.get("pending", []))
+        }
         parents: dict[str, str] = {}
         hierarchy: dict[str, set[str]] = {}
         dependencies: dict[str, set[str]] = {}
@@ -2279,13 +2365,32 @@ class DevHubTracker(Tracker):
                 raise TrackerConflictError(
                     f"titre ou corps non reproductible par DevHub: {record['source_ref']}"
                 )
+            terminal = record.get("terminal")
+            if terminal is not None:
+                created = terminal.get("source_created")
+                dates = [terminal.get(key) for key in _IMPORT_DATES]
+                if (any(value is not None and (type(value) is not int or value < 0)
+                        for value in dates)
+                        or (created is not None and any(
+                            value is not None and value < created for value in dates[1:]))):
+                    # DEVHUB-126: updated and completed may not precede created.
+                    raise TrackerConflictError(
+                        f"dates source non reproductibles par DevHub: {record['source_ref']}")
+                pr_url = terminal.get("pr_url")
+                if pr_url is not None and (
+                        not isinstance(pr_url, str) or not pr_url
+                        or _utf16_length(pr_url) > _IMPORT_PR_URL_MAX):
+                    raise TrackerConflictError(
+                        f"pr_url non reproductible par DevHub: {record['source_ref']}")
             for link in record["links"]:
                 other, kind = link["target"], link["type"]
                 if kind not in _LINK_TYPES:
                     raise TrackerCapabilityUnavailableError(
                         self.name, f"migration_issue_link:{kind}")
                 if other not in by_id:
-                    continue  # outside the living scope, as migration.copy_and_verify does
+                    continue  # not an issue of the manifest, as migration.copy_and_verify does
+                if record["id"] in deferred or other in deferred:
+                    continue
                 if other == record["id"]:
                     raise TrackerConflictError(
                         f"lien vers soi-même refusé par DevHub: {record['source_ref']}")

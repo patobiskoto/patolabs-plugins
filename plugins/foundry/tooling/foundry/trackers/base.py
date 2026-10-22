@@ -215,6 +215,32 @@ class Tracker(ABC):
         del project, snapshot
         return {}
 
+    # PAT-331: items of a terminal (history-only) issue that this target cannot carry yet,
+    # item name -> reason.  A non-empty map is recorded on every terminal manifest record as
+    # ``pending`` and keeps the cutover from being ready (``migration.ready_for_cutover``).
+    migration_pending_terminal_items: dict[str, str] = {}
+    # Whether ``migration_import_issue`` writes a record carrying ``terminal`` (a done or
+    # dropped issue, frozen).  A target that does not keeps the living-only scope of
+    # FOUNDRY-ADR-0026: ``capture_manifest`` leaves terminal issues out for it.
+    migration_terminal_import_supported: bool = False
+
+    def migration_export_issues(self, project: Project) -> list[dict]:
+        """Return every issue of the project, terminal and archived ones included (PAT-331).
+
+        Each entry is ``{"issue", "archived", "source_created", "source_updated",
+        "source_completed"}``; the dates are epoch milliseconds or ``None``.  The default
+        lists ``search`` (no archived issue, no completion date): a provider that can do
+        better overrides it.
+        """
+        return [
+            {
+                "issue": issue, "archived": False,
+                "source_created": issue.created, "source_updated": issue.updated,
+                "source_completed": None,
+            }
+            for issue in (self.get_issue(item.id) for item in self.search(project))
+        ]
+
     def migration_export_adrs(self, project: Project) -> list[dict]:
         """Return ADR source bytes plus relation knowledge available at the provider."""
         return [

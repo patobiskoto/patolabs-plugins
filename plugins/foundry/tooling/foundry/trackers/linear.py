@@ -262,6 +262,22 @@ query FoundryLinearIssues($teamId: ID!, $projectId: ID!, $after: String) {{
 }}
 """
 
+# PAT-331: the history listing reads archived issues too (``includeArchived``) and the
+# native completion / cancellation dates; ``_ISSUES_QUERY`` is unchanged.
+_ISSUES_HISTORY_QUERY = """
+query FoundryLinearIssuesHistory($teamId: ID!, $projectId: ID!, $after: String) {
+  issues(
+    filter: { team: { id: { eq: $teamId } }, project: { id: { eq: $projectId } } }
+    first: 100
+    after: $after
+    includeArchived: true
+  ) {
+    nodes { id identifier archivedAt completedAt canceledAt }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
 _PROJECT_RELEASES_QUERY = """
 query FoundryLinearProjectMilestones($id: String!, $after: String) {
   project(id: $id) {
@@ -5283,6 +5299,63 @@ class LinearTracker(Tracker):
             seen.add(issue.id)
             out.append(issue)
         return out
+
+    def migration_export_issues(self, project: Project) -> list[dict]:
+        """Every issue of the project for a full-history cutover (PAT-331).
+
+        Archived issues are listed (``_ISSUES_HISTORY_QUERY``) and every issue is then read
+        like ``get_issue`` does.  ``source_completed`` is the native ``completedAt`` of a
+        ``done`` issue and ``canceledAt`` of a ``dropped`` one, ``None`` when Linear has none
+        for that state; ``source_created`` and ``source_updated`` are ``Issue.created`` and
+        ``Issue.updated``.
+        """
+        binding = self._activate(project)
+        listed: dict[str, dict] = {}
+        cursor = None
+        for _ in range(_MAX_PAGES):
+            data = self._graphql(
+                _ISSUES_HISTORY_QUERY,
+                {
+                    "teamId": binding["team_id"],
+                    "projectId": binding["project_id"],
+                    "after": cursor,
+                },
+                "issue.history",
+            )
+            connection = data.get("issues")
+            page = connection.get("pageInfo") if isinstance(connection, dict) else None
+            if (not isinstance(connection, dict) or not isinstance(connection.get("nodes"), list)
+                    or not isinstance(page, dict) or type(page.get("hasNextPage")) is not bool):
+                raise LinearTrackerError("issue.history", None, "invalid_response")
+            for node in connection["nodes"]:
+                identifier = node.get("identifier") if isinstance(node, dict) else None
+                if not isinstance(identifier, str) or not identifier:
+                    raise LinearTrackerError("issue.history", None, "invalid_response")
+                if identifier in listed:
+                    raise LinearTrackerError("issue.history", None, "pagination_stalled")
+                listed[identifier] = node
+            if not page["hasNextPage"]:
+                break
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor:
+                raise LinearTrackerError("issue.history", None, "pagination_stalled")
+        else:
+            raise LinearTrackerError("issue.history", None, "pagination_limit")
+        exported = []
+        for identifier, node in listed.items():
+            issue = self.get_issue(identifier)
+            state = issue.normalized_state or issue.state
+            native = node.get("completedAt") if state == "done" else (
+                node.get("canceledAt") if state == "dropped" else None
+            )
+            exported.append({
+                "issue": issue,
+                "archived": node.get("archivedAt") is not None,
+                "source_created": issue.created,
+                "source_updated": issue.updated,
+                "source_completed": _epoch_ms(native),
+            })
+        return exported
 
     def _mapped_release(self, project: Project, release: str) -> tuple[dict, str]:
         binding = self._activate(project)

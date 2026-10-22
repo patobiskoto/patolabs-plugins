@@ -2974,6 +2974,124 @@ def test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answ
             ScriptedTracker([raw]).migration_import_issue(PROJECT, SNAPSHOT, source_ref=REF)
 
 
+# --- PAT-331: terminal issue import (DEVHUB-126, merge defda07) ------------------------
+
+TERMINAL = {
+    "kind": "issue", "source_ref": REF, "id": "PAT-1001", "title": "Done work",
+    "body": "- [x] one\n",
+    "attributes": {"type": "Task", "priority": None, "estimate": 3, "state": "done"},
+    "terminal": {
+        "pr_url": "https://github.com/acme/trame/pull/9",
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000,
+    },
+    "pending": [], "exceptions": [], "links": [],
+}
+
+
+def terminal_raw(**overrides):
+    return issue_raw(
+        id="TRAME-7", title="Done work", body="- [x] one\n", source_ref=REF, state="done",
+        imported_terminal=True, source_created=1000, source_updated=3000,
+        source_completed=2000, **overrides)
+
+
+def test_migration_import_issue_posts_a_terminal_record_to_the_import_route(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([terminal_raw()])
+    issue = tracker.migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+    method, path, body, kwargs = tracker.calls[0]
+    assert (method, path) == ("POST", "/projects/TRAME/issues/import")
+    # the three field keys are always sent (the server digests them as sent), the
+    # milestone and labels never
+    assert body == {
+        "source_ref": REF, "title": "Done work", "body": "- [x] one\n", "state": "done",
+        "fields": {"type": "Task", "priority": None, "estimate": 3},
+        "pr_url": "https://github.com/acme/trame/pull/9",
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000,
+    }
+    assert kwargs["idempotent"] is True and len(tracker.calls) == 1
+    assert issue.import_history == {
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000}
+
+
+def test_migration_import_issue_omits_absent_dates_and_pr_url_of_a_terminal_record(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    bare = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "dropped"},
+            "terminal": {"pr_url": None, "source_created": None,
+                         "source_updated": None, "source_completed": None}}
+    tracker = ScriptedTracker([{
+        **terminal_raw(), "state": "dropped", "source_created": None,
+        "source_updated": None, "source_completed": None}])
+    issue = tracker.migration_import_issue(PROJECT, bare, source_ref=REF)
+    assert set(tracker.calls[0][2]) == {"source_ref", "title", "body", "state", "fields"}
+    assert tracker.calls[0][2]["state"] == "dropped"
+    assert issue.import_history == {
+        "source_created": None, "source_updated": None, "source_completed": None}
+
+
+def test_migration_import_issue_refuses_a_non_terminal_state_for_a_terminal_record(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    wrong = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "ready"}}
+    with pytest.raises(ValueError, match="terminal"):
+        tracker.migration_import_issue(PROJECT, wrong, source_ref=REF)
+    assert tracker.calls == []
+
+
+def test_migration_import_issue_terminal_fails_closed_on_conflict_and_divergent_answer(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    with pytest.raises(TrackerConflictError, match="source_ref"):
+        ScriptedTracker([conflict()]).migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+    unmarked = {**terminal_raw(), "imported_terminal": None}
+    for raw in (unmarked, {**terminal_raw(), "title": "Other"},
+                {**terminal_raw(), "body": "x"}, {**terminal_raw(), "source_ref": "z"}):
+        with pytest.raises(TrackerConflictError, match="divergente"):
+            ScriptedTracker([raw]).migration_import_issue(PROJECT, TERMINAL, source_ref=REF)
+
+
+def test_issue_read_exposes_the_import_history_of_an_imported_terminal_issue_only():
+    assert DevHubTracker._to_issue(issue_raw()).import_history is None
+    assert "import_history" not in DevHubTracker._to_issue(issue_raw()).to_dict()
+    issue = DevHubTracker._to_issue(terminal_raw())
+    assert issue.import_history == {
+        "source_created": 1000, "source_updated": 3000, "source_completed": 2000}
+    assert issue.to_dict()["import_history"] == issue.import_history
+    for bad in ({"source_created": "1"}, {"source_completed": -1}, {"imported_terminal": "yes"}):
+        with pytest.raises(DevHubTrackerError):
+            DevHubTracker._to_issue({**terminal_raw(), **bad})
+
+
+def test_terminal_record_state_is_not_an_exception_but_a_living_done_state_is():
+    tracker = ScriptedTracker([])
+    assert tracker.migration_attribute_exceptions(PROJECT, TERMINAL) == {}
+    living = {k: v for k, v in TERMINAL.items() if k != "terminal"}
+    assert "state" in tracker.migration_attribute_exceptions(PROJECT, living)
+    ready = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "state": "ready"}}
+    assert "state" in tracker.migration_attribute_exceptions(PROJECT, ready)
+
+
+def test_preflight_refuses_source_dates_the_import_route_would_refuse():
+    tracker = ScriptedTracker([])
+    tracker._preflight_issues([TERMINAL])
+    for terminal in ({"source_updated": 999}, {"source_completed": 999},
+                     {"pr_url": ""}, {"pr_url": "h" * 501}, {"source_created": -1}):
+        bad = {**TERMINAL, "terminal": {**TERMINAL["terminal"], **terminal}}
+        with pytest.raises(TrackerConflictError, match="non reproductible"):
+            tracker._preflight_issues([bad])
+
+
+def test_preflight_does_not_check_links_whose_end_has_pending_links():
+    tracker = ScriptedTracker([])
+    pending = [{"item": "links", "reason": "later"}]
+    done = {**TERMINAL, "pending": pending,
+            "links": [{"type": "subtask-of", "direction": "inward", "target": "PAT-2"}]}
+    living = {"kind": "issue", "id": "PAT-2", "source_ref": "linear:issue:PAT-2",
+              "title": "t", "body": "", "links": [], "exceptions": [],
+              "attributes": {"type": "Task", "priority": None, "estimate": None,
+                             "state": "ready"}}
+    tracker._preflight_issues([done, living])  # parent is not an Epic, yet deferred
+
+
 @pytest.mark.parametrize("ref", ["", "a b", "a\tb", "a\x7fb", "x" * 201, "é\u0085", None])
 def test_migration_issue_ports_refuse_an_invalid_source_ref_before_any_request(monkeypatch, ref):
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
@@ -3922,5 +4040,18 @@ def test_capture_manifest_to_a_devhub_target_records_the_exceptions_and_the_prof
     assert exceptions == {
         "PAT-1": {"state": "target creation state unavailable: in-progress"},
         "PAT-2": {"priority": "target value unavailable: Urgent"},
+        "PAT-3": {},
     }
     assert manifest["phase"] == "preflight"
+
+
+def test_preflight_checks_the_workflow_status_of_a_terminal_state(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    record = {**TERMINAL, "attributes": {**TERMINAL["attributes"], "priority": "P2"}}
+    _preflight([record], workflow=workflow_raw(2))
+    with pytest.raises(TrackerConflictError, match="done"):
+        _preflight([record], workflow=workflow_raw(2, statuses_disabled=("done",)))
+    # a living record still checks its creation state, not the terminal one
+    _preflight([{**record, "terminal": None, "attributes": {
+        **record["attributes"], "state": "ready"}}], workflow=workflow_raw(
+            2, statuses_disabled=("done",)))

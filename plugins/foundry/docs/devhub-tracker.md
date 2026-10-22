@@ -696,6 +696,44 @@ is the port default (`None`): the ADR codec needs no qualification, and `migrati
 Order of the copy: issues, their links, then the ADRs, each replacement before the ADR it replaces
 ("ADRs" above).
 
+## Terminal issue import (PAT-331 stage 1, DHN-49)
+
+The manifest of a cutover toward DevHub covers every issue of the source project, `done` and
+`dropped` ones and archived ones included, because `DevHubTracker.migration_terminal_import_supported` is
+true (`trackers/base.py`, `capture_manifest` in `migration.py`); a target that leaves it false keeps the
+living-only scope of FOUNDRY-ADR-0026. PAT-ADR-0032 frames this and is `proposed` at the time of
+writing. A terminal record carries `terminal` (`pr_url` and the three source dates) and `pending`.
+
+- Source: `migration_export_issues` lists the issues (`trackers/base.py`; Linear overrides it in
+  `trackers/linear.py` with `includeArchived` and the native `completedAt` of a `done` issue or
+  `canceledAt` of a `dropped` one, `None` when Linear has none). An archived issue gets the manifest
+  exception `archived` (the import route has no archived state). Source dates are `Issue.created` and
+  `Issue.updated`.
+- Write: `migration_import_issue` posts a record carrying `terminal` to `POST /projects/:key/issues/import`
+  (`_terminal_import_body`, `_import_terminal_issue`). Request shape and replay rules: the section "Terminal
+  issue import" of the DevHub contract (`TRACKER_API.md`, DEVHUB-126, merge `defda07`). The `fields` object
+  always holds `type`, `priority` and `estimate` (`null` when absent or excepted), because the server
+  digests it as sent; `milestone` and `labels` are never sent, as in the living import, and are not
+  manifest exceptions (they are not in `_ISSUE_ATTRIBUTES`). `pr_url` and each date are omitted when `None`.
+  A replay with the same content converges, other content is `TrackerConflictError`.
+- Readback: `Issue.import_history` holds the three dates of an issue the server marks as an imported terminal
+  issue (`_to_issue`); `copy_and_verify` and `verify_targets` compare state, `pr_url` and the three dates
+  exactly (`_terminal_matches`, `migration.py`).
+- Preflight: dates that the route refuses (updated or completed before created, negative, not an integer)
+  and a `pr_url` over 500 units are refused before any write (`_preflight_issues`); the workflow status of
+  `done` or `dropped` is checked like a creation state (`_preflight_workflow`).
+- Pending, never approximated: `migration_pending_terminal_items` names the links (DEVHUB-127) and the
+  comments with their lifecycle receipts (DEVHUB-128) as pending on every terminal record. Links with an
+  end on a record whose links are pending are neither written nor compared, and
+  `migration.ready_for_cutover` is false while any record has a pending item, so `activate` is refused.
+  An imported receipt is never a new review or merge proof (PAT-ADR-0032).
+- Not changed: Epic closure and release-scope reads over an imported terminal child; whether DevHub's
+  Epic closure accepts such a child is an open question to the DevHub side (unknown).
+
+Offline tests: `tests/test_devhub_tracker.py` (terminal import, readback, preflight),
+`tests/test_tracker_migration.py` (manifest, copy, readback, Linear export). Live need: DHN-49 in
+`devhub-requirements.md`, `unknown` (not run against an instance).
+
 ## Body replacement and ADR relations (PAT-312, DHN-21, DHN-32, DHN-33)
 
 `update_body(issue, expected_body, updated_body)` reads the issue, raises
