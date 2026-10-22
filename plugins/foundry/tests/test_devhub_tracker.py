@@ -2756,6 +2756,76 @@ def test_release_scope_reads_a_human_accepted_issue_with_its_decision_reference(
     assert (bare.id, bare.disposition) == ("TRAME-4", "unavailable")
 
 
+
+def _drifted_child():
+    return issue_raw(
+        id="TRAME-3", state="done", pr_url=None, body=HUMAN_BODY + "\n- [ ] drift",
+        ac_total=3, ac_done=0, version=8)
+
+
+def _abnormal_receipt_sets():
+    decision = human_decision(issue="TRAME-3")
+    return {
+        "two decisions": [human_receipt(1, decision, issue="TRAME-3"),
+                          human_receipt(2, decision, issue="TRAME-3")],
+        "next to a PR receipt": [receipt_raw(1, issue="TRAME-3"),
+                                 human_receipt(2, decision, issue="TRAME-3")],
+    }
+
+
+def test_human_decision_drift_is_not_accepted_on_the_three_read_paths():
+    decision = human_decision(issue="TRAME-3")
+    page = lambda: receipt_page([human_receipt(1, decision, issue="TRAME-3")])  # noqa: E731
+    closure = ScriptedTracker([_drifted_child(), page()]).observe_epic_closure_child("TRAME-3")
+    assert closure.acceptance_source is None and closure.ac_done == 0
+    status = ScriptedTracker([_drifted_child(), page()]).observe_human_acceptance("TRAME-3")
+    assert status.acceptance_source is None and status.projection_status == "unknown"
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _drifted_child(), page(),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert scope.issues[0].disposition == "unavailable"
+
+
+@pytest.mark.parametrize("name", ["two decisions", "next to a PR receipt"])
+def test_abnormal_human_receipt_sets_read_as_a_conflict_on_the_three_read_paths(name):
+    receipts = _abnormal_receipt_sets()[name]
+    closure = ScriptedTracker([_accepted_child(), receipt_page(receipts)])
+    assert closure.observe_epic_closure_child("TRAME-3").acceptance_source is None
+    status = ScriptedTracker([_accepted_child(), receipt_page(receipts)])
+    status = status.observe_human_acceptance("TRAME-3")
+    assert status.acceptance_source is None and status.projection_status == "unknown"
+    tracker = ScriptedTracker([
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+        _accepted_child(), receipt_page(receipts),
+        version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                           "total_count": 1, "complete": True}),
+    ])
+    scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+    assert scope.issues[0].disposition == "unavailable"
+
+
+def test_release_scope_refuses_a_decision_on_an_issue_with_a_pr_or_without_criterion():
+    decision = human_decision(issue="TRAME-3")
+    for over in ({"pr_url": "https://github.com/acme/trame/pull/1"},
+                 {"ac_total": 0, "body": ""}):
+        raw = {**_accepted_child(), **over}
+        tracker = ScriptedTracker([
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+            raw, receipt_page([human_receipt(1, decision, issue="TRAME-3")]),
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+        ])
+        scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+        assert scope.issues[0].disposition == "unavailable"
+
+
 # --- PAT-319: DHN-34 selective issue import and DHN-36 ADR import ---------------------
 # Contract announced by DevHub on 2026-10-21 (DEVHUB-105, merged as b0231d9).
 

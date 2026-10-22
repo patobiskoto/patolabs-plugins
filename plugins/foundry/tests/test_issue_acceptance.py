@@ -776,6 +776,7 @@ def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, caps
         assert hint in out
         assert ("encore celui de la décision" in out) is (native == "in-progress")
         assert ("pas un état de reprise" in out) is (native == "blocked")
+        assert ("read-back divergent" in out) is (native == "in-progress")
 
 
 def test_replay_refuses_a_native_state_other_than_the_decision_from_state(monkeypatch):

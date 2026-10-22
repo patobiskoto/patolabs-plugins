@@ -1320,7 +1320,8 @@ def _accept_status(tracker, issue_id):
             tail = (
                 "relance exactement la même commande `issue accept` (aucun second reçu) "
                 "si l'état natif est encore celui de la décision (`from_state`) ; sinon "
-                "elle est refusée"
+                "elle est refusée. Sur DevHub, l'état et le reçu s'écrivent ensemble : "
+                "un reçu sans état done y est refusé (read-back divergent), lis la cause"
             )
         else:
             tail = (

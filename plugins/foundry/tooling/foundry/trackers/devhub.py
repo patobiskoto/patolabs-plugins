@@ -1602,14 +1602,34 @@ class DevHubTracker(Tracker):
         issue = self.get_issue(issue_id)
         if issue.state != "done" or issue.ac_total < 1 or issue.ac_done == issue.ac_total:
             return issue
-        recorded = [item for item in self.read_proof_receipts(issue_id)
-                    if item["action"] == "human_acceptance"]
-        if len(recorded) != 1:
+        decided = self._valid_human_decision(issue, self.read_proof_receipts(issue_id))
+        if not isinstance(decided, dict):
             return issue
         return dataclasses.replace(
-            self._with_human_acceptance(issue, recorded[0]["decision_digest"], issue.state),
+            self._with_human_acceptance(issue, decided["decision_digest"], issue.state),
             ac_done=issue.ac_total,
         )
+
+    @staticmethod
+    def _valid_human_decision(issue: Issue, receipts: list[dict]) -> dict | str | None:
+        """The one decision receipt of an issue, ``None`` if there is none, ``"conflict"``.
+
+        Conflict (as Linear's, ``docs/linear-tracker.md`` "Reading"): two decisions, a
+        decision next to a PR-bound receipt (``review``, ``done``, ``acceptance_override``),
+        or a body or criteria changed after the decision (PAT-ADR-0025, PAT-ADR-0033).
+        """
+        from foundry import acceptance_decision as decisions
+
+        recorded = [item for item in receipts if item["action"] == "human_acceptance"]
+        if not recorded:
+            return None
+        if len(recorded) != 1 or len(receipts) != 1:
+            return "conflict"
+        try:
+            decisions.check_against_body(recorded[0]["decision"], issue.body or "")
+        except decisions.AcceptanceDecisionError:
+            return "conflict"
+        return recorded[0]
 
     def observe_human_acceptance(self, issue_id: str) -> Issue:
         """Read-only status of `issue accept` (PAT-330): the issue and its receipt.
@@ -1624,12 +1644,16 @@ class DevHubTracker(Tracker):
             return dataclasses.replace(
                 issue, native_state=issue.state, projection_status="unknown",
             )
-        recorded = [item for item in receipts if item["action"] == "human_acceptance"]
-        if len(recorded) != 1:
+        decided = self._valid_human_decision(issue, receipts)
+        if decided == "conflict":
+            return dataclasses.replace(
+                issue, native_state=issue.state, projection_status="unknown",
+            )
+        if decided is None:
             return dataclasses.replace(
                 issue, native_state=issue.state, projection_status="aligned",
             )
-        return self._with_human_acceptance(issue, recorded[0]["decision_digest"], issue.state)
+        return self._with_human_acceptance(issue, decided["decision_digest"], issue.state)
 
     @staticmethod
     def _same_review(receipt: dict, context: TransitionContext) -> bool:
@@ -1874,8 +1898,9 @@ class DevHubTracker(Tracker):
         if issue.state in _UNFINISHED_STATES:
             disposition = "unfinished"
         elif issue.state == "done":
-            # Accepted only with the exact done receipt and all criteria checked; a
-            # done issue with unchecked criteria could be an audited override, which
+            # Accepted by the exact done receipt (after a review receipt of the same
+            # coordinates) with all criteria checked, or by one valid decision receipt
+            # below; a done issue with unchecked criteria could be an audited override, which
             # DevHub records as a typed `acceptance_override` receipt (DEVHUB-106, PAT-318);
             # that receipt is not read here: such an issue stays unavailable until a release
             # rule reads it.  A human decision (`human_acceptance`) is read below.
@@ -1898,12 +1923,12 @@ class DevHubTracker(Tracker):
             else:
                 # PAT-330 / PAT-ADR-0025: a decision receipt without PR or `done` receipt;
                 # the reference key is the one Linear emits.
-                decided = [receipt for receipt in receipts
-                           if receipt["action"] == "human_acceptance"]
-                if len(decided) == 1 and not done and len(receipts) == 1:
+                decided = self._valid_human_decision(issue, receipts)
+                if (isinstance(decided, dict) and not issue.pr_url
+                        and issue.ac_total >= 1):
                     disposition = "accepted"
-                    references["acceptance_decision_digest"] = decided[0]["decision_digest"]
-                    references["proof_receipt_id"] = decided[0]["id"]
+                    references["acceptance_decision_digest"] = decided["decision_digest"]
+                    references["proof_receipt_id"] = decided["id"]
         else:
             disposition = "unavailable"
         return ReleaseIssue(

@@ -276,7 +276,11 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   `acceptance_coordinates`. `--status` reads through `observe_human_acceptance`: the issue and
   its receipts (`read_proof_receipts`); exactly one `human_acceptance` receipt gives `accepté`
   when the issue is `done` (and `reçu écrit, état non projeté` otherwise), none gives
-  `aucune acceptation humaine`, and a DevHub error on the receipt read gives `inconnu`.
+  `aucune acceptation humaine`, and a DevHub error on the receipt read gives `inconnu`, as do
+  two `human_acceptance` receipts, a decision next to any other receipt (`review`, `done`,
+  `acceptance_override`) and a body or criteria changed after the decision
+  (`DevHubTracker._valid_human_decision`, `acceptance_decision.check_against_body`; the
+  conflicts of `linear-tracker.md`, "Reading").
   `get_issue` and `observe_issue` are unchanged: they do not expose the human acceptance
   (offline: `tests/test_devhub_tracker.py`, PAT-330; live: DHN-48, green at `3f0cf4b`,
   `devhub-requirements.md`, "Live run of PAT-330").
@@ -296,12 +300,13 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   and validates it as the decision document, never comparing bytes. Any other shape raises
   `invalid_response`.
 - Human decision in the release scope and the Epic closure (PAT-330, PAT-ADR-0025):
-  `read_release_scope` (`_release_issue`) reads a `done` issue whose only receipt is one
-  `human_acceptance` receipt as `accepted`, with the references `acceptance_decision_digest`
+  `read_release_scope` (`_release_issue`) reads a `done` issue with no PR (`pr_url` empty), at least one criterion and
+  whose only receipt is one `human_acceptance` receipt, still matching the body, as `accepted`, with the references `acceptance_decision_digest`
   (the key Linear emits) and `proof_receipt_id`. For the atomic Epic closure,
   `write.close_epic` reads each direct child through `observe_epic_closure_child` (default:
   `get_issue`); DevHub adds one receipt read only for a `done` child whose criteria are not all
-  checked, and a single `human_acceptance` receipt then marks it accepted
+  checked, and a single `human_acceptance` receipt (the only receipt, still matching the body, else
+  the issue is returned unchanged) then marks it accepted
   (`acceptance_source` `devhub-human-acceptance`) and counts its criteria as satisfied, as the
   decision passed each one. The server does not check the boxes on a human acceptance: at `3f0cf4b`
   `recordHumanAcceptance` updates the state, `completion_kind` and version, not the body
