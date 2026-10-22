@@ -383,11 +383,11 @@ def test_pat64_contract_rows_are_supported_for_the_three_original_providers(oper
     assert all("ticket" not in cell for cell in original.values())
 
 
-def test_devhub_cutover_target_cells_split_between_supported_copy_and_ticketed_adr_gap():
+def test_devhub_cutover_target_cells_are_both_supported():
     """PAT-324: DevHub overrides the preflight and declares the attributes the cutover
-    manifest requires (migration.py), so the live-work copy is supported. The ADR import
-    stays a gap owned by PAT-327: DevHub has no carrier for source-only issue references
-    nor for an `unknown` ADR relation (PAT-ADR-0003, PAT-ADR-0008)."""
+    manifest requires (migration.py), so the live-work copy is supported. PAT-327: the ADR
+    import is supported too, DEVHUB-122 giving a carrier for source-only issue references
+    and for an `unknown` ADR relation (PAT-ADR-0003, PAT-ADR-0008)."""
     from foundry.trackers.base import Tracker
     from foundry.trackers.devhub import DevHubTracker
 
@@ -400,7 +400,7 @@ def test_devhub_cutover_target_cells_split_between_supported_copy_and_ticketed_a
     live = rows["cross-tracker-live-work-copy"]["cells"]["devhub"]
     assert live["status"] == "supported" and "ticket" not in live
     adr = rows["cross-tracker-adr-import"]["cells"]["devhub"]
-    assert adr["status"] == "gap" and adr["ticket"] == "PAT-327"
+    assert adr["status"] == "supported" and "ticket" not in adr
     tombstone = rows["tombstone-archived-source-after-switch"]["cells"]["devhub"]
     assert tombstone["status"] == "supported"
 
