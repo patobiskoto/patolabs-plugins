@@ -2086,7 +2086,7 @@ def test_migration_export_adrs_never_claims_supersedes_while_a_superseded_adr_is
 
 
 def test_migration_export_adrs_returns_source_only_refs_and_unknown_relations_as_stored():
-    refs = ["linear:issue:PAT-9", "Linear:issue:PAT-10", "linear:issue:PAT-10"[:-1] + "1"]
+    refs = ["linear:issue:PAT-9", "Linear:issue:PAT-10", "linear:issue:PAT-11"]
     items = [
         {"id": "TRAME-ADR-0001", "title": "A", "status": "accepted", "version": 1},
         {"id": "TRAME-ADR-0002", "title": "B", "status": "accepted", "version": 1},
@@ -2759,6 +2759,42 @@ def test_epic_closure_over_a_child_accepted_by_a_human_decision(monkeypatch):
     assert receipt.children[0].acceptance_source is None
 
 
+def test_epic_closure_end_to_end_over_a_child_accepted_by_a_human_decision(monkeypatch):
+    # PAT-325: `write.close_epic` against the real `DevHubTracker`, only HTTP faked: the
+    # closure transport and `_validate_epic_outcome` both run.
+    decision = human_decision(issue="TRAME-3")
+    epic = issue_raw(
+        id="TRAME-1", type="Epic", state="in-progress", pr_url=None, body="- [ ] validated",
+        ac_total=1, ac_done=1, version=5,
+        links=[{"type": "parent-of", "direction": "outward", "target": "TRAME-3"}])
+    receipt = EpicClosureReceipt(
+        project_key="TRAME", project_id=PROJECT.id, parent_id="TRAME-1", parent_version=5,
+        parent_type="Epic", parent_ac_done=1, parent_ac_total=1,
+        children=(EpicClosureChild("TRAME-3", 8, "done"),),
+        issued_at=12_000, nonce="closure_nonce_123456",
+    )
+    answer = {
+        "schema_version": EPIC_CLOSURE_CONTRACT,
+        "outcome": {
+            "receipt": receipt.to_dict(), "closed_parent_version": 6,
+            "audit_id": "21", "replayed": False,
+        },
+    }
+    tracker = ScriptedTracker([
+        epic, _accepted_child(), receipt_page([human_receipt(1, decision, issue="TRAME-3")]),
+        answer,
+    ])
+    monkeypatch.setattr(write, "mutation_project", lambda *_a, **_k: PROJECT)
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    outcome = write.close_epic(tracker, "TRAME-1", issued_at=12_000, nonce="closure_nonce_123456")
+    assert outcome == EpicClosureOutcome(receipt, 6, "21", replayed=False)
+    method, path, body, _kwargs = tracker.calls[-1]
+    assert (method, path) == ("POST", "/projects/TRAME/epics/TRAME-1/closure")
+    # the wire receipt binds id, version and state only: the decision stays out of it
+    assert body["receipt"]["children"] == [{"id": "TRAME-3", "version": 8, "state": "done"}]
+    assert [call[0] for call in tracker.calls] == ["GET", "GET", "GET", "POST"]
+
+
 def test_release_scope_reads_a_human_accepted_issue_with_its_decision_reference():
     decision = human_decision(issue="TRAME-3")
     digest = decisions.decision_digest(decision)
@@ -2833,6 +2869,37 @@ def test_abnormal_human_receipt_sets_read_as_a_conflict_on_the_three_read_paths(
     assert scope.issues[0].disposition == "unavailable"
 
 
+def test_closure_child_read_ignores_a_decision_on_an_issue_with_a_pr():
+    # PAT-325: same rule as the release scope; no receipt read is made
+    pr = {**_accepted_child(), "pr_url": "https://github.com/acme/trame/pull/1"}
+    tracker = ScriptedTracker([pr])
+    child = tracker.observe_epic_closure_child("TRAME-3")
+    assert (child.ac_done, child.acceptance_source) == (0, None)
+    assert len(tracker.calls) == 1
+
+
+def test_release_scope_does_not_accept_a_pr_proof_next_to_a_human_decision():
+    # PAT-325: review + done receipts of the PR path and a decision receipt are a conflict
+    decision = human_decision(issue="TRAME-3")
+    pr_url = "https://github.com/acme/trame/pull/1"
+    raw = {**issue_raw(id="TRAME-3", state="done", pr_url=pr_url, ac_total=1, ac_done=1)}
+    for extra in ([], [human_receipt(3, decision, issue="TRAME-3")]):
+        receipts = [
+            receipt_raw(1, issue="TRAME-3", action="review", pr_url=pr_url),
+            receipt_raw(2, issue="TRAME-3", action="done", pr_url=pr_url),
+            *extra,
+        ]
+        tracker = ScriptedTracker([
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+            raw, receipt_page(receipts),
+            version_raw(scope={"direct": ["TRAME-3"], "direct_count": 1,
+                               "total_count": 1, "complete": True}),
+        ])
+        scope = tracker.read_release_scope(release_project({"v1": "TRAME-VERSION-3"}), "v1")
+        assert scope.issues[0].disposition == ("unavailable" if extra else "accepted")
+
+
 def test_release_scope_refuses_a_decision_on_an_issue_with_a_pr_or_without_criterion():
     decision = human_decision(issue="TRAME-3")
     for over in ({"pr_url": "https://github.com/acme/trame/pull/1"},
@@ -2877,6 +2944,18 @@ def test_migration_import_issue_posts_the_coordinate_and_the_non_null_fields(mon
     }
     assert kwargs["idempotent"] is True
     assert issue.id == "TRAME-7" and len(tracker.calls) == 1
+
+
+def test_migration_import_issue_omits_every_absent_attribute(monkeypatch):
+    # PAT-325: the server stores null for an omitted type, priority or estimate
+    # (`fields.priority ?? null`, deduced from source at 3f0cf4b), so nothing is sent for None
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([issue_raw(
+        id="TRAME-7", title="Imported", body="- [ ] one\n", source_ref=REF)])
+    bare = dict(SNAPSHOT, attributes={
+        "type": None, "priority": None, "estimate": None, "state": None})
+    tracker.migration_import_issue(PROJECT, bare, source_ref=REF)
+    assert tracker.calls[0][2]["fields"] == {}
 
 
 def test_migration_import_issue_fails_closed_on_conflict_and_on_a_divergent_answer(monkeypatch):
@@ -3720,6 +3799,16 @@ def test_migration_preflight_refuses_a_disabled_or_ambiguous_creation_state(kwar
         tracker.migration_preflight(BOUND, (record,))
 
 
+def test_migration_preflight_refuses_a_creation_state_with_one_enabled_and_one_disabled_status():
+    # PAT-325: the server counts every status of the canonical state, enabled or not
+    # (`resolveStatus` answers 409 mapping_ambiguous unless exactly one matches, `3f0cf4b`)
+    raw = workflow_raw(2, extra_status="backlog")
+    raw["settings"]["statuses"][-1]["enabled"] = False
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), raw])
+    with pytest.raises(TrackerConflictError, match="état de création désactivé ou ambigu"):
+        tracker.migration_preflight(BOUND, (_migration_issue(1),))
+
+
 @pytest.mark.parametrize("failure", (
     DevHubTrackerError("GET", "/projects/TRAME", 403, "authority_boundary"),
     DevHubTrackerError("GET", "/projects/TRAME", 404, "route_unavailable"),
@@ -3761,12 +3850,25 @@ def test_migration_preflight_refuses_a_malformed_workflow_read(raw):
         tracker.migration_preflight(BOUND, (_migration_issue(1),))
 
 
+def test_a_malformed_workflow_read_names_the_real_route_of_the_project():
+    tracker = ScriptedTracker([_BOUND_REMOTE, governance_raw(), []])
+    with pytest.raises(TrackerConflictError) as caught:
+        tracker.migration_preflight(BOUND, (_migration_issue(1),))
+    assert "GET /api/tracker/workflow/v1/projects/TRAME -> unavailable (invalid_response)" in str(
+        caught.value)
+
+
 def test_migration_attribute_exceptions_name_each_value_devhub_cannot_reproduce():
     tracker = ScriptedTracker([])
     exact = _migration_issue(1, type="Epic", state="ready", priority="P0", estimate=21)
     assert tracker.migration_attribute_exceptions(BOUND, exact) == {}
+    # absent type, priority and estimate stay null on the server (PAT-325): no exception;
+    # an absent state would be created in backlog, which no readback equals: excepted
     assert tracker.migration_attribute_exceptions(BOUND, _migration_issue(
-        1, type=None, state=None, priority=None, estimate=None)) == {}
+        1, type=None, state="ready", priority=None, estimate=None)) == {}
+    assert tracker.migration_attribute_exceptions(BOUND, _migration_issue(
+        1, type=None, state=None, priority=None, estimate=None)) == {
+            "state": "target creation state unavailable: None"}
     found = tracker.migration_attribute_exceptions(BOUND, _migration_issue(
         1, type="t" * 81, state="in-progress", priority="Major", estimate=22))
     assert found == {

@@ -292,6 +292,34 @@ def test_setup_refuses_a_manual_governed_project_before_publishing(monkeypatch, 
     assert not (repo / ".foundry/tracker.json").exists()
 
 
+def test_setup_relays_a_typed_refusal_but_not_another_error_text(monkeypatch, tmp_path):
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    def run(error, directory):
+        repo = _repo(directory, "acme", "trame")
+        missing = DevHubTrackerError("GET", "/projects/resolve", 404, "project_not_found")
+        tracker = ScriptedDevHubTracker([missing, PROJECT_RAW, PROJECT_RAW, PROJECT_RAW])
+
+        def refuse(project):
+            raise error
+
+        tracker.verify_project_identity = refuse
+        monkeypatch.setenv("FOUNDRY_TRACKER", "devhub")
+        monkeypatch.setattr(foundry, "tracker", lambda name=None: tracker)
+        monkeypatch.chdir(repo)
+        monkeypatch.setenv("FOUNDRY_DATA", str(directory))
+        with pytest.raises(SystemExit) as caught:
+            setup_project.setup("Trame", "TRAME", "trame")
+        assert registry.load() == {}
+        return str(caught.value)
+
+    typed = run(DevHubGovernanceModeError("TRAME", "manual"), tmp_path / "a")
+    assert "Setup tracker refusé" in typed and "'manual'" in typed
+    other = run(RuntimeError("provider-internal-text"), tmp_path / "b")
+    assert "Setup tracker refusé" in other and "indisponibles" in other
+    assert "provider-internal-text" not in other
+
+
 def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch, tmp_path):
     repo = _repo(tmp_path, "acme", "demo")
     tracker = GitHubProjectsTracker()

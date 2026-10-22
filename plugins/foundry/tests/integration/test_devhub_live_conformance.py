@@ -952,9 +952,12 @@ def test_dhn_43_a_manifest_is_captured_copied_and_verified_to_devhub(suite):
     child = Issue("PAT-2", "live cutover child", state="in-progress", type="Task",
                   priority="P2", estimate=3, body="- [x] done\n- [ ] open\n",
                   links=[Link("subtask-of", "outward", "PAT-1")])
+    # PAT-325: an issue with no type, priority or estimate is omitted from the import and
+    # must read back as null (deduced from the server source, now observed by this run)
+    bare = Issue("PAT-3", "live cutover bare issue", state="ready", body="- [ ] bare\n")
     adrs = [Adr(f"FOUNDRY-ADR-{number:04d}", f"ADR {number}", status, f"body {number}\n")
             for number, status in ((1, "superseded"), (2, "accepted"))]
-    source = FakeTransportTracker("linear", issues=[epic, child], adrs=adrs, adr_relations={
+    source = FakeTransportTracker("linear", issues=[epic, child, bare], adrs=adrs, adr_relations={
         adrs[0].id: {"supersedes": [], "superseded_by": adrs[1].id, "issues": []},
         adrs[1].id: {"supersedes": [adrs[0].id], "superseded_by": None, "issues": ["PAT-2"]},
     })
@@ -963,12 +966,14 @@ def test_dhn_43_a_manifest_is_captured_copied_and_verified_to_devhub(suite):
     assert manifest["target"]["migration_profile"]["kind"] == "devhub-source-ref-v1"
     # a state DevHub cannot create is an explicit exception, never an approximation
     assert {item["id"]: [entry["attribute"] for entry in item["exceptions"]]
-            for item in manifest["issues"]} == {"PAT-1": [], "PAT-2": ["state"]}
+            for item in manifest["issues"]} == {"PAT-1": [], "PAT-2": ["state"], "PAT-3": []}
     copy_and_verify(manifest, tracker, project, lambda: None)
     assert manifest["phase"] == "verified"
     verify_targets(manifest, tracker, project)
     imported = tracker.get_issue(manifest["issues"][1]["target_id"])
     assert imported.state == "backlog" and imported.body == child.body
+    omitted = tracker.get_issue(manifest["issues"][2]["target_id"])
+    assert (omitted.type, omitted.priority, omitted.estimate) == (None, None, None)
     # the profile is deterministic, and a second copy converges on the same objects
     assert capture_manifest(source, source_project, tracker, project)["source_digest"] == (
         manifest["source_digest"])
@@ -1130,6 +1135,26 @@ def test_dhn_46_an_adr_corpus_with_a_source_only_reference_and_unknown_relations
             source_created=None, source_updated=None,
             expected_source_sha256=request["body_sha256"],
             source_only_issue_refs=("linear:issue:PAT-9",), unknown_relations=("issues",))
+
+    # PAT-325 (DEVHUB-122 answer relayed on 2026-10-22, deduced at 3f0cf4b): a `superseded` ADR
+    # whose replacement is unknown is imported as `superseded` without `superseded_by`
+    other_key = gate.new_project_key()
+    other = tracker.provision_project(
+        "Foundry live unknown replacement target", other_key,
+        f"github.com/foundry-live/{other_key.lower()}")
+    lone = Adr("FOUNDRY-ADR-0001", "ADR 1", "superseded", "body 1\n")
+    lone_source = FakeTransportTracker("linear", issues=[], adrs=[lone], adr_relations={
+        lone.id: {"supersedes": [], "superseded_by": "unknown", "issues": []},
+    })
+    lone_manifest = capture_manifest(lone_source, Project("T", "source"), tracker, other)
+    copy_and_verify(lone_manifest, tracker, other, lambda: None)
+    verify_targets(lone_manifest, tracker, other)
+    (exported_lone,) = tracker.migration_export_adrs(other)
+    assert exported_lone["adr"].status == "superseded"
+    assert exported_lone["relations"]["superseded_by"] == "unknown"
+    item = tracker._adr_lookup(other, foreign_id=lone.id)
+    assert tracker._application_req("GET", f"/adrs/{item['id']}")["unknown_relations"] == [
+        "superseded_by"]
 
 
 @need("DHN-47")
