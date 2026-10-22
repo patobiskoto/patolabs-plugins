@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
+import subprocess
 import time
 from dataclasses import dataclass, replace
 
@@ -920,6 +922,88 @@ def test_dhn_43_a_manifest_is_captured_copied_and_verified_to_devhub(suite):
     copy_and_verify(replay, tracker, project, lambda: None)
     assert [item["target_id"] for item in replay["issues"]] == [
         item["target_id"] for item in manifest["issues"]]
+
+
+@need("DHN-44")
+def test_dhn_44_the_preflight_refuses_a_value_the_published_workflow_disables(suite):
+    # PAT-328: a service credential cannot publish a workflow (``publishWorkflow`` needs a
+    # human actor), so the disposable instance's operator provides an executable.  It is
+    # called as ``<executable> <PROJECT KEY>`` with the new ``settings`` JSON on stdin.
+    from foundry.migration import capture_manifest
+    from foundry.models import Issue
+    from test_tracker_migration import FakeTransportTracker
+
+    publisher = os.environ.get(gate.ENV_WORKFLOW_PUBLISH)
+    if not publisher:
+        pytest.skip(
+            f"{gate.ENV_WORKFLOW_PUBLISH} not set: DHN-44 needs an executable that publishes "
+            "a workflow on the disposable instance (docs/devhub-requirements.md)")
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    project = tracker.provision_project(
+        "Foundry live workflow target", key, f"github.com/foundry-live/{key.lower()}")
+    path = f"/projects/{key}"
+    workflow = {"response_contract": "devhub-workflow.v1", "api_prefix": "/api/tracker/workflow/v1"}
+    unpublished = tracker._req("GET", path, **workflow)
+    assert unpublished["version"] == 1  # never published: the import checks nothing
+
+    def captured(**fields):
+        issue = Issue("PAT-1", "live workflow issue", state="ready", body="- [ ] one\n", **fields)
+        return capture_manifest(
+            FakeTransportTracker("linear", issues=[issue]), Project("T", "source"), tracker, project)
+
+    captured(type="Bug", priority="P3", estimate=8)  # accepted while unpublished
+    settings = unpublished["settings"]
+    for field, disabled in (("type", "Bug"), ("priority", "P3"), ("estimate", 8)):
+        for entry in settings["fields"][field]:
+            if entry["value"] == disabled:
+                entry["enabled"] = False
+    subprocess.run(
+        [publisher, key], input=json.dumps(settings), text=True, check=True,
+        capture_output=True, timeout=120)
+    published = tracker._req("GET", path, **workflow)
+    assert published["version"] > 1
+    captured(type="Task", priority="P2", estimate=3)  # enabled values still pass
+    for fields, shown in (
+        ({"type": "Bug", "priority": "P2", "estimate": 3}, "type='Bug'"),
+        ({"type": "Task", "priority": "P3", "estimate": 3}, "priority='P3'"),
+        ({"type": "Task", "priority": "P2", "estimate": 8}, "estimate='8'"),
+    ):
+        with pytest.raises(TrackerConflictError, match="valeur désactivée") as refused:
+            captured(**fields)
+        assert shown in str(refused.value)
+    assert tracker.search(project) == []  # every refusal came before any write
+
+
+@need("DHN-45")
+def test_dhn_45_the_preflight_refuses_a_proposed_adr_replacement(suite):
+    # PAT-328: DevHub answers 409 invalid_transition to a replacement stored as ``proposed``
+    # (``cd23304``); a replacement accepted, deprecated or superseded is taken.
+    from foundry.migration import capture_manifest
+    from foundry.models import Adr
+    from test_tracker_migration import FakeTransportTracker
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    project = tracker.provision_project(
+        "Foundry live replacement target", key, f"github.com/foundry-live/{key.lower()}")
+
+    def captured(status):
+        old, new = (Adr(f"FOUNDRY-ADR-{number:04d}", f"ADR {number}", state, f"body {number}\n")
+                    for number, state in ((1, "superseded"), (2, status)))
+        relations = {
+            old.id: {"supersedes": [], "superseded_by": new.id, "issues": []},
+            new.id: {"supersedes": [old.id], "superseded_by": None, "issues": []},
+        }
+        return capture_manifest(
+            FakeTransportTracker("linear", adrs=[old, new], adr_relations=relations),
+            Project("T", "source"), tracker, project)
+
+    for status in ("accepted", "deprecated"):
+        assert captured(status)["target"]["migration_profile"]["kind"] == "devhub-source-ref-v1"
+    with pytest.raises(TrackerConflictError, match=r"proposed.*FOUNDRY-ADR-0002"):
+        captured("proposed")
+    assert tracker.list_adrs(project) == []  # refused before any write
 
 
 # --- Epic cadencer (PAT-ADR-0026) -----------------------------------------------------
