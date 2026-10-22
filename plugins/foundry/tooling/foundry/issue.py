@@ -1316,12 +1316,16 @@ def _accept_status(tracker, issue_id):
         )
         if state.native_state == "done":
             tail = "relance exactement la même commande `issue accept` (aucun second reçu)"
+        elif getattr(tracker, "name", None) == "devhub":
+            tail = (
+                "DevHub écrit l'état done et le reçu ensemble : toute relance de "
+                "`issue accept` sans état done y est refusée ; lis la cause avant d'agir"
+            )
         elif state.native_state in _ACCEPT_RETRY_STATES:
             tail = (
                 "relance exactement la même commande `issue accept` (aucun second reçu) "
                 "si l'état natif est encore celui de la décision (`from_state`) ; sinon "
-                "elle est refusée. Sur DevHub, l'état et le reçu s'écrivent ensemble : "
-                "un reçu sans état done y est refusé (read-back divergent), lis la cause"
+                "elle est refusée"
             )
         else:
             tail = (

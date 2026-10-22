@@ -262,10 +262,11 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   `TrackerConflictError` a state other than the decision's `from_state`, any existing
   receipt, an Epic, a child, a PR, no criterion, a body or criteria drift
   (`acceptance_decision.check_against_body`) and a failing `verify_evidence`. An existing
-  `human_acceptance` receipt of the same digest converges without a request; another digest is
-  refused. Otherwise it sends `POST /issues/:id/human-acceptance` with the body `decision`
-  and a proof of action `human-acceptance` over `project_key`, `resource_id`,
-  `expected_version` and `decision_digest` (`acceptance_decision.decision_digest`), then
+  `human_acceptance` receipt of the same digest converges without a request only when the issue
+  is `done` and that receipt passes `_valid_human_decision` (the only receipt, still matching
+  the body); otherwise, or with another digest, the replay is refused. Otherwise it sends
+  `POST /issues/:id/human-acceptance` with the body `decision` and a proof of action
+  `human-acceptance` over `project_key`, `resource_id`, `expected_version` and `decision_digest` (`acceptance_decision.decision_digest`), then
   requires the issue `done` and one receipt whose object equals the decision. Since PAT-330
   (PAT-ADR-0033, which amends the "Fournisseurs" paragraph of PAT-ADR-0025) the command
   `issue accept` and its `--status` run on DevHub with the conditions of PAT-ADR-0025:
@@ -275,7 +276,8 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   `devhub-human-acceptance` (`human_acceptance_source`) and the decision digest in
   `acceptance_coordinates`. `--status` reads through `observe_human_acceptance`: the issue and
   its receipts (`read_proof_receipts`); exactly one `human_acceptance` receipt gives `accepté`
-  when the issue is `done` (and `reçu écrit, état non projeté` otherwise), none gives
+  when the issue is `done` (and `reçu écrit, état non projeté` otherwise, whose hint on DevHub
+  says that any replay without `done` is refused, `_accept_status` in `issue.py`), none gives
   `aucune acceptation humaine`, and a DevHub error on the receipt read gives `inconnu`, as do
   two `human_acceptance` receipts, a decision next to any other receipt (`review`, `done`,
   `acceptance_override`) and a body or criteria changed after the decision
@@ -311,7 +313,9 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   decision passed each one. The server does not check the boxes on a human acceptance: at `3f0cf4b`
   `recordHumanAcceptance` updates the state, `completion_kind` and version, not the body
   (`src/tracker/store.ts`; deduced from source, DHN-48 asserts only the counts). The atomic closure receipt binds id, version and
-  state only (PAT-316), so it carries no acceptance source. Still not done: a `done` issue
+  state only (PAT-316), so it carries no acceptance source: a limit against the condition of
+  PAT-ADR-0025 ("Lecture") that the Epic closure audit binds the acceptance source, which on
+  DevHub only Foundry's read before the call checks. Still not done: a `done` issue
   merged under an override (`acceptance_override` receipt) stays `unavailable` in a release
   scope.
 - Known limit announced by DevHub (DEVHUB-87, deferred): a decision string with U+0000 or a

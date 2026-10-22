@@ -760,8 +760,9 @@ def test_cli_flag_filter_knows_the_accept_flags():
 
 
 def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, capsys):
-    """PAT-239 (206-1): `relance` is unconditional only for `done`."""
-    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: object())
+    """PAT-239 (206-1): `relance` is unconditional only for `done` (Linear)."""
+    linear = type("LinearStub", (), {"name": "linear"})()
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: linear)
     for native, hint in (
         ("blocked", "pas un état de reprise"),
         ("in-progress", "encore celui de la décision"),
@@ -776,7 +777,29 @@ def test_cli_status_ties_the_replay_hint_to_the_decision_state(monkeypatch, caps
         assert hint in out
         assert ("encore celui de la décision" in out) is (native == "in-progress")
         assert ("pas un état de reprise" in out) is (native == "blocked")
-        assert ("read-back divergent" in out) is (native == "in-progress")
+        assert "DevHub" not in out
+
+
+def test_cli_status_gives_devhub_its_own_replay_hint(monkeypatch, capsys):
+    """PAT-330: on DevHub every replay without `done` is refused; Linear keeps its text."""
+    devhub = type("DevHubStub", (), {"name": "devhub"})()
+    monkeypatch.setattr(foundry, "tracker", lambda *_a, **_k: devhub)
+    for native in ("in-progress", "blocked"):
+        monkeypatch.setattr(
+            write, "issue_acceptance_state",
+            lambda *_a, native=native: write.AcceptanceState("receipt-only", "d" * 64, native),
+        )
+        issue_cli.accept("TRAME-5", flags=["--status"])
+        out = capsys.readouterr().out
+        assert "sans état done y est refusée" in out
+        assert "encore celui de la décision" not in out
+        assert "pas un état de reprise" not in out
+    monkeypatch.setattr(
+        write, "issue_acceptance_state",
+        lambda *_a: write.AcceptanceState("receipt-only", "d" * 64, "done"),
+    )
+    issue_cli.accept("TRAME-5", flags=["--status"])
+    assert "aucun second reçu)" in capsys.readouterr().out
 
 
 def test_replay_refuses_a_native_state_other_than_the_decision_from_state(monkeypatch):

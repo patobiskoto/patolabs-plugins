@@ -1513,7 +1513,9 @@ class DevHubTracker(Tracker):
         validation, then a fresh read and every refusal, then the cited-evidence check,
         then one POST (done, version + 1 and the receipt in one server transaction), then
         a read-back that recomputes the digest.  An exact replay converges without a
-        second POST; a different decision is refused.  No automatic retry.
+        second POST while the issue is ``done`` and its one decision receipt still matches
+        the body (``_valid_human_decision``); a different decision is refused.  No
+        automatic retry.
         """
         from foundry import acceptance_decision as decisions
 
@@ -1533,6 +1535,9 @@ class DevHubTracker(Tracker):
         if recorded:
             if recorded[0]["decision_digest"] != digest:
                 refuse("a different decision is already recorded for this issue")
+            if not isinstance(self._valid_human_decision(issue, receipts), dict):
+                refuse("the recorded decision sits next to another receipt, or the body "
+                       "or criteria changed after it")
             if issue.state != "done" or recorded[0]["decision"] != decision:
                 raise TrackerConflictError("DevHub acceptance read-back divergent")
             return self._with_human_acceptance(issue, digest, raw["state"])
@@ -1618,16 +1623,14 @@ class DevHubTracker(Tracker):
         decision next to a PR-bound receipt (``review``, ``done``, ``acceptance_override``),
         or a body or criteria changed after the decision (PAT-ADR-0025, PAT-ADR-0033).
         """
-        from foundry import acceptance_decision as decisions
-
         recorded = [item for item in receipts if item["action"] == "human_acceptance"]
         if not recorded:
             return None
         if len(recorded) != 1 or len(receipts) != 1:
             return "conflict"
         try:
-            decisions.check_against_body(recorded[0]["decision"], issue.body or "")
-        except decisions.AcceptanceDecisionError:
+            _acceptance_decision.check_against_body(recorded[0]["decision"], issue.body or "")
+        except _acceptance_decision.AcceptanceDecisionError:
             return "conflict"
         return recorded[0]
 

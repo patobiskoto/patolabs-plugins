@@ -2544,6 +2544,29 @@ def test_accept_issue_exact_replay_converges_without_a_post_and_a_different_one_
     assert all(call[0] == "GET" for call in tracker.calls)
 
 
+def test_accept_issue_replay_refuses_a_body_changed_after_the_decision():
+    """PAT-330 review: the replay never converges on a decision `--status` reads `inconnu`."""
+    decision = human_decision()
+    drifted = ready_issue(state="done", version=9, body=HUMAN_BODY + "\n- [ ] drift")
+    tracker = ScriptedTracker([drifted, receipt_page([human_receipt(1, decision)])])
+    with pytest.raises(TrackerConflictError, match="body or criteria changed"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
+@pytest.mark.parametrize("receipts", [
+    lambda d: [human_receipt(1, d), human_receipt(2, d)],
+    lambda d: [human_receipt(1, d), receipt_raw(2)],
+], ids=["two decisions", "next to a PR receipt"])
+def test_accept_issue_replay_refuses_an_abnormal_receipt_set(receipts):
+    decision = human_decision()
+    done = ready_issue(state="done", version=8)
+    tracker = ScriptedTracker([done, receipt_page(receipts(decision))])
+    with pytest.raises(TrackerConflictError, match="next to another receipt"):
+        tracker.accept_issue("TRAME-1", decision, project=PROJECT)
+    assert all(call[0] == "GET" for call in tracker.calls)
+
+
 @pytest.mark.parametrize("issue, receipts, over, match", [
     (ready_issue(state="in-progress"), [], {}, "native state is in-progress"),
     (ready_issue(type="Epic"), [], {}, "Epic"),
