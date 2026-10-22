@@ -1140,6 +1140,107 @@ def test_activate_cli_replays_after_registry_promotion_before_marker_replace(
     assert json.loads(capsys.readouterr().out)["tracker"] == "ghprojects"
 
 
+def _git_checkout(path, remote):
+    path.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "remote.origin.url", remote],
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+         "commit", "--allow-empty", "-m", "init"],
+    ):
+        subprocess.run(args, cwd=path, check=True, capture_output=True)
+
+
+def _devhub_activation_fixture(monkeypatch, tmp_path):
+    """PAT-329: a git checkout bound to a YouTrack source, an isolated registry, a DevHub target."""
+    state, repo = tmp_path / "state", tmp_path / "public"
+    _git_checkout(repo, "https://github.com/acme/public.git")
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.chdir(repo)
+    canonical = "github.com/acme/public"
+    registry = cutover_cli.registry
+    assert os.path.realpath(registry.path()).startswith(os.path.realpath(state))
+    registry.register("youtrack", "public", "SRC", "0-1", canonical_repo=canonical)
+    registry.bootstrap_repository_binding("youtrack", "public", "SRC", "0-1", cwd=str(repo))
+    source = FakeTransportTracker("youtrack", issues=[
+        Issue("SRC-1", "Epic", state="ready", type="Epic", priority="P1", estimate=8,
+              body="- [ ] first\n", links=[Link("parent-of", "outward", "SRC-2")]),
+        Issue("SRC-2", "Child", state="ready", type="Task", priority="P2", estimate=3,
+              body="- [x] done\n", links=[Link("subtask-of", "outward", "SRC-1")]),
+    ], adrs=[Adr("FOUNDRY-ADR-0001", "ADR 1", "accepted", "body\n")], adr_relations={
+        "FOUNDRY-ADR-0001": {"supersedes": [], "superseded_by": None, "issues": ["SRC-2"]}})
+    source.resolve_checkout_project = lambda: Project("SRC", "0-1", {"canonical_repo": canonical})
+    target = FakeTransportTracker("devhub")
+    target_project = Project("DHB", "target", {"canonical_repo": canonical})
+    config_path, manifest_path = tmp_path / "target.json", tmp_path / "manifest.json"
+    config_path.write_text(json.dumps({"key": "DHB", "id": "target", "extra": target_project.extra}))
+    monkeypatch.setattr(cutover_cli, "_target", lambda _name: target)
+    monkeypatch.setattr(cutover_cli.foundry, "tracker", lambda *_a, **_k: source)
+    return repo, canonical, config_path, manifest_path, target
+
+
+def test_activate_toward_devhub_publishes_the_registry_entry_and_the_marker(
+    monkeypatch, tmp_path, capsys,
+):
+    repo, canonical, config_path, manifest_path, _target = _devhub_activation_fixture(
+        monkeypatch, tmp_path)
+    for action in ("preflight", "copy"):
+        cutover_cli.main([action, "devhub", str(config_path), str(manifest_path)])
+    verified = load_manifest(manifest_path)
+    assert verified["phase"] == "verified" and verified["target"]["tracker"] == "devhub"
+    capsys.readouterr()
+    cutover_cli.main(["activate", "devhub", str(config_path), str(manifest_path)])
+    assert json.loads(capsys.readouterr().out)["tracker"] == "devhub"
+    assert load_manifest(manifest_path)["phase"] == "activated"
+    published = cutover_cli.registry.load()
+    entries = [entry for entry in published["devhub"].values() if "_staged_cutover" not in entry]
+    assert entries == [{"key": "DHB", "id": "target", "canonical_repo": canonical}]
+    assert all(entry.get("archive") is True for entry in published["youtrack"].values())
+    binding = cutover_cli.registry.repository_tracker_binding(str(repo))
+    assert (binding.tracker, binding.repository) == ("devhub", canonical)
+    assert (binding.project.key, binding.project.id) == ("DHB", "target")
+    assert binding.migration_manifest_digest == verified["source_digest"]
+    assert binding.activation_kind == "migration"
+
+
+def test_activate_toward_devhub_refuses_a_divergent_manifest_and_publishes_nothing(
+    monkeypatch, tmp_path,
+):
+    repo, _canonical, config_path, manifest_path, _target = _devhub_activation_fixture(
+        monkeypatch, tmp_path)
+    for action in ("preflight", "copy"):
+        cutover_cli.main([action, "devhub", str(config_path), str(manifest_path)])
+    registry_before = cutover_cli.registry.load()
+    manifest = load_manifest(manifest_path)
+
+    from foundry.migration import _digest, _source_view
+
+    def attempt(mutated, error, message):
+        mutated["source_digest"] = _digest(_source_view(mutated))
+        save_manifest(manifest_path, mutated)
+        with pytest.raises(error, match=message):
+            cutover_cli.main(["activate", "devhub", str(config_path), str(manifest_path)])
+        assert cutover_cli.registry.load() == registry_before
+        assert cutover_cli.registry.repository_tracker_binding(str(repo)).tracker == "youtrack"
+
+    other_project = copy.deepcopy(manifest)
+    other_project["target"]["project"]["id"] = "other"
+    attempt(other_project, SystemExit, "incompatible")
+    other_tracker = copy.deepcopy(manifest)
+    other_tracker["target"]["tracker"] = "linear"
+    attempt(other_tracker, SystemExit, "incompatible")
+    unverified = copy.deepcopy(manifest)
+    unverified["phase"] = "preflight"
+    attempt(unverified, SystemExit, "non vérifié")
+    # a hand-edited file whose digest was not recomputed is refused when it is loaded
+    tampered = copy.deepcopy(manifest)
+    tampered["target"]["project"]["id"] = "other"
+    manifest_path.write_text(json.dumps(tampered))
+    with pytest.raises(MigrationError, match="modifié"):
+        cutover_cli.main(["activate", "devhub", str(config_path), str(manifest_path)])
+    assert cutover_cli.registry.load() == registry_before
+
+
 class _YouTrackMigrationTransport(YouTrackTracker):
     def __init__(self, *, lose_issue=False, lose_adr=False):
         self.url, self.token = "https://youtrack.invalid", "test"
