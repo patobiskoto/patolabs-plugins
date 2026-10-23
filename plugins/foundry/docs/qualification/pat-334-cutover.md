@@ -62,14 +62,24 @@ any more (deduced from the marker resolution, `docs/devhub-tracker.md`).
 - Claude Code, installed CLI, main checkout: `doctor` shows `Config — tracker=devhub`, `PLP … — 309 issues` and
   `Repo courant → projet — patolabs-plugins → PLP` green; `query issue PLP-2` reads the issue.
 - Codex: the CLI of the Codex installation (`codex plugin list`) gives the same `doctor` lines and reads
-  `PLP-2`. A headless Codex session was not run (refused by the local permission policy), so the reading from
-  a Codex session itself is not verified.
+  `PLP-2`. A first attempt at a headless Codex session was refused by the local permission policy; the session
+  was then run, observed by the coordinator on 2026-10-23 after PLP-1 merged (about 10:30): `codex exec --sandbox
+  workspace-write -c sandbox_workspace_write.network_access=true` (codex-cli 0.162.1), from the main checkout,
+  `FOUNDRY_TRACKER` unset, asked to run read-only `doctor` and `query issue PLP-2`. It used the Foundry 2.3.0 CLI
+  of the Codex installation (`~/.codex/plugins/cache/patolabs/foundry/2.3.0/tooling/foundry_cli.py`). `doctor`
+  showed `Config — tracker=devhub mode=v1 codehost=github`, `PLP … — 309 issues`, `Code-host github — repo
+  courant → <repo>` and `Repo courant → projet — patolabs-plugins → PLP`, all green, no red line; `query issue
+  PLP-2` read "Basculer ce dépôt de Linear vers DevHub", state `done`. The network from the Codex sandbox to the
+  production DevHub therefore works with network access enabled in `workspace-write`; the behaviour with the
+  default sandbox without network was not tried (unknown).
 - Registry (observed by the coordinator, comparing the backup registry taken before the run with the registry
   after it): `activate` changed the Linear registry entry of this repository only by adding `archive: true`; the
   entry stays, archived.
-- `doctor` also shows three red lines for older DevHub registry entries of other repositories
+- At cutover time, `doctor` also showed three red lines for older DevHub registry entries of other repositories
   (`foundry-e2e-sandbox-20260903`, `foundry-e2e-sandbox-20260906`, `trame`), present in the registry before
-  this run and unrelated to it; they were left untouched.
+  this run and unrelated to it; the run left them untouched. Later on 2026-10-23, after a registry backup, these
+  three entries were moved out of the registry into a quarantine file under `~/.config/foundry/quarantine/`;
+  `doctor` has shown no red line since (observed by the coordinator).
 - `source_ref`: `PAT-177`, drawn at random among the manifest's issues, was found by
   `migration_find_issue(linear:issue:PAT-177)` as `PLP-146`, the target named by the manifest, with the same
   title.
