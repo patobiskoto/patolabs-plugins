@@ -751,7 +751,7 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Comment exceptions, never approximated: `DevHubTracker.migration_comment_exception` returns a reason for a
   comment that `importCommentSchema` of DEVHUB-128 would refuse (empty or blank text, text over
   `_IMPORT_COMMENT_MAX` UTF-16 units, NUL or unpaired surrogate, missing or blank author, author over
-  `_IMPORT_AUTHOR_MAX` units or holding a control character, date outside `0..._IMPORT_EPOCH_MAX`). Such a
+  `_IMPORT_AUTHOR_MAX` units or holding a control character, date outside `0..._IMPORT_EPOCH_MAX`, i.e. after 9999-12-31T23:59:59.999Z, see "Corrections from the PAT-332 rehearsal"). Such a
   comment is not written: the record carries a `comment_exceptions` entry with its coordinate, the reason
   (never the content) and a digest of its content. Like the attribute exceptions (`labels`, `milestone`,
   `archived`) it does not by itself keep `ready_for_cutover` false. `_preflight_issues` refuses before any write
@@ -786,11 +786,11 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Points to watch in the real-corpus rehearsal (PAT-332): a terminal record whose updated or completed date
   precedes its created date is refused by `_preflight_issues` (fail closed) instead of becoming a named
   exception, so one such issue stops the whole copy (deduced from the code, not observed on a real corpus);
-  likewise an issue, living or terminal, whose parent in the manifest is not an `Epic` (or has its `type`
-  excepted), and a cycle of parent or dependency links between issues of the manifest (`_preflight_issues`,
-  deduced from the code, not observed on a real corpus);
-  and the history listing nests `comments` without `includeArchived`, so whether Linear returns the comments of
-  an archived issue, or archived comments, is unknown.
+  and a cycle of parent or dependency links between issues of the manifest (`_preflight_issues`, deduced from
+  the code, not observed on a real corpus). A parent that is not an `Epic` is no longer one of them: see
+  "Corrections from the PAT-332 rehearsal" below. Comments: the rehearsal read 20 comments of an archived
+  Linear issue through the history listing (observed in the rehearsal, reported by the coordinator, not
+  re-run here); whether archived comments or threaded replies are all included is unknown.
 - Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
   `migration_terminal_import_supported` is false, as `search` did, so FOUNDRY-ADR-0026's living-only scope
   is unchanged there. `migration_export_issues` of Linear still reads the comments of every issue whatever
@@ -801,6 +801,58 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 Offline tests: `tests/test_devhub_tracker.py` (terminal import, readback, preflight),
 `tests/test_tracker_migration.py` (manifest, copy, readback, Linear export). Live: DHN-49 in
 `devhub-requirements.md`, `green` ("Live run of PAT-331").
+
+### Corrections from the PAT-332 rehearsal (PAT-332)
+
+Five gaps observed by the rehearsal of this repository's Linear corpus toward disposable DevHub instances built from
+`890e338`, then `72a24e2` for the final run (reported by the coordinator in
+`qualification/pat-332-cutover-rehearsal.md`; the offline tests below do not re-run them).
+
+- Archived links (observed): the Linear history export read each issue with connections that leave out archived
+  issues, so a closed archived `Nits` Epic exported with no child and ten `relates` links between archived
+  issues were one-sided. The export now reads each issue with `_ISSUE_HISTORY_QUERY`
+  (`includeArchived: true` on `children`, `relations`, `inverseRelations`); see `linear-tracker.md`, "History
+  export of archived links (PAT-332)".
+- Non-Epic parent (observed: DevHub refused a link whose parent had no type, `createTrackerLink`, "parent must be
+  an Epic"): `Tracker.migration_epic_only_parent` (`trackers/base.py`, `False` by default; `True` on
+  `DevHubTracker`). When it is true, `capture_manifest` makes each captured `parent-of` / `subtask-of` link whose
+  parent `type` is not exactly `Epic`, or whose `type` is excepted by `migration_attribute_exceptions`, an entry
+  of the `links` exception of BOTH issues, with cause `parent is not an Epic on the target` (same
+  `{type, direction, target, cause}` shape as the links outside the manifest). The link is removed from the
+  record's `links`, so `copy_and_verify` and `verify_targets` neither write nor compare it, and the exception does
+  not keep `ready_for_cutover` false. The `_preflight_issues` refusal "parent non Epic refusé par DevHub" stays
+  for a link still present (defensive). Tests: `test_a_non_epic_parent_link_is_a_named_exception_on_both_ends_and_is_not_copied`,
+  `test_an_epic_parent_link_is_kept_and_a_target_without_the_member_keeps_every_link`,
+  `test_a_parent_whose_type_is_excepted_by_the_target_is_not_an_epic_there` (`tests/test_tracker_migration.py`).
+- ADR numbering order (observed: `FOUNDRY-ADR-0001` took number 1, then `PAT-ADR-0001` was refused by the 409
+  mapped in `import_adr`): the rule is that of `originAdrNumber`, DevHub `890e338` (DEVHUB-111, DEVHUB-116), as
+  stated by DevHub and read in its message, not re-run: a foreign id byte-identical to `<KEY>-ADR-NNNN`, NNNN
+  being the number from 1 to 999999 left-padded to 4 digits and not over-padded, keeps that number; any other
+  foreign id takes the project counter, and after each insert the counter becomes the greater of itself and the
+  number plus one; a number already held answers 409 `resource_conflict`. `migration_import_adrs` therefore
+  writes first the ADRs that keep their number (`_origin_adr_number`), then the others, each replacement still
+  before the ADR it replaces (`_numbering_order` over `_replacement_order`); answers stay in input order. Before
+  the first write, and in `_preflight_adrs`, `_numbering_order` simulates that numbering from an empty project
+  and raises `TrackerConflictError` naming the ADR that would claim a held number (for example an unnumbered
+  replacement forced before the numbered ADR it replaces, which takes its number). The simulation assumes an
+  empty project; a number already held by an ADR present on the target is still refused by the server only.
+  The ADRs that do not keep their number get server numbers above those held and keep their foreign id as port
+  id. Tests: `test_origin_adr_number_follows_the_server_rule`,
+  `test_migration_import_adrs_writes_the_adrs_that_keep_their_number_first`,
+  `test_numbering_order_refuses_an_adr_claiming_a_number_already_held_naming_it` (`tests/test_devhub_tracker.py`).
+- Source date bound (stated by DevHub `890e338`, DEVHUB-130, read in its message, not re-run): a source date above
+  9999-12-31T23:59:59.999Z answers 400 `invalid_request`. `_IMPORT_EPOCH_MAX` (`trackers/devhub.py`) is now
+  253402300799999 ms (it was 8640000000000000, the ECMAScript date limit) and bounds the comment date
+  (`migration_comment_exception`), the terminal issue dates (`_preflight_issues`) and the ADR dates (`import_adr`),
+  each refused before any write. Test: `test_the_comment_date_bound_is_the_last_millisecond_of_year_9999`.
+- Comment length (observed: two Epic closure receipts of the corpus, 54970 and 56409 characters, were
+  comment exceptions under the 50000 bound): DevHub raised `MAX_COMMENT_TEXT` to 200000 for native and imported
+  comments (DEVHUB-131, merge `72a24e2`, `src/tracker/contract.ts:82`, read in source). `_IMPORT_COMMENT_MAX`
+  (`trackers/devhub.py`) is now 200000. A DevHub older than `72a24e2` refuses an imported comment over 50000
+  characters with 400 and the copy stops before activation (deduced from the route, not run): the cutover
+  needs a DevHub at `72a24e2` or later. Foundry does not check the server version. DevHub also caps a request
+  body at 1 MiB, so a text near 200000 characters made mostly of characters JSON-escaped as `\u00XX` can be
+  refused as too large (stated by DevHub, not run). Test: `test_comment_exception_names_each_limit_without_quoting_the_content`.
 
 ### Labels and milestone, and Epic closure over imported children (PAT-331, decisions of 2026-10-22)
 

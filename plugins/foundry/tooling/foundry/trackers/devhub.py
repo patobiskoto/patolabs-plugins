@@ -129,13 +129,13 @@ _IMPORT_CREATION_STATES = ("backlog", "ready")
 _IMPORT_TERMINAL_STATES = ("done", "dropped")
 _IMPORT_PR_URL_MAX = 500
 _IMPORT_DATES = ("source_created", "source_updated", "source_completed")
-# DEVHUB-128 (``importCommentSchema``, ``MAX_COMMENT_TEXT`` of ``contract.ts`` at ``a57ce72``):
-# the text is 1 to 50000 UTF-16 units with a non-blank character, no NUL, no unpaired
+# DEVHUB-128 (``importCommentSchema``, ``MAX_COMMENT_TEXT`` of ``contract.ts``, 200000 since
+# DEVHUB-131 at ``72a24e2``, 50000 before): the text is 1 to 200000 UTF-16 units with a non-blank character, no NUL, no unpaired
 # surrogate; the author is 1 to 200 units, not blank, no control character
 # (``\p{Cc}``) and no unpaired surrogate; the source date is epoch ms in ``_IMPORT_EPOCH``.
-_IMPORT_COMMENT_MAX = 50_000
+_IMPORT_COMMENT_MAX = 200_000
 _IMPORT_AUTHOR_MAX = 200
-_IMPORT_EPOCH_MAX = 8_640_000_000_000_000
+_IMPORT_EPOCH_MAX = 253_402_300_799_999  # 9999-12-31T23:59:59.999Z, DevHub 890e338 (DEVHUB-130)
 _COMMENT_SOURCE_KEYS = ("source_ref", "source_author", "source_created")
 _COMMENT_TEXT_FORBIDDEN = re.compile(r"[\x00\ud800-\udfff]")
 _COMMENT_AUTHOR_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
@@ -397,6 +397,7 @@ class DevHubTracker(Tracker):
     # pending any more, so ``migration.ready_for_cutover`` no longer waits on this map.
     migration_terminal_import_supported = True
     migration_comments_supported = True
+    migration_epic_only_parent = True  # createTrackerLink: "parent must be an Epic" (PAT-332)
     migration_pending_terminal_items: dict[str, str] = {}
 
     def __init__(
@@ -2501,7 +2502,7 @@ class DevHubTracker(Tracker):
             if terminal is not None:
                 created = terminal.get("source_created")
                 dates = [terminal.get(key) for key in _IMPORT_DATES]
-                if (any(value is not None and (type(value) is not int or value < 0)
+                if (any(value is not None and (type(value) is not int or not 0 <= value <= _IMPORT_EPOCH_MAX)
                         for value in dates)
                         or (created is not None and any(
                             value is not None and value < created for value in dates[1:]))):
@@ -2557,8 +2558,8 @@ class DevHubTracker(Tracker):
             raise TrackerConflictError("cycle de liens refusé par DevHub")
 
     def _preflight_adrs(self, project: Project, adrs: list[dict]) -> None:
-        ordered, by_id = self._replacement_order(tuple(adrs))
-        del ordered  # only the cycle and duplicate refusals matter here
+        ordered, by_id = self._numbering_order(project, tuple(adrs))
+        del ordered  # only the cycle, duplicate and numbering refusals matter here
         unlinked = {
             record["id"] for record in adrs
             if record["status"] == "superseded"
@@ -2844,7 +2845,7 @@ class DevHubTracker(Tracker):
         }
         for key, value in (("source_created", source_created), ("source_updated", source_updated)):
             if value is not None:
-                if type(value) is not int or value < 0:
+                if type(value) is not int or not 0 <= value <= _IMPORT_EPOCH_MAX:
                     raise ValueError("date source ADR DevHubTracker invalide")
                 request[key] = value
         if superseded_by is not _UNSPECIFIED_ADR_RELATION and superseded_by is not None:
@@ -3011,6 +3012,57 @@ class DevHubTracker(Tracker):
         }
 
     @staticmethod
+    def _origin_adr_number(key: str, foreign_id: object) -> int | None:
+        """The number DevHub keeps for an imported ADR, ``None`` when it assigns its own.
+
+        ``originAdrNumber`` of DevHub ``890e338`` (DEVHUB-111, DEVHUB-116): a foreign id
+        byte-identical to ``<KEY>-ADR-NNNN``, NNNN being the number (1 to 999999) left-padded
+        to 4 digits and not over-padded, keeps that number (PAT-332, read from DevHub's
+        message, not re-run here).
+        """
+        prefix = f"{key}-ADR-"
+        if not isinstance(foreign_id, str) or not foreign_id.startswith(prefix):
+            return None
+        digits = foreign_id[len(prefix):]
+        if not digits.isascii() or not digits.isdigit() or len(digits) > 6:
+            return None
+        number = int(digits)
+        if not 1 <= number <= 999_999 or digits != str(number).zfill(4):
+            return None
+        return number
+
+    @classmethod
+    def _numbering_order(
+        cls, project: Project, snapshots: tuple[dict, ...],
+    ) -> tuple[list[dict], dict]:
+        """``_replacement_order`` with the ADRs that keep their number first (PAT-332).
+
+        DevHub gives the others the project counter and raises it past every number it
+        holds, so an imported ``FOUNDRY-ADR-0001`` taking number 1 first refused
+        ``PAT-ADR-0001``.  The order keeps replacement first, then simulates the server
+        numbering from an empty project and refuses, before any write and naming the ADR,
+        one that would claim a number already held (a counter hit by a later numbered ADR).
+        """
+        def numbered(snapshot):
+            return cls._origin_adr_number(project.key, snapshot["id"]) is not None
+
+        ordered, by_id = cls._replacement_order(
+            tuple(sorted(snapshots, key=lambda snapshot: not numbered(snapshot))))
+        held: dict[int, str] = {}
+        counter = 1
+        for snapshot in ordered:
+            number = cls._origin_adr_number(project.key, snapshot["id"])
+            if number is None:
+                number = counter
+            elif number in held:
+                raise TrackerConflictError(
+                    f"numéro ADR déjà pris dans l'ordre d'import: {snapshot['id']} "
+                    f"(numéro {number}, pris par {held[number]})")
+            held[number] = snapshot["id"]
+            counter = max(counter, number + 1)
+        return ordered, by_id
+
+    @staticmethod
     def _replacement_order(snapshots: tuple[dict, ...]) -> tuple[list[dict], dict]:
         """Snapshots ordered replacement first, and the snapshots by id (PAT-319, PAT-324).
 
@@ -3045,14 +3097,17 @@ class DevHubTracker(Tracker):
     ) -> list[Adr]:
         """Import a closed corpus, replacements first, answers in input order (PAT-319).
 
+        PAT-332: among the orders that respect it, the ADRs that keep their number
+        (``_origin_adr_number``) go first (``_numbering_order``).
+
         The server refuses ``superseded_by`` to an ADR not yet imported, so each ADR is
         written after the one that replaces it; a cycle or a replacement outside the
         corpus is not reordered (the server's refusal stands).
         """
         if qualification is not None:
             raise TrackerConflictError("devhub ADR migration qualification is unexpected")
-        ordered, by_id = self._replacement_order(snapshots)
         project = self._require_project(project)
+        ordered, by_id = self._numbering_order(project, snapshots)
         registry.require_writable_project(self.name, project)
         for snapshot in ordered:
             # Local refusals (status, source-only issue references, supersedes, digest,

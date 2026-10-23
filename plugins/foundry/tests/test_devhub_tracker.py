@@ -4166,13 +4166,13 @@ def imported_comment(**over):
 def test_comment_exception_names_each_limit_without_quoting_the_content():
     check = DevHubTracker.migration_comment_exception
     assert check(PROJECT, COMMENT) is None
-    assert check(PROJECT, {**COMMENT, "text": "x" * 50_000}) is None
+    assert check(PROJECT, {**COMMENT, "text": "x" * 200_000}) is None
     assert check(PROJECT, {**COMMENT, "source_author": " Équipe déploiement "}) is None
     for change, expected in [
         ({"text": ""}, "text empty"),
         ({"text": " \t ﻿\n"}, "text blank"),
-        ({"text": "x" * 50_001}, "longer"),
-        ({"text": "😀" * 25_001}, "longer"),  # UTF-16 units, as the server counts
+        ({"text": "x" * 200_001}, "longer"),
+        ({"text": "😀" * 100_001}, "longer"),  # UTF-16 units, as the server counts
         ({"text": "a\x00b"}, "NUL"),
         ({"text": "a\ud800b"}, "NUL"),
         ({"source_author": None}, "author absent"),
@@ -4266,3 +4266,76 @@ def test_preflight_refuses_a_comment_the_import_route_would_refuse_and_a_duplica
     for comments in ([{**COMMENT, "text": ""}], [COMMENT, COMMENT]):
         with pytest.raises(TrackerConflictError, match="commentaire non reproductible"):
             tracker._preflight_issues([{**living, "comments": comments}])
+
+
+# --- PAT-332: ADR numbering order and the source date bound ----------------------------
+
+def _numbering_snapshot(foreign_id, source_ref, superseded_by=None):
+    return {
+        "id": foreign_id, "source_ref": source_ref, "title": foreign_id, "body": "b\n",
+        "status": "superseded" if superseded_by else "accepted",
+        "relations": {"supersedes": "unknown", "superseded_by": superseded_by, "issues": []},
+        "source_created": None, "source_updated": None,
+    }
+
+
+@pytest.mark.parametrize("foreign_id, expected", [
+    ("TRAME-ADR-0001", 1), ("TRAME-ADR-0033", 33), ("TRAME-ADR-12345", 12345),
+    ("TRAME-ADR-999999", 999999), ("TRAME-ADR-1000000", None), ("TRAME-ADR-0000", None),
+    ("TRAME-ADR-001", None), ("TRAME-ADR-00033", None), ("TRAME-ADR-0033x", None),
+    ("FOUNDRY-ADR-0001", None), ("trame-ADR-0001", None), ("TRAME-ADR-００１２", None),
+    (None, None),
+])
+def test_origin_adr_number_follows_the_server_rule(foreign_id, expected):
+    assert DevHubTracker._origin_adr_number("TRAME", foreign_id) == expected
+
+
+def test_migration_import_adrs_writes_the_adrs_that_keep_their_number_first(monkeypatch):
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    snapshots = tuple(
+        _numbering_snapshot(f"{prefix}-ADR-{number:04d}", f"linear:adr:{prefix}{number}")
+        for prefix, number in (("FOUNDRY", 1), ("FOUNDRY", 2), ("TRAME", 1), ("TRAME", 2)))
+    ordered, _by_id = DevHubTracker._numbering_order(PROJECT, snapshots)
+    assert [item["id"] for item in ordered] == [
+        "TRAME-ADR-0001", "TRAME-ADR-0002", "FOUNDRY-ADR-0001", "FOUNDRY-ADR-0002"]
+    # a replacement is still written before the ADR it replaces, numbered or not
+    chain = (_numbering_snapshot("TRAME-ADR-0001", "r:1"),
+             _numbering_snapshot("FOUNDRY-ADR-0001", "r:f", superseded_by="TRAME-ADR-0002"),
+             _numbering_snapshot("TRAME-ADR-0002", "r:2"))
+    ordered, _by_id = DevHubTracker._numbering_order(PROJECT, chain)
+    assert [item["id"] for item in ordered] == [
+        "TRAME-ADR-0001", "TRAME-ADR-0002", "FOUNDRY-ADR-0001"]
+
+
+def test_numbering_order_refuses_an_adr_claiming_a_number_already_held_naming_it():
+    # The unnumbered replacement is forced first and takes counter 1, then the numbered
+    # TRAME-ADR-0001 it replaces would claim that number.
+    corpus = (_numbering_snapshot("TRAME-ADR-0001", "r:1", superseded_by="FOUNDRY-ADR-0001"),
+              _numbering_snapshot("FOUNDRY-ADR-0001", "r:f"))
+    tracker = ScriptedTracker([])
+    with pytest.raises(TrackerConflictError, match="TRAME-ADR-0001"):
+        tracker.migration_import_adrs(PROJECT, corpus)
+    assert tracker.calls == []  # before the first write
+    with pytest.raises(TrackerConflictError, match="TRAME-ADR-0001"):
+        tracker._preflight_adrs(PROJECT, list(corpus))
+
+
+def test_the_comment_date_bound_is_the_last_millisecond_of_year_9999():
+    assert devhub_module._IMPORT_EPOCH_MAX == 253_402_300_799_999
+    check = ScriptedTracker([]).migration_comment_exception
+    assert check(PROJECT, {**COMMENT, "source_created": 253_402_300_799_999}) is None
+    assert "date" in check(PROJECT, {**COMMENT, "source_created": 253_402_300_800_000})
+
+
+def test_a_terminal_issue_date_after_year_9999_is_refused_before_any_write():
+    def record(created):
+        return {"id": "S-1", "source_ref": "linear:issue:S-1", "title": "t", "body": "",
+                "links": [], "attributes": {"type": "Task"}, "exceptions": [],
+                "terminal": {"pr_url": None, "source_created": created,
+                             "source_updated": None, "source_completed": None}}
+
+    tracker = ScriptedTracker([])
+    tracker._preflight_issues([record(253_402_300_799_999)])
+    with pytest.raises(TrackerConflictError, match="dates source"):
+        tracker._preflight_issues([record(253_402_300_800_000)])
+    assert tracker.calls == []

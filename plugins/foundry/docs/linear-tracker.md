@@ -1805,6 +1805,21 @@ temporarily unavailable, never dual-writable; replaying the exact command comple
 transition idempotently. Multiple source bindings, a different existing marker, or a
 changed target binding are refused.
 
+### History export of archived links (PAT-332)
+
+`LinearTracker.migration_export_issues` lists archived issues (`_ISSUES_HISTORY_QUERY`, `includeArchived`) and reads
+each one through `_export_issue`. Since PAT-332 that read uses `_ISSUE_HISTORY_QUERY` (`trackers/linear.py`), which
+is `_ISSUE_FIELDS` with `includeArchived: true` on `children(first: 100)`, `relations(first: 100)` and
+`inverseRelations(first: 100)` (capital R). Observed in the rehearsal (reported by the coordinator, not re-run
+here): without it an archived Epic exported with no child (archiving an Epic archives its children), so the Epic
+closure replay failed, and `relates` links between archived issues were one-sided; Linear accepts the argument on
+those three connections and returns the archived nodes. The read goes straight to `_graphql`, never through
+the snapshot or command read caches (`_snapshot_scopes`, `_read_scopes`). `get_issue`, `_read_raw` and
+`_ISSUE_QUERY` are unchanged; an ordinary read of an archived closed Epic whose children are archived is
+therefore expected to keep failing its closure replay (deduced, not run; out of scope). Linear returns the
+comments of an archived issue (observed: 20 read in the rehearsal). Test:
+`test_linear_history_export_reads_archived_links_and_bypasses_the_read_caches` (`tests/test_tracker_migration.py`).
+
 ### Reprise après dérive locale du binding
 
 Un marqueur présent dont le `registry_binding_digest` ne correspond plus à l'entrée de

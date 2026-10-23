@@ -225,6 +225,21 @@ query FoundryLinearIssue($id: String!) {{
 }}
 """
 
+# PAT-332: the history export reads each issue with ``includeArchived: true`` on the three
+# connections that otherwise leave archived issues out (``children``, ``relations``,
+# ``inverseRelations``); ``_ISSUE_QUERY`` and ordinary reads are unchanged.
+_ISSUE_HISTORY_FIELDS = (
+    _ISSUE_FIELDS
+    .replace("children(first: 100)", "children(first: 100, includeArchived: true)")
+    .replace("relations(first: 100)", "relations(first: 100, includeArchived: true)")
+    .replace("inverseRelations(first: 100)", "inverseRelations(first: 100, includeArchived: true)")
+)
+_ISSUE_HISTORY_QUERY = f"""
+query FoundryLinearIssueHistoryRead($id: String!) {{
+  issue(id: $id) {{ {_ISSUE_HISTORY_FIELDS} }}
+}}
+"""
+
 _ISSUE_STATE_HISTORY_QUERY = """
 query FoundryLinearIssueStateHistory($id: String!) {
   issue(id: $id) {
@@ -5457,11 +5472,19 @@ class LinearTracker(Tracker):
         return exported
 
     def _export_issue(self, identifier: str) -> tuple[Issue, list[dict]]:
-        """Read one issue like ``get_issue``, its relations without a Foundry type set aside."""
+        """Read one issue like ``get_issue``, its relations without a Foundry type set aside.
+
+        PAT-332: archived children and relations are read too (``_ISSUE_HISTORY_QUERY``), and
+        the read bypasses the snapshot and command read caches, which hold ordinary reads.
+        """
         uncaptured: list[dict] = []
-        issue = self._to_issue(
-            self._read_raw(identifier), self._project(), uncaptured_relations=uncaptured,
-        )
+        data = self._graphql(_ISSUE_HISTORY_QUERY, {"id": identifier}, "issue.read")
+        raw = data.get("issue")
+        if raw is None:
+            raise IssueUnavailableError(identifier)
+        if not isinstance(raw, dict):
+            raise LinearTrackerError("issue.read", None, "invalid_response")
+        issue = self._to_issue(raw, self._project(), uncaptured_relations=uncaptured)
         return issue, uncaptured
 
     def _history_comments(self, identifier: str, connection) -> list[dict]:

@@ -2155,3 +2155,88 @@ def test_a_source_that_exports_no_comments_is_a_named_exception_not_an_empty_cop
     other = capture_manifest(source, Project("Y", "a"), FakeTransportTracker("linear"), project)
     assert other["issues"][0]["exceptions"] == []
 
+
+
+# --- PAT-332: hierarchy links toward a target that takes an Epic as parent only ---------
+
+class _EpicOnlyParentTracker(_TerminalCapableTracker):
+    migration_epic_only_parent = True
+
+
+def _hierarchy_source(parent_type):
+    return FakeTransportTracker("linear", [
+        Issue("A-1", "parent", state="ready", body="b", type=parent_type,
+              links=[Link("parent-of", "outward", "A-2")]),
+        Issue("A-2", "child", state="ready", body="b", type="Task",
+              links=[Link("subtask-of", "outward", "A-1"),
+                     Link("relates", "outward", "A-3")]),
+        Issue("A-3", "other", state="ready", body="b", type="Task"),
+    ])
+
+
+@pytest.mark.parametrize("parent_type", [None, "Task"])
+def test_a_non_epic_parent_link_is_a_named_exception_on_both_ends_and_is_not_copied(parent_type):
+    target, project = _EpicOnlyParentTracker("devhub"), Project("B", "b")
+    manifest = capture_manifest(_hierarchy_source(parent_type), Project("A", "a"), target, project)
+    parent, child, other = manifest["issues"]
+    cause = "parent is not an Epic on the target"
+    for record, link in ((parent, ("parent-of", "outward", "A-2")),
+                         (child, ("subtask-of", "outward", "A-1"))):
+        reasons = {item["attribute"]: item["reason"] for item in record["exceptions"]}
+        assert json.loads(reasons["links"].removeprefix("not copied; source value: ")) == [
+            {"cause": cause, "direction": link[1], "target": link[2], "type": link[0]}]
+    assert parent["links"] == []
+    assert child["links"] == [{"type": "relates", "direction": "outward", "target": "A-3"}]
+    assert "links" not in {item["attribute"] for item in other["exceptions"]}
+    copy_and_verify(manifest, target, project, lambda: None)
+    verify_targets(manifest, target, project)
+    assert ready_for_cutover(manifest)
+
+
+def test_an_epic_parent_link_is_kept_and_a_target_without_the_member_keeps_every_link():
+    target, project = _EpicOnlyParentTracker("devhub"), Project("B", "b")
+    manifest = capture_manifest(_hierarchy_source("Epic"), Project("A", "a"), target, project)
+    assert manifest["issues"][0]["links"] == [
+        {"type": "parent-of", "direction": "outward", "target": "A-2"}]
+    assert "links" not in {i["attribute"] for i in manifest["issues"][0]["exceptions"]}
+    assert Tracker.migration_epic_only_parent is False
+    plain = capture_manifest(
+        _hierarchy_source(None), Project("A", "a"), _TerminalCapableTracker("youtrack"), project)
+    assert len(plain["issues"][0]["links"]) == 1
+
+
+def test_a_parent_whose_type_is_excepted_by_the_target_is_not_an_epic_there():
+    class Excepting(_EpicOnlyParentTracker):
+        def migration_attribute_exceptions(self, project, snapshot):
+            return {"type": "unmappable"} if snapshot["id"] == "A-1" else {}
+
+    manifest = capture_manifest(
+        _hierarchy_source("Epic"), Project("A", "a"), Excepting("devhub"), Project("B", "b"))
+    assert manifest["issues"][0]["links"] == []
+
+
+def test_linear_history_export_reads_archived_links_and_bypasses_the_read_caches(monkeypatch):
+    from foundry.trackers import linear as linear_module
+    tracker = LinearTracker(token="t", transport=lambda *a, **k: None)
+    seen = []
+    raw = {"id": "i", "identifier": "L-1", "title": "t", "description": "",
+           "state": {"id": "s", "name": "Done"}, "team": {"id": "t", "key": "L"},
+           "labels": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+           "children": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+           "relations": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+           "inverseRelations": {"nodes": [], "pageInfo": {"hasNextPage": False}}}
+    monkeypatch.setattr(tracker, "_project", lambda: Project("L", "p"))
+    monkeypatch.setattr(
+        tracker, "_graphql", lambda query, variables, op: seen.append((query, op)) or {"issue": raw})
+    monkeypatch.setattr(tracker, "_to_issue", lambda r, p, uncaptured_relations: Issue("L-1", "t"))
+    with tracker.read_scope(), tracker.graph_snapshot():
+        tracker._export_issue("L-1")
+        tracker._export_issue("L-1")
+    assert len(seen) == 2  # never served from the snapshot or command scope
+    query = seen[0][0]
+    for connection in ("children(first: 100, includeArchived: true)",
+                       "relations(first: 100, includeArchived: true)",
+                       "inverseRelations(first: 100, includeArchived: true)"):
+        assert connection in query
+    assert query.count("includeArchived") == 3
+    assert "includeArchived" not in linear_module._ISSUE_QUERY

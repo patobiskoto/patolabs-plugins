@@ -128,6 +128,14 @@ def _comments_match(record: dict, actual: Issue) -> bool:
     }
 
 
+def _epic_parent_dropped(link: dict, record_id: str, non_epic: set[str], captured_ids: set[str]) -> bool:
+    """Whether a hierarchy link has a captured parent the target refuses (PAT-332)."""
+    return link["target"] in captured_ids and (
+        (link["type"] == "parent-of" and record_id in non_epic)
+        or (link["type"] == "subtask-of" and link["target"] in non_epic)
+    )
+
+
 def capture_manifest(source: Tracker, source_project: Project, target: Tracker, target_project: Project) -> dict:
     """Read all source inputs and return a closed, no-effect manifest."""
     records = []
@@ -174,6 +182,7 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
             _capture_comments(record, item["comments"], source.name, target, target_project)
         records.append(record)
     captured_ids = {record["id"] for record in records}
+    attribute_exceptions: dict[str, dict[str, str]] = {}
     for record in records:
         exceptions = {
             name: "target capability unavailable"
@@ -193,6 +202,17 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
         ):
             raise MigrationError("exceptions d'attribut cible invalides")
         exceptions.update(specific)
+        attribute_exceptions[record["id"]] = exceptions
+    # PAT-332: a target that takes an Epic as parent only (``migration_epic_only_parent``)
+    # cannot hold a hierarchy link whose parent has another type, or whose type is excepted.
+    non_epic = {
+        record["id"] for record in records
+        if target.migration_epic_only_parent
+        and (record["attributes"].get("type") != "Epic"
+             or "type" in attribute_exceptions[record["id"]])
+    }
+    for record in records:
+        exceptions = attribute_exceptions[record["id"]]
         # PAT-ADR-0032: no target copies labels nor milestone; each non-empty source value
         # is a named exception carrying that value (an issue without them gets none).
         (labels, milestone, pr_url, created, updated, uncaptured,
@@ -226,7 +246,15 @@ def capture_manifest(source: Tracker, source_project: Project, target: Tracker, 
             {"type": link["type"], "direction": link["direction"], "target": link["target"],
              "cause": "target outside the manifest"}
             for link in record["links"] if link["target"] not in captured_ids
+        ] + [
+            {"type": link["type"], "direction": link["direction"], "target": link["target"],
+             "cause": "parent is not an Epic on the target"}
+            for link in record["links"]
+            if _epic_parent_dropped(link, record["id"], non_epic, captured_ids)
         ]
+        # Kept out of the copy and the readback like a link outside the manifest.
+        record["links"] = [link for link in record["links"] if not _epic_parent_dropped(
+            link, record["id"], non_epic, captured_ids)]
         if dropped:
             exceptions["links"] = "not copied; source value: " + json.dumps(
                 sorted(dropped, key=lambda entry: json.dumps(entry, sort_keys=True)),
