@@ -796,7 +796,9 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   Linear issue through the history listing (observed in the rehearsal, reported by the coordinator, not
   re-run here); whether archived comments or threaded replies are all included is unknown. Offline test of the
   reply exception: `test_a_reply_in_a_thread_is_a_named_comment_exception_and_a_top_level_one_is_kept`
-  (`tests/test_tracker_migration.py`).
+  (`tests/test_tracker_migration.py`). The real cutover of this repository (PAT-334) was captured before this
+  exception existed, so a reply in its corpus, if any, was imported flattened into `PLP`; whether there was any
+  is unknown. The history query with `parent { id }` has not run against the Linear API (unknown).
 - Points to watch, ADRs (PAT-332): `migration_export_adrs` (`trackers/linear.py`) exports only the last version of
   each ADR version chain (`chains[adr_id][-1]`), so the earlier versions are not copied and are not named as
   exceptions; and `source_created` / `source_updated` come from the `origin` of that last version, and the `origin` of
@@ -805,10 +807,12 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   observed on a real corpus). Neither is a manifest exception today.
 - Points to watch, strict read (PAT-332): the history export reads every issue, archived or not, through
   `_export_issue`, which calls `_to_issue` without `observe_lifecycle`, so one issue refused by that strict read
-  stops the whole export (fails closed), and so the capture: `LinearBindingError` with `state_id_unmapped`,
+  stops the whole export (fails closed), and so the capture. Among these refusals: `LinearBindingError` with `state_id_unmapped`,
   `label_id_unmapped` or `milestone_id_unmapped` (the state, a label or the milestone of the issue is not in the
   binding), a `TrackerConflictError` from the lifecycle projection (State and receipts disagree, malformed
-  marker) and the same error from the Epic closure audit (`_verified_epic_closure`). Deduced from the code, not
+  marker) and the same error from the Epic closure audit (`_verified_epic_closure`); the list is not exhaustive (for
+  example `type_labels_ambiguous`, a closure audit on an issue that is not `done`, the `invalid_response` of
+  normalisation and the project check `_assert_issue_project`). Deduced from the code, not
   observed on a real corpus; no such issue becomes a named exception.
 - Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
   `migration_terminal_import_supported` is false, as `search` did, so FOUNDRY-ADR-0026's living-only scope

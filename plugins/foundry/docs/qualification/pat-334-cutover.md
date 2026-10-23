@@ -44,7 +44,8 @@ any more (deduced from the marker resolution, `docs/devhub-tracker.md`).
   PAT-18 → PLP-297, created in backlog with a `state` exception). By type: Task 187, Bug 51, Epic 36, Feature
   31, none 4.
 - Links: 978 (relates 252, parent-of 234, subtask-of 234, depends-on 129, blocks 129).
-- Comments: 2120, 0 comment exception.
+- Comments: 2120, 0 comment exception. This capture predates the named exception for a reply in a thread
+  (PLP-1, `docs/devhub-tracker.md`): a reply, if any, was imported flattened; whether there was any is unknown.
 - Issue exceptions (80 issues carry at least one): `archived` 49, `source_dates` 22, `milestone` 8, `state` 2,
   `links` 2.
 - Manifest digest: `sha256:d60e78a1ac3e9dfb24be4e0da4b4adccb6206c9dfdfa6a17c461ccb904987241`, the one
