@@ -282,6 +282,29 @@ of other `*.md` names in a new Linear ADR body) and claim no gain. Statuses:
 - **Not verified:** the Foundry 2.2.0 / Ship-iOS 0.3.0 pair on a host, and the return to
   2.1.1 through an official manager (not tried, PAT-162).
 
+**Release 2.3.0, prepared by its release pull request:** that pull request sets both
+Foundry host manifests to **2.3.0** (Ship-iOS stays at **0.3.0**) and carries the dated
+`2.3.0` section of the [CHANGELOG](plugins/foundry/CHANGELOG.md), assembled from the 34
+fragments of `plugins/foundry/changelog.d/` (which it deletes), the
+[release notes](plugins/foundry/docs/release-2.3.0.md), the
+[upgrade and rollback guide](plugins/foundry/docs/migration-2.3.0.md) and the freeze
+entry of `plugins/foundry/tests/fixtures/release-history.json`. The release notes open
+with the behaviour changes (DevHub as a V1 provider, the full-history cutover toward
+DevHub, `issue accept` on DevHub, the `--help` handling, the cadencer changes) and claim
+no gain. Statuses:
+
+- **Done by the release pull request:** the manifests, the CHANGELOG section, the two
+  pages, the freeze entry, the removal of the fragments and one comment line of
+  `scripts/ci_plan.py`. The two pages are frozen from that pull request on.
+- **Not done by it, and not claimed here:** the tag `foundry-v2.3.0`, the update of the
+  installed plugin on Claude Code and on Codex, the readback of the version a host
+  actually loads, and the cutover of this repository toward DevHub (PAT-334). They come
+  after the merge; the tag and the host update each need the maintainer's explicit
+  authorization, and all are recorded on the release ticket
+  (`skills/release/SKILL.md`, steps 6 to 9).
+- **Not verified:** the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host, and the return to
+  2.2.0 through an official manager (not tried, PAT-162).
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -315,7 +338,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 2.2.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 2.3.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
