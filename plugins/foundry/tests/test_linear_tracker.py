@@ -410,7 +410,7 @@ class LinearWire:
                     self.state_histories.get(issue["identifier"], connection([]))
                 ),
             }}}
-        if "FoundryLinearIssue(" in document:
+        if "FoundryLinearIssue(" in document or "FoundryLinearIssueHistoryRead(" in document:
             return {
                 "data": {
                     "issue": copy.deepcopy(self._by_reference(variables["id"]))
@@ -11256,3 +11256,12 @@ def test_pat209_altered_body_is_refused_before_any_write(tracker, adr):
     with pytest.raises(TrackerConflictError, match="unsupported Markdown"):
         instance.create_adr(PROJECT, f"Altered {adr}", PAT209_SOURCES[adr] + " **x `y`**")
     assert not any("mutation " in document for document, _ in wire.calls[calls:])
+
+
+def test_history_issue_read_includes_archived_children_and_relations():
+    """PAT-332: each connection that hides archived issues is read with includeArchived."""
+    fields = linear_module._ISSUE_HISTORY_FIELDS
+    for connection in ("children", "relations", "inverseRelations"):
+        assert f"{connection}(first: 100, includeArchived: true)" in fields
+    assert "includeArchived" not in linear_module._ISSUE_FIELDS
+    assert fields in linear_module._ISSUE_HISTORY_QUERY

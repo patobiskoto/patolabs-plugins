@@ -228,6 +228,10 @@ class Tracker(ABC):
     # ``Issue.comments`` entries carrying ``source_ref``, ``source_author`` and
     # ``source_created``.  A target that does not keeps comments out of the manifest.
     migration_comments_supported: bool = False
+    # PAT-332: whether the target refuses a hierarchy link (``parent-of`` / ``subtask-of``)
+    # whose parent is not an Epic.  ``capture_manifest`` then makes such a link a named
+    # ``links`` exception on both ends instead of leaving it to block the cutover.
+    migration_epic_only_parent: bool = False
 
     def migration_export_issues(self, project: Project) -> list[dict]:
         """Return every issue of the project, terminal and archived ones included (PAT-331).
