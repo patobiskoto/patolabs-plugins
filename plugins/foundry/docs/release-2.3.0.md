@@ -18,8 +18,9 @@ and for the migration guide. This page announces **no gain**: no time, cost, quo
 quality improvement is measured by it or claimed. Upgrade and rollback instructions are
 in [migration-2.3.0.md](migration-2.3.0.md).
 
-The release contains the qualification and import tickets of Epic PAT-295 (the DevHub
-qualification, entries PAT-296 to PAT-332 of the changelog) and the green rehearsal of the
+The release contains the DevHub qualification and import tickets of Epic PAT-295, among the
+entries PAT-296 to PAT-332 of the changelog (that range also holds tickets of deferred review
+remarks), and the green rehearsal of the
 full Linear to DevHub cutover (PAT-332). It does **not** perform the cutover of this repository: that is the
 separate ticket PAT-334, and nothing on this page says it is done.
 
@@ -115,7 +116,8 @@ paths, empty). Nothing here says that any of them is installed on a host.
 
 - **Rollback to an earlier plugin version is an untried procedure** (PAT-162); see
   [migration-2.3.0.md](migration-2.3.0.md).
-- **A DevHub older than `72a24e2`** refuses part of the cutover (item 2).
+- **A DevHub older than `72a24e2`** refuses part of the cutover (item 2; deduced from the route,
+  not run, [devhub-tracker.md](devhub-tracker.md), "Corrections from the PAT-332 rehearsal").
 - **The rehearsal is not the cutover:** its figures are in the report cited in item 2.
 
 ## Release phases and evidence

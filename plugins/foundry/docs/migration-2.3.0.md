@@ -6,8 +6,9 @@ a tag, an installation, a version loaded by a host or the cutover of this reposi
 those states come after the merge and are recorded on the release ticket
 (`skills/release/SKILL.md`, step 9), not here. Both Foundry manifests must report
 `2.3.0`. The catalogues have no version key. See [release-2.3.0.md](release-2.3.0.md)
-for what the version contains. Apart from the DevHub pilot path that PAT-323 retires (item 1 below),
-no entry of the `2.3.0` changelog section was read as removing a verb, an option or a
+for what the version contains. Apart from the DevHub pilot path that PAT-323 retires (item 1 below), and
+`--ac-override-reason`, which PAT-286 makes an option of `issue merge` only (the other `issue`
+verbs now refuse it as an unknown flag), no entry of the `2.3.0` changelog section was read as removing a verb, an option or a
 configuration key; the changes that can affect an existing user are the checks of the
 next section (read from the `2.3.0` changelog section when this guide was written).
 A first installation and a first repository are unchanged: follow
