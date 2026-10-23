@@ -751,7 +751,11 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
 - Comment exceptions, never approximated: `DevHubTracker.migration_comment_exception` returns a reason for a
   comment that `importCommentSchema` of DEVHUB-128 would refuse (empty or blank text, text over
   `_IMPORT_COMMENT_MAX` UTF-16 units, NUL or unpaired surrogate, missing or blank author, author over
-  `_IMPORT_AUTHOR_MAX` units or holding a control character, date outside `0..._IMPORT_EPOCH_MAX`, i.e. after 9999-12-31T23:59:59.999Z, see "Corrections from the PAT-332 rehearsal"). Such a
+  `_IMPORT_AUTHOR_MAX` units or holding a control character, date that is not an integer from 0 to `_IMPORT_EPOCH_MAX`, so
+  a negative date is refused as well as one after 9999-12-31T23:59:59.999Z, see "Corrections from the PAT-332 rehearsal").
+  A reply in a Linear comment thread is a named exception too, whatever the target (`COMMENT_REPLY_EXCEPTION`,
+  `_capture_comments` in `migration.py`; `_history_comment` in `trackers/linear.py` reads the `parent` of the comment,
+  `_HISTORY_COMMENT_FIELDS`): the thread is not reproduced and the reply is not flattened into the issue. Such a
   comment is not written: the record carries a `comment_exceptions` entry with its coordinate, the reason
   (never the content) and a digest of its content. Like the attribute exceptions (`labels`, `milestone`,
   `archived`) it does not by itself keep `ready_for_cutover` false. `_preflight_issues` refuses before any write
@@ -790,7 +794,22 @@ writing. A terminal record carries `terminal` (`pr_url` and the three source dat
   the code, not observed on a real corpus). A parent that is not an `Epic` is no longer one of them: see
   "Corrections from the PAT-332 rehearsal" below. Comments: the rehearsal read 20 comments of an archived
   Linear issue through the history listing (observed in the rehearsal, reported by the coordinator, not
-  re-run here); whether archived comments or threaded replies are all included is unknown.
+  re-run here); whether archived comments or threaded replies are all included is unknown. Offline test of the
+  reply exception: `test_a_reply_in_a_thread_is_a_named_comment_exception_and_a_top_level_one_is_kept`
+  (`tests/test_tracker_migration.py`).
+- Points to watch, ADRs (PAT-332): `migration_export_adrs` (`trackers/linear.py`) exports only the last version of
+  each ADR version chain (`chains[adr_id][-1]`), so the earlier versions are not copied and are not named as
+  exceptions; and `source_created` / `source_updated` come from the `origin` of that last version, and the `origin` of
+  an ADR created in Linear is `{"kind": "native"}` (`trackers/linear.py`, ADR metadata validation), which carries
+  neither, so they are `None` and the ADR reaches DevHub without source dates (deduced from the code, not
+  observed on a real corpus). Neither is a manifest exception today.
+- Points to watch, strict read (PAT-332): the history export reads every issue, archived or not, through
+  `_export_issue`, which calls `_to_issue` without `observe_lifecycle`, so one issue refused by that strict read
+  stops the whole export (fails closed), and so the capture: `LinearBindingError` with `state_id_unmapped`,
+  `label_id_unmapped` or `milestone_id_unmapped` (the state, a label or the milestone of the issue is not in the
+  binding), a `TrackerConflictError` from the lifecycle projection (State and receipts disagree, malformed
+  marker) and the same error from the Epic closure audit (`_verified_epic_closure`). Deduced from the code, not
+  observed on a real corpus; no such issue becomes a named exception.
 - Scope toward a target without terminal import: `capture_manifest` skips an archived source issue when
   `migration_terminal_import_supported` is false, as `search` did, so FOUNDRY-ADR-0026's living-only scope
   is unchanged there. `migration_export_issues` of Linear still reads the comments of every issue whatever
@@ -836,6 +855,13 @@ Five gaps observed by the rehearsal of this repository's Linear corpus toward di
   and raises `TrackerConflictError` naming the ADR that would claim a held number (for example an unnumbered
   replacement forced before the numbered ADR it replaces, which takes its number). The simulation assumes an
   empty project; a number already held by an ADR present on the target is still refused by the server only.
+  Documented limit (deduced from the code, not observed): `_numbering_order` picks one order and does not search
+  the others, so an unnumbered replacement forced before the numbered ADR it replaces can take a counter that a
+  numbered ADR written later needs, and the corpus is refused (fails closed, before any write) although another
+  order would number cleanly (`TRAME-ADR-0005` replaced by an unnumbered ADR, plus `TRAME-ADR-0001`: refused,
+  while `TRAME-ADR-0001`, the replacement, `TRAME-ADR-0005` is not). Writing the numbered ADRs in decreasing
+  order does not settle that example. Test of the limit:
+  `test_numbering_order_documented_limit_refuses_a_corpus_that_another_order_would_take`.
   The ADRs that do not keep their number get server numbers above those held and keep their foreign id as port
   id. Tests: `test_origin_adr_number_follows_the_server_rule`,
   `test_migration_import_adrs_writes_the_adrs_that_keep_their_number_first`,
@@ -843,8 +869,9 @@ Five gaps observed by the rehearsal of this repository's Linear corpus toward di
 - Source date bound (stated by DevHub `890e338`, DEVHUB-130, read in its message, not re-run): a source date above
   9999-12-31T23:59:59.999Z answers 400 `invalid_request`. `_IMPORT_EPOCH_MAX` (`trackers/devhub.py`) is now
   253402300799999 ms (it was 8640000000000000, the ECMAScript date limit) and bounds the comment date
-  (`migration_comment_exception`), the terminal issue dates (`_preflight_issues`) and the ADR dates (`import_adr`),
-  each refused before any write. Test: `test_the_comment_date_bound_is_the_last_millisecond_of_year_9999`.
+  (`migration_comment_exception`), the terminal issue dates (`_preflight_issues`) and the ADR dates (`_prepare_adr_import`, called by `import_adr`),
+  each refused before any write. Tests: `test_the_comment_date_bound_is_the_last_millisecond_of_year_9999`,
+  `test_the_adr_source_date_bound_is_checked_before_any_write`.
 - Comment length (observed: two Epic closure receipts of the corpus, 54970 and 56409 characters, were
   comment exceptions under the 50000 bound): DevHub raised `MAX_COMMENT_TEXT` to 200000 for native and imported
   comments (DEVHUB-131, merge `72a24e2`, `src/tracker/contract.ts:82`, read in source). `_IMPORT_COMMENT_MAX`

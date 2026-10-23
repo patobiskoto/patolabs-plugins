@@ -288,6 +288,7 @@ _HISTORY_ISSUES_PAGE = 25
 _HISTORY_COMMENTS_PAGE = 50
 _HISTORY_COMMENT_FIELDS = """
 id body createdAt
+parent { id }
 user { name displayName }
 botActor { name }
 externalUser { name displayName }
@@ -745,14 +746,21 @@ def _epoch_ms_exact(value) -> int:
 
 
 def _history_comment(node) -> dict:
-    """One Linear comment as ``{"id", "text", "author", "created"}`` (PAT-331 stage 3).
+    """One Linear comment as ``{"id", "text", "author", "created", "reply"}`` (PAT-331 stage 3).
 
     ``author`` is the first non-empty text of the user's ``name`` then ``displayName``, the
     bot actor's ``name``, the external user's ``name`` then ``displayName``; ``None`` when
-    the comment has none of them (a deleted user, for example).
+    the comment has none of them (a deleted user, for example).  ``reply`` is true when the
+    comment has a ``parent`` comment (a reply in a thread); an absent or ``null`` ``parent``
+    is a top-level comment.
     """
     if (not isinstance(node, dict) or not isinstance(node.get("id"), str) or not node["id"]
             or not isinstance(node.get("body"), str)):
+        raise LinearTrackerError("issue.history", None, "invalid_response")
+    parent = node.get("parent")
+    if parent is not None and (
+            not isinstance(parent, dict) or not isinstance(parent.get("id"), str)
+            or not parent["id"]):
         raise LinearTrackerError("issue.history", None, "invalid_response")
     author = None
     for key, names in (
@@ -773,7 +781,7 @@ def _history_comment(node) -> dict:
             break
     return {
         "id": node["id"], "text": node["body"], "author": author,
-        "created": _epoch_ms_exact(node.get("createdAt")),
+        "created": _epoch_ms_exact(node.get("createdAt")), "reply": parent is not None,
     }
 
 

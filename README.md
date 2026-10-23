@@ -340,7 +340,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the three qualified tracker variants. Version 2.3.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.3.0 (both host manifests). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
