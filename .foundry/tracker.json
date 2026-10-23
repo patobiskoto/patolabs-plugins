@@ -1,15 +1,15 @@
 {
   "activation": {
     "kind": "migration",
-    "manifest_digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77"
+    "manifest_digest": "sha256:d60e78a1ac3e9dfb24be4e0da4b4adccb6206c9dfdfa6a17c461ccb904987241"
   },
-  "configuration_digest": "sha256:9a0663007b847679e79bc82beabbf061e19c750518fd75767d3e847f3e2de6df",
+  "configuration_digest": "sha256:177cca49ad0506315dc0caf47f7f97fb431ea38cd4a2a7c19265930999936647",
   "project": {
-    "id": "aeb77381-f8aa-48d3-a2a5-e6b2d2773007",
-    "key": "PAT"
+    "id": "8",
+    "key": "PLP"
   },
-  "registry_binding_digest": "sha256:6b3819b130685642f7c6d2a3bb04b342690916f4c342f6ae0051b60379d412cf",
+  "registry_binding_digest": "sha256:264fa81560d530068548186a4a51f1c01f9e1b6c9cb47fdc157fbf44ba1cc8f3",
   "repository": "github.com/patobiskoto/patolabs-plugins",
-  "tracker": "linear",
+  "tracker": "devhub",
   "version": 2
 }

@@ -679,7 +679,7 @@ agents/             Claude logical roles + internal read-only/worker effort prof
                    no agent frontmatter fixes a provider model
 skills/review-pr/  portable two-stage review contract (AC compliance, then quality)
 docs/adr/          bootstrap copies of early Foundry ADRs; the authoritative ADRs of this
-                   repository live in its Linear project (PAT), see docs/linear-tracker.md
+                   repository live in its DevHub project (PLP), see docs/devhub-tracker.md
 docs/model-routing-pilot-*.md   frozen manual measurement protocol + results sheet
 ```
 
@@ -766,9 +766,10 @@ anything.
 
 ## Develop Foundry (dogfooding)
 
-Foundry is piloted with its own tools: this repository is bound to Linear project `PAT`
-through its `.foundry/tracker.json` marker (the former YouTrack project `FOUNDRY` is an
-archive). In-repo, config falls back to
+Foundry is piloted with its own tools: this repository is bound to DevHub project `PLP`
+through its `.foundry/tracker.json` marker since the cutover of 2026-10-23
+(`docs/qualification/pat-334-cutover.md`); the former Linear project `PAT` and YouTrack
+project `FOUNDRY` are archives. In-repo, config falls back to
 `~/.config/foundry/config.env` (or the legacy `~/.config/orfeo-poc/youtrack.env`), so the
 tooling runs without installing the plugin:
 

@@ -329,9 +329,11 @@ and integrity-checked version comments. Epic closure is audited and non-atomic o
 YouTrack, Linear and GitHub Projects (DevHub closes atomically). Bounded detection does not exclude an external overwrite between
 the fresh read and write (S1→S2). A cockpit Evidence Plane envelope is advisory and
 has no state, AC or merge authority.
-This repository itself is bound to Linear (project PAT) for issues and ADRs; the
-historical YouTrack project is designated a read-only origin archive (see the cutover
-incident record in `plugins/foundry/docs/linear-cutover-operations.json`). ChatGPT MCP activation
+This repository itself is bound to DevHub (project PLP) for issues and ADRs since the
+cutover of 2026-10-23 (`plugins/foundry/docs/qualification/pat-334-cutover.md`); its former
+Linear project PAT is no longer bound, and the historical YouTrack project
+is designated a read-only origin archive (see the cutover incident record in
+`plugins/foundry/docs/linear-cutover-operations.json`). ChatGPT MCP activation
 remains separate planned work.
 
 ## Plugins
@@ -379,7 +381,7 @@ cd plugins/foundry && pip install pytest ruff && pytest -q -m "not integration" 
 Parallel run (`pytest-xdist`), which pull requests the CI skips `foundry` for, and the
 release rule: see the "Which CI jobs run" part of [`plugins/foundry/README.md`](plugins/foundry/README.md).
 
-Foundry is piloted with its own method (Linear project `PAT`, bound by `.foundry/tracker.json`); the pipeline runs in-repo via
+Foundry is piloted with its own method (DevHub project `PLP`, bound by `.foundry/tracker.json`); the pipeline runs in-repo via
 `python3 plugins/foundry/tooling/foundry_cli.py <module>`. Runtime configuration resolves
 from environment variables, Claude plugin options, the macOS keychain, then
 `~/.config/foundry/config.env`.

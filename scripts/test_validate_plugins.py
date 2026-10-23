@@ -260,7 +260,7 @@ class PublicSurfaceContract(unittest.TestCase):
         self.assertNotIn("relations/comments/PR projection", readme)
         flat = " ".join(readme.split())
         self.assertIn("ChatGPT MCP activation remains separate planned work", flat)
-        self.assertIn("bound to Linear (project PAT) for issues and ADRs", flat)
+        self.assertIn("bound to DevHub (project PLP) for issues and ADRs", flat)
         self.assertIn("designated a read-only origin archive", flat)
         self.assertIn("witness-bound project Documents", flat)
         self.assertNotIn("no Foundry ADR knowledge base", flat)

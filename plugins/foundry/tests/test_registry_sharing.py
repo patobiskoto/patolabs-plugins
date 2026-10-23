@@ -1161,6 +1161,16 @@ def test_interrupted_marker_publication_stays_fail_closed_and_is_recoverable(
     assert recovered.tracker == "linear"
 
 
+def _assert_marker_bound_to_devhub_cutover(root, marker):
+    """Since PAT-334 the marker carries the DevHub cutover, recorded in its report."""
+    report = (root / "plugins/foundry/docs/qualification/pat-334-cutover.md").read_text(
+        encoding="utf-8",
+    )
+    assert marker["tracker"] == "devhub"
+    assert marker["project"]["key"] == "PLP"
+    assert f"`{_current_cutover_manifest_digest(marker)}`" in report
+
+
 def test_live_cutover_records_linear_adr_authority_without_rewriting_input():
     root = Path(__file__).resolve().parents[3]
     marker = json.loads((root / ".foundry/tracker.json").read_text(encoding="utf-8"))
@@ -1176,7 +1186,9 @@ def test_live_cutover_records_linear_adr_authority_without_rewriting_input():
     authority = operations["adr_authority"]
 
     # The ADR clause of the immutable cutover input is superseded, not rewritten.
-    assert _current_cutover_manifest_digest(marker) == (
+    # The Linear cutover input is no longer the marker's: PAT-334 bound DevHub.
+    _assert_marker_bound_to_devhub_cutover(root, marker)
+    assert _current_cutover_manifest_digest(marker) != (
         operations["attestation"]["cutover_manifest"]["digest"]
     )
     assert {item["decision"] for item in public_manifest["adrs"]} == {"archive-reference"}
@@ -1238,7 +1250,8 @@ def test_live_cutover_attestation_separates_private_input_and_public_redaction()
         "digest": "sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77",
         "role": "immutable-cutover-input",
     }
-    assert _current_cutover_manifest_digest(marker) == cutover["digest"]
+    _assert_marker_bound_to_devhub_cutover(root, marker)
+    assert _current_cutover_manifest_digest(marker) != cutover["digest"]
     assert public["digest"] == (
         "sha256:" + hashlib.sha256(public_manifest_path.read_bytes()).hexdigest()
     )
