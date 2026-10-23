@@ -1866,10 +1866,10 @@ For the live cutover, the whole-file SHA-256 supplied to `registry cutover` is t
 immutable digest of the private operator input:
 `sha256:e15d28556317cd664c9f2467cf9d69df3673315e9bb42535b545afa11208df77`.
 It was bound verbatim in `.foundry/tracker.json` until the DevHub cutover of 2026-10-23
-(`docs/qualification/pat-334-cutover.md`), which replaced the marker; the private input is not published
-because it contained the source tenant URL. The versioned public manifest is a redacted
-derivative whose `source.issue_url_reference` is replaced by the non-addressable archive
-marker. Its distinct whole-file digest is
+(`docs/qualification/pat-334-cutover.md`), which replaced the marker; the private input is
+not published because it contained the source tenant URL. The versioned public manifest is
+a redacted derivative whose `source.issue_url_reference` is replaced by the
+non-addressable archive marker. Its distinct whole-file digest is
 `sha256:4589727201ae44a00d0b47c92fca38a6fcc7a5bbde7eba0e8668a07e60d721dc`.
 `linear-cutover-operations.json` records both roles, both digests, the redacted field and
 the derivation edge; a generic `manifest_digest` is intentionally not used for both.
@@ -1900,15 +1900,14 @@ inferred from the current guard.
 
 The selective manifest of 2026-09-22 predates the Linear ADR adapter: its `adrs` entries
 (`decision: archive-reference`) and `adr_reference_reason` record that, at cutover time,
-decisions were referenced in the YouTrack archive. That manifest is the immutable
-cutover input that the marker bound until the DevHub cutover of 2026-10-23, and is not
-rewritten. Its ADR clause is superseded by
-accepted PAT-ADR-0001 and the audited PAT-23 import: the Linear project PAT now holds
-the 27 historical Foundry ADRs as witness-bound Documents, beside the native PAT ADRs.
-Until the DevHub cutover of 2026-10-23, which imported these ADRs into DevHub project
-`PLP` (`docs/qualification/pat-334-cutover.md`), Linear was the only ADR reference of this
-repository; YouTrack is solely the read-only
-origin archive, and Foundry has no Git-catalogue or YouTrack fallback for ADR reads.
+decisions were referenced in the YouTrack archive. That manifest is the immutable cutover
+input that the marker bound until the DevHub cutover of 2026-10-23, and is not rewritten.
+Its ADR clause is superseded by accepted PAT-ADR-0001 and the audited PAT-23 import: the
+Linear project PAT now holds the 27 historical Foundry ADRs as witness-bound Documents,
+beside the native PAT ADRs. Until the DevHub cutover of 2026-10-23, which imported these
+ADRs into DevHub project `PLP` (`docs/qualification/pat-334-cutover.md`), Linear was the
+only ADR reference of this repository; YouTrack is solely the read-only origin archive,
+and Foundry has no Git-catalogue or YouTrack fallback for ADR reads.
 `linear-cutover-operations.json` records this under `adr_authority` (batch digest,
 audit digest, qualification project, count and superseded clause) without publishing
 any private source body or receipt.

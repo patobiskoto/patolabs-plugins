@@ -28,7 +28,7 @@ otherwise.
 
 Linear requests by operation (whole run): `issue.read` 1824, `adr.issue-link.read` 92, `issue.history` 26,
 `adr.list` 8. `activate` recaptures the source (`source_is_unchanged`), hence a second 975. Linear's quota is
-2500 requests per hour (response headers `x-ratelimit-requests-*`), so preflight and activate must run in the
+observed at 2500 requests per hour (response headers `x-ratelimit-requests-*`), so preflight and activate must run in the
 same fresh hour; a copy between them costs none.
 
 After activation, from the clone: `query adrs` 60, `query backlog` 309, `query issue PLP-1` readable,

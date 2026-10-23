@@ -3042,6 +3042,14 @@ class DevHubTracker(Tracker):
         ``PAT-ADR-0001``.  The order keeps replacement first, then simulates the server
         numbering from an empty project and refuses, before any write and naming the ADR,
         one that would claim a number already held (a counter hit by a later numbered ADR).
+
+        Limit: it picks one order and does not search the others.  An unnumbered replacement
+        placed before the numbered ADR it replaces takes the counter, so a corpus can be
+        refused although another order exists (``TRAME-ADR-0005`` replaced by an unnumbered
+        ADR, plus ``TRAME-ADR-0001``: the order replacement, 0005, 0001 is refused, the order
+        0001, replacement, 0005 is not).  Writing the numbered ADRs in decreasing number
+        order does not settle it (that example stays refused); an increasing order is not shown to
+        settle every corpus either.  The refusal fails closed, before any write.
         """
         def numbered(snapshot):
             return cls._origin_adr_number(project.key, snapshot["id"]) is not None

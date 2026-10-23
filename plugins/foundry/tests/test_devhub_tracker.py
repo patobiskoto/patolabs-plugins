@@ -4290,20 +4290,30 @@ def test_origin_adr_number_follows_the_server_rule(foreign_id, expected):
     assert DevHubTracker._origin_adr_number("TRAME", foreign_id) == expected
 
 
-def test_migration_import_adrs_writes_the_adrs_that_keep_their_number_first(monkeypatch):
+def _written_adr_ids(monkeypatch, corpus):
+    """The ``adr_id`` of each real ``import_adr`` call of ``migration_import_adrs``, in order."""
+    # ``migration_import_adrs`` reads the registry (``require_writable_project``).
     monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([])
+    written = []
+    monkeypatch.setattr(
+        tracker, "import_adr", lambda project, **arguments: written.append(arguments["adr_id"]))
+    tracker.migration_import_adrs(PROJECT, corpus)
+    assert tracker.calls == []
+    return written
+
+
+def test_migration_import_adrs_writes_the_adrs_that_keep_their_number_first(monkeypatch):
     snapshots = tuple(
         _numbering_snapshot(f"{prefix}-ADR-{number:04d}", f"linear:adr:{prefix}{number}")
         for prefix, number in (("FOUNDRY", 1), ("FOUNDRY", 2), ("TRAME", 1), ("TRAME", 2)))
-    ordered, _by_id = DevHubTracker._numbering_order(PROJECT, snapshots)
-    assert [item["id"] for item in ordered] == [
+    assert _written_adr_ids(monkeypatch, snapshots) == [
         "TRAME-ADR-0001", "TRAME-ADR-0002", "FOUNDRY-ADR-0001", "FOUNDRY-ADR-0002"]
     # a replacement is still written before the ADR it replaces, numbered or not
     chain = (_numbering_snapshot("TRAME-ADR-0001", "r:1"),
              _numbering_snapshot("FOUNDRY-ADR-0001", "r:f", superseded_by="TRAME-ADR-0002"),
              _numbering_snapshot("TRAME-ADR-0002", "r:2"))
-    ordered, _by_id = DevHubTracker._numbering_order(PROJECT, chain)
-    assert [item["id"] for item in ordered] == [
+    assert _written_adr_ids(monkeypatch, chain) == [
         "TRAME-ADR-0001", "TRAME-ADR-0002", "FOUNDRY-ADR-0001"]
 
 
@@ -4320,11 +4330,40 @@ def test_numbering_order_refuses_an_adr_claiming_a_number_already_held_naming_it
         tracker._preflight_adrs(PROJECT, list(corpus))
 
 
+def test_numbering_order_documented_limit_refuses_a_corpus_that_another_order_would_take():
+    # Documented limit of ``_numbering_order`` (no search among the orders): the unnumbered
+    # replacement is forced before TRAME-ADR-0005 and takes counter 1, so TRAME-ADR-0001
+    # is refused although 0001, replacement, 0005 would number cleanly.
+    corpus = (_numbering_snapshot("TRAME-ADR-0005", "r:5", superseded_by="FOUNDRY-ADR-0001"),
+              _numbering_snapshot("TRAME-ADR-0001", "r:1"),
+              _numbering_snapshot("FOUNDRY-ADR-0001", "r:f"))
+    with pytest.raises(TrackerConflictError, match="TRAME-ADR-0001"):
+        DevHubTracker._numbering_order(PROJECT, corpus)
+
+
 def test_the_comment_date_bound_is_the_last_millisecond_of_year_9999():
     assert devhub_module._IMPORT_EPOCH_MAX == 253_402_300_799_999
     check = ScriptedTracker([]).migration_comment_exception
     assert check(PROJECT, {**COMMENT, "source_created": 253_402_300_799_999}) is None
     assert "date" in check(PROJECT, {**COMMENT, "source_created": 253_402_300_800_000})
+
+
+@pytest.mark.parametrize("field", ["source_created", "source_updated"])
+def test_the_adr_source_date_bound_is_checked_before_any_write(field):
+    tracker = ScriptedTracker([])
+    arguments = dict(
+        adr_id="FOUNDRY-ADR-0026", title="t", body=ADR_BODY, historical_status="accepted",
+        source_ref=ADR_SRC, source_created=None, source_updated=None,
+        expected_source_sha256=ADR_SHA, supersedes=(), superseded_by=None, issue_refs=(),
+        source_only_issue_refs=(),
+    )
+    for edge in (0, 253_402_300_799_999):
+        request = tracker._prepare_adr_import(PROJECT, **{**arguments, field: edge})
+        assert request[field] == edge
+    for bad in (-1, 253_402_300_800_000, True, 1.5):
+        with pytest.raises(ValueError, match="date source ADR"):
+            tracker._prepare_adr_import(PROJECT, **{**arguments, field: bad})
+    assert tracker.calls == []
 
 
 def test_a_terminal_issue_date_after_year_9999_is_refused_before_any_write():

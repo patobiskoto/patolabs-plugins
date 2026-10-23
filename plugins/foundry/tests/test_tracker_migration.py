@@ -20,6 +20,7 @@ from foundry.trackers.ghprojects import (
     _CreateCandidate,
     _FieldBinding,
 )
+from foundry.trackers import linear as linear_module
 from foundry.trackers.linear import LinearTracker, LinearTrackerError
 from foundry.trackers.youtrack import YouTrackTracker, _YouTrackHTTPError
 
@@ -1936,8 +1937,28 @@ def test_linear_export_continues_only_the_issues_with_more_comments(monkeypatch)
     assert seen[1][1] == {"id": "L-1", "after": "cur-1"}
 
 
+def test_linear_export_flags_a_reply_by_its_parent_comment(monkeypatch):
+    nodes = [
+        _comment_node("top", "first", "2026-01-02T03:04:05.000Z", user={"name": "N"},
+                      parent=None),
+        _comment_node("reply", "second", "2026-01-02T03:04:06.000Z", user={"name": "N"},
+                      parent={"id": "top"}),
+        _comment_node("legacy", "third", "2026-01-02T03:04:07.000Z", user={"name": "N"}),
+    ]
+    page = _history_page([{
+        "identifier": "L-1", "archivedAt": None, "completedAt": None, "canceledAt": None,
+        "comments": _connection_page(nodes)}])
+    tracker, _seen = _linear_export(monkeypatch, [page])
+    (entry,) = tracker.migration_export_issues(Project("L", "p"))
+    assert [(c["id"], c["reply"]) for c in entry["comments"]] == [
+        ("top", False), ("reply", True), ("legacy", False)]
+    assert "parent { id }" in linear_module._HISTORY_COMMENT_FIELDS
+
+
 @pytest.mark.parametrize("bad", [
     None, {"nodes": []},
+    _connection_page([_comment_node("x", parent="nope")]),
+    _connection_page([_comment_node("x", parent={"id": ""})]),
     _connection_page([{"id": "x", "body": None, "createdAt": "2026-01-01T00:00:00Z"}]),
     _connection_page([_comment_node("x", created="not a date")]),
     _connection_page([_comment_node("x", created="2026-01-01T00:00:00")]),
@@ -2013,6 +2034,24 @@ def test_manifest_records_comments_of_living_and_terminal_issues_and_names_excep
     assert all(e["digest"].startswith("sha256:") for e in by_id["SRC-2"]["comment_exceptions"])
     assert "text" not in by_id["SRC-2"]["comment_exceptions"][0]
     assert by_id["SRC-3"]["comments"] == [] and by_id["SRC-2"]["pending"] == []
+
+
+def test_a_reply_in_a_thread_is_a_named_comment_exception_and_a_top_level_one_is_kept():
+    manifest, target, project = _comment_manifest(extra=[
+        {"id": "r", "text": "reply", "author": "W", "created": 12, "reply": True},
+        {"id": "t", "text": "top level", "author": "W", "created": 13, "reply": False},
+    ])
+    record = {item["id"]: item for item in manifest["issues"]}["SRC-2"]
+    assert [c["source_ref"] for c in record["comments"]] == [
+        "linear:comment:b", "linear:comment:c", "linear:comment:t"]
+    assert [(e["source_ref"], e["reason"]) for e in record["comment_exceptions"]] == [
+        ("linear:comment:r", "reply in a comment thread; the thread is not reproduced")]
+    assert record["comment_exceptions"][0]["digest"].startswith("sha256:")
+    assert "text" not in record["comment_exceptions"][0]
+    copy_and_verify(manifest, target, project, lambda: None)
+    assert [c["source_ref"] for c in target.issues["import-SRC-2"].comments] == [
+        "linear:comment:b", "linear:comment:c", "linear:comment:t"]
+    assert ready_for_cutover(manifest)
 
 
 def test_a_target_without_comment_support_gets_no_comments_in_the_manifest():

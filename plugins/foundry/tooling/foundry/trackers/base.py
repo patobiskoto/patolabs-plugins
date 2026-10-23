@@ -241,7 +241,8 @@ class Tracker(ABC):
         lists ``search`` (no archived issue, no completion date): a provider that can do
         better overrides it.  An entry may also carry ``"comments"``, the complete list of
         the issue's comments as ``{"id", "text", "author", "created"}`` (``author`` text or
-        ``None`` when the source cannot name one, ``created`` epoch ms); the default carries
+        ``None`` when the source cannot name one, ``created`` epoch ms), plus ``"reply"`` true
+        for a reply in a thread (absent means a top-level comment); the default carries
         no ``comments`` key, so ``capture_manifest`` names an exception ``comments`` toward a
         target that copies them, and a provider that exports comments overrides it.  An entry
         may carry ``"uncaptured_links"``: ``{"type", "direction", "target"}`` of each source

@@ -79,6 +79,9 @@ def _adr_snapshot(exported: dict, source_tracker: str) -> dict:
     return snapshot
 
 
+COMMENT_REPLY_EXCEPTION = "reply in a comment thread; the thread is not reproduced"
+
+
 def _capture_comments(
     record: dict, comments: list[dict], source_tracker: str, target: Tracker,
     target_project: Project,
@@ -89,6 +92,10 @@ def _capture_comments(
     becomes a ``comment_exceptions`` entry naming its coordinate, the reason and a digest of
     its content (so a later change at the source is still seen).  Like the attribute
     exceptions it does not by itself keep the cutover from being ready.
+
+    A reply in a thread (``item["reply"]`` true) is an exception whatever the target: no
+    current target reproduces threads (the DevHub import body has no parent), and flattening
+    it would lose the link to its parent.
     """
     importable, excepted = [], []
     for item in comments:
@@ -97,7 +104,10 @@ def _capture_comments(
             "text": item["text"], "source_author": item["author"],
             "source_created": item["created"],
         }
-        reason = target.migration_comment_exception(target_project, comment)
+        if item.get("reply") is True:
+            reason = COMMENT_REPLY_EXCEPTION
+        else:
+            reason = target.migration_comment_exception(target_project, comment)
         if reason is None:
             importable.append(comment)
         elif not isinstance(reason, str) or not reason:
