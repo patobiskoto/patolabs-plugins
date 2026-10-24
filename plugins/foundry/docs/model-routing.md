@@ -413,7 +413,7 @@ python3 tooling/foundry_cli.py routing codex-plan reviewer \
   --packet-file <BOUNDED-PACKET>
 ```
 
-After `resume-technical`, ordinary Claude/Codex routes remain refused. The explicit
+After `resume-technical`, ordinary Claude/Codex routes remain refused while the diagnostic is open. The explicit
 `claim-technical-route` CAS operation binds the single recorded local diagnostic route
 to one stable identifier and its exact stopped role. A retry uses the same identifier;
 a second identifier or another role is refused. Only then do the Claude/Codex façades
@@ -425,7 +425,7 @@ budget/capacity. A reviewer may consume only its own technical route as a local
 diagnostic: this requires no Git diff or review claim and returns no spawn, provider,
 campaign, push, PR, CI, or merge authority. The route never finances a review.
 
-The sole exception to the ordinary-route refusal is a credited correction after an
+While the diagnostic is open, the sole exception to the ordinary-route refusal is a credited correction after an
 exact terminal **blocked** review bound to a consumed technical route. The trusted
 `routing escalation failure ... --kind review_blocking_after_fix` boundary requires
 the immutable `--root` and `--base`, recomputes the current diff, and re-reads the
@@ -494,13 +494,72 @@ consumption records without that field retain the root-derived default namespace
 Omit it for the normal root-derived namespace. `--root` and `--base` remain mandatory trusted coordinates,
 and the diff is re-read while the escalation transition is locked.
 
-After either an exact reviewer or implementer route is consumed, it may unlock one fresh
-review only.
+While the diagnostic is open, either consumed reviewer or implementer route may unlock
+one fresh review, subject to the bounded rearm paths above.
 Foundry first validates the claim, current Git diff, and immutable root/base coordinates
 while holding the issue lock. It then binds that exact hash in the same escalation audit
 event. A pending route, a different role or route identity, a stale generation, a
 distinct hash, or a coordinate mismatch is refused without a claim or binding. This
 never authorizes a provider invocation or campaign effect.
+
+### Complete a reviewed technical diagnostic before remaining qualification
+
+`routing escalation complete-technical <ISSUE> <RECORDED-ROLE> --halt-generation <N>
+--root <ROOT> --base <BASE-SHA>` closes the consumed diagnostic for the current,
+non-halted generation through
+[`EscalationStore.complete_technical_remediation`](../tooling/foundry/escalation.py),
+without changing its counters, floors, credits or existing audits.
+The command derives the proof namespace from the repository and accepts no proof ID,
+digest, outcomes, issue prose or namespace override as authority
+([`routing.main`](../tooling/foundry/routing.py)).
+
+[`ReviewDeduplicator.validated_technical_completion`](../tooling/foundry/routing.py)
+reads the terminal claim's canonical proof and observes the current issue through the
+bound tracker under the escalation lock.
+The proof must name the requested issue and agree with the terminal claim on base,
+HEAD, diff, review generation and claim digest.
+The repository namespace and claim's root/base/HEAD/diff must match the calling
+checkout's committed `base...HEAD` range; the proof's AC digest and ordered AC
+identifiers/digests must match the native issue.
+The requested role and halt generation must equal the consumed diagnostic's role and
+generation, and the proof must finish after its technical review binding
+(`complete_technical_remediation`).
+Quality must be `mergeable`, with every AC either `pass` or `not_covered`; `fail` and
+`contradicted` refuse completion even with that quality
+(`validated_technical_completion`).
+
+Success returns `action=technical_remediation_completed` and appends one
+`technical_completion_audit` entry per diagnostic; an identical concurrent or later
+replay revalidates the evidence and returns `replayed=true` without another entry
+(`complete_technical_remediation`, `_normalize_technical_completions`).
+The old local route is closed, ordinary preparation resumes under the retained floors,
+and a subsequent halt generation cannot inherit this completion
+(`_technical_remediation_event`, `active_floor`).
+The canonical proof stays immutable, `not_covered` stays non-passing, and any new diff
+uses the normal separate review claim and deduplication gates
+(`AcceptanceProofStore.valid_for_merge`, `claim_fresh_reviewer_authorization`).
+The result reports `product_accepted=false`, `provider_effect_allowed=false` and
+`campaign_restart_allowed=false`; subsequent external effects still require their own
+fresh authority, capacity, budget, snapshot and gates (FOUNDRY-ADR-0010/0013/0014).
+
+From `plugins/foundry/`, the operator sequence is:
+
+```bash
+python3 tooling/foundry_cli.py routing escalation show <ISSUE> --root <ROOT>
+python3 tooling/foundry_cli.py routing escalation complete-technical <ISSUE> <RECORDED-ROLE> \
+  --halt-generation <GENERATION-FROM-SHOW> --root <ROOT> --base <REVIEWED-BASE-SHA>
+python3 tooling/foundry_cli.py routing codex-plan implementer --issue <ISSUE> \
+  --root <ROOT> --packet-file <BOUNDED-QUALIFICATION-PACKET>
+```
+
+The offline copy recipe below exercises that launcher sequence with a temporary Git
+repository, isolated ledgers and a native-issue test double; it prepares a plan and
+invokes no agent or provider
+([`test_technical_completion.py`](../tests/test_technical_completion.py)).
+
+```bash
+python3 -m pytest -q tests/test_technical_completion.py::test_completion_reopens_preparation_without_accepting_uncovered_criteria
+```
 
 ### PAT-10 recovery: separate authorized work from the final cutover
 
