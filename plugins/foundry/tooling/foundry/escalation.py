@@ -98,6 +98,7 @@ _LEDGER_OPTIONAL_KEYS = {
     "failure_receipts", "campaign_review_retry_receipts", "terminal_outcome",
     "terminal_reclassification", "technical_remediation_audit",
     "legacy_blocking_proof_attestations", "credited_correction_claim_audit",
+    "technical_completion_audit",
 }
 _FAILURE_RECEIPT_KEYS = {"role", "kind", "current_tier", "decision"}
 _DECISION_REQUIRED_KEYS = {
@@ -184,6 +185,14 @@ _TECHNICAL_REVIEW_REARM_BINDING_KEYS = {
 _RECLASSIFICATION_CODE = "legacy_human_required_reclassified_technical"
 _TECHNICAL_REMEDIATION_RESUME_CODE = "technical_remediation_resumed"
 _TECHNICAL_REMEDIATION_ROUTE_CODE = "technical_remediation_route_claimed"
+_TECHNICAL_COMPLETION_CODE = "technical_remediation_completed"
+_TECHNICAL_COMPLETION_KEYS = {
+    "code", "at", "role", "halt_generation", "route_id", "review_claimed_at", "proof",
+}
+_TECHNICAL_COMPLETION_PROOF_KEYS = {
+    "proof_id", "completed_at", "generation", "claim_digest", "coordinates",
+    "quality", "head", "diff_hash", "ac_digest", "not_covered", "repository_digest",
+}
 _LEGACY_LEDGER_EVIDENCE_KIND = "complete_legacy_ledger"
 _LEGACY_RECEIPT_EVIDENCE_KIND = "failure_receipt"
 _LEGACY_LEDGER_EVIDENCE_PREFIX = "legacy-ledger-halt-generation-"
@@ -1012,6 +1021,74 @@ def _campaign_review_decision_material(
     }
 
 
+def _normalize_technical_completions(raw, technical_audit, repository, issue_id):
+    """Check one immutable completion per diagnostic, bound to its terminal review."""
+    if not isinstance(raw, list) or len(raw) > len(technical_audit):
+        raise _invalid_ledger(issue_id)
+    by_generation = {item["halt_generation"]: item for item in technical_audit}
+    previous_generation = 0
+    previous_at = None
+    for event in raw:
+        if not isinstance(event, dict) or set(event) != _TECHNICAL_COMPLETION_KEYS:
+            raise _invalid_ledger(issue_id)
+        generation = event["halt_generation"]
+        if type(generation) is not int or generation <= previous_generation:
+            raise _invalid_ledger(issue_id)
+        technical = by_generation.get(generation)
+        proof = event["proof"]
+        at = _utc_timestamp(event["at"])
+        if (
+            technical is None
+            or event["code"] != _TECHNICAL_COMPLETION_CODE
+            or not isinstance(event["role"], str)
+            or event["role"] not in {"implementer", "reviewer"}
+            or any(event[key] != technical[key] for key in (
+                "role", "route_id", "review_claimed_at",
+            ))
+            or technical["route_consumed_at"] is None
+            or technical["review_claimed_at"] is None
+            or at is None
+            or (previous_at is not None and at <= previous_at)
+            or not isinstance(proof, dict)
+            or set(proof) != _TECHNICAL_COMPLETION_PROOF_KEYS
+        ):
+            raise _invalid_ledger(issue_id)
+        completed_at = _utc_timestamp(proof["completed_at"])
+        if (
+            any(not isinstance(proof[key], str) or _DIGEST.fullmatch(proof[key]) is None
+                for key in ("proof_id", "claim_digest", "diff_hash", "ac_digest",
+                            "repository_digest"))
+            or proof["repository_digest"] != hashlib.sha256(repository.encode("utf-8")).hexdigest()
+            or proof["quality"] != "mergeable"
+            or type(proof["generation"]) is not int or proof["generation"] < 1
+            or not isinstance(proof["head"], str)
+            or re.fullmatch(r"[0-9a-f]{40}", proof["head"]) is None
+            or proof["diff_hash"] != technical["review_diff_hash"]
+            or completed_at is None
+            or completed_at <= _utc_timestamp(technical["review_claimed_at"])
+            or at <= completed_at
+            or any(item["halt_generation"] > generation and _utc_timestamp(item["at"]) <= at
+                   for item in technical_audit)
+        ):
+            raise _invalid_ledger(issue_id)
+        try:
+            coordinates = ReviewDeduplicator._validate_coordinates(proof["coordinates"])
+        except RoutingConfigError as exc:
+            raise _invalid_ledger(issue_id) from exc
+        if not Path(coordinates["root"]).is_absolute():
+            raise _invalid_ledger(issue_id)
+        remaining = proof["not_covered"]
+        if (
+            not isinstance(remaining, list)
+            or any(not isinstance(item, str) or re.fullmatch(r"ac-[1-9][0-9]*", item) is None
+                   for item in remaining)
+            or remaining != sorted(set(remaining), key=lambda item: int(item[3:]))
+        ):
+            raise _invalid_ledger(issue_id)
+        previous_generation, previous_at = generation, at
+    return raw
+
+
 class EscalationStore:
     """A small locked JSON state machine, namespaced by hashed repository identity."""
 
@@ -1092,6 +1169,7 @@ class EscalationStore:
             "technical_remediation_audit": [],
             "legacy_blocking_proof_attestations": [],
             "credited_correction_claim_audit": [],
+            "technical_completion_audit": [],
             "failure_receipts": {},
             "campaign_review_retry_receipts": {},
         }
@@ -1184,6 +1262,10 @@ class EscalationStore:
             not state["halted"]
             and audit
             and audit[-1]["halt_generation"] == state["halt_generation"]
+            and not any(
+                event["halt_generation"] == state["halt_generation"]
+                for event in state["technical_completion_audit"]
+            )
         ):
             return audit[-1]
         return None
@@ -1423,6 +1505,7 @@ class EscalationStore:
             *(event["at"] for event in state.get("technical_remediation_audit", [])),
             *(event["at"] for event in state.get("legacy_blocking_proof_attestations", [])),
             *(event["at"] for event in state.get("credited_correction_claim_audit", [])),
+            *(event["at"] for event in state.get("technical_completion_audit", [])),
             *(
                 event["route_consumed_at"]
                 for event in state.get("technical_remediation_audit", [])
@@ -1442,8 +1525,7 @@ class EscalationStore:
             state.get("terminal_reclassification", {}).get("at"),
         )
 
-    @staticmethod
-    def _normalize_state(raw: object, issue_id: str) -> dict:
+    def _normalize_state(self, raw: object, issue_id: str) -> dict:
         """Validate the complete v1 envelope and return only trusted fields."""
         if not isinstance(raw, dict):
             raise _invalid_ledger(issue_id)
@@ -2358,6 +2440,10 @@ class EscalationStore:
             "technical_remediation_audit": technical_audit,
             "legacy_blocking_proof_attestations": legacy_attestations,
             "credited_correction_claim_audit": correction_claims,
+            "technical_completion_audit": _normalize_technical_completions(
+                raw.get("technical_completion_audit", []), technical_audit,
+                self._repository, issue_id,
+            ),
             "failure_receipts": failure_receipts,
             "campaign_review_retry_receipts": campaign_receipts,
         }
@@ -2886,6 +2972,9 @@ class EscalationStore:
             "credited_correction_claim_audit": [
                 dict(event) for event in state["credited_correction_claim_audit"]
             ],
+            "technical_completion_audit": [
+                dict(event) for event in state["technical_completion_audit"]
+            ],
             "max_escalations_per_issue": MAX_ESCALATIONS_PER_ISSUE,
             "max_parallel_agents": MAX_PARALLEL_AGENTS,
             "remediation_authorization": self._remediation(state),
@@ -3156,6 +3245,88 @@ class EscalationStore:
             state["halted_reason"] = None
             state.pop("terminal_outcome", None)
             return result_for(state, replayed=False), True
+
+        _, result = self._locked(issue_id, mutate)
+        return result
+
+    def complete_technical_remediation(
+        self, issue_id: str, role: str, halt_generation: int, *,
+        root: str | os.PathLike, base: str,
+    ) -> dict:
+        """Close one consumed diagnostic after authenticated terminal quality.
+
+        This removes only the completed diagnostic's routing restriction. Counters,
+        floors, credits, canonical review evidence and external authorities stay
+        independent; a later stop cannot inherit this generation's completion.
+        """
+        issue_id = _validate_issue_id(issue_id)
+        role = _validate_role(role)
+        halt_generation = _validate_halt_generation(halt_generation)
+        try:
+            os.lstat(self._path(issue_id))
+        except OSError as exc:
+            raise RoutingConfigError("clôture technique : diagnostic existant requis.") from exc
+
+        def mutate(state):
+            if state["halted"] or state["halt_generation"] != halt_generation:
+                raise EscalationTechnicalBlockedError(
+                    "clôture technique : issue arrêtée ou génération périmée."
+                )
+            audit = state["technical_remediation_audit"]
+            technical = audit[-1] if audit else None
+            if (
+                technical is None
+                or technical["halt_generation"] != halt_generation
+                or technical["role"] != role
+                or role not in {"implementer", "reviewer"}
+                or technical["route_id"] is None
+                or technical["route_consumed_at"] is None
+                or technical["review_diff_hash"] is None
+                or technical["review_claimed_at"] is None
+            ):
+                raise RoutingConfigError(
+                    "clôture technique : route consommée et review exactes requises."
+                )
+            proof = ReviewDeduplicator(
+                self._repository, self._state_dir,
+            ).validated_technical_completion(
+                issue_id, technical["review_diff_hash"], root=root, base=base,
+            )
+            if _utc_timestamp(proof["completed_at"]) <= _utc_timestamp(
+                technical["review_claimed_at"],
+            ):
+                raise RoutingConfigError(
+                    "clôture technique : preuve antérieure à la review technique."
+                )
+            completions = state["technical_completion_audit"]
+            existing = next((
+                item for item in completions if item["halt_generation"] == halt_generation
+            ), None)
+            if existing is not None:
+                if existing["proof"] != proof:
+                    raise RoutingConfigError("clôture technique : preuve contradictoire au rejeu.")
+            else:
+                completions.append({
+                    "code": _TECHNICAL_COMPLETION_CODE,
+                    "at": _timestamp_after(self._next_audit_timestamp(state), proof["completed_at"]),
+                    "halt_generation": halt_generation,
+                    "role": role,
+                    "route_id": technical["route_id"],
+                    "review_claimed_at": technical["review_claimed_at"],
+                    "proof": proof,
+                })
+            return {
+                "action": _TECHNICAL_COMPLETION_CODE,
+                "issue_id": issue_id,
+                "role": role,
+                "halt_generation": halt_generation,
+                "replayed": existing is not None,
+                "proof_id": proof["proof_id"],
+                "not_covered": proof["not_covered"],
+                "product_accepted": False,
+                "provider_effect_allowed": False,
+                "campaign_restart_allowed": False,
+            }, existing is None
 
         _, result = self._locked(issue_id, mutate)
         return result
