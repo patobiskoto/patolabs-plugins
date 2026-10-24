@@ -1,1 +1,0 @@
-- PLP-2: this repository is bound to DevHub project `PLP` after its cutover from Linear on 2026-10-23 (PAT-334, PAT-ADR-0032); the run, its figures and its checks are in `docs/qualification/pat-334-cutover.md`.

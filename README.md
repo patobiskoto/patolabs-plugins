@@ -305,6 +305,22 @@ no gain. Statuses:
 - **Not verified:** the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host, and the return to
   2.2.0 through an official manager (not tried, PAT-162).
 
+**Release 2.4.0, source candidate prepared under PLP-313:** both Foundry manifests
+declare **2.4.0**. This preparation carries the dated
+[CHANGELOG](plugins/foundry/CHANGELOG.md) section from PLP-312, PLP-310, PLP-2 and
+PLP-1, removes those four fragments, adds the
+[release note](plugins/foundry/docs/release-2.4.0.md),
+[upgrade and rollback guide](plugins/foundry/docs/migration-2.4.0.md) and freeze
+entry, and updates the README references and CI release-version comment.
+The completion command's contract is in
+[model-routing.md](plugins/foundry/docs/model-routing.md#complete-a-reviewed-technical-diagnostic-before-remaining-qualification).
+The tag `foundry-v2.4.0`, host installation, listed/installed/loaded-version readbacks
+and live consumer qualification are not done or claimed for 2.4.0 here.
+Merge, tag and host update retain separate agreements
+([release skill](plugins/foundry/skills/release/SKILL.md), steps 5–7).
+The migration guide records the ledger compatibility limit on a return to 2.3.0;
+an official-manager downgrade remains untried.
+
 ## Public scope
 
 This repository is published under [Apache-2.0](LICENSE). It is maintained by the
@@ -340,7 +356,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.3.0 (both host manifests). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.4.0 (both host manifests; source candidate). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
