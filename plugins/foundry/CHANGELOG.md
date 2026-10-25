@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 2.4.0 — 2026-10-25
+
+Minor release for the reviewed technical-diagnostic completion command
+(`routing escalation complete-technical`, PLP-312; contract and authority limits in
+`docs/model-routing.md`, "Complete a reviewed technical diagnostic before remaining
+qualification"), the Linear comment-reply exception (PLP-1;
+`docs/devhub-tracker.md`, "Comment exceptions"), and the dated cutover records PLP-2
+and PLP-310 (`docs/qualification/pat-334-cutover.md`). Release scope, preparation
+status and upgrade/rollback limits are in `docs/release-2.4.0.md` and
+`docs/migration-2.4.0.md`.
+
+- PLP-312: close a consumed technical diagnostic through `routing escalation complete-technical`
+  after its canonical review proves `quality=mergeable` with only `pass`/`not_covered`
+  criteria, so remaining qualification can be prepared under the preserved routing floors
+  (`EscalationStore.complete_technical_remediation`, `ReviewDeduplicator.validated_technical_completion`).
+  The audited transition keeps uncovered criteria non-passing and grants no provider,
+  campaign or product acceptance authority; see the completion procedure in `docs/model-routing.md`.
+- PLP-310: the PAT-334 cutover report now records the headless Codex session run after activation (Foundry 2.3.0 CLI of the Codex installation, `doctor` green, `PLP-2` read) and the later quarantine of the three red registry entries; see `docs/qualification/pat-334-cutover.md`.
+- PLP-2: this repository is bound to DevHub project `PLP` after its cutover from Linear on 2026-10-23 (PAT-334, PAT-ADR-0032); the run, its figures and its checks are in `docs/qualification/pat-334-cutover.md`.
+- PLP-1: review remarks deferred from PAT-331 (Epic `Nits PAT-295`) are settled. Behaviour change: the Linear history export reads the `parent` of each comment (`_HISTORY_COMMENT_FIELDS`), and `capture_manifest` names a reply in a comment thread as a `comment_exceptions` entry (`COMMENT_REPLY_EXCEPTION`, `migration.py`) toward any target instead of flattening it; a top-level comment is unchanged, and the exception does not keep `ready_for_cutover` false. `DevHubTracker._numbering_order` keeps its single-order choice, now documented as a limit (a corpus can be refused although another order would number cleanly; fails closed before any write). Tests: the reply exception and the `parent` field, the real call order of `migration_import_adrs`, the ADR source date bound in `_prepare_adr_import`, the documented numbering limit. Documentation status (R5): `docs/devhub-tracker.md` ("Comment exceptions", points to watch of PAT-332 for ADR version chains and source dates and for the strict read of one issue, "Corrections from the PAT-332 rehearsal": numbering limit and date bound citation), `docs/qualification/pat-334-cutover.md` (prerequisite, registry entry, 27 `FOUNDRY-ADR-*`), `docs/qualification/pat-332-cutover-rehearsal.md` (quota observed), `docs/linear-tracker.md` (paragraph reflow, no word changed) and the root `README.md` (four qualified tracker variants) updated; `AGENTS.md`/`CLAUDE.md` not touched.
+
 ## 2.3.0 — 2026-10-23
 
 Minor release. DevHub is admitted as the fourth V1 provider of the registry and of the tracker contract (`registry bootstrap devhub`, `setup_project`, PAT-323, PAT-ADR-0031) and the DevHub pilot path is retired (PAT-323); `cutover` carries the terminal and archived issues, their links and the comments of every issue toward DevHub (PAT-331, PAT-ADR-0032), after the rehearsal of PAT-332 (`docs/qualification/pat-332-cutover-rehearsal.md`), which needs a DevHub at `72a24e2` or later (`docs/devhub-tracker.md`, "Corrections from the PAT-332 rehearsal"); `issue accept` and `issue accept --status` run on DevHub (PAT-330, PAT-ADR-0033); the DevHub adapter gains the routes listed in the entries of PAT-309 to PAT-321 and PAT-324 to PAT-328; `-h`/`--help` prints the usage and writes nothing in the verbs named by PAT-286, which also makes `--ac-override-reason` an option of `issue merge` only and has `issue openpr <ISSUE-ID>` refuse a current branch that is not that issue's branch; the campaign cadencer defers the remarks of a ticket with no origin Epic to `Nits` (PAT-291) and tries the proof carry when the PR base is unchanged (PAT-294, PAT-288); the Linear usage limit is a durable refusal (PAT-310). The cutover of this repository toward DevHub is not done by this release.
