@@ -41,8 +41,8 @@ PLP-311 and GitHub Release creation (PLP-29) are outside PLP-313's preparation s
 | Official rollback to 2.3.0 | Not run; compatibility is limited as described in the migration guide |
 
 The merge, tag and host-update STOPs each require their own explicit agreement
-([release skill](../skills/release/SKILL.md), steps 5–7); later readbacks belong on the
-release ticket (steps 8–9). This page supplies neither a review verdict nor a CI result.
+([release skill](../skills/release/SKILL.md), steps 5–7); readbacks are made at steps 7–8 and
+recorded on the release ticket (step 9). This page supplies neither a review verdict nor a CI result.
 The two pages and the changelog section are frozen by `freeze_entry` in
 [test_release_contract.py](../tests/test_release_contract.py) and the `2.4.0` entry of
 [release-history.json](../tests/fixtures/release-history.json).
@@ -51,7 +51,7 @@ The two pages and the changelog section are frozen by `freeze_entry` in
 
 | Touched artifact | Status / source |
 | --- | --- |
-| Both manifest versions, `2.3.0` → `2.4.0` | Updated here and in the migration guide; no other manifest field changes |
+| Both manifest versions, `2.3.0` → `2.4.0` | Updated; stated on this page; no other manifest field changes |
 | Dated changelog and four retired fragments | Updated: the `2.4.0 — 2026-10-25` section, assembled without rewriting the entries |
 | Release note and migration guide | New: this page and [migration-2.4.0.md](migration-2.4.0.md) |
 | Root and Foundry READMEs | Updated: prepared-release links/statuses, current manifest version and migration pointer; the Foundry release list includes 2.4.0 |
