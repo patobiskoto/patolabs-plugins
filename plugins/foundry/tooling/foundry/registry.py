@@ -1143,8 +1143,10 @@ def _validated_binding_entry(
         ):
             raise ValueError("binding ghprojects invalide : migration_label invalide")
     elif tracker == "devhub":
-        if set(candidate) - {"canonical_repo", "release_ids"}:
+        if set(candidate) - {"canonical_repo", "release_ids", "preserve_issue_numbers"}:
             raise ValueError("binding DevHub V1 invalide : extra non autorisé")
+        if "preserve_issue_numbers" in candidate and type(candidate["preserve_issue_numbers"]) is not bool:
+            raise ValueError("binding DevHub V1 invalide : preserve_issue_numbers doit être booléen")
         if "release_ids" in candidate:
             candidate["release_ids"] = _require_release_id_map(candidate["release_ids"])
     return {"key": key, "id": project_id, **candidate}

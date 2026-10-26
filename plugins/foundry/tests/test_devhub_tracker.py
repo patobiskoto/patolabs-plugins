@@ -3254,7 +3254,7 @@ def test_import_adr_sends_the_replacement_source_ref_and_the_issue_links(monkeyp
 
 
 @pytest.mark.parametrize("overrides, error", [
-    ({"historical_status": "rejected"}, ValueError),
+    ({"historical_status": "unsupported"}, ValueError),
     ({"adr_id": "a b"}, ValueError),
     ({"adr_id": "x" * 121}, ValueError),
     ({"source_ref": "a b"}, ValueError),
@@ -3376,7 +3376,7 @@ def test_migration_import_adr_refuses_a_known_supersedes_and_a_corpus_checks_it_
             PROJECT, snap(2, supersedes=["FOUNDRY-ADR-0001"]), source_ref="linear:adr:2")
     assert single.calls == []
     # the whole corpus is refused before its first write
-    for bad in (snap(3, status="rejected"),
+    for bad in (snap(3, status="unsupported"),
                 snap(3, source_only_issue_refs=["linear:issue:PAT-1", "linear:issue:PAT-1"]),
                 snap(3, supersedes=["FOUNDRY-ADR-0001"]),        # not named by that ADR
                 snap(3, supersedes=["FOUNDRY-ADR-0099"])):       # outside the corpus
@@ -3784,7 +3784,7 @@ def test_migration_preflight_refuses_a_parent_whose_type_is_excepted():
 
 
 @pytest.mark.parametrize(("records", "message"), (
-    ([_migration_adr(1, status="rejected")], "non importable"),
+    ([_migration_adr(1, status="unsupported")], "non importable"),
     ([_migration_adr(1, **{"source_only_issue_refs": ["linear:issue:PAT-9"] * 2})], "non importable"),
     ([_migration_adr(1, **{"source_only_issue_refs": [f"linear:issue:PAT-{n}" for n in range(201)]})],
      "non importable"),

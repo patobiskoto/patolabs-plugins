@@ -517,7 +517,9 @@ the server counter. The adapter sends the same body and reads the answer as befo
 "Source-only references and unknown relations" below), `source_only_refs` and `unknown_relations`. The sha-256 of the UTF-8 body is compared with
 `expected_source_sha256` before any request (`TrackerConflictError`); the server checks it
 again (422 `invalid_request`). The status must be one of `proposed`, `accepted`, `deprecated`,
-`superseded`; any other (for example `rejected`) is a `ValueError`. `superseded_by` is the foreign
+`superseded` or `rejected` (`_ADR_IMPORT_STATES`, `_prepare_adr_import`); any other is a `ValueError`.
+`rejected` is historical import/read vocabulary only: `_to_adr` reads it, while `create_adr`
+still requires `proposed` and `set_adr_status` keeps `_ADR_STATES` unchanged (PLP-311). `superseded_by` is the foreign
 id of the replacement: the adapter looks it up (`?foreign_id=`) and sends its `source_ref`;
 an unknown replacement is `TrackerConflictError` before the import is written, and the
 parameter requires the status `superseded`. `issue_refs` become `linked_issue_ids` (issues of the
@@ -627,7 +629,7 @@ against a server, the live test of DHN-43 ran `capture_manifest`, `copy_and_veri
 DevHub is a target for living work and for an ADR corpus, source-only issue references and `unknown` relation families included, since DEVHUB-122 (`3f0cf4b`) and PAT-327 ("Source-only references and unknown relations" above): the contract cell `cross-tracker-adr-import` is `supported` (`tracker-contract.v1.json`), its live proof is DHN-46 (`devhub-requirements.md`, "Live run of PAT-327"). Two corpora stay refused by the preflight for two different reasons: a `supersedes` that is known while a `superseded` ADR of the corpus has an unknown replacement is refused because no readback of it could match (the export gives `unknown` to every other `supersedes`, PAT-ADR-0008), whereas `issues` declared unknown beside source-only references is refused because the server refuses that combination (it is not a readback matter). For this repository the impact is deduced, not run: the Linear adapter exports `unknown` for each family of an ADR's `missing_relations` (`trackers/linear.py`, `migration_export_adrs`), FOUNDRY-ADR-0026 declares missing relations, and `migration.capture_manifest` exports every ADR; the DevHub preflight no longer refuses those families, but a preflight of this repository toward DevHub has not been run.
 
 **`migration_preflight`** (`trackers/devhub.py`) writes nothing and returns the same value for the
-same target: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
+same target; without number preservation ("Explicit source issue numbers" below), its profile is: `{"kind": "devhub-source-ref-v1", "issue_coordinate": "source_ref", "adr_coordinate":
 "source_ref+foreign_id", "creation_states": ["backlog", "ready"]}`. The value is part of the manifest
 digest (`migration._source_view`), which `source_is_unchanged` compares again at activation, so it
 holds no timestamp and no server value. It first decides locally, before its three reads, what the
@@ -643,14 +645,16 @@ and `importAdrSchema` of `12ca158:src/tracker/contract.ts`, and `createTrackerIs
   parents, a parent whose `type` is not exactly `Epic` (or whose `type` is excepted), a hierarchy cycle and
   a dependency cycle are refused (`createTrackerLink`: "parent must be an Epic", "issue already has a
   parent", "hierarchy cycle refused", "dependency cycle refused");
-- the ADR corpus: a status DevHub lacks (`rejected`), a source-only reference list or an unknown-family declaration the
+- the ADR corpus: a status outside `_ADR_IMPORT_STATES`, a source-only reference list or an unknown-family declaration the
   server would refuse (PAT-327, "Source-only references and unknown relations" above), a known `supersedes` while a
   `superseded` ADR of the corpus has an unknown replacement (PAT-ADR-0008), a replacement outside the corpus, a `superseded` status with a replacement known to be absent (`None`; one whose replacement is `unknown` is accepted, `_preflight_adrs`) or
   the reverse (a known replacement on an ADR whose status is not `superseded`), a `supersedes` list that is not the exact reciprocal of the `superseded_by` links, a cycle,
   more than 50 issue relations (`_ADR_LINK_MAX`), and everything `_prepare_adr_import` refuses
   (body digest, shapes);
-- an ADR whose replacement (`superseded_by`) is `proposed` in the corpus: DevHub refuses it with 409
-  `invalid_transition` (DEVHUB-118, `store.ts:2307-2309` at `cd23304`, relayed by the DevHub agent), and the refusal
+- an ADR whose replacement (`superseded_by`) is `proposed` or `rejected` in the corpus
+  (`_preflight_adrs`, DevHub `src/tracker/store.ts::importTrackerAdr`): DevHub refuses it with 409
+  `invalid_transition` (observed in source; the `proposed` refusal was qualified by DEVHUB-118
+  at `cd23304`, while the historical `rejected` extension awaits DHN-50), and the refusal
   names the ADR; an `accepted`, `superseded` or `deprecated` replacement is accepted (PAT-328).
 
 Then it calls `verify_project_identity` (one `GET /projects/resolve`, then one `GET /governance/projects/:key`):
@@ -695,6 +699,52 @@ them so at import (PAT-327, whose `issues` are then not read). `migration_qualif
 is the port default (`None`): the ADR codec needs no qualification, and `migration_import_adrs` refuses one.
 Order of the copy: issues, their links, their comments ("Terminal issue import"), then the ADRs, each replacement before the ADR it replaces
 ("ADRs" above).
+
+## Explicit source issue numbers (PLP-311; live qualification pending)
+
+The target configuration can opt in with `Project.extra.preserve_issue_numbers: true`;
+`DevHubTracker._preserve_issue_numbers` requires a boolean and defaults to false.
+Synthetic target configuration (replace the target id with the disposable project's id):
+
+```json
+{"key":"ARCH","id":"target-id","extra":{"canonical_repo":"github.com/example/archive","preserve_issue_numbers":true}}
+```
+
+With the option true, `_migration_issue_number` and `_snapshot_issue_number` require an
+exact source coordinate `<tracker>:issue:<target-key>-<number>` matching the snapshot id,
+with canonical ASCII digits, no leading zero, and a number in `1..999999`
+(`_IMPORT_ISSUE_NUMBER_MAX`); `migration_preflight` also refuses repeated numbers before
+its identity/workflow reads.
+For example, source ids `ARCH-19`, `ARCH-7`, `ARCH-1` request numbers `19`, `7`, `1` in
+that order, including holes (`tests/test_devhub_migration_identity.py`).
+`migration_import_issue` adds `source_number` beside `source_ref` for living creates;
+`_import_terminal_issue` adds it for terminal imports.
+With the option absent or false, neither method adds the member; the existing payloads
+are unchanged (`test_absent_and_false_option_have_identical_payloads`).
+`capture_manifest` records the option in the target project and the deterministic
+`migration_preflight` profile, both covered by `migration._source_view`;
+`cutover._registry_target_project` retains it and `registry._validated_binding_entry`
+validates and preserves it in the target binding.
+`_read_back_registered` retains this local option when `resolve_checkout_project` re-reads
+the server identity; server metadata cannot enable or override it.
+Both import methods compare the exact returned id, and `migration_find_issue` compares
+the id derived from `source_ref`, so both resumed copy and activation readback refuse a
+sequentially renumbered issue (`copy_and_verify`, `verify_targets` in `migration.py`).
+A server refusal propagates without dropping `source_number` or retrying sequentially
+(`test_server_refusal_never_retries_without_source_number`).
+The preflight does not detect whether a server supports this extension; live support
+is unknown until DHN-50 passes on a disposable instance carrying the extension
+(`tests/integration/test_devhub_live_conformance.py`, `docs/devhub-requirements.md`).
+The server contract requires `source_ref`, a service credential and Foundry governance
+for `source_number` (observed in DevHub `src/tracker/contract.ts::sourceNumberSchema` and
+`src/tracker/store.ts::assertSourceNumberAuthority`); Foundry sends the number only through the migration methods above,
+not native `create_issue`.
+
+Historical ADR `rejected` keeps exact body bytes and explicit `unknown` relation families
+through `_prepare_adr_import`, `_to_adr` and `migration_export_adrs`; `_preflight_adrs`
+accepts that status but refuses a `proposed` or `rejected` supersession replacement.
+This extension adds no native decision target (`_ADR_STATES`, `create_adr`,
+`set_adr_status`); live qualification of the historical round trip is pending DHN-50.
 
 ## Terminal issue import (PAT-331, DHN-49)
 
