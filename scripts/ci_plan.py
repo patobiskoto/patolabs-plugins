@@ -18,7 +18,7 @@ from typing import NamedTuple
 
 SHIP_IOS_PREFIX = "plugins/ship-ios/"
 # A release PR is recognised by the files it changes, not by its title or branch:
-# every release so far (foundry 0.9.0, 1.0.0, 1.1.0, 1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, prepared 2.4.0) bumped a plugin
+# every release so far (foundry 0.9.0, 1.0.0, 1.1.0, 1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, prepared 2.4.0 and 2.5.0) bumped a plugin
 # manifest version, and a version bump needs a manifest on one of these paths.
 RELEASE_MANIFEST_NAMES = (
     "plugin.json",

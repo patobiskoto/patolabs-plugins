@@ -260,20 +260,19 @@ the tag and the host update each need the maintainer's explicit authorization, a
 are recorded on the release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not
 verified: the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host.
 
-**2.4.0 is a minor source candidate prepared under PLP-313.** Both host manifests
-declare 2.4.0. This preparation carries the dated [CHANGELOG](CHANGELOG.md) section
-from PLP-312, PLP-310, PLP-2 and PLP-1, removes those four fragments, adds the
-[release note](docs/release-2.4.0.md),
-[upgrade and rollback guide](docs/migration-2.4.0.md) and freeze entry, and updates
-the README references and CI release-version comment.
-The completion command's contract is in
-[model-routing.md](docs/model-routing.md#complete-a-reviewed-technical-diagnostic-before-remaining-qualification).
-The tag `foundry-v2.4.0`, host installation, listed/installed/loaded-version readbacks
-and live consumer qualification are not done or claimed for 2.4.0 here.
+**Release 2.5.0, minor source candidate prepared under PLP-314:** both Foundry
+manifests declare **2.5.0**. This preparation carries only PLP-311 into the dated
+[CHANGELOG](CHANGELOG.md), removes its fragment, adds the
+[release note](docs/release-2.5.0.md),
+[upgrade and rollback guide](docs/migration-2.5.0.md) and freeze entry,
+and updates the README references and CI release-version comment.
+Behaviour sources and qualification limits are in
+[Explicit source issue numbers](docs/devhub-tracker.md#explicit-source-issue-numbers-plp-311-live-qualification-pending)
+and [Selective import](docs/devhub-tracker.md#selective-import-pat-319-dhn-34-dhn-36).
+The tag `foundry-v2.5.0`, host installation, listed/installed/loaded-version readbacks,
+server deployment and real-project migration are not done or claimed here.
 Merge, tag and host update retain separate agreements
 ([release skill](skills/release/SKILL.md), steps 5–7).
-The migration guide records the ledger compatibility limit on a return to 2.3.0;
-an official-manager downgrade remains untried.
 
 ## Why
 
@@ -392,7 +391,8 @@ is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2
 2.1.0 is in [`docs/migration-2.1.0.md`](docs/migration-2.1.0.md); the upgrade from 2.1.1 to
 2.2.0 is in [`docs/migration-2.2.0.md`](docs/migration-2.2.0.md); the upgrade from 2.2.0 to
 2.3.0 is in [`docs/migration-2.3.0.md`](docs/migration-2.3.0.md); the prepared upgrade
-from 2.3.0 to 2.4.0 is in [`docs/migration-2.4.0.md`](docs/migration-2.4.0.md). The former
+from 2.3.0 to 2.4.0 is in [`docs/migration-2.4.0.md`](docs/migration-2.4.0.md); the prepared upgrade
+from 2.4.0 to 2.5.0 is in [`docs/migration-2.5.0.md`](docs/migration-2.5.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -883,7 +883,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0 and the prepared 2.4.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0 and the prepared 2.4.0 and 2.5.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
