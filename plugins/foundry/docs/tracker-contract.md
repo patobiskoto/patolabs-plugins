@@ -157,6 +157,23 @@ relations, and `migration.capture_manifest` exports every ADR; since PAT-327 the
   it preserves the exact Markdown checkbox marks for migration fidelity, while
   lifecycle acceptance remains unknown until the target's normal review proof.
 
+### Optional DevHub migration extensions (PLP-311)
+
+`Project.extra.preserve_issue_numbers: true` explicitly requests exact same-key issue ids
+for living and terminal imports (`DevHubTracker._snapshot_issue_number`,
+`migration_import_issue`, `_import_terminal_issue`, `migration_find_issue`); absent or false
+keeps existing payloads, with no sequential retry after a server refusal.
+`capture_manifest` binds that option in its target project/profile, and
+`registry._validated_binding_entry` preserves the boolean in the target binding;
+`DevHubTracker._read_back_registered` retains that local intent on canonical resolution
+and prevents server metadata from activating or overriding it.
+`_ADR_IMPORT_STATES` adds historical `rejected` to read/import only, with exact bodies
+and explicit unknown relations; native `_ADR_STATES` stays unchanged.
+These extensions are tested offline in `tests/test_devhub_migration_identity.py`;
+DHN-50 remains unknown pending disposable-instance qualification, so the prior live
+proofs of the two cross-tracker core cells do not qualify these additions
+(`docs/devhub-requirements.md`, `docs/devhub-tracker.md`, "Explicit source issue numbers").
+
 ### PAT-64 — cutover portable et reprenable
 
 `foundry.migration` définit l'orchestrateur unique de cutover. Il ne contient aucune

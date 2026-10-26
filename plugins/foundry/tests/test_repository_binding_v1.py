@@ -215,7 +215,7 @@ def test_devhub_bootstrap_publishes_only_a_verified_foundry_governed_project(
     }
 
 
-def test_devhub_binding_accepts_only_the_canonical_repository_and_release_ids(
+def test_devhub_binding_accepts_only_declared_extras(
     isolated, monkeypatch,
 ):
     repo = _repo(isolated, "acme", "same")
@@ -229,6 +229,36 @@ def test_devhub_binding_accepts_only_the_canonical_repository_and_release_ids(
         "devhub", "same", "KEY", "42", release_ids={"1.0.0": "KEY-VERSION-1"},
     )
     assert binding.project.extra["release_ids"] == {"1.0.0": "KEY-VERSION-1"}
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_devhub_binding_keeps_explicit_number_preservation(isolated, monkeypatch, value):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    binding = registry.bootstrap_repository_binding(
+        "devhub", "same", "KEY", "42", preserve_issue_numbers=value,
+    )
+    assert binding.project.extra["preserve_issue_numbers"] is value
+    assert registry.repository_tracker_binding().project.extra["preserve_issue_numbers"] is value
+    from test_devhub_tracker import ScriptedTracker
+    tracker = ScriptedTracker([{
+        "key": "KEY", "id": "42", "canonical_repo": "github.com/acme/same",
+    }])
+    resolved = tracker.resolve_checkout_project(str(repo))
+    assert resolved.extra["preserve_issue_numbers"] is value
+    assert resolved.extra["canonical_repo"] == "github.com/acme/same"
+    assert tracker.calls[0][:2] == ("GET", "/projects/resolve?repo=github.com%2Facme%2Fsame")
+
+
+@pytest.mark.parametrize("value", [None, "true", 1, [], {}])
+def test_devhub_binding_refuses_non_boolean_number_preservation(isolated, monkeypatch, value):
+    repo = _repo(isolated, "acme", "same")
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError, match="preserve_issue_numbers"):
+        registry.bootstrap_repository_binding(
+            "devhub", "same", "KEY", "42", preserve_issue_numbers=value,
+        )
+    assert registry.load() == {}
 
 
 @pytest.mark.parametrize("foreign_mode", ["canonical", "legacy"])

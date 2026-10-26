@@ -83,6 +83,9 @@ _INVERSE_LINK_TYPES = {
     "blocks": "depends-on",
 }
 _ADR_STATES = {"proposed", "accepted", "deprecated", "superseded"}
+# Historical imports and reads have a wider vocabulary than native decisions.
+_ADR_IMPORT_STATES = _ADR_STATES | {"rejected"}
+_IMPORT_ISSUE_NUMBER_MAX = 999999
 _AUDIT_OPERATIONS = {
     "project.create", "issue.create", "issue.update", "issue.transition",
     "issue.link", "issue.comment", "adr.create", "adr.status",
@@ -758,7 +761,7 @@ class DevHubTracker(Tracker):
     def _to_adr(raw) -> Adr:
         if (not isinstance(raw, dict) or not isinstance(raw.get("id"), str)
                 or not isinstance(raw.get("title"), str)
-                or raw.get("status") not in _ADR_STATES
+                or raw.get("status") not in _ADR_IMPORT_STATES
                 or type(raw.get("version")) is not int or raw["version"] < 1):
             raise DevHubTrackerError("GET", "/adrs", None, "invalid_response")
         # DEVHUB-105 keys are additive: absent on an older server, null on a normal ADR.
@@ -970,6 +973,7 @@ class DevHubTracker(Tracker):
 
     def _read_back_registered(self, registered: Project, repo: str) -> Project:
         """Re-read a registered project on the server and refuse any contradiction."""
+        self._preserve_issue_numbers(registered)  # validate the local-only option before transport
         canonical = registered.extra.get("canonical_repo")
         if not isinstance(canonical, str) or not canonical:
             raise SystemExit(f"Binding DevHub incomplet pour '{repo}' : canonical_repo requis.")
@@ -988,14 +992,13 @@ class DevHubTracker(Tracker):
         remote = self._to_project(raw)
         if remote.key != registered.key or remote.id != registered.id:
             raise SystemExit(f"Binding DevHub contradictoire pour '{repo}' ; mutation refusée.")
-        # `release_ids` is a local mapping the server does not carry (read_release_scope):
-        # keep it from the binding; every other field stays the server's answer.
-        if "release_ids" in registered.extra and "release_ids" not in remote.extra:
-            remote = Project(
-                key=remote.key, id=remote.id,
-                extra={**remote.extra, "release_ids": registered.extra["release_ids"]},
-            )
-        return remote
+        # Number preservation is local intent: the server cannot activate it or override it.
+        extra = {key: value for key, value in remote.extra.items() if key != "preserve_issue_numbers"}
+        # `release_ids` keeps its existing local-map fallback; other metadata stays remote.
+        for name in ("release_ids", "preserve_issue_numbers"):
+            if name in registered.extra and name not in extra:
+                extra[name] = registered.extra[name]
+        return Project(key=remote.key, id=remote.id, extra=extra)
 
     def verify_project_identity(self, project: Project) -> bool:
         """Read back the exact project before a binding is published (DHN-41, PAT-314).
@@ -2155,6 +2158,34 @@ class DevHubTracker(Tracker):
             raise ValueError("source_ref DevHubTracker invalide")
         return value
 
+    @staticmethod
+    def _preserve_issue_numbers(project: Project) -> bool:
+        value = project.extra.get("preserve_issue_numbers", False)
+        if type(value) is not bool:
+            raise ValueError("preserve_issue_numbers doit être un booléen explicite")
+        return value
+
+    @classmethod
+    def _migration_issue_number(cls, project: Project, source_ref: str) -> int | None:
+        """An explicitly requested same-key source number, never an inferred opt-in."""
+        if not cls._preserve_issue_numbers(project):
+            return None
+        match = re.fullmatch(
+            rf"[^:]+:issue:{re.escape(project.key)}-([1-9][0-9]{{0,5}})", source_ref,
+        )
+        if match is None or not 1 <= int(match[1]) <= _IMPORT_ISSUE_NUMBER_MAX:
+            raise TrackerConflictError(
+                "identifiant issue source non reproductible par DevHub "
+                f"avec preserve_issue_numbers: {source_ref}")
+        return int(match[1])
+
+    @classmethod
+    def _snapshot_issue_number(cls, project: Project, snapshot: dict, source_ref: str) -> int | None:
+        number = cls._migration_issue_number(project, source_ref)
+        if number is not None and snapshot.get("id") != f"{project.key}-{number}":
+            raise TrackerConflictError("identifiant issue source divergent de source_ref")
+        return number
+
     def _import_lookup_page(self, path: str, base: str) -> list[dict]:
         """One exact-lookup list answer: zero or one item, never a page to walk."""
         raw = self._application_req("GET", path)
@@ -2181,6 +2212,7 @@ class DevHubTracker(Tracker):
         """
         project = self._require_project(project)
         self._source_ref(source_ref)
+        number = self._migration_issue_number(project, source_ref)
         base = f"/projects/{urllib.parse.quote(project.key, safe='')}/issues"
         items = self._import_lookup_page(
             f"{base}?{urllib.parse.urlencode({'source_ref': source_ref})}", base,
@@ -2188,6 +2220,8 @@ class DevHubTracker(Tracker):
         if not items:
             return None
         listed = items[0]
+        if number is not None and listed.get("id") != f"{project.key}-{number}":
+            raise TrackerConflictError("identifiant issue DevHub divergent du numéro source")
         if (listed.get("source_ref") != source_ref or not isinstance(listed.get("id"), str)
                 or _ISSUE_ID.fullmatch(listed["id"]) is None
                 or self._project_key(listed["id"]) != project.key):
@@ -2218,6 +2252,7 @@ class DevHubTracker(Tracker):
         self._source_ref(source_ref)
         if snapshot.get("source_ref", source_ref) != source_ref:
             raise ValueError("source_ref de migration divergent")
+        number = self._snapshot_issue_number(project, snapshot, source_ref)
         title, body = snapshot["title"], snapshot["body"]
         if not isinstance(title, str) or not title.strip() or not isinstance(body, str):
             raise ValueError("titre/corps de migration DevHubTracker invalides")
@@ -2232,10 +2267,13 @@ class DevHubTracker(Tracker):
             )
             if attributes.get(name) is not None
         }, allow_state=True)
+        request = {"title": title, "body": body, "fields": fields, "source_ref": source_ref}
+        if number is not None:
+            request["source_number"] = number
         try:
             raw = self._application_req(
                 "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/issues",
-                {"title": title, "body": body, "fields": fields, "source_ref": source_ref},
+                request,
                 idempotent=True,
             )
         except DevHubTrackerError as error:
@@ -2248,6 +2286,7 @@ class DevHubTracker(Tracker):
         issue = self._to_issue(raw)
         if (raw.get("source_ref") != source_ref or raw.get("body") != body
                 or issue.title != title.strip()
+                or (number is not None and issue.id != f"{project.key}-{number}")
                 or self._project_key(issue.id) != project.key):
             raise TrackerConflictError("issue migration DevHub divergente après import")
         return issue
@@ -2283,6 +2322,9 @@ class DevHubTracker(Tracker):
     ) -> Issue:
         """Import one terminal issue (PAT-331): 201 first, 200 same content, 409 otherwise."""
         body = self._terminal_import_body(snapshot, source_ref)
+        number = self._snapshot_issue_number(project, snapshot, source_ref)
+        if number is not None:
+            body["source_number"] = number
         try:
             raw = self._application_req(
                 "POST", f"/projects/{urllib.parse.quote(project.key, safe='')}/issues/import",
@@ -2298,6 +2340,7 @@ class DevHubTracker(Tracker):
         issue = self._to_issue(raw)
         if (raw.get("source_ref") != source_ref or raw.get("body") != body["body"]
                 or raw.get("title") != body["title"] or issue.import_history is None
+                or (number is not None and issue.id != f"{project.key}-{number}")
                 or self._project_key(issue.id) != project.key):
             raise TrackerConflictError("issue migration DevHub divergente après import")
         return issue
@@ -2375,10 +2418,11 @@ class DevHubTracker(Tracker):
         issue texts, the living graph (every parent an exact ``Epic`` with at most one parent,
         no hierarchy or dependency cycle: the server refuses the others on the link) and the
         ADR corpus (status, relations that DevHub can record, reciprocal supersession, a
-        replacement that is not ``proposed``).  A route missing on an older server (DEVHUB-105)
+        replacement that is neither ``proposed`` nor ``rejected``).  A route missing on an older server (DEVHUB-105)
         is not probed (unknown); the first copy request would refuse it.
         """
         project = self._require_project(project)
+        preserve_numbers = self._preserve_issue_numbers(project)
         refs = [record["source_ref"] for record in records]
         if len(refs) != len(set(refs)):
             raise TrackerConflictError("provenance source de migration dupliquée")
@@ -2391,17 +2435,25 @@ class DevHubTracker(Tracker):
                 ) from None
         issues = [record for record in records if record.get("kind") == "issue"]
         adrs = [record for record in records if record.get("kind") == "adr"]
+        if preserve_numbers:
+            numbers = [self._snapshot_issue_number(project, record, record["source_ref"])
+                       for record in issues]
+            if len(numbers) != len(set(numbers)):
+                raise TrackerConflictError("numéro issue source dupliqué")
         self._preflight_issues(issues)
         self._preflight_adrs(project, adrs)
         if not self.verify_project_identity(project):
             raise TrackerConflictError("profil migration DevHub hors projet")
         self._preflight_workflow(project, issues)
-        return {
+        profile = {
             "kind": "devhub-source-ref-v1",
             "issue_coordinate": "source_ref",
             "adr_coordinate": "source_ref+foreign_id",
             "creation_states": list(_IMPORT_CREATION_STATES),
         }
+        if preserve_numbers:
+            profile["preserve_issue_numbers"] = True
+        return profile
 
     def _read_workflow(self, project: Project) -> tuple[int, dict, list]:
         """Read the published workflow (``GET /api/tracker/workflow/v1/projects/:key``).
@@ -2582,11 +2634,12 @@ class DevHubTracker(Tracker):
                 if (record["status"] == "superseded") != (replacement is not None):
                     raise TrackerConflictError(f"supersession ADR sans lien réciproque: {ref}")
             if replacement not in (None, "unknown") and (
-                    by_id[replacement]["status"] == "proposed"):
+                    by_id[replacement]["status"] in {"proposed", "rejected"}):
                 # DevHub refuses the import with 409 invalid_transition (``cd23304``, PAT-328);
-                # a replacement that is accepted, superseded or deprecated is taken.
+                # a replacement that is accepted, superseded or deprecated is taken;
+                # historical rejected imports cannot become replacements either.
                 raise TrackerConflictError(
-                    f"ADR de remplacement proposed refusée par DevHub: {ref} "
+                    f"ADR de remplacement {by_id[replacement]['status']} refusée par DevHub: {ref} "
                     f"(remplaçant {replacement})")
             if relations["supersedes"] != "unknown":
                 expected = sorted(
@@ -2816,7 +2869,7 @@ class DevHubTracker(Tracker):
         if not self._origin_text(adr_id, _FOREIGN_ID_MAX):
             raise ValueError("identifiant ADR étranger DevHubTracker invalide")
         if (not isinstance(title, str) or not title.strip() or not isinstance(body, str)
-                or historical_status not in _ADR_STATES):
+                or historical_status not in _ADR_IMPORT_STATES):
             raise ValueError("ADR d'import DevHubTracker invalide")
         source_only = list(source_only_issue_refs)
         if (len(source_only) > _ADR_SOURCE_ONLY_MAX or len(set(source_only)) != len(source_only)
@@ -2892,7 +2945,8 @@ class DevHubTracker(Tracker):
         replacement of this project by its foreign id, imported first; the server takes its
         ``source_ref``.  A non-empty ``supersedes`` is refused (DevHub stores the
         edge from the replaced ADR, written when that ADR is imported with its
-        ``superseded_by``).  A status DevHub lacks (``rejected``) is refused.  A ``foreign_id`` equal to the server id of a native ADR of
+        ``superseded_by``). Historical ``rejected`` is read/import vocabulary only
+        (``_ADR_IMPORT_STATES``), never a native decision target. A ``foreign_id`` equal to the server id of a native ADR of
         the project (no ``foreign_id``) is refused before the write.  Replay 200, divergence
         or a taken ``foreign_id`` 409 (``TrackerConflictError``).  The answer does not echo
         ``superseded_by`` or ``linked_issue_ids`` (``6721ad8:src/tracker/store.ts:374-386``,

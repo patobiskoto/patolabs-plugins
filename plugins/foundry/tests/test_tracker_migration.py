@@ -1217,6 +1217,31 @@ def test_activate_toward_devhub_publishes_the_registry_entry_and_the_marker(
     assert binding.activation_kind == "migration"
 
 
+def test_devhub_preflight_stages_number_option_and_refuses_a_config_that_drops_it(
+    monkeypatch, tmp_path,
+):
+    repo, _canonical, config_path, manifest_path, _target = _devhub_activation_fixture(
+        monkeypatch, tmp_path)
+    config = json.loads(config_path.read_text())
+    config["key"] = "SRC"
+    config["extra"]["preserve_issue_numbers"] = True
+    config_path.write_text(json.dumps(config))
+    cutover_cli.main(["preflight", "devhub", str(config_path), str(manifest_path)])
+    manifest = load_manifest(manifest_path)
+    assert manifest["target"]["project"]["extra"]["preserve_issue_numbers"] is True
+    staged = list(cutover_cli.registry.load()["devhub"].values())
+    assert len(staged) == 1
+    assert staged[0]["preserve_issue_numbers"] is True
+    assert staged[0]["_staged_cutover"] == manifest["source_digest"]
+    assert cutover_cli.registry.repository_tracker_binding(str(repo)).tracker == "youtrack"
+    config["extra"].pop("preserve_issue_numbers")
+    config_path.write_text(json.dumps(config))
+    with pytest.raises(SystemExit, match="incompatible"):
+        cutover_cli.main(["copy", "devhub", str(config_path), str(manifest_path)])
+    assert list(cutover_cli.registry.load()["devhub"].values()) == staged
+    assert _target.effects == 0
+
+
 def test_activate_toward_devhub_refuses_a_divergent_manifest_and_publishes_nothing(
     monkeypatch, tmp_path,
 ):

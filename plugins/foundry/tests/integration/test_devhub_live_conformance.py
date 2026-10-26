@@ -1592,3 +1592,56 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     assert {(child.id, child.state) for child in outcome.receipt.children} == {
         (ids["PAT-1"], "done"), (ids["PAT-2"], "dropped")}
     assert tracker.get_issue(ids["PAT-4"]).state == "done"
+
+
+@need("DHN-50")
+def test_dhn_50_explicit_source_numbers_and_rejected_adr_round_trip(suite):
+    """PLP-311: synthetic same-key corpus only, without registry activation."""
+    import copy as copy_module
+
+    from foundry.migration import capture_manifest, copy_and_verify, ready_for_cutover, verify_targets
+    from foundry.models import Adr, Issue
+    from test_tracker_migration import FakeTransportTracker
+
+    tracker = suite.tracker
+    key = gate.new_project_key()
+    project = tracker.provision_project(
+        "live source numbering target", key, f"github.com/foundry-live/{key.lower()}")
+    project = replace(project, extra={**project.extra, "preserve_issue_numbers": True})
+    issues = [
+        Issue(f"{key}-{number}", f"source issue {number}", state=state,
+              type="Task", priority="P2", estimate=3, body="- [x] historical\n")
+        for number, state in ((19, "done"), (7, "ready"), (1, "dropped"))
+    ]
+    body = "  ## Historical choice\r\n\r\nRejected. é\n  "
+    rejected = Adr("ARCH-ADR-0001", "historical choice", "rejected", body)
+    unknown = {"supersedes": "unknown", "superseded_by": "unknown", "issues": "unknown"}
+    source = FakeTransportTracker("linear", issues=issues, adrs=[rejected],
+                                  adr_relations={rejected.id: unknown})
+    manifest = capture_manifest(source, Project(key, "source"), tracker, project)
+    assert manifest["target"]["project"]["extra"]["preserve_issue_numbers"] is True
+    assert manifest["target"]["migration_profile"]["preserve_issue_numbers"] is True
+    assert [item["id"] for item in manifest["issues"]] == [issue.id for issue in issues]
+    copy_and_verify(manifest, tracker, project, lambda: None)
+    verify_targets(manifest, tracker, project)
+    assert ready_for_cutover(manifest)
+    assert [record["target_id"] for record in manifest["issues"]] == [issue.id for issue in issues]
+    (exported,) = tracker.migration_export_adrs(project)
+    assert (exported["adr"].id, exported["adr"].status, exported["adr"].body) == (
+        rejected.id, "rejected", body)
+    assert exported["relations"] == unknown
+    # Both direct import replay and the orchestration replay must retain the requested ids.
+    for record in manifest["issues"]:
+        assert tracker.migration_import_issue(
+            project, record, source_ref=record["source_ref"]).id == record["id"]
+    copy_and_verify(copy_module.deepcopy(manifest), tracker, project, lambda: None)
+    assert {issue.id for issue in tracker.search(project)} == {issue.id for issue in issues}
+    # A collision is a refusal, with no sequential substitute created.
+    collision = copy_module.deepcopy(manifest["issues"][0])
+    collision["source_ref"] = f"youtrack:issue:{collision['id']}"
+    with pytest.raises(TrackerConflictError):
+        tracker.migration_import_issue(project, collision, source_ref=collision["source_ref"])
+    assert {issue.id for issue in tracker.search(project)} == {issue.id for issue in issues}
+    # Source metadata carries no new native decision authority.
+    with pytest.raises(ValueError):
+        tracker.set_adr_status(rejected, "rejected", project=project)
