@@ -288,22 +288,25 @@ no completion callback, so its status stays `routed`. A Codex `current_context` 
 a deduplicated review, a Codex advisory (post-merge) review (`advisory=True`) and a local technical remediation are not invocations and are not
 recorded. A Claude advisory post-merge review is recorded: it is launched through the same hook with a
 `FOUNDRY_ROUTE_REQUEST` issue (`postmerge_review.py`), and the route request has no key that marks it advisory
-(`claude_user_request`, `routing_facades.py`); an attribution window can therefore treat it as a reviewer record. The closed field list is `_FIELDS`: issue, host, role, requested model, effort,
-tier, timestamp, status, failure class, reviewed head and base (reviewers only),
+(`claude_user_request`, `routing_facades.py`); an attribution window can therefore treat it as a reviewer record. The closed field list is `_FIELDS`: event, id (opaque invocation id), issue, host, role,
+requested model, effort, tier, timestamp, status, failure class, reviewed head and base (reviewers only),
 `correction` (implementers: a credited correction plan was claimed at routing). It never
 holds a prompt, path, command or secret; the Claude `tool_use_id` is stored only as a
-hash. Writes are append-only, owner-only (`0600`) and fail-open: an I/O or git error
+hash. Writes are append-only, owner-only (`0600`) and fail-open, and stop at `_MAX_BYTES` (8 MiB):
+a larger file is neither appended to nor read, with no rotation. An I/O or git error
 returns `False` and changes no routing result, hook output, gate or merge. A value not
 observed is `null` (the requested model is not the served model; no served model is
 recorded). No gate, routing decision or merge reads the file, and the review-proof format
 is unchanged (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
 
-`routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR]` prints
+`routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR] [--repository NAMESPACE]`
+(`--repository` defaults to the identity derived from the origin URL of `--root`) prints
 `invocations_for_diff`: the first recorded reviewer invocation of the issue whose head is
 `--head` (and whose recorded base, when both are known, equals `--base`; Claude reviewers
 record no base), and the implementer invocations of the issue recorded, in append order,
 since the previous reviewer invocation of the issue with another head. The output is
-`null` when no such reviewer invocation exists or an input is invalid, and its
+`null` when no such reviewer invocation exists, the log is unreadable (including a file above
+`_MAX_BYTES`, which makes it `null` for every head) or an input is invalid, and its
 `invocations` is `null` when the window holds none. Limits (deduced from the rule, not
 measured): the window names invocations, it does not prove they produced the diff
 (discarded or out-of-band work is not distinguished); the reviewed head is the worktree
