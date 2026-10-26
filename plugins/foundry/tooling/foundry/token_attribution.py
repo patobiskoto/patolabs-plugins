@@ -37,7 +37,7 @@ SCHEMA = "token-attribution.v1"
 METHODS = ("exact", "window", "approximate", "overlap", "unattributed")
 SCOPE = "all logs passed; windows are per coordinator log and a window needs both its start and its merge call"
 _ISSUE = r"[A-Z][A-Z0-9_]*-[1-9][0-9]*"
-_WINDOW_CALL = re.compile(r"foundry_cli\.py\s+issue\s+(start|merge)\s+(" + _ISSUE + r")(?![A-Za-z0-9_-])")
+_WINDOW_CALL = re.compile(r"foundry_cli\.py[\"'\\]*\s+issue\s+(start|merge)\s+(" + _ISSUE + r")(?![A-Za-z0-9_-])")
 _ROLE_LINE = re.compile(r"Resolved role: (architect|implementer|reviewer|scout)\Z")
 _TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _CODEX_SUFFIX = re.compile(r"(.*)_([0-9a-f]{16})\Z")
@@ -135,7 +135,7 @@ def _packet_role(path: Path) -> str | None:
     """Role token of the Foundry routed packet header; nothing else of the prompt is kept."""
     try:
         first = next(_json_lines(path), None)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     message = first.get("message") if first else None
     content = message.get("content") if isinstance(message, dict) else None
@@ -152,7 +152,7 @@ def _codex_meta(path: Path) -> dict | None:
     """Closed subset of the first ``session_meta``: id, parent id, agent name parts."""
     try:
         first = next(_json_lines(path), None)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     payload = first.get("payload") if first and first.get("type") == "session_meta" else None
     if not isinstance(payload, dict):
@@ -204,12 +204,14 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     """Attach every readable token slice of the given logs; see the module docstring."""
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])
-    unreadable, rows_of = {"coordinator": 0, "subagent": 0}, {}
+    unreadable, rows_of, lost_parents = {"coordinator": 0, "subagent": 0}, {}, set()
     for index, unit in enumerate(units):
         try:
             rows_of[index] = read_host_log(unit["host"], unit["path"], timestamps=True)
         except CostAttributionError:
             unreadable["subagent" if unit["subagent"] else "coordinator"] += 1
+            if not unit["subagent"]:
+                lost_parents.add((unit["host"], unit["parent"] if unit["host"] == "claude" else unit["key"]))
     # Windows are per coordinator log, keyed by what its subagents name as parent.
     windows: dict[tuple[str, str], list[dict]] = {}
     for index, unit in enumerate(units):
@@ -218,7 +220,7 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
         key = (unit["host"], unit["parent"] if unit["host"] == "claude" else unit["key"])
         try:
             windows[key] = _windows(_calls(unit["host"], unit["path"]))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             windows[key] = []
     slices: dict[tuple, dict] = {}
 
@@ -267,6 +269,8 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                 elif kind == "overlap":
                     add(tokens, 1, issue=None, method="overlap", issues=value, **common)
                 else:
+                    if value == "no_window" and subagent and (host, unit["parent"] or "") in lost_parents:
+                        value = "parent_unreadable"
                     add(tokens, 1, issue=None, method="unattributed", reason=value, **common)
     ordered = [slices[k] for k in sorted(slices, key=lambda k: (METHODS.index(k[0]),) + k[1:])]
     totals = {"requests": sum(s["requests"] for s in ordered),

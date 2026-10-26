@@ -248,3 +248,56 @@ def test_cli_verb_prints_sorted_json(tmp_path):
     data = json.loads(out.stdout)
     assert data["schema"] == "token-attribution.v1" and data["totals"]["requests"] == 1
     assert out.stdout == json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+
+
+def test_windows_open_on_the_quoted_skill_form_in_both_hosts(tmp_path):
+    quoted = 'python3 "${CLAUDE_PLUGIN_ROOT}/tooling/foundry_cli.py" issue VERB PLP-9'
+    main = _claude_tree(tmp_path, [
+        _claude_call("2026-10-03T10:00:00.000Z", quoted.replace("VERB", "start")),
+        _claude_request("2026-10-03T10:10:00.000Z", 1),
+        _claude_call("2026-10-03T10:20:00.000Z", quoted.replace("VERB", "merge") + " 12"),
+    ], [])
+    result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=tmp_path / "state")
+    assert [(s["issue"], _tok([s])) for s in _by(result, method="window")] == [("PLP-9", 1000)]
+
+    def call(at, verb):
+        return {"type": "response_item", "timestamp": at, "payload": {
+            "type": "function_call", "name": "exec_command",
+            "arguments": json.dumps({"cmd": quoted.replace("VERB", verb)})}}
+    rows = [{"type": "session_meta", "timestamp": "2026-10-03T10:00:00.000Z",
+             "payload": {"id": "thread-q", "cwd": "/synthetic", "model": "gpt-5"}},
+            call("2026-10-03T10:00:00.000Z", "start"),
+            {"type": "event_msg", "timestamp": "2026-10-03T10:10:00.000Z", "payload": {
+                "type": "token_count", "info": {"last_token_usage": _codex_usage(1),
+                                                "total_token_usage": _codex_usage(1)}}},
+            call("2026-10-03T10:20:00.000Z", "merge")]
+    assert '\\"' in rows[1]["payload"]["arguments"]
+    rollout = _write(tmp_path / "rollout-q.jsonl", rows)
+    result = token_attribution.report(codex_sessions=[rollout], repository=REPO, state_dir=tmp_path / "state")
+    assert [(s["issue"], _tok([s])) for s in _by(result, method="window")] == [("PLP-9", 1000)]
+
+
+def test_subagent_of_an_unreadable_coordinator_is_not_called_no_window(tmp_path):
+    main = tmp_path / "proj" / "s-main.jsonl"
+    main.parent.mkdir(parents=True)
+    main.write_text("not json\n")
+    sub = tmp_path / "proj" / "s-main" / "subagents" / "agent-a.jsonl"
+    _write(sub, [{"type": "user", "timestamp": "2026-10-03T10:00:00.000Z", "message": {"content": HEADER}},
+                 _claude_request("2026-10-03T10:05:00.000Z", 1, session="s-sub")])
+    result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=tmp_path / "state")
+    assert result["unreadable_logs"]["coordinator"] == 1
+    assert [(s["reason"], s["scope"]) for s in result["slices"]] == [("parent_unreadable", "subagent")]
+
+
+def test_invalid_utf8_header_line_reads_as_unreadable_not_as_a_failure(tmp_path):
+    bad = tmp_path / "bad.jsonl"
+    bad.write_bytes(b'{"type": "x"}\n\xff\xfe\n')
+    assert token_attribution._packet_role(bad) is None
+    assert token_attribution._codex_meta(bad) is None
+
+
+def test_only_the_cli_verb_imports_token_attribution():
+    importers = {p.name for p in (PLUGIN_ROOT / "tooling").rglob("*.py")
+                 if re.search(r"^\s*(from foundry import .*\btoken_attribution\b|from foundry\.token_attribution\b|import foundry\.token_attribution)",
+                              p.read_text(), re.M)}
+    assert importers == {"routing.py"}

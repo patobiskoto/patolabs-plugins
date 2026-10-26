@@ -150,7 +150,7 @@ malformée est ignorée.
 méthode, et à un rôle Foundry. Lecture seule, hors ligne, rejouable : mêmes journaux et même
 enregistrement local d'invocations (`docs/model-routing.md`, « Local invocation record »), même sortie
 (JSON à clés triées, aucune horloge). Aucun appel réseau, aucune écriture tracker ni journal, aucun
-routage ni gate ne le lit (`tests/test_token_attribution.py`, `tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
+routage ni gate ne le lit : seul le verbe CLI de `routing.py` importe `token_attribution` (`tests/test_token_attribution.py::test_only_the_cli_verb_imports_token_attribution`), et la surface du module est bornée par `test_module_has_no_network_tracker_or_write_surface`.
 Le lecteur FOUNDRY-ADR-0015 garde ses garanties : `read_host_log(..., timestamps=True)` ajoute seulement
 `request_at` (horodatage hôte de chaque entrée de `token_requests`), absent par défaut. Ce module extrait en plus
 uniquement un identifiant d'issue, un rôle, un identifiant d'invocation opaque et des horodatages ; la sortie ne contient
@@ -167,13 +167,13 @@ tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `wi
 | `window` | requête du coordinateur dans exactement une fenêtre | appels Bash (Claude) ou `exec` (Codex) `foundry_cli.py issue start <ID>` puis le premier `issue merge <ID>` suivant, du même journal |
 | `approximate` | requête d'un sous-agent sans enregistrement, dans exactement une fenêtre de son coordinateur (historique antérieur à PLP-316) | idem ; c'est une présomption temporelle, pas un lien |
 | `overlap` | requête dans plusieurs fenêtres | `issues` nomme les issues ; les tokens ne sont jamais répartis |
-| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp` |
+| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp`, `parent_unreadable` (sous-agent dont le journal de coordinateur est refusé par `read_host_log` : ses fenêtres ne sont pas calculées) |
 
 Une fenêtre sans `issue merge` est ouverte (`closed: false`) : elle n'attribue rien seule (`window_unclosed`) et
 compte comme recouvrement avec toute fenêtre qui contient la requête. Un recouvrement est aussi déclaré dans
 `windows[].overlaps_with`. Les fenêtres sont par journal de coordinateur Claude (ou par rollout Codex) ; un sous-agent
 Codex est rattaché à la fenêtre du rollout dont l'identifiant est son `parent_thread_id`, un sous-agent Claude à celle du
-journal principal dont il est le sous-dossier `subagents/`. Un appel est lu à son horodatage d'émission, sans vérifier
+journal principal dont il est le sous-dossier `subagents/`. Le périmètre de « non attribué » est celui de tous les journaux fournis (`SCOPE`) : les tranches ne portent aucun projet. Dans une campagne d'Epic, `issue start` et `issue merge` s'exécutent dans des sous-processus du cadenceur (`campaign_effects.py`), pas comme appels d'outil d'un journal de session : ces sessions n'ont donc aucune fenêtre (`no_window`). Un appel est lu à son horodatage d'émission, sans vérifier
 qu'il a réussi (déduit : un `issue merge` refusé ferme tout de même la fenêtre).
 
 `role` : l'enregistrement local (`implementer`, `reviewer`) ; sinon l'en-tête `Resolved role:` du paquet routé d'un
