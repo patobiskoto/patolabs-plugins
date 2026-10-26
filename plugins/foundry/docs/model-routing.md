@@ -274,6 +274,39 @@ repeatable `--available-model` availability observations, and repeatable
 fallback candidate list, actually attempted path, gate floor, availability status, and
 warning.
 
+## Local invocation record and reviewed-diff attribution (PLP-316)
+
+`tooling/foundry/invocation_log.py` appends one `routed` event per routed implementer or
+reviewer invocation that carries an issue (`FOUNDRY_ROUTE_REQUEST`), to
+`<data_dir>/model-routing/invocations/<sha256 of the repository identity>.jsonl`
+(`registry.data_dir()`, the directory of the escalation and review-dedup stores, so it
+works with `FOUNDRY_DATA` unset; the opt-in telemetry journal is unchanged). Claude writes
+it from the `PreToolUse` hook (`hooks/route_agent.py`, only when the payload carries a `tool_use_id`, like the telemetry preparation) and updates the status from the
+`PostToolUse` hook (`hooks/observe_agent.py`: `completed`/`none` or `failed`/`host`);
+Codex writes it from `codex_spawn_plan` in `subagent` mode (`routing_facades.py`) and has
+no completion callback, so its status stays `routed`. A Codex `current_context` fallback,
+a deduplicated review, an advisory (post-merge) review and a local technical remediation are not invocations and are not
+recorded. The closed field list is `_FIELDS`: issue, host, role, requested model, effort,
+tier, timestamp, status, failure class, reviewed head and base (reviewers only),
+`correction` (implementers: a credited correction plan was claimed at routing). It never
+holds a prompt, path, command or secret; the Claude `tool_use_id` is stored only as a
+hash. Writes are append-only, owner-only (`0600`) and fail-open: an I/O or git error
+returns `False` and changes no routing result, hook output, gate or merge. A value not
+observed is `null` (the requested model is not the served model; no served model is
+recorded). No gate, routing decision or merge reads the file, and the review-proof format
+is unchanged (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
+
+`routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR]` prints
+`invocations_for_diff`: the first recorded reviewer invocation of the issue whose head is
+`--head` (and whose recorded base, when both are known, equals `--base`; Claude reviewers
+record no base), and the implementer invocations of the issue recorded, in append order,
+since the previous reviewer invocation of the issue with another head. The output is
+`null` when no such reviewer invocation exists or an input is invalid, and its
+`invocations` is `null` when the window holds none. Limits (deduced from the rule, not
+measured): the window names invocations, it does not prove they produced the diff
+(discarded or out-of-band work is not distinguished); the reviewed head is the worktree
+`HEAD` at launch; `correction` is only the credited-correction claim, not every fix.
+
 ## Fallback invariants
 
 - Non-gate roles normally walk downward from their resolved tier and emit

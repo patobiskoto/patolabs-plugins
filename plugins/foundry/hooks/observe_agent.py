@@ -27,6 +27,7 @@ if _UNSUPPORTED:  # PAT-265: fail open but visible, before any foundry import
 
 from foundry.routing_facades import claude_invocation_completed  # noqa: E402
 from foundry.telemetry import TelemetryObserver  # noqa: E402
+from foundry import invocation_log  # noqa: E402
 
 
 def observe(payload: object, *, environ=None) -> bool:
@@ -41,6 +42,12 @@ def observe(payload: object, *, environ=None) -> bool:
         status, failure_class = "failed", "host"
     else:
         return False
+    if isinstance(correlation, str) and correlation and isinstance(payload.get("cwd"), str):
+        # PLP-316: local fail-open status update; read by no gate (invocation_log.py).
+        invocation_log.record_completion(
+            invocation_log.claude_invocation_id(correlation),
+            status=status, failure_class=failure_class, root=payload["cwd"],
+        )
     observer = TelemetryObserver.from_environ(environ)
     return bool(claude_invocation_completed(
         observer, correlation=correlation,

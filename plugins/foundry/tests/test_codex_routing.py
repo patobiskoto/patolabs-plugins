@@ -1420,8 +1420,11 @@ def _pat204_claim_args(tmp_path, *options):
 
 
 def _pat204_snapshot(state):
+    # The PLP-316 invocation record is excluded: a successful replay is a new launchable
+    # plan and is recorded as an invocation; the refusals under test write nothing.
     return {str(path.relative_to(state)): path.read_bytes()
-            for path in state.rglob("*") if path.is_file()}
+            for path in state.rglob("*") if path.is_file()
+            and "invocations" not in path.relative_to(state).parts}
 
 
 # Each case names the cause that refuses the route; ``match`` pins it so a case cannot

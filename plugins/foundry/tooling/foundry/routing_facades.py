@@ -28,6 +28,7 @@ from foundry.routing import (
 )
 from foundry.escalation import EscalationStore, MAX_PARALLEL_AGENTS
 from foundry.telemetry import TelemetryObserver, TelemetryRun, unknown_metric
+from foundry import invocation_log
 
 
 CLAUDE_MODEL_OVERRIDE = "CLAUDE_CODE_SUBAGENT_MODEL"
@@ -722,6 +723,15 @@ def codex_spawn_plan(
     ) if _observe else None
     if telemetry is not None:
         result["telemetry"] = telemetry
+    if (issue_id is not None and result["mode"] == "subagent" and not advisory
+            and role in invocation_log.ROLES):
+        # PLP-316: local fail-open record, read by no gate (invocation_log.py).
+        invocation_log.record_routed(
+            route, issue_id=issue_id, invocation_id=execution_id,
+            root=root if root is not None else (review_claim or {}).get("root"),
+            base=(review_claim or {}).get("base"),
+            correction=correction_plan_claimed, state_dir=escalation_state_dir,
+        )
     return result
 
 

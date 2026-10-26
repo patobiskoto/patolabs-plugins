@@ -2881,6 +2881,15 @@ def main(
     rounds_report.add_argument("--repository", help="repo namespace; defaults to origin URL")
     rounds_report.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
     rounds_report.add_argument("--json", action="store_true", help="print the report as JSON instead of text")
+    invocations = sub.add_parser(
+        "review-invocations",
+        help="read-only: implementer/corrector invocations recorded for a reviewed head (PLP-316)",
+    )
+    invocations.add_argument("issue")
+    invocations.add_argument("--head", required=True, help="40-hex reviewed head")
+    invocations.add_argument("--base", help="40-hex Git base SHA of the review")
+    invocations.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    invocations.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3363,6 +3372,14 @@ def main(
             )
             print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
                   else review_rounds.render(result))
+            return
+        if args.command == "review-invocations":
+            from foundry import invocation_log
+
+            print(json.dumps(invocation_log.invocations_for_diff(
+                args.issue, args.head, args.base, root=args.root,
+                repository=args.repository,
+            ), ensure_ascii=False, indent=2))
             return
         if args.command == "read-review":
             repository = args.repository or repository_identity(args.root)
