@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 2.5.0 — 2026-10-26
+
+Minor release for explicit same-key source issue numbers and historical ADR
+`rejected` read/import support (PLP-311). Behaviour sources and qualification limits
+are in `docs/devhub-tracker.md`, "Explicit source issue numbers" and "Selective
+import"; preparation status and upgrade references are in `docs/release-2.5.0.md`
+and `docs/migration-2.5.0.md`.
+
+- PLP-311: DevHub migration can explicitly preserve same-key issue numbers with
+  `Project.extra.preserve_issue_numbers`; the preflight and readback require exact ids,
+  and server refusals keep the requested numbering (`DevHubTracker._snapshot_issue_number`,
+  `migration_import_issue`, `_import_terminal_issue`, `migration_find_issue`).
+  Historical ADR `rejected` is supported by read/import without adding a native decision
+  target (`_ADR_IMPORT_STATES`, `_to_adr`, `_prepare_adr_import`; `_ADR_STATES` unchanged).
+  Disposable-instance qualification is pending DHN-50 (`docs/devhub-requirements.md`).
+
 ## 2.4.0 — 2026-10-25
 
 Minor release for the reviewed technical-diagnostic completion command
