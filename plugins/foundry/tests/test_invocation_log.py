@@ -174,7 +174,7 @@ def test_cli_verb_prints_json_or_null(tmp_path):
 
 
 def test_no_decision_path_reads_the_log():
-    allowed = {"invocation_log.py", "routing_facades.py", "routing.py"}
+    allowed = {"invocation_log.py", "routing_facades.py", "routing.py", "token_attribution.py"}
     offenders = [p.name for p in (PLUGIN_ROOT / "tooling" / "foundry").rglob("*.py")
                  if p.name not in allowed
                  and re.search(r"\binvocation_log\b", p.read_text())]

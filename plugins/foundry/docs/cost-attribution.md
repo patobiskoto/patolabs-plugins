@@ -141,3 +141,46 @@ incomplète; inversement, une observation dans la fenêtre reste visible même s
 ligne de coût ne l'est. Un champ de compteur explicitement présent mais partiel ou
 malformé continue d'échouer fermé. Seule la métadonnée de quota facultative absente ou
 malformée est ignorée.
+
+## Rattachement des tokens à une issue et à un rôle
+
+`python3 tooling/foundry_cli.py routing token-attribution [--session <journal-principal.jsonl>]...
+[--codex-session <rollout.jsonl>]... [--repository NS] [--root DIR]` (PLP-317,
+`tooling/foundry/token_attribution.py`) rattache chaque tranche de tokens lue par `read_host_log` à une issue, avec une
+méthode, et à un rôle Foundry. Lecture seule, hors ligne, rejouable : mêmes journaux et même
+enregistrement local d'invocations (`docs/model-routing.md`, « Local invocation record »), même sortie
+(JSON à clés triées, aucune horloge). Aucun appel réseau, aucune écriture tracker ni journal, aucun
+routage ni gate ne le lit (`tests/test_token_attribution.py`, `tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
+Le lecteur FOUNDRY-ADR-0015 garde ses garanties : `read_host_log(..., timestamps=True)` ajoute seulement
+`request_at` (horodatage hôte de chaque entrée de `token_requests`), absent par défaut. Ce module extrait en plus
+uniquement un identifiant d'issue, un rôle, un identifiant d'invocation opaque et des horodatages ; la sortie ne contient
+ni prompt, ni chemin, ni commande, ni identifiant de session hôte (`test_replayable_deterministic_and_content_free`).
+
+Sortie (`schema: token-attribution.v1`) : `slices` (par `issue`, `method`, `role`, `role_source`, `host`,
+`scope` coordinator|subagent, `reason`, `issues`, `requests`, `tokens` = `BILLING_TOKEN_KEYS`), `totals` (somme des
+tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `windows`, `invocation_log`
+(`read`|`unreadable`), `unreadable_logs` (`coordinator`, `subagent`).
+
+| `method` | Condition observée | Source |
+|---|---|---|
+| `exact` | un journal de sous-agent dont l'identifiant d'invocation est dans l'enregistrement local, qui porte l'issue | Claude : `toolUseId` du `agent-*.meta.json` voisin, haché par `invocation_log.claude_invocation_id` ; Codex : suffixe de 16 hexadécimaux de `agent_path` (identifiant d'exécution de `_codex_execution_name`, `routing_facades.py`) |
+| `window` | requête du coordinateur dans exactement une fenêtre | appels Bash (Claude) ou `exec` (Codex) `foundry_cli.py issue start <ID>` puis le premier `issue merge <ID>` suivant, du même journal |
+| `approximate` | requête d'un sous-agent sans enregistrement, dans exactement une fenêtre de son coordinateur (historique antérieur à PLP-316) | idem ; c'est une présomption temporelle, pas un lien |
+| `overlap` | requête dans plusieurs fenêtres | `issues` nomme les issues ; les tokens ne sont jamais répartis |
+| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp` |
+
+Une fenêtre sans `issue merge` est ouverte (`closed: false`) : elle n'attribue rien seule (`window_unclosed`) et
+compte comme recouvrement avec toute fenêtre qui contient la requête. Un recouvrement est aussi déclaré dans
+`windows[].overlaps_with`. Les fenêtres sont par journal de coordinateur Claude (ou par rollout Codex) ; un sous-agent
+Codex est rattaché à la fenêtre du rollout dont l'identifiant est son `parent_thread_id`, un sous-agent Claude à celle du
+journal principal dont il est le sous-dossier `subagents/`. Un appel est lu à son horodatage d'émission, sans vérifier
+qu'il a réussi (déduit : un `issue merge` refusé ferme tout de même la fenêtre).
+
+`role` : l'enregistrement local (`implementer`, `reviewer`) ; sinon l'en-tête `Resolved role:` du paquet routé d'un
+sous-agent Claude (`role_source: packet_header`, seul ce mot est lu) ; sinon le préfixe par défaut d'un agent Codex
+`foundry_<identité>` (`role_source: agent_name`) ; sinon `null`. Le coordinateur n'a pas de rôle (`null`, `scope: coordinator`).
+Observé sur une session Claude locale (2026-10-22, 93 journaux de sous-agents) : l'en-tête `Resolved role:` est
+présent dans 92 d'entre eux ; l'enregistrement d'invocations lu avec la configuration par défaut contenait 0 entrée, donc le
+lien `exact` n'a pas été observé sur des données réelles (inconnu) et seul le test synthétique l'établit. Limite observée
+sur la même session : 93 journaux de sous-agents sur 93 sont refusés par `read_host_log` (« request has no terminal snapshot »,
+garantie de complétude Claude ci-dessus, inchangée) ; ils sont comptés dans `unreadable_logs.subagent`, jamais devinés.

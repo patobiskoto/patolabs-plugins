@@ -177,6 +177,28 @@ def _routed_with_status(events: list[dict]) -> list[dict]:
     return result
 
 
+def records_by_id(
+    *,
+    root: str | os.PathLike | None = None,
+    repository: str | None = None,
+    state_dir: str | os.PathLike | None = None,
+) -> dict[str, dict] | None:
+    """``routed`` records keyed by opaque invocation id (first record wins).
+
+    Read side of the offline token attribution (PLP-317). ``{}`` when no log exists,
+    ``None`` when it cannot be read; never raises, never writes.
+    """
+    try:
+        path = _path(repository or _repository(root), state_dir)
+        result: dict[str, dict] = {}
+        for record in _routed_with_status(_read(path)):
+            if isinstance(record.get("id"), str):
+                result.setdefault(record["id"], record)
+        return result
+    except Exception:
+        return None
+
+
 def invocations_for_diff(
     issue_id: str,
     head: str,
