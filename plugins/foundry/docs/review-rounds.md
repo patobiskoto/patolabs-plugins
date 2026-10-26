@@ -77,7 +77,9 @@ source.
   `cost_attribution.read_host_log` (outside the invocation path, FOUNDRY-ADR-0015). Per class:
   input, cache_read, cache_write, output. They are the full totals of the logs passed (the
   session's sub-agents included, every issue worked in it), not filtered by issue or round
-  window; the text labels them "all logs passed, not filtered by issue or round". A Claude log is the coordinator; the `*.jsonl`
+  window; the text labels them "all logs passed, not filtered by issue or round" (the per-issue and
+  per-role attachment is the separate `routing token-attribution`, see
+  [cost-attribution.md](cost-attribution.md), "Rattachement des tokens à une issue et à un rôle"). A Claude log is the coordinator; the `*.jsonl`
   under `<dir>/<session>/subagents/` are the sub-agents (by position only, as in
   `cache_ttl_replay.py`). A Codex rollout is reported as `codex_unclassified`: the
   coordinator/sub-agent split is not implemented in `review_rounds.py`; whether a rollout

@@ -360,8 +360,14 @@ def resolve_project(host: str, *, claude_path_slug: str | None = None,
 
 def read_host_log(host: str, log_path: str | Path,
                   registry_data: Mapping[str, object] | None = None,
-                  diagnostics: dict | None = None) -> list[dict]:
-    """Read one native session JSONL into sanitized usage and quota records."""
+                  diagnostics: dict | None = None, *, timestamps: bool = False) -> list[dict]:
+    """Read one native session JSONL into sanitized usage and quota records.
+
+    ``timestamps=True`` (PLP-317, off by default: rows are then byte-identical to the
+    historical ones) adds ``request_at`` to each billable row, the host timestamp of each
+    entry of ``token_requests`` in the same order; it is empty when ``token_requests`` is
+    the single non-positional bucket chunk. No other counter or guarantee changes.
+    """
     if host not in {"claude", "codex"}:
         raise CostAttributionError("host differs")
     try:
@@ -476,7 +482,7 @@ def read_host_log(host: str, log_path: str | Path,
                                          "observed_on": occurred_on, **snapshot})
                 codex_usage_seen = True
                 codex_events.append({"session_id": session_id, "model": codex_model,
-                                     "occurred_on": occurred_on, "tokens": tokens,
+                                     "occurred_on": occurred_on, "tokens": tokens, "at": timestamp,
                                      "cumulative": cumulative,
                                      "cumulative_source": cumulative_source,
                                      "plan_usage_observations": observations})
@@ -508,7 +514,8 @@ def read_host_log(host: str, log_path: str | Path,
             identity = ((event_session_id, raw.get("agentId"), request_id, message_id)
                         if correlated else ("legacy", len(claude_requests)))
             terminal = message.get("stop_reason") is not None
-            value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal, correlated)
+            value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal, correlated,
+                     timestamp)
             previous = claude_requests.get(identity)
             if previous is not None:
                 if previous[:2] != value[:2]:
@@ -581,6 +588,8 @@ def read_host_log(host: str, log_path: str | Path,
                 # threshold decision, but dropping it from a mixed bucket
                 # would make the priced chunks disagree with the row total.
                 row["token_requests"].append(increment)
+                if timestamps:
+                    row.setdefault("request_at", []).append(event["at"])
                 if request_matches_increment:
                     codex_ranks[session] += 1
                     row["request_ranks"].append(codex_ranks[session])
@@ -590,6 +599,8 @@ def read_host_log(host: str, log_path: str | Path,
                 increment = _normalized_codex_usage(event["tokens"])
                 _add_tokens(row["tokens"], increment)
                 row["token_requests"].append(increment)
+                if timestamps:
+                    row.setdefault("request_at", []).append(event["at"])
                 codex_ranks[session] += 1
                 row["request_ranks"].append(codex_ranks[session])
             observations = event["plan_usage_observations"]
@@ -613,8 +624,13 @@ def read_host_log(host: str, log_path: str | Path,
             # A per-request stream is preferred for threshold pricing.
             if not row["token_requests"]:
                 row["token_requests"] = [row["tokens"]]
+                row["request_at"] = []
                 row["request_ranks"] = []
                 row["request_granularity"] = False
+            if not timestamps:
+                row.pop("request_at", None)
+            else:
+                row.setdefault("request_at", [])
             row.update({"project": resolve_project("codex", codex_cwd=cwd, registry_data=registry_data),
                         "epic": None, "issue": None, "provenance": "host_reported"})
             row.setdefault("plan_usage_percent", "unavailable")
@@ -622,7 +638,8 @@ def read_host_log(host: str, log_path: str | Path,
                 row["position_data_ambiguous"] = True
             rows.append(row)
         return [*rows, *codex_plan_rows]
-    for session, model, occurred_on, tokens, degradation_reason, terminal, correlated in claude_requests.values():
+    for (session, model, occurred_on, tokens, degradation_reason, terminal, correlated,
+         request_timestamp) in claude_requests.values():
         if correlated and not terminal:
             raise CostAttributionError("host token usage unavailable: request has no terminal snapshot")
         claude_billable_records += 1
@@ -635,6 +652,8 @@ def read_host_log(host: str, log_path: str | Path,
                                           "token_requests": [], "request_ranks": []})
         _add_tokens(row["tokens"], tokens)
         row["token_requests"].append(tokens)
+        if timestamps:
+            row.setdefault("request_at", []).append(request_timestamp)
         claude_rank += 1
         row["request_ranks"].append(claude_rank)
     rows = list(claude_rows.values())

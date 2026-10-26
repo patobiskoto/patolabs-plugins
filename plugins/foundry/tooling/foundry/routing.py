@@ -2890,6 +2890,16 @@ def main(
     invocations.add_argument("--base", help="40-hex Git base SHA of the review")
     invocations.add_argument("--repository", help="repo namespace; defaults to origin URL")
     invocations.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
+    attribution = sub.add_parser(
+        "token-attribution",
+        help="read-only: attach host-log token slices to an issue and a role (PLP-317)",
+    )
+    attribution.add_argument("--session", action="append", default=[],
+                             help="Claude main session log; its subagents/ logs are included")
+    attribution.add_argument("--codex-session", action="append", default=[],
+                             help="Codex rollout log (coordinator or sub-agent)")
+    attribution.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    attribution.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3372,6 +3382,14 @@ def main(
             )
             print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
                   else review_rounds.render(result))
+            return
+        if args.command == "token-attribution":
+            from foundry import token_attribution
+
+            print(json.dumps(token_attribution.report(
+                claude_sessions=args.session, codex_sessions=args.codex_session,
+                root=args.root, repository=args.repository,
+            ), ensure_ascii=True, indent=2, sort_keys=True))
             return
         if args.command == "review-invocations":
             from foundry import invocation_log
