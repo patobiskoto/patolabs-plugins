@@ -2023,6 +2023,83 @@ class ReviewDeduplicator:
             )
         return binding
 
+    def validated_technical_completion(
+        self, issue_id: str, diff_hash: str, *, root: str | os.PathLike, base: str,
+    ) -> dict:
+        """Authenticate technical quality without accepting uncovered product AC.
+
+        No caller proof identifier, outcome, or issue prose is authoritative here:
+        the terminal claim selects its canonical proof and the bound tracker supplies
+        the current criteria. The caller holds the escalation issue lock throughout.
+        """
+        from foundry import tracker
+
+        review_root, review_base = review_diff_coordinates(root, base)
+        coordinates = self._validate_coordinates({
+            "root": str(review_root), "base": review_base,
+        })
+        if repository_identity(review_root) != self.__repository:
+            raise RoutingConfigError("clôture technique : dépôt courant différent.")
+        diff_hash = self._validate_hash(diff_hash)
+        with self._locked():
+            # Do not migrate a historical bare claim during this read-only check.
+            record = self._read_record(
+                self.directory / diff_hash, diff_hash, migrate_bare_legacy=False,
+            )
+            self._assert_coordinates(record, coordinates)
+            head = self._assert_current_head(record, str(review_root))
+            binding = self._completed_proof_binding_from_record(diff_hash, record)
+            if head is None or binding is None:
+                raise RoutingConfigError("clôture technique : review Git terminale requise.")
+            durable = self._validated_proof_for_terminal_binding(
+                issue_id, diff_hash, binding, claimed_head=head,
+            )
+            proof_store = AcceptanceProofStore(self.__repository, self.__state_dir)
+            proof = proof_store._validated_proof(proof_store.directory / binding["proof_id"])
+            if durable["quality"] != "mergeable" or any(
+                criterion["verdict"] not in {"pass", "not_covered"}
+                for criterion in proof["issue"]["criteria"]
+            ):
+                raise RoutingConfigError(
+                    "clôture technique : qualité mergeable sans AC fail/contradicted requise."
+                )
+            active_tracker = tracker(cwd=str(review_root))
+            active_tracker.resolve_checkout_project(str(review_root))
+            current = active_tracker.observe_issue(issue_id)
+            if getattr(current, "id", None) != issue_id or not isinstance(
+                getattr(current, "body", None), str,
+            ):
+                raise RoutingConfigError("clôture technique : issue courante incohérente.")
+            criteria = acceptance_criteria(current.body)
+            if (
+                proof["issue"]["ac_digest"] != acceptance_digest(criteria)
+                or [{"id": item["id"], "digest": item["digest"]}
+                    for item in proof["issue"]["criteria"]] != criteria
+            ):
+                raise RoutingConfigError("clôture technique : critères courants différents.")
+            # Re-read Git after the native issue observation, still under both locks.
+            if (
+                git_head(review_root) != head
+                or review_diff_hash(git_diff(review_root, review_base)) != diff_hash
+                or git_head(review_root) != head
+                or repository_identity(review_root) != self.__repository
+            ):
+                raise RoutingConfigError("clôture technique : HEAD ou diff courant périmé.")
+            return {
+                **binding,
+                "quality": "mergeable",
+                "head": head,
+                "diff_hash": diff_hash,
+                "ac_digest": proof["issue"]["ac_digest"],
+                "not_covered": [
+                    item["id"] for item in proof["issue"]["criteria"]
+                    if item["verdict"] == "not_covered"
+                ],
+                "repository_digest": hashlib.sha256(
+                    self.__repository.encode("utf-8"),
+                ).hexdigest(),
+            }
+
     def assert_active(self, diff_hash: str, claim_id: str) -> None:
         """Reject stale/recovered/completed reviewer generations."""
         diff_hash = self._validate_hash(diff_hash)
@@ -3049,6 +3126,19 @@ def main(
         help="identité stable du même diagnostic local ; réutiliser au rejeu",
     )
     escalation_technical_claim.add_argument("--root")
+    escalation_technical_complete = escalation_actions.add_parser(
+        "complete-technical",
+        help="clôture le diagnostic après preuve qualité canonique, sans accepter les AC ouverts",
+    )
+    escalation_technical_complete.add_argument("issue")
+    escalation_technical_complete.add_argument("role", choices=("implementer", "reviewer"))
+    escalation_technical_complete.add_argument(
+        "--halt-generation", required=True, type=_positive_int,
+    )
+    escalation_technical_complete.add_argument("--root", required=True)
+    escalation_technical_complete.add_argument(
+        "--base", required=True, help="SHA Git immuable de la review technique terminée",
+    )
     args = parser.parse_args(argv)
     try:
         if args.command == "postmerge-review":
@@ -3429,6 +3519,12 @@ def main(
             elif args.escalation_action == "claim-technical-route":
                 payload = store.claim_technical_remediation_route(
                     args.issue, args.role, args.halt_generation, args.route_id,
+                )
+                human_required = False
+            elif args.escalation_action == "complete-technical":
+                payload = store.complete_technical_remediation(
+                    args.issue, args.role, args.halt_generation,
+                    root=args.root, base=args.base,
                 )
                 human_required = False
             else:

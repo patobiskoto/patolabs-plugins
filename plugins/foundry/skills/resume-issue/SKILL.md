@@ -116,6 +116,15 @@ issue lock; a sibling worktree or stale HEAD cannot consume it. Codex task-name 
 Claude Agent role/turn-bound validations complete before that CAS, so an invalid launch
 request leaves the sole plan available for one corrected retry. That exception never
 reopens the technical route or grants provider/campaign authority.
+
+When the consumed diagnostic has a canonical terminal review with `quality=mergeable`
+and only `pass`/`not_covered` AC, use the explicit `complete-technical` procedure in
+[`model-routing.md`](../../docs/model-routing.md#complete-a-reviewed-technical-diagnostic-before-remaining-qualification)
+before preparing the remaining qualification (`EscalationStore.complete_technical_remediation`).
+It authenticates the current Git and native AC bindings, preserves the non-passing AC
+and closes only that diagnostic; its receipt supplies no provider/campaign authority
+(`ReviewDeduplicator.validated_technical_completion`, `complete_technical_remediation`).
+
 For a released v1 stop
 without a terminal classification, first run
 `reclassify-legacy-terminal` with the exact generation. It accepts either an exact
