@@ -723,7 +723,7 @@ def codex_spawn_plan(
     ) if _observe else None
     if telemetry is not None:
         result["telemetry"] = telemetry
-    if (issue_id is not None and result["mode"] == "subagent" and not advisory
+    if (issue_id is not None and result["mode"] == "subagent" and not advisory and _observe
             and role in invocation_log.ROLES):
         # PLP-316: local fail-open record, read by no gate (invocation_log.py).
         invocation_log.record_routed(

@@ -285,8 +285,10 @@ it from the `PreToolUse` hook (`hooks/route_agent.py`, only when the payload car
 `PostToolUse` hook (`hooks/observe_agent.py`: `completed`/`none` or `failed`/`host`);
 Codex writes it from `codex_spawn_plan` in `subagent` mode (`routing_facades.py`) and has
 no completion callback, so its status stays `routed`. A Codex `current_context` fallback,
-a deduplicated review, an advisory (post-merge) review and a local technical remediation are not invocations and are not
-recorded. The closed field list is `_FIELDS`: issue, host, role, requested model, effort,
+a deduplicated review, a Codex advisory (post-merge) review (`advisory=True`) and a local technical remediation are not invocations and are not
+recorded. A Claude advisory post-merge review is recorded: it is launched through the same hook with a
+`FOUNDRY_ROUTE_REQUEST` issue (`postmerge_review.py`), and the route request has no key that marks it advisory
+(`claude_user_request`, `routing_facades.py`); an attribution window can therefore treat it as a reviewer record. The closed field list is `_FIELDS`: issue, host, role, requested model, effort,
 tier, timestamp, status, failure class, reviewed head and base (reviewers only),
 `correction` (implementers: a credited correction plan was claimed at routing). It never
 holds a prompt, path, command or secret; the Claude `tool_use_id` is stored only as a
