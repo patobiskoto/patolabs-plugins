@@ -1621,3 +1621,39 @@ def test_pat205_claim_review_warns_on_stderr_only_when_host_is_omitted(
         assert "defaulting to claude" in captured.err and "--host codex" in captured.err
     else:
         assert captured.err == ""
+
+
+def test_plp316_claim_review_records_nothing_and_codex_plan_reviewer_records_once(
+    tmp_path, capsys, monkeypatch,
+):
+    # B1 of the PLP-316 review: the preflight and the claim launch nothing; only the plan
+    # that is actually spawned is a reviewer invocation.
+    import subprocess
+    root = tmp_path / "repo"
+    root.mkdir()
+    for cmd in (["git", "init", "-q"], ["git", "remote", "add", "origin", "https://example.invalid/x.git"]):
+        subprocess.run(cmd, cwd=root, check=True)
+    packet = tmp_path / "review-packet.txt"
+    packet.write_text(_packet(), encoding="utf-8")
+    state = tmp_path / "state"
+    monkeypatch.setenv("FOUNDRY_DATA", str(state))
+    monkeypatch.setattr("foundry.routing.git_diff", lambda *_a, **_kw: b"plp316 diff")
+
+    def records():
+        return [line for path in state.rglob("invocations/*.jsonl")
+                for line in path.read_text().splitlines()]
+
+    main(["codex-plan", "reviewer", "--issue", "FOUNDRY-42", "--packet-file", str(packet),
+          "--git-diff", "--root", str(root), "--base", BASE_SHA,
+          "--claim-attempt-token", CLAIM_ATTEMPT_TOKEN])
+    assert json.loads(capsys.readouterr().out)["mode"] == "subagent"
+    found = [json.loads(line) for line in records()]
+    assert len(found) == 1
+    assert (found[0]["role"], found[0]["host"], found[0]["issue"]) == (
+        "reviewer", "codex", "FOUNDRY-42")
+    # A claim (here refused as already owned) launches nothing and adds no record.
+    main(["claim-review", "--host", "codex", "--issue", "FOUNDRY-42",
+          "--repository", "owner/plp316", "--git-diff", "--root", str(root),
+          "--base", BASE_SHA, "--claim-attempt-token", OTHER_CLAIM_ATTEMPT_TOKEN])
+    capsys.readouterr()
+    assert len(records()) == 1

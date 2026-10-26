@@ -41,6 +41,7 @@ from foundry.routing_facades import (  # noqa: E402
 )
 from foundry.escalation import MAX_PARALLEL_AGENTS  # noqa: E402
 from foundry.telemetry import TelemetryObserver  # noqa: E402
+from foundry import invocation_log  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,7 @@ def route_tool_input(
         if resolution.get("technical_remediation_local_only", False):
             return
         route = resolution["route"]
+        prepared["route"] = route
         if _resolved_route is not None:
             _resolved_route(route)
         task_prompt = resolution["task_prompt"]
@@ -282,6 +284,15 @@ def route_tool_input(
     telemetry = prepared.get("telemetry")
     if telemetry is not None:
         prepare_claude_invocation(*telemetry)
+    if resolution.get("issue_id") is not None and "route" in prepared and correlation:
+        # PLP-316: local fail-open record, read by no gate (invocation_log.py). Like the
+        # telemetry above it needs the host callback id: a dry-run resolution is no launch.
+        invocation_log.record_routed(
+            prepared["route"], issue_id=resolution["issue_id"],
+            invocation_id=invocation_log.claude_invocation_id(correlation),
+            root=cwd,
+            correction=resolution.get("credited_correction_plan_claimed", False),
+        )
     return prepared["updated"], (
         prepared["claimed_context"]
         if resolution.get("credited_correction_plan_claimed", False)
