@@ -294,6 +294,9 @@ def test_invalid_utf8_header_line_reads_as_unreadable_not_as_a_failure(tmp_path)
     bad.write_bytes(b'{"type": "x"}\n\xff\xfe\n')
     assert token_attribution._packet_role(bad) is None
     assert token_attribution._codex_meta(bad) is None
+    result = token_attribution.report(claude_sessions=[bad], codex_sessions=[bad], repository=REPO,
+                                      state_dir=tmp_path / "s")
+    assert result["unreadable_logs"] == {"coordinator": 2, "subagent": 0}
 
 
 def test_only_the_cli_verb_imports_token_attribution():

@@ -208,7 +208,7 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     for index, unit in enumerate(units):
         try:
             rows_of[index] = read_host_log(unit["host"], unit["path"], timestamps=True)
-        except CostAttributionError:
+        except (CostAttributionError, OSError, UnicodeDecodeError):
             unreadable["subagent" if unit["subagent"] else "coordinator"] += 1
             if not unit["subagent"]:
                 lost_parents.add((unit["host"], unit["parent"] if unit["host"] == "claude" else unit["key"]))
