@@ -2900,6 +2900,13 @@ def main(
                              help="Codex rollout log (coordinator or sub-agent)")
     attribution.add_argument("--repository", help="repo namespace; defaults to origin URL")
     attribution.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
+    turns_report = sub.add_parser(
+        "review-turns",
+        help="read-only: per-turn review data of an issue from the local proofs (PLP-318)",
+    )
+    turns_report.add_argument("issue")
+    turns_report.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    turns_report.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3389,6 +3396,13 @@ def main(
             print(json.dumps(token_attribution.report(
                 claude_sessions=args.session, codex_sessions=args.codex_session,
                 root=args.root, repository=args.repository,
+            ), ensure_ascii=True, indent=2, sort_keys=True))
+            return
+        if args.command == "review-turns":
+            from foundry import review_turns
+
+            print(json.dumps(review_turns.report(
+                args.issue, args.repository or repository_identity(args.root),
             ), ensure_ascii=True, indent=2, sort_keys=True))
             return
         if args.command == "review-invocations":
