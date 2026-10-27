@@ -51,19 +51,29 @@ def _declared_apart(wildcard_stem: str, other: str) -> bool:
     """True when ``other`` names a declared new wire version, not the wildcard's version.
 
     A historical wildcard (``claude-sonnet-5-*``) must not capture a declared
-    newer version (``claude-sonnet-5-5``, dated or not): the same exclusion rule
+    newer version (``claude-sonnet-5-5``, whatever its suffix): the same exclusion rule
     serves ``_matches`` (selection) and ``_overlap`` (grid loading).  Two
     patterns whose canonical versions are equal, or undeclared, stay related.
     """
     from foundry.routing_facades import claude_policy_model
     prefix = wildcard_stem.rstrip("-")
-    base = re.sub(r"-[0-9]{8}$", "", other.rstrip("-"))
-    if not prefix or not base:
+    other = other.rstrip("-")
+    if not prefix or not other:
         return False
-    canonical_prefix, canonical_other = claude_policy_model(prefix), claude_policy_model(base)
-    return (canonical_prefix != prefix and canonical_other != base
-            and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
-            != re.sub(r"-[0-9]{8}$", "", canonical_other))
+    canonical_prefix = claude_policy_model(prefix)
+    if canonical_prefix == prefix:
+        return False
+    cuts = [i for i, ch in enumerate(other) if ch == "-"] + [len(other)]
+    for cut in cuts:
+        base = other[:cut]
+        if len(base) < len(prefix):
+            continue
+        canonical_other = claude_policy_model(base)
+        if (canonical_other != base
+                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
+                != re.sub(r"-[0-9]{8}$", "", canonical_other)):
+            return True
+    return False
 
 
 def _overlap(left: str, right: str) -> bool:

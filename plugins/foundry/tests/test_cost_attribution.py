@@ -82,6 +82,7 @@ def test_declared_new_version_is_not_an_overlap_of_the_historical_wildcard_but_r
     day = "2026-09-15"
     assert price_for(grid, "claude", "claude-sonnet-5-5", day)["model"] == "sonnet-5.5"
     assert price_for(grid, "claude", "claude-sonnet-5-5-20261101", day)["model"] == "sonnet-5.5"
+    assert price_for(grid, "claude", "claude-sonnet-5-5-foo", day)["model"] == "sonnet-5.5"
     assert price_for(grid, "claude", "claude-sonnet-5-20261101", day)["model"] == "sonnet-5"
     # (existing entry, clashing alias) pairs that stay ambiguous
     for other, alias in ((old, "claude-sonnet-5-*"), (new, "claude-sonnet-5-5-*"),
