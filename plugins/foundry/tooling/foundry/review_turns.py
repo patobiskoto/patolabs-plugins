@@ -24,6 +24,7 @@ SCHEMA = "review-turns.v1"
 SOURCES = {
     "rank": "completed_at of the review ledger record bound to the proof diff hash, then generation",
     "completed_at": "completed_at of the review ledger record bound to the proof diff hash",
+    "started_at": "claim.started_at of the review ledger record bound to the proof diff hash",
     "generation": "acceptance proof review.generation",
     "head": "acceptance proof coordinates.head",
     "base": "acceptance proof coordinates.base",
@@ -107,7 +108,7 @@ def report(issue: str, repository: str, *, state_dir=None) -> dict:
         coordinates = proof["coordinates"]
         verdicts = [c["verdict"] for c in proof["issue"]["criteria"]]
         passed = sum(v == "pass" for v in verdicts)
-        _, completed = _ledger_times(ledger_dir, coordinates["diff_hash"])
+        started, completed = _ledger_times(ledger_dir, coordinates["diff_hash"])
         unrecorded = {}
         campaign, journal_why = _campaign(attempts, issue, coordinates)
         if journal_why:
@@ -131,7 +132,7 @@ def report(issue: str, repository: str, *, state_dir=None) -> dict:
         turns.append({
             "generation": proof["review"]["generation"], "head": coordinates["head"],
             "base": coordinates["base"], "type": None if not campaign else "partial" if campaign["partial"] else "full",
-            "completed_at": completed,
+            "started_at": started, "completed_at": completed,
             "verdict": "validated" if proof["quality"] == "mergeable" and passed == len(verdicts)
             else "blocked",
             "quality": proof["quality"], "criteria_pass": passed, "criteria": len(verdicts),
