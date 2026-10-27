@@ -101,6 +101,8 @@ _LEDGER_OPTIONAL_KEYS = {
     "technical_completion_audit",
 }
 _FAILURE_RECEIPT_KEYS = {"role", "kind", "current_tier", "decision"}
+# PLP-326: observed UTC time of an escalated decision; absent from older receipts.
+_FAILURE_RECEIPT_OPTIONAL_KEYS = {"decided_at"}
 _DECISION_REQUIRED_KEYS = {
     "issue_id", "role", "action", "initial_tier", "final_tier",
     "issue_escalations", "role_escalations", "deterministic_failures",
@@ -1648,7 +1650,8 @@ class EscalationStore:
             if (not isinstance(idempotency_key, str)
                     or _FAILURE_IDEMPOTENCY.fullmatch(idempotency_key) is None
                     or not isinstance(receipt, dict)
-                    or set(receipt) != _FAILURE_RECEIPT_KEYS):
+                    or not _FAILURE_RECEIPT_KEYS <= set(receipt)
+                    or not set(receipt) <= _FAILURE_RECEIPT_KEYS | _FAILURE_RECEIPT_OPTIONAL_KEYS):
                 raise _invalid_ledger(issue_id)
             role = receipt.get("role")
             kind = receipt.get("kind")
@@ -1758,12 +1761,19 @@ class EscalationStore:
                 )
             ):
                 raise _invalid_ledger(issue_id)
+            decided_at = receipt.get("decided_at")
+            if "decided_at" in receipt and (
+                decision.action != "escalated" or _utc_timestamp(decided_at) is None
+            ):
+                raise _invalid_ledger(issue_id)
             failure_receipts[idempotency_key] = {
                 "role": role,
                 "kind": kind,
                 "current_tier": current_tier,
                 "decision": decision.to_dict(),
             }
+            if "decided_at" in receipt:
+                failure_receipts[idempotency_key]["decided_at"] = decided_at
 
         campaign_receipts_raw = raw.get("campaign_review_retry_receipts", {})
         if (not isinstance(campaign_receipts_raw, dict)
@@ -4279,6 +4289,9 @@ class EscalationStore:
                     "current_tier": current_tier,
                     "decision": decision.to_dict(),
                 }
+                if decision.action == "escalated":
+                    # Audit time only: no routing or escalation decision reads it (PLP-326).
+                    state["failure_receipts"][receipt_key]["decided_at"] = _now_utc()
                 return decision, True
 
             role_state = self._role_state_view(state, role)

@@ -300,14 +300,19 @@ def _escalations(issue: str, repository: str, state_dir, records: dict | None) -
     except (OSError, ValueError, RecursionError, RoutingConfigError):
         return [], [{"issue": issue, "kind": "escalation", "reason": "escalation_ledger_unreadable"}]
     found: dict[tuple[str, int], dict | None] = {}
+    decided: dict[tuple[str, int], int] = {}  # observed decision time (receipt decided_at), when written
     for key in sorted(state["failure_receipts"]):
-        decision = state["failure_receipts"][key]["decision"]
+        receipt = state["failure_receipts"][key]
+        decision = receipt["decision"]
         if decision.get("action") != "escalated":
             continue
         item = {"role": decision["role"], "signal": decision["signal"], "from_tier": decision["initial_tier"],
                 "to_tier": decision["final_tier"], "rank": decision["role_escalations"]}
+        stamp = _epoch_ms(receipt.get("decided_at"))
         slot = (item["role"], item["rank"])
         found[slot] = item if found.get(slot, item) == item else None
+        if stamp is not None:
+            decided[slot] = min(stamp, decided.get(slot, stamp))
     out, omitted = [], []
     for (role, rank), item in sorted(found.items()):
         label = {"issue": issue, "kind": "escalation", "role": role, "rank": rank}
@@ -315,13 +320,14 @@ def _escalations(issue: str, repository: str, state_dir, records: dict | None) -
                 or type(rank) is not int or rank < 1 or _id(item["to_tier"]) is None):
             omitted.append({**label, "reason": "receipt_ambiguous_or_outside_the_format"})
             continue
-        first = next((r for r in (records or {}).values()
+        observed = decided.get((role, rank))
+        first = None if observed is not None else next((r for r in (records or {}).values()
                       if r.get("issue") == issue and r.get("role") == role and r.get("tier") == item["to_tier"]
                       and _epoch_ms(r.get("at")) is not None), None)
-        if first is None:
+        if first is None and observed is None:
             omitted.append({**label, "reason": "no_recorded_time"})
             continue
-        when = _epoch_ms(first["at"])
+        when = observed if observed is not None else _epoch_ms(first["at"])
         rec = _Record(issue, "escalation", "es-" + _digest("escalation", issue, role, rank)[:32],
                       "escalation-ledger.v1", {"issue": issue, **item})
         src = "escalation ledger failure receipt (escalation.py, action escalated): "
@@ -332,9 +338,11 @@ def _escalations(issue: str, repository: str, state_dir, records: dict | None) -
             "to_tier": rec.put("to_tier", item["to_tier"], src + "decision.final_tier"),
             "rank": rec.put("rank", rank, src + "decision.role_escalations"),
         }
-        out.append((rec, rec.finish(when, None, when, "exact",
-                                    "deduced upper bound: at of the first routed invocation of the role in this "
-                                    "issue at to_tier (the ledger keeps no time)", body)))
+        time_source = ("observed: decided_at of the escalation ledger failure receipt (escalation.py), written when "
+                       "the decision was recorded" if observed is not None else
+                       "deduced upper bound: at of the first routed invocation of the role in this "
+                       "issue at to_tier (the receipt has no decided_at)")
+        out.append((rec, rec.finish(when, None, when, "exact", time_source, body)))
     return out, omitted
 
 
