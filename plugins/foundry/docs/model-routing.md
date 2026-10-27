@@ -1351,7 +1351,8 @@ qualified. Haiku 5.5 always needs an effort: null stays reserved for Haiku 4.5. 
 and never become an alias of the latest version. The short alias `haiku` is not
 promoted: it keeps the effort-free generic profile, its unobserved version and
 `CLAUDE_ALIAS_VERSION_UNOBSERVED`. Passive telemetry accepts the `haiku-5.5` identity;
-the shipped offline price grid `pricing-v1.json` has no row for it, so its cost stays
+the shipped offline price grid `pricing-v1.json` has a `haiku-5.5` row from 2026-10-27
+(PLP-328, [cost-attribution.md](cost-attribution.md)); before that date its cost stays
 unknown, never zero.
 
 Minimum host version. `CLAUDE_MODEL_MIN_HOST_VERSION` (`routing_facades.py`) requires

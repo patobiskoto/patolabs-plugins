@@ -142,6 +142,24 @@ ligne de coût ne l'est. Un champ de compteur explicitement présent mais partie
 malformé continue d'échouer fermé. Seule la métadonnée de quota facultative absente ou
 malformée est ignorée.
 
+## Entrées Claude 5.5 et Fable 5.1 de la grille (PLP-328)
+
+`pricing-v1.json` porte, pour l'hôte `claude`, les entrées `sonnet-5.5`, `haiku-5.5`, `opus-5.5` et `fable-5.1`, avec la source `https://platform.claude.com/docs/en/about-claude/pricing` (tableau « Model pricing », tarifs de l'API directe, USD par million de tokens), lue le 2026-10-27 (`captured_at`). Les colonnes sont reportées comme pour les entrées existantes : `input` = entrée de base, `cache_write_input` = écriture de cache à 5 min, `cached_input` = lecture de cache, `output` = sortie.
+
+| Modèle | `input` | `cache_write_input` | `cached_input` | `output` |
+|---|---|---|---|---|
+| `sonnet-5.5` | 2 | 2.5 | 0.1 | 10 |
+| `haiku-5.5` jusqu'à 100000 tokens | 0.1 | 0.125 | 0.01 | 0.5 |
+| `haiku-5.5` au-delà (`over_threshold_rates`) | 0.5 | 0.625 | 0.05 | 2.5 |
+| `opus-5.5` | 4 | 5 | 0.2 | 20 |
+| `fable-5.1` | 10 | 12.5 | 0.25 | 50 |
+
+- Validité : `effective_from` 2026-10-27, `effective_to` 2026-12-31 (même fin que les autres entrées). Les prix ne sont vérifiés qu'à la date de lecture ; leur validité antérieure est inconnue, donc une requête datée avant le 2026-10-27 reste sans prix (`no_price_for_model_and_date`), jamais estimée au tarif d'aujourd'hui.
+- `haiku-5.5` : la page indique que la longueur du prompt compte tous les tokens d'entrée, lectures et écritures de cache comprises, et qu'une requête au-delà de 100000 tokens paie le tarif supérieur. L'entrée porte donc `context_threshold_tokens` 100000 et `over_threshold_rates`, appliqués par `_price_chunk` (comparaison `context > threshold`). `routing kpi-export` ne dispose que d'un total par invocation et laisse le montant `null` pour une entrée à seuil ([kpi-export.md](kpi-export.md)) ; `cost-attribution` sur un journal à requêtes distinctes applique le seuil requête par requête.
+- Le tarif d'écriture de cache à 1 h (Fable 5.1 20, Opus 5.5 8, Sonnet 5.5 4, Haiku 5.5 0.20 puis 1 au-delà du seuil) n'est pas une clé de la grille (`load_price_grid` n'accepte que les quatre clés de `rates`) : seule l'écriture à 5 min est appliquée, comme pour les entrées existantes.
+- Les entrées existantes (`haiku-4.5`, `sonnet-5`, `opus-5`, `fable-5`, `gpt-*`) ne changent pas d'un octet : leur `rate_version` est épinglé par `test_existing_entries_keep_their_rate_version` (`tests/test_kpi_export.py`).
+- Les alias historiques `claude-sonnet-5-*`, `claude-opus-5-*`, `claude-fable-5-*` sont des préfixes de `claude-sonnet-5-5`, etc. `_overlap` applique à présent, comme `_matches`, l'exclusion d'une version déclarée (`_declared_apart`, via `claude_policy_model`) : un joker historique ne capture pas une version nouvelle déclarée (datée ou non), et `load_price_grid` n'y voit plus un recouvrement. Un vrai recouvrement (même motif, ou version non déclarée) reste refusé.
+
 ## Rattachement des tokens à une issue et à un rôle
 
 Le verbe `routing kpi-export` (PLP-319, [kpi-export.md](kpi-export.md)) réutilise cette attribution (méthode `exact`, par invocation) et la grille `pricing-v1.json` pour écrire un montant `estimated`, jamais une facture.

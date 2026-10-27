@@ -75,6 +75,21 @@ def test_overlapping_active_aliases_and_incomplete_threshold_rates_fail_closed(t
         _grid(tmp_path, [_entry(context_threshold_tokens=10)])
 
 
+def test_declared_new_version_is_not_an_overlap_of_the_historical_wildcard_but_real_ambiguity_is(tmp_path):
+    old = _entry(host="claude", model="sonnet-5", aliases=["claude-sonnet-5", "claude-sonnet-5-*"])
+    new = _entry(host="claude", model="sonnet-5.5", aliases=["claude-sonnet-5-5", "claude-sonnet-5-5-*"])
+    grid = _grid(tmp_path, [old, new])
+    day = "2026-09-15"
+    assert price_for(grid, "claude", "claude-sonnet-5-5", day)["model"] == "sonnet-5.5"
+    assert price_for(grid, "claude", "claude-sonnet-5-5-20261101", day)["model"] == "sonnet-5.5"
+    assert price_for(grid, "claude", "claude-sonnet-5-20261101", day)["model"] == "sonnet-5"
+    # (existing entry, clashing alias) pairs that stay ambiguous
+    for other, alias in ((old, "claude-sonnet-5-*"), (new, "claude-sonnet-5-5-*"),
+                         (new, "claude-sonnet-5-5-2026*"), (old, "claude-sonnet-5-9")):
+        with pytest.raises(CostAttributionError, match="overlapping"):
+            _grid(tmp_path, [other, _entry(host="claude", model="x", aliases=[alias])])
+
+
 def test_reader_extracts_only_five_counters_and_resolves_codex_session_cwd(tmp_path):
     log = tmp_path / "rollout.jsonl"
     log.write_text("\n".join([
@@ -432,7 +447,7 @@ def test_registered_project_resolution_never_guesses():
 
 
 def test_known_models_is_derived_from_the_committed_price_grid():
-    assert KNOWN_MODELS == {"haiku-4.5", "sonnet-5", "opus-5", "fable-5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"}
+    assert KNOWN_MODELS == {"haiku-4.5", "sonnet-5", "opus-5", "fable-5", "sonnet-5.5", "haiku-5.5", "opus-5.5", "fable-5.1", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"}
 
 
 def test_aggregate_reports_unpriced_models_from_explicit_discovery_response(tmp_path):

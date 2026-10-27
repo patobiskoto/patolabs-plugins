@@ -76,9 +76,14 @@ tokens, so micro-USD is `tokens * rate` (`_price_chunk` multiplies the same way)
 integer string. `rate_version` = `pricing-v1-` + the first 12 hex of the sha256 of the grid entry used, so a changed
 rate changes the version. The grid entries are billed as `subscription` (`billing_mode`): the amount is an
 API-equivalent estimate. It is `null` when the requested model has no entry for that day (observed in
-`pricing-v1.json` on 2026-10-27: the Claude entries are `haiku-4.5`, `sonnet-5`, `opus-5`, `fable-5`, so a `sonnet-5.5`
-request is not priced), when the entry has a context threshold (`context_threshold_tokens` needs per-request counts,
-which a per-invocation total does not have), or when tokens are null.
+`pricing-v1.json` on 2026-10-27: the Claude entries are `haiku-4.5`, `sonnet-5`, `opus-5`, `fable-5`, `sonnet-5.5`,
+`haiku-5.5`, `opus-5.5`, `fable-5.1`; the last four are effective from 2026-10-27, so an attempt of one of them dated
+earlier, or a model outside this list, is not priced), when the entry has a context threshold (`context_threshold_tokens` needs per-request counts,
+which a per-invocation total does not have; `_amount` in `kpi_export.py` returns the reason
+`threshold_pricing_needs_per_request_tokens`, and of the Claude entries only `haiku-5.5` has a threshold,
+100000 tokens), or when tokens are null. The 1h cache-write rate of the Anthropic page is not a key of the grid
+(`cost_attribution.load_price_grid` accepts the four rate keys only), so only the 5m write rate is applied to
+`cache_write_input`.
 
 Not exported: the coordinator's own tokens and the tokens of sub-agents without an invocation record (methods `window`,
 `approximate`, `overlap`, `unattributed` of `routing token-attribution`). No coordinator attempt is emitted.

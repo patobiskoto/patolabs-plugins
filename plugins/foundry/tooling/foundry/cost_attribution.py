@@ -47,24 +47,41 @@ def _date(value: object) -> str:
     return value
 
 
+def _declared_apart(wildcard_stem: str, other: str) -> bool:
+    """True when ``other`` names a declared new wire version, not the wildcard's version.
+
+    A historical wildcard (``claude-sonnet-5-*``) must not capture a declared
+    newer version (``claude-sonnet-5-5``, dated or not): the same exclusion rule
+    serves ``_matches`` (selection) and ``_overlap`` (grid loading).  Two
+    patterns whose canonical versions are equal, or undeclared, stay related.
+    """
+    from foundry.routing_facades import claude_policy_model
+    prefix = wildcard_stem.rstrip("-")
+    base = re.sub(r"-[0-9]{8}$", "", other.rstrip("-"))
+    if not prefix or not base:
+        return False
+    canonical_prefix, canonical_other = claude_policy_model(prefix), claude_policy_model(base)
+    return (canonical_prefix != prefix and canonical_other != base
+            and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
+            != re.sub(r"-[0-9]{8}$", "", canonical_other))
+
+
 def _overlap(left: str, right: str) -> bool:
     a, b = left.rstrip("*"), right.rstrip("*")
-    return left == right or (left.endswith("*") and b.startswith(a)) or (
-        right.endswith("*") and a.startswith(b))
+    if left == right:
+        return True
+    if left.endswith("*") and b.startswith(a):
+        return not _declared_apart(a, b)
+    if right.endswith("*") and a.startswith(b):
+        return not _declared_apart(b, a)
+    return False
 
 
 def _matches(pattern: str, model: str) -> bool:
     # A declared new wire version cannot inherit a historical wildcard rate.
     # Exact aliases and wildcards naming the new version still work in future grids.
     if pattern.endswith("*") and model.startswith(pattern[:-1]):
-        from foundry.routing_facades import claude_policy_model
-        prefix = pattern[:-1].rstrip("-")
-        canonical_prefix = claude_policy_model(prefix) if prefix else prefix
-        canonical_model = claude_policy_model(model)
-        if (canonical_prefix != prefix and canonical_model != model
-                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
-                != re.sub(r"-[0-9]{8}$", "", canonical_model)):
-            return False
+        return not _declared_apart(pattern[:-1], model)
     return model.startswith(pattern[:-1]) if pattern.endswith("*") else model == pattern
 
 
