@@ -109,12 +109,14 @@ def report(issue: str, repository: str, *, state_dir=None) -> dict:
         passed = sum(v == "pass" for v in verdicts)
         _, completed = _ledger_times(ledger_dir, coordinates["diff_hash"])
         unrecorded = {}
-        campaign, why = _campaign(attempts, issue, coordinates)
-        if why:
-            unrecorded["type"] = why
+        campaign, journal_why = _campaign(attempts, issue, coordinates)
+        if journal_why:
+            unrecorded["type"] = journal_why
         count, why = _remarks(remarks_store, proof)
         if why and campaign:
             count, why = campaign["fix_before_merge"] + campaign["non_blocking"], None
+        elif why == "no_campaign_receipt" and journal_why != "no_campaign_record":
+            why = journal_why
         if why:
             unrecorded["remarks"] = why
         base = coordinates["base"] if _SHA.fullmatch(coordinates["base"]) else None

@@ -133,7 +133,8 @@ reason: `no_campaign_record` (type: no matching journal record, e.g. outside a c
 `ambiguous` (matching records that disagree on `partial` or the remark counts); `no_campaign_receipt`
 (remarks: no receipt and no matching journal record; the receipt is written only for a `mergeable`
 quality, so a blocked turn never has one, `review_remarks.py`, `campaign_review.py`, but its journal
-count fills `remarks`) or `receipt_unreadable`;
+count fills `remarks`) or `receipt_unreadable`; without a receipt, `remarks` takes the journal reason
+`attempts_journal_unreadable` or `ambiguous` when that is why the journal gives no count;
 `no_reviewer_record_for_head` (review before PLP-316, a Codex current context, or a head with
 no routed reviewer) or `invocation_log_unreadable` (probed after a failed lookup, deduced: a log that changes between the
 lookup and the probe could still give the wrong reason). Limits: two proofs of the same head share

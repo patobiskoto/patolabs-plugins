@@ -152,6 +152,7 @@ def test_unreadable_attempts_journal(tmp_path):
     (tmp_path / "campaign-attempts.jsonl").write_text("{not json\n")
     turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
     assert turn["type"] is None and turn["unrecorded"]["type"] == "attempts_journal_unreadable"
+    assert turn["remarks"] is None and turn["unrecorded"]["remarks"] == "attempts_journal_unreadable"
 
 
 def test_diverging_campaign_records_are_ambiguous(tmp_path):
@@ -160,7 +161,7 @@ def test_diverging_campaign_records_are_ambiguous(tmp_path):
     _attempt(tmp_path, "PLP-1", proof, partial=False)
     turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
     assert turn["type"] is None and turn["remarks"] is None
-    assert turn["unrecorded"]["type"] == "ambiguous"
+    assert turn["unrecorded"]["type"] == "ambiguous" and turn["unrecorded"]["remarks"] == "ambiguous"
 
 
 def test_receipt_with_another_schema_version_is_unreadable(tmp_path):
