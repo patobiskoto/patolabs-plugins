@@ -305,17 +305,15 @@ no gain. Statuses:
 - **Not verified:** the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host, and the return to
   2.2.0 through an official manager (not tried, PAT-162).
 
-**Release 2.5.0, minor source candidate prepared under PLP-314:** both Foundry
-manifests declare **2.5.0**. This preparation carries only PLP-311 into the dated
-[CHANGELOG](plugins/foundry/CHANGELOG.md), removes its fragment, adds the
-[release note](plugins/foundry/docs/release-2.5.0.md),
-[upgrade and rollback guide](plugins/foundry/docs/migration-2.5.0.md) and freeze entry,
+**Release 2.6.0, minor source candidate prepared under PLP-327:** both Foundry
+manifests declare **2.6.0**. This preparation carries PLP-319, PLP-318, PLP-317 and
+PLP-316 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md), removes their fragments,
+adds the [release note](plugins/foundry/docs/release-2.6.0.md),
+[upgrade and rollback guide](plugins/foundry/docs/migration-2.6.0.md) and freeze entry,
 and updates the README references and CI release-version comment.
-Behaviour sources and qualification limits are in
-[Explicit source issue numbers](plugins/foundry/docs/devhub-tracker.md#explicit-source-issue-numbers-plp-311-live-qualification-pending)
-and [Selective import](plugins/foundry/docs/devhub-tracker.md#selective-import-pat-319-dhn-34-dhn-36).
-The tag `foundry-v2.5.0`, host installation, listed/installed/loaded-version readbacks,
-server deployment and real-project migration are not done or claimed here.
+Behaviour sources are in [kpi-export.md](plugins/foundry/docs/kpi-export.md) and the pages
+it links. The tag `foundry-v2.6.0`, host installation and listed/installed/loaded-version
+readbacks are not done or claimed here.
 Merge, tag and host update retain separate agreements
 ([release skill](plugins/foundry/skills/release/SKILL.md), steps 5–7).
 
@@ -354,7 +352,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.5.0 (both host manifests; source candidate). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.6.0 (both host manifests; source candidate). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |
