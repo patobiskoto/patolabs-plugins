@@ -100,13 +100,14 @@ It is read-only and offline: it reads the proof store, the review ledger, the ca
 receipt, the campaign attempts journal (`campaign_effects.read_attempts`, file
 `campaign-attempts.jsonl` of the state directory) and the PLP-316 invocation record and writes nothing
 (`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory,
-journal included, before and after). No gate, routing or merge reads it
+journal included, before and after). No gate, routing or merge reads it; only the CLI verb and the offline export `kpi_export.py` (PLP-319) import it
 (`test_only_the_cli_verb_imports_review_turns`); it changes neither the proof format nor
 `record-review-proof`. Per turn, with the source of each field (`sources` emits one entry per field, `unrecorded` excepted; `test_sources_cover_every_emitted_field`):
 
 - `rank`: order of the ledger `completed_at` bound to the proof diff hash, then
   `generation`; a turn without a recorded time ranks after the timed ones.
 - `head`, `base`: the proof `coordinates`.
+- `started_at`, `completed_at`: `claim.started_at` and `completed_at` of the review ledger record bound to the proof diff hash (PLP-319 reads `started_at` for [kpi-export.md](kpi-export.md)).
 - `verdict` (`validated` when quality is `mergeable` and every criterion passes, else
   `blocked`, as `review_rounds`), `quality`, `criteria_pass`, `criteria`: the proof.
 - `remarks`: the number of remarks of the receipt `review-remarks/<namespace>/<proof id>`

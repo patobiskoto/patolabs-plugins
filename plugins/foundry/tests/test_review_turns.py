@@ -88,6 +88,7 @@ def test_turns_rank_verdict_remarks_and_reviewer(tmp_path):
     result = review_turns.report("PLP-1", REPO, state_dir=tmp_path)
     one, two = result["turns"]
     assert (one["rank"], one["verdict"], one["criteria_pass"], one["criteria"]) == (1, "blocked", 1, 2)
+    assert one["started_at"] == one["completed_at"] == "2026-10-01T10:00:00Z"
     assert (two["rank"], two["verdict"], two["remarks"]) == (2, "validated", 3)
     assert two["head"] == second["coordinates"]["head"] and two["base"] == _hex("b", 40)
     assert (two["reviewer_model"], two["reviewer_effort"], two["reviewer_host"]) == ("sonnet-5.5", "high", "claude")
@@ -208,7 +209,7 @@ def test_only_the_cli_verb_imports_review_turns():
     importers = {p.name for p in (PLUGIN_ROOT / "tooling").rglob("*.py")
                  if re.search(r"^\s*(from foundry import .*\breview_turns\b|from foundry\.review_turns\b)",
                               p.read_text(), re.M)}
-    assert importers == {"routing.py"}
+    assert importers == {"routing.py", "kpi_export.py"}  # the CLI verb and the PLP-319 export
 
 
 def test_cli_verb_prints_sorted_json(tmp_path):

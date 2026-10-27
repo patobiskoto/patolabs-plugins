@@ -2907,6 +2907,18 @@ def main(
     turns_report.add_argument("issue")
     turns_report.add_argument("--repository", help="repo namespace; defaults to origin URL")
     turns_report.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
+    kpi = sub.add_parser(
+        "kpi-export",
+        help="read-only: write attempt, review-round and escalation records of issues to one file (PLP-319)",
+    )
+    kpi.add_argument("issue", nargs="+")
+    kpi.add_argument("--output", required=True, help="the only file written")
+    kpi.add_argument("--session", action="append", default=[],
+                     help="Claude main session log; its subagents/ logs are included")
+    kpi.add_argument("--codex-session", action="append", default=[],
+                     help="Codex rollout log (coordinator or sub-agent)")
+    kpi.add_argument("--repository", help="repo namespace; defaults to origin URL")
+    kpi.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3404,6 +3416,16 @@ def main(
             print(json.dumps(review_turns.report(
                 args.issue, args.repository or repository_identity(args.root),
             ), ensure_ascii=True, indent=2, sort_keys=True))
+            return
+        if args.command == "kpi-export":
+            from foundry import kpi_export
+
+            document = kpi_export.build(
+                args.issue, args.repository or repository_identity(args.root),
+                claude_sessions=args.session, codex_sessions=args.codex_session,
+            )
+            Path(args.output).write_bytes(document)
+            print(json.dumps(json.loads(document)["counts"], sort_keys=True))
             return
         if args.command == "review-invocations":
             from foundry import invocation_log

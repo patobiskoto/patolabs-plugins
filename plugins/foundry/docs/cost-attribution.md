@@ -144,13 +144,15 @@ malformée est ignorée.
 
 ## Rattachement des tokens à une issue et à un rôle
 
+Le verbe `routing kpi-export` (PLP-319, [kpi-export.md](kpi-export.md)) réutilise cette attribution (méthode `exact`, par invocation) et la grille `pricing-v1.json` pour écrire un montant `estimated`, jamais une facture.
+
 `python3 tooling/foundry_cli.py routing token-attribution [--session <journal-principal.jsonl>]...
 [--codex-session <rollout.jsonl>]... [--repository NS] [--root DIR]` (PLP-317,
 `tooling/foundry/token_attribution.py`) rattache chaque tranche de tokens lue par `read_host_log` à une issue, avec une
 méthode, et à un rôle Foundry. Lecture seule, hors ligne, rejouable : mêmes journaux et même
 enregistrement local d'invocations (`docs/model-routing.md`, « Local invocation record »), même sortie
 (JSON à clés triées, aucune horloge). Aucun appel réseau, aucune écriture tracker ni journal, aucun
-routage ni gate ne le lit : seul le verbe CLI de `routing.py` importe `token_attribution` (`tests/test_token_attribution.py::test_only_the_cli_verb_imports_token_attribution`), et la surface du module est bornée par `test_module_has_no_network_tracker_or_write_surface`.
+routage ni gate ne le lit : seuls le verbe CLI de `routing.py` et l'export `kpi_export.py` (PLP-319, hors-ligne, qui n'écrit rien) importent `token_attribution` (`tests/test_token_attribution.py::test_only_the_cli_verb_imports_token_attribution`), et la surface du module est bornée par `test_module_has_no_network_tracker_or_write_surface`.
 Le lecteur FOUNDRY-ADR-0015 garde ses garanties : `read_host_log(..., timestamps=True)` ajoute seulement
 `request_at` (horodatage hôte de chaque entrée de `token_requests`), absent par défaut. Ce module extrait en plus
 uniquement un identifiant d'issue, un rôle, un identifiant d'invocation opaque et des horodatages ; la sortie ne contient

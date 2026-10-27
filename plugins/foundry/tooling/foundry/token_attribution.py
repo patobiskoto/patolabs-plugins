@@ -200,8 +200,12 @@ def _codex_units(paths: list[str]) -> list[dict]:
 
 
 def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
-           state_dir=None) -> dict:
-    """Attach every readable token slice of the given logs; see the module docstring."""
+           state_dir=None, per_invocation: dict | None = None) -> dict:
+    """Attach every readable token slice of the given logs; see the module docstring.
+
+    ``per_invocation``, when a dict is given, is filled with the ``exact`` tokens keyed by
+    invocation id (``requests`` and ``tokens``); the returned report is unchanged (PLP-319).
+    """
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])
     unreadable, rows_of, lost_parents = {"coordinator": 0, "subagent": 0}, {}, set()
@@ -258,6 +262,12 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
             if "tokens" not in row:
                 continue
             if record is not None:
+                if per_invocation is not None:
+                    seen = per_invocation.setdefault(record["id"], {
+                        "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0)})
+                    seen["requests"] += len(row["token_requests"])
+                    for name in BILLING_TOKEN_KEYS:
+                        seen["tokens"][name] += row["tokens"][name]
                 add(row["tokens"], len(row["token_requests"]), issue=record["issue"], method="exact", **common)
                 continue
             requests, times = row["token_requests"], row.get("request_at", [])
