@@ -266,6 +266,9 @@ def _benchmark_campaign_requested(config: pytest.Config) -> bool:
         return False
 
     parsed = expression(Scanner(markexpr))
+    # pytest 9.2 returns (ast.Expression, frozenset[str]); earlier versions the bare node.
+    if isinstance(parsed, tuple):
+        parsed = parsed[0]
 
     def has_positive_term(node: ast.AST, *, negated: bool = False) -> bool:
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
