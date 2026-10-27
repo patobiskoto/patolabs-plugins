@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 2.6.0 — 2026-10-27
+
+Minor release for the local invocation record and the offline KPI readers of Epic
+PLP-315 (PLP-ADR-0061): `routing review-invocations`, `routing token-attribution`,
+`routing review-turns` and `routing kpi-export` (PLP-316 to PLP-319). Behaviour sources
+are in `docs/model-routing.md`, `docs/cost-attribution.md`, `docs/review-rounds.md` and
+`docs/kpi-export.md`; preparation status and upgrade references are in
+`docs/release-2.6.0.md` and `docs/migration-2.6.0.md`.
+
+- PLP-319: add `routing kpi-export ISSUE... --output FILE`, a read-only offline command that writes the attempt, review-round and escalation records of issues in the `devhub-observations.v2` format, with value-by-value provenance and an `estimated` amount carrying its `rate_version` (`docs/kpi-export.md`); `routing token-attribution` keeps its output and `routing review-turns` gains `started_at`.
+- PLP-318: add `routing review-turns ISSUE`, a read-only offline command that lists the review turns of an issue from the local acceptance proofs: rank, head, base, verdict, remark count (campaign receipt, else the campaign attempts journal), `type` (full or partial, from the campaign attempts journal only) and requested reviewer model (PLP-316 invocation record); any unrecorded value is `null` with a reason (`docs/review-rounds.md`).
+- PLP-317: add `routing token-attribution`, a read-only offline command that attaches the token slices read from Claude Code and Codex session logs to a Foundry issue with a method (`exact` through the PLP-316 invocation record, `window` from the coordinator's `issue start` to `issue merge` calls, `approximate` for unrecorded history, declared `overlap`, or `unattributed` with a reason) and to a Foundry role (`null` when not observable); `read_host_log` gains an opt-in `timestamps` argument and its default output is unchanged (`docs/cost-attribution.md`).
+- PLP-316: record locally, beside the escalation and review-dedup stores, the issue, host, role, requested model, effort, tier, status and reviewed head of each routed implementer and reviewer invocation (Claude and Codex), and add `routing review-invocations` to attribute the implementer and correction invocations to a reviewed head (`null` when undeterminable); nothing in routing, gates or merge reads it and the review proof is unchanged (`docs/model-routing.md`).
+
 ## 2.5.0 — 2026-10-26
 
 Minor release for explicit same-key source issue numbers and historical ADR
