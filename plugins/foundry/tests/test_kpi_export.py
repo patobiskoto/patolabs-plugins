@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from foundry import invocation_log, kpi_export
+from foundry import escalation, invocation_log, kpi_export
 from foundry.escalation import EscalationStore
 from test_review_turns import _attempt, _hex, _proof, _receipt, _snapshot
 from test_token_attribution import TOOL_USE, _claude_request, _claude_tree
@@ -178,8 +178,18 @@ def _escalate(state, issue="PLP-1"):
         store.record_failure(issue, "implementer", "test_red", "balanced", idempotency_key=f"key-0000000{index}")
 
 
+def _strip_decided_at(state, issue="PLP-1"):
+    """Rewrite the ledger as an older release wrote it: receipts without ``decided_at``."""
+    path = EscalationStore(REPO, state_dir=state).directory / f"{issue}.json"
+    ledger = json.loads(path.read_text())
+    for receipt in ledger["failure_receipts"].values():
+        receipt.pop("decided_at", None)
+    path.write_text(json.dumps(ledger))
+
+
 def test_escalation_comes_from_the_ledger_and_is_timed_by_the_first_use_of_the_tier(tmp_path):
     _escalate(tmp_path)
+    _strip_decided_at(tmp_path)
     _, records = _records(_build(tmp_path))
     assert records == []  # no invocation at the new tier: no recorded time
     data, _ = _records(_build(tmp_path))
@@ -196,6 +206,64 @@ def test_escalation_comes_from_the_ledger_and_is_timed_by_the_first_use_of_the_t
     assert "deduced" in data["provenance"][record["record_id"]]["from"]["started_at"]
     # the idempotency key does not depend on the order or the time of the export
     assert record["attempt_id"] == "es-" + hashlib.sha256(b"escalation|PLP-1|implementer|1").hexdigest()[:32]
+
+
+def test_new_escalation_receipt_is_timed_by_its_observed_decision_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(escalation, "_now_utc", lambda: "2026-10-05T12:00:00.250000Z")
+    _escalate(tmp_path)
+    _routed(tmp_path, "PLP-1", "implementer", "f" * 16, tier="frontier", at="2026-10-09T00:00:00.000000Z")
+    data, records = _records(_build(tmp_path))
+    record = [r for r in records if r["kind"] == "escalation"][0]
+    _check(record)
+    assert record["started_at"] == record["observed_at"] == 1791201600250
+    source = data["provenance"][record["record_id"]]["from"]["started_at"]
+    assert source.startswith("observed") and "deduced" not in source
+    # an escalation without any routed invocation is now exported too
+    state = tmp_path / "other"
+    _escalate(state)
+    _, records = _records(_build(state))
+    assert [r["kind"] for r in records] == ["escalation"]
+    # the stamp changes neither the record identity nor the idempotency key
+    _strip_decided_at(tmp_path)
+    _, old = _records(_build(tmp_path))
+    old_record = [r for r in old if r["kind"] == "escalation"][0]
+    assert (old_record["record_id"], old_record["attempt_id"]) == (record["record_id"], record["attempt_id"])
+    assert old_record["started_at"] == 1791504000000
+
+
+def test_only_escalated_receipts_carry_decided_at_and_old_ledgers_stay_valid(tmp_path, monkeypatch):
+    monkeypatch.setattr(escalation, "_now_utc", lambda: "2026-10-05T12:00:00Z")
+    _escalate(tmp_path)
+    store = EscalationStore(REPO, state_dir=tmp_path)
+    receipts = json.loads((store.directory / "PLP-1.json").read_text())["failure_receipts"]
+    stamped = {r["decision"]["action"]: r.get("decided_at") for r in receipts.values()}
+    assert stamped == {"failure_recorded": None, "escalated": "2026-10-05T12:00:00Z"}
+    _strip_decided_at(tmp_path)
+    assert store._normalize_state(json.loads((store.directory / "PLP-1.json").read_text()), "PLP-1")
+    # replaying a key returns the same decision and does not restamp the receipt
+    monkeypatch.setattr(escalation, "_now_utc", lambda: "2027-01-01T00:00:00Z")
+    store.record_failure("PLP-1", "implementer", "test_red", "balanced", idempotency_key="key-00000001")
+    assert "decided_at" not in json.loads((store.directory / "PLP-1.json").read_text())["failure_receipts"][
+        "key-00000001"]
+
+
+def test_no_decision_path_reads_decided_at():
+    root = PLUGIN_ROOT / "tooling" / "foundry"
+    readers = {p.name for p in root.rglob("*.py") if "decided_at" in p.read_text()}
+    assert readers == {"escalation.py", "kpi_export.py"}
+    # in escalation.py the field is only validated on load, copied by the normalizer and written by the recorder
+    uses = [line.strip() for line in (root / "escalation.py").read_text().splitlines() if "decided_at" in line]
+    assert uses == [
+        '_FAILURE_RECEIPT_OPTIONAL_KEYS = {"decided_at"}',
+        'decided_at = receipt.get("decided_at")',
+        'if "decided_at" in receipt and (',
+        'decision.action != "escalated" or _utc_timestamp(decided_at) is None',
+        'if "decided_at" in receipt:',
+        'failure_receipts[idempotency_key]["decided_at"] = decided_at',
+        'state["failure_receipts"][receipt_key]["decided_at"] = _now_utc()',
+    ]
+    # kpi_export reads it in one function only
+    assert "decided_at" not in (root / "kpi_export.py").read_text().split("def _escalations")[0]
 
 
 def test_same_inputs_same_bytes_and_read_only(tmp_path):

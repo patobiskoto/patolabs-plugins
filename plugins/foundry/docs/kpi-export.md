@@ -118,10 +118,14 @@ hex of sha256 of issue, role and rank. No free-text reason.
 
 Limits: a receipt exists only for a failure recorded with an idempotency key, and an escalation by risk floor
 (`RISK_FLOORS`) or explicit request leaves no per-event receipt (observed: ledgers with `total_escalations` above zero
-and no receipt), so those are not exported. The ledger keeps no time: `started_at` = `observed_at` is the `at` of the
-first routed invocation of the same role and issue at `to_tier`, an upper bound (deduced, said in `provenance`); the
-record is omitted (`no_recorded_time`) when the invocation record has none. `attribution` is `exact` (the ledger is
-keyed by issue).
+and no receipt), so those are not exported. A failure receipt of an `escalated` decision written since PLP-326 carries
+`decided_at`, the UTC time read from the clock (`_now_utc`, `escalation.py`) when the receipt was written; it is an
+audit field that no routing or escalation decision reads
+(`tests/test_kpi_export.py::test_no_decision_path_reads_decided_at`). Older receipts have none and stay readable. The reverse does not hold: Foundry 2.6.0 and earlier accept only the four receipt keys (`set(receipt) != _FAILURE_RECEIPT_KEYS` in their `escalation.py`), so they treat a ledger holding a receipt with `decided_at` as invalid and routing fails closed for that issue (deduced from that code, not run); do not go back to such a version, or run one on another host, once a new escalation receipt exists.
+`started_at` = `observed_at` is that `decided_at` (observed, said in `provenance`); for a receipt without it, it is
+the `at` of the first routed invocation of the same role and issue at `to_tier`, an upper bound (deduced, said in
+`provenance`); with no `decided_at` the record is omitted (`no_recorded_time`) when the invocation record has none.
+`attribution` is `exact` (the ledger is keyed by issue).
 
 ## Procedure and sample
 
