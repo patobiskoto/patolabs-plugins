@@ -91,6 +91,44 @@ source.
   unknown.
 - Output holds counts only: no claim or proof identifier, prompt or log content.
 
+## Per-turn data of an issue (PLP-318)
+
+`python3 tooling/foundry_cli.py routing review-turns ISSUE [--repository NS] [--root DIR]`
+(`review_turns.py`, schema `review-turns.v1`, JSON with sorted keys) lists one entry per
+review turn of the issue: a turn is a non-carried acceptance proof, as in the report above.
+It is read-only and offline: it reads the proof store, the review ledger, the campaign remarks
+receipt and the PLP-316 invocation record and writes nothing
+(`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory
+before and after). No gate, routing or merge reads it
+(`test_only_the_cli_verb_imports_review_turns`); it changes neither the proof format nor
+`record-review-proof`. Per turn, with the source of each field (also emitted as `sources`):
+
+- `rank`: order of the ledger `completed_at` bound to the proof diff hash, then
+  `generation`; a turn without a recorded time ranks after the timed ones.
+- `head`, `base`: the proof `coordinates`.
+- `verdict` (`validated` when quality is `mergeable` and every criterion passes, else
+  `blocked`, as `review_rounds`), `quality`, `criteria_pass`, `criteria`: the proof.
+- `remarks`: the number of remarks of the receipt `review-remarks/<namespace>/<proof id>`
+  (`review_remarks.py`), checked against the proof's issue, diff hash and generation.
+- `reviewer_model`, `reviewer_effort`, `reviewer_host`: the first reviewer record of the
+  invocation log for this issue and this head (`invocation_log.invocations_for_diff`); this is
+  the model requested at routing, not an observation of the model that ran.
+- `type` (full or partial): always `null`. `prepare-review --previous-head` writes the
+  declared head only to `coordinates.json` of the packet directory the caller chose; neither a
+  proof nor a ledger record carries it (`review_packet.py`, `prepare_review_packet`), so no
+  recorded field proves a turn partial, and none proves it full.
+
+A value no local source records is `null` and the turn's `unrecorded` maps the field to a
+reason: `previous_head_not_persisted` (type); `no_campaign_receipt` (remarks outside a campaign
+or before PAT-141: only the campaign receipt carries a count) or `receipt_unreadable`;
+`no_reviewer_record_for_head` (review before PLP-316, a Codex current context, or a head with
+no routed reviewer) or `invocation_log_unreadable`. Limits: two proofs of the same head share
+the first reviewer record (deduced from the lookup rule of `invocations_for_diff`); the
+escalation ledger is not read, since it holds no per-turn field the proofs lack (deduced
+from reading `escalation.py`, not exhaustively checked); a proof file that cannot be read is
+counted in `unreadable_proofs` for the whole repository namespace, as above. The output holds
+no proof, claim or invocation identifier and no remark text.
+
 ## Observation window
 
 The first 10 issues delivered under the rule, with their follow-up issues. If a follow-up
