@@ -97,11 +97,12 @@ source.
 (`review_turns.py`, schema `review-turns.v1`, JSON with sorted keys) lists one entry per
 review turn of the issue: a turn is a non-carried acceptance proof, as in the report above.
 It is read-only and offline: it reads the proof store, the review ledger, the campaign remarks
-receipt and the PLP-316 invocation record and writes nothing
-(`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory
-before and after). No gate, routing or merge reads it
+receipt, the campaign attempts journal (`campaign_effects.read_attempts`, file
+`campaign-attempts.jsonl` of the state directory) and the PLP-316 invocation record and writes nothing
+(`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory,
+journal included, before and after). No gate, routing or merge reads it
 (`test_only_the_cli_verb_imports_review_turns`); it changes neither the proof format nor
-`record-review-proof`. Per turn, with the source of each field (also emitted as `sources`):
+`record-review-proof`. Per turn, with the source of each field (`sources` emits one entry per field, `unrecorded` excepted; `test_sources_cover_every_emitted_field`):
 
 - `rank`: order of the ledger `completed_at` bound to the proof diff hash, then
   `generation`; a turn without a recorded time ranks after the timed ones.
@@ -109,20 +110,33 @@ before and after). No gate, routing or merge reads it
 - `verdict` (`validated` when quality is `mergeable` and every criterion passes, else
   `blocked`, as `review_rounds`), `quality`, `criteria_pass`, `criteria`: the proof.
 - `remarks`: the number of remarks of the receipt `review-remarks/<namespace>/<proof id>`
-  (`review_remarks.py`), checked against the proof's issue, diff hash and generation.
+  (`review_remarks.py`), checked against the receipt schema version and the proof's issue, diff
+  hash and generation. Without a receipt, the count `fix_before_merge + non_blocking` of the
+  matching campaign journal record (see `type`), which is the same number
+  (`campaign_review.py`, remark sums checked at parse time); a receipt always wins.
 - `reviewer_model`, `reviewer_effort`, `reviewer_host`: the first reviewer record of the
   invocation log for this issue and this head (`invocation_log.invocations_for_diff`); this is
   the model requested at routing, not an observation of the model that ran.
-- `type` (full or partial): always `null`. `prepare-review --previous-head` writes the
-  declared head only to `coordinates.json` of the packet directory the caller chose; neither a
-  proof nor a ledger record carries it (`review_packet.py`, `prepare_review_packet`), so no
-  recorded field proves a turn partial, and none proves it full.
+- `type` (`full` or `partial`): `review.partial` of the campaign attempts journal record
+  (`kind` `review`, `finished`, `ticket` the issue, `review.carried` false, `review.diff_hash` and
+  `review.head` equal to the proof's; `campaign_review.py` `REVIEW_KEYS`, written by the
+  review effect, `docs/campaign-effects.md`, "Partial review and proof carry"). Records with
+  `carried` true describe a carried proof, which is not a turn here, and are ignored. Outside a
+  campaign nothing records it: `prepare-review --previous-head` writes the declared head only to
+  `coordinates.json` of the packet directory the caller chose (`review_packet.py`,
+  `prepare_review_packet`), so a manual review has `type` `null`. The journal is read for the
+  whole state directory, not per repository namespace: it carries a ticket identifier only.
 
 A value no local source records is `null` and the turn's `unrecorded` maps the field to a
-reason: `previous_head_not_persisted` (type); `no_campaign_receipt` (remarks outside a campaign
-or before PAT-141: only the campaign receipt carries a count) or `receipt_unreadable`;
+reason: `no_campaign_record` (type: no matching journal record, e.g. outside a campaign),
+`attempts_journal_unreadable` (any journal line outside the contract, or an I/O error) or
+`ambiguous` (matching records that disagree on `partial` or the remark counts); `no_campaign_receipt`
+(remarks: no receipt and no matching journal record; the receipt is written only for a `mergeable`
+quality, so a blocked turn never has one, `review_remarks.py`, `campaign_review.py`, but its journal
+count fills `remarks`) or `receipt_unreadable`;
 `no_reviewer_record_for_head` (review before PLP-316, a Codex current context, or a head with
-no routed reviewer) or `invocation_log_unreadable`. Limits: two proofs of the same head share
+no routed reviewer) or `invocation_log_unreadable` (probed after a failed lookup, deduced: a log that changes between the
+lookup and the probe could still give the wrong reason). Limits: two proofs of the same head share
 the first reviewer record (deduced from the lookup rule of `invocations_for_diff`); the
 escalation ledger is not read, since it holds no per-turn field the proofs lack (deduced
 from reading `escalation.py`, not exhaustively checked); a proof file that cannot be read is

@@ -60,6 +60,19 @@ def _reviewer(state, issue, head, ident="a" * 16):
         "at": "2026-10-01T00:00:00.000000Z", "status": "routed"})
 
 
+def _attempt(state, issue, proof, partial=True, carried=False, fix=1, non_blocking=2, head=None, event="finished"):
+    record = {"schema_version": "foundry-campaign-attempts.v1", "event": event, "attempt": "a" * 8, "epic": "PLP-E", "ticket": issue,
+              "kind": "review", "status": "completed", "exit_code": 0, "cost_usd": None,
+              "duration_ms": 1, "summary_file": None, "branch_head": None, "error": None,
+              "at": "2026-10-01T00:00:00Z",
+              "review": {"verdict": "blocked", "fix_before_merge": fix, "non_blocking": non_blocking,
+                         "diff_hash": proof["coordinates"]["diff_hash"], "base": _hex("b", 40),
+                         "head": head or proof["coordinates"]["head"], "carried": carried,
+                         "partial": partial}}
+    with (Path(state) / "campaign-attempts.jsonl").open("a") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
 def _snapshot(root):
     return {str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns)
             for p in sorted(root.rglob("*")) if p.is_file()}
@@ -87,7 +100,7 @@ def test_unrecorded_data_is_null_with_reason(tmp_path):
     turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
     assert turn["type"] is None and turn["remarks"] is None and turn["reviewer_model"] is None
     assert turn["completed_at"] is None
-    assert turn["unrecorded"] == {"type": "previous_head_not_persisted", "remarks": "no_campaign_receipt",
+    assert turn["unrecorded"] == {"type": "no_campaign_record", "remarks": "no_campaign_receipt",
                                   "reviewer_model": "no_reviewer_record_for_head"}
 
 
@@ -104,6 +117,67 @@ def test_malformed_receipt_and_unreadable_log_are_reported(tmp_path):
     assert turn["unrecorded"]["reviewer_model"] == "invocation_log_unreadable"
 
 
+def test_type_comes_from_the_campaign_journal(tmp_path):
+    partial = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable", "2026-10-01T10:00:00Z")
+    full = _proof(tmp_path, "PLP-1", "2", ["pass", "fail"], "blocked", "2026-10-02T10:00:00Z", generation=2)
+    _attempt(tmp_path, "PLP-1", partial, partial=True)
+    _attempt(tmp_path, "PLP-1", full, partial=False, fix=2, non_blocking=1)
+    _attempt(tmp_path, "PLP-1", full, partial=False, fix=2, non_blocking=1)  # same retry: not ambiguous
+    _attempt(tmp_path, "PLP-1", partial, partial=False, carried=True)  # carried: ignored
+    _attempt(tmp_path, "PLP-9", full, partial=True)  # another ticket: ignored
+    one, two = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"]
+    assert (one["type"], two["type"]) == ("partial", "full")
+    assert "type" not in one["unrecorded"] and "type" not in two["unrecorded"]
+    # no receipt: the journal counts fill the remarks
+    assert (one["remarks"], two["remarks"]) == (3, 3)
+    assert "remarks" not in one["unrecorded"]
+
+
+def test_receipt_wins_over_journal_count(tmp_path):
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    _receipt(tmp_path, proof, [{"text": "n", "fix_before_merge": False, "target": "diff"}])
+    _attempt(tmp_path, "PLP-1", proof, fix=4, non_blocking=4)
+    assert review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]["remarks"] == 1
+
+
+def test_no_matching_record_or_other_head_gives_no_campaign_record(tmp_path):
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    _attempt(tmp_path, "PLP-1", proof, head=_hex("other", 40))
+    turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
+    assert turn["type"] is None and turn["unrecorded"]["type"] == "no_campaign_record"
+
+
+def test_unreadable_attempts_journal(tmp_path):
+    _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    (tmp_path / "campaign-attempts.jsonl").write_text("{not json\n")
+    turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
+    assert turn["type"] is None and turn["unrecorded"]["type"] == "attempts_journal_unreadable"
+
+
+def test_diverging_campaign_records_are_ambiguous(tmp_path):
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    _attempt(tmp_path, "PLP-1", proof, partial=True)
+    _attempt(tmp_path, "PLP-1", proof, partial=False)
+    turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
+    assert turn["type"] is None and turn["remarks"] is None
+    assert turn["unrecorded"]["type"] == "ambiguous"
+
+
+def test_receipt_with_another_schema_version_is_unreadable(tmp_path):
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    _receipt(tmp_path, proof, [])
+    path = review_remarks.ReviewRemarksStore(REPO, tmp_path).directory / proof["proof_id"]
+    path.write_text(path.read_text().replace('"schema_version": 1', '"schema_version": 2'))
+    assert review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]["unrecorded"]["remarks"] \
+        == "receipt_unreadable"
+
+
+def test_sources_cover_every_emitted_field(tmp_path):
+    _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
+    assert set(turn) - {"unrecorded"} <= set(review_turns.SOURCES)
+
+
 def test_no_proof_gives_no_turn(tmp_path):
     assert review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"] == []
 
@@ -112,6 +186,7 @@ def test_read_only_and_content_free(tmp_path):
     proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable", "2026-10-01T10:00:00Z")
     _receipt(tmp_path, proof, [{"text": "SECRET-TEXT", "fix_before_merge": False, "target": "diff"}])
     _reviewer(tmp_path, "PLP-1", proof["coordinates"]["head"])
+    _attempt(tmp_path, "PLP-1", proof)
     before = _snapshot(tmp_path)
     first = json.dumps(review_turns.report("PLP-1", REPO, state_dir=tmp_path), sort_keys=True)
     assert json.dumps(review_turns.report("PLP-1", REPO, state_dir=tmp_path), sort_keys=True) == first
@@ -123,7 +198,7 @@ def test_read_only_and_content_free(tmp_path):
 def test_module_has_no_network_tracker_or_write_surface():
     source = (PLUGIN_ROOT / "tooling" / "foundry" / "review_turns.py").read_text()
     imports = set(re.findall(r"^(?:from|import) ([\w.]+)", source, re.M))
-    assert imports <= {"__future__", "json", "re", "foundry", "foundry.review_rounds", "foundry.routing"}
+    assert imports <= {"__future__", "json", "re", "pathlib", "foundry", "foundry.review_rounds", "foundry.routing"}
     assert not re.search(r"\b(write_text|write_bytes|urlopen|socket|subprocess|record_routed|_append|"
                          r"\.record\(|mkdir|unlink|replace)\b", source)
 

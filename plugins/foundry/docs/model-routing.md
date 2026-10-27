@@ -298,7 +298,7 @@ returns `False` and changes no routing result, hook output, gate or merge. A val
 observed is `null` (the requested model is not the served model; no served model is
 recorded). No gate, routing decision or merge reads the file, and the review-proof format
 is unchanged (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
-The one reader outside routing is the offline report `routing token-attribution` (PLP-317, `token_attribution.py`, which only reads it): [cost-attribution.md](cost-attribution.md), "Rattachement des tokens à une issue et à un rôle".
+The readers outside routing are two offline reports that only read it: `routing token-attribution` (PLP-317, `token_attribution.py`) and `routing review-turns` (PLP-318, `review_turns.py`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue"). For the first: [cost-attribution.md](cost-attribution.md), "Rattachement des tokens à une issue et à un rôle".
 
 `routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR] [--repository NAMESPACE]`
 (`--repository` defaults to the identity derived from the origin URL of `--root`) prints
