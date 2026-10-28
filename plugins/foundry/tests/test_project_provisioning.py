@@ -293,6 +293,7 @@ def test_setup_refuses_a_manual_governed_project_before_publishing(monkeypatch, 
 
 
 def test_setup_relays_a_typed_refusal_but_not_another_error_text(monkeypatch, tmp_path):
+    from foundry.trackers.base import TrackerConflictError
     from foundry.trackers.devhub import DevHubGovernanceModeError
 
     def run(error, directory):
@@ -318,6 +319,8 @@ def test_setup_relays_a_typed_refusal_but_not_another_error_text(monkeypatch, tm
     other = run(RuntimeError("provider-internal-text"), tmp_path / "b")
     assert "Setup tracker refusé" in other and "indisponibles" in other
     assert "provider-internal-text" not in other
+    conflict = run(TrackerConflictError("conflict-internal-text"), tmp_path / "c")
+    assert "indisponibles" in conflict and "conflict-internal-text" not in conflict
 
 
 def test_unsupported_provider_refuses_before_resolution_or_mutation(monkeypatch, tmp_path):

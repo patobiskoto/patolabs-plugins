@@ -14,7 +14,6 @@ import sys
 
 import foundry
 from foundry import registry
-from foundry.trackers.base import TrackerConflictError
 
 
 def _parse_adr_md(text: str, filename: str):
@@ -151,11 +150,14 @@ def setup(name, short, repo, adr_dir=None):
     if tracker.name in registry._V1_TRACKERS and "canonical_repo" in project.extra:
         # A canonical entry without its marker fails closed (PAT-323): publish both.
         # Same read-back as `registry bootstrap`: exact identity, governance mode (PAT-321).
+        from foundry.trackers.devhub import DevHubGovernanceModeError
+
         try:
             verified = tracker.verify_project_identity(project)
-        except TrackerConflictError as exc:
-            # A typed refusal (for example DevHub governance mode) names its cause;
-            # any other error stays generic, as in `registry.verify_existing_project`.
+        except DevHubGovernanceModeError as exc:
+            # Only this typed DevHub refusal (PAT-321) names its cause; any other error,
+            # a TrackerConflictError included, stays generic, as in
+            # `registry.verify_existing_project` (PLP-14).
             raise SystemExit(f"Setup tracker refusé : {exc}") from None
         except Exception:
             raise SystemExit(

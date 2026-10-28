@@ -184,11 +184,11 @@ def test_devhub_adapter_refuses_a_checkout_active_on_another_provider(isolated, 
 def test_devhub_bootstrap_publishes_only_a_verified_foundry_governed_project(
     isolated, monkeypatch, capsys,
 ):
-    from foundry.trackers.base import TrackerConflictError
+    from foundry.trackers.devhub import DevHubGovernanceModeError
 
     repo = _repo(isolated, "acme", "same")
     monkeypatch.chdir(repo)
-    answers = iter([False, TrackerConflictError("gouvernance refusée"), True])
+    answers = iter([False, DevHubGovernanceModeError("KEY", "manual"), True])
 
     class Stand:
         def verify_project_identity(self, project):
@@ -201,7 +201,7 @@ def test_devhub_bootstrap_publishes_only_a_verified_foundry_governed_project(
     command = ["bootstrap", "devhub", "same", "KEY", "42"]
     with pytest.raises(SystemExit, match="étrangères ou contradictoires"):
         registry.main(command)
-    with pytest.raises(SystemExit, match="gouvernance refusée"):
+    with pytest.raises(SystemExit, match="mode de gouvernance 'manual'"):
         registry.main(command)
     assert registry.load() == {}
     assert not (repo / ".foundry/tracker.json").exists()

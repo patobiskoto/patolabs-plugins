@@ -388,9 +388,9 @@ is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2
 2.0.0 is in [`docs/migration-2.0.0.md`](docs/migration-2.0.0.md); the upgrade from 2.0.0 to
 2.1.0 is in [`docs/migration-2.1.0.md`](docs/migration-2.1.0.md); the upgrade from 2.1.1 to
 2.2.0 is in [`docs/migration-2.2.0.md`](docs/migration-2.2.0.md); the upgrade from 2.2.0 to
-2.3.0 is in [`docs/migration-2.3.0.md`](docs/migration-2.3.0.md); the prepared upgrade
-from 2.3.0 to 2.4.0 is in [`docs/migration-2.4.0.md`](docs/migration-2.4.0.md); the prepared upgrade
-from 2.4.0 to 2.5.0 is in [`docs/migration-2.5.0.md`](docs/migration-2.5.0.md); the prepared upgrade
+2.3.0 is in [`docs/migration-2.3.0.md`](docs/migration-2.3.0.md); the upgrade
+from 2.3.0 to 2.4.0 is in [`docs/migration-2.4.0.md`](docs/migration-2.4.0.md); the upgrade
+from 2.4.0 to 2.5.0 is in [`docs/migration-2.5.0.md`](docs/migration-2.5.0.md); the upgrade
 from 2.5.0 to 2.6.0 is in [`docs/migration-2.6.0.md`](docs/migration-2.6.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
@@ -882,7 +882,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0 and the prepared 2.4.0, 2.5.0 and 2.6.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.4.0, 2.5.0 and 2.6.0, all published and tagged), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in

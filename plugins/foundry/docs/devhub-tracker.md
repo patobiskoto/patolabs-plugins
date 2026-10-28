@@ -418,9 +418,10 @@ at `8028000`), both read in source, not run. DevHub documents the refusal in `TR
 since DEVHUB-116 (`12ca158:docs/TRACKER_API.md`, route table rows of the Epic closure and of the import, lines 320 and 322), which was not merged when this
 section was written (PAT-321); that merge is what PAT-326 follows.
 
-A project is in mode `manual` or `foundry`; DevHub refuses Foundry writes (proof-bound
-transitions and the routes of this page) outside `foundry`, with 403 `authority_boundary`.
-That code is shared with other authority refusals (for example a decided ADR, see
+A project is in mode `manual` or `foundry`; DevHub refuses the routes listed under "Guard
+on writes" below outside `foundry`, with 403 `authority_boundary` (source of each route
+there). Whether DevHub refuses any other Foundry write outside `foundry` is not established
+by this page: unknown. That code is shared with other authority refusals (for example a decided ADR, see
 `link_adr_issue`), so the adapter never names a governance cause from the code alone.
 
 - Identity read-back. `verify_project_identity` (`trackers/devhub.py`), after the identity
@@ -449,11 +450,18 @@ That code is shared with other authority refusals (for example a decided ADR, se
   wraps both already. On the status route governance is checked before the
   `superseded` refusal (409), so a Manual project gets 403 first (see "Proof-bound ADR
   supersession").
-- Callers. `registry.verify_existing_project` turns a `TrackerConflictError` of the
-  read-back into a `ValueError` carrying its message (any other exception keeps the generic
-  message), so a binding fails closed naming the mode; `registry bootstrap devhub` reaches
-  this path since PAT-323. `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
+- Callers. `registry.verify_existing_project` turns a `DevHubGovernanceModeError` of the
+  read-back, and only that error, into a `ValueError` carrying its message (any other
+  exception, a `TrackerConflictError` of another adapter included, keeps the generic
+  message, PLP-14), so a binding fails closed naming the mode; `registry bootstrap devhub`
+  reaches this path since PAT-323. `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
   `ghprojects`, so `doctor` does not read the governance mode of a DevHub project.
+- Not read at resolution. `resolve_checkout_project`, the DevHub checkout resolution
+  (`_read_back_registered` in `trackers/devhub.py`: one `GET /projects/resolve`, no
+  governance read), does not read the mode. A `manual` project is therefore named only after
+  a 403 `authority_boundary` on one of the wrapped routes above, or by the identity read-back
+  of `registry bootstrap devhub` or of `setup_project.setup`, which also calls
+  `verify_project_identity` and relays only `DevHubGovernanceModeError`.
 
 Tests: `tests/test_devhub_tracker.py`, section "PAT-321" (offline, scripted transport).
 Observed on 2026-10-21 on a disposable instance built from DevHub `8028000` (never
