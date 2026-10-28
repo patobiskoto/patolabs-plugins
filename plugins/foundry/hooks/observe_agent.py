@@ -35,7 +35,8 @@ def _is_background_launch(payload: dict) -> bool:
 
     Observed in transcripts: the Agent ``toolUseResult`` of a background launch holds
     ``isAsync: true`` / ``status: "async_launched"``. That the hook payload carries the
-    same object is deduced, not observed.
+    marker was observed on 2026-10-28 (PLP-335); which of the two keys is not observed.
+    The evidence chain is in ``docs/model-routing.md``, "Local invocation record".
     """
     response = payload.get("tool_response")
     return isinstance(response, dict) and (
