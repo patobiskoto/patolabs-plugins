@@ -371,6 +371,7 @@ class DevHubTracker(Tracker):
     project_provisioning_supported = True
     project_provisioning_requires_repository = True
     epic_subgraph_supported = True
+    kpi_publication_supported = True  # PLP-325: POST /api/economics/v2/.../observations:batch
     # PAT-309 / DHN-38: every proven review and done transition appends one
     # receipt in the server transaction, read by `read_proof_receipts`.
     append_only_lifecycle_supported = True

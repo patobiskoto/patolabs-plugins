@@ -3,8 +3,9 @@
 `python3 tooling/foundry_cli.py routing kpi-export ISSUE... --output FILE [--session <claude-main.jsonl>]...
 [--codex-session <rollout.jsonl>]... [--repository NS] [--root DIR]` (`tooling/foundry/kpi_export.py`, document
 schema `foundry-kpi-export.v1`, records of contract `devhub-observations.v2`, PLP-ADR-0061, DEVHUB-ADR-0017)
-writes one local file with the attempt, review-round and escalation records of the listed issues. Nothing is sent:
-the transmission to DevHub is a separate step of the maintainer.
+writes one local file with the attempt, review-round and escalation records of the listed issues. This verb sends
+nothing; the transmission is the separate, explicit verb `routing kpi-publish` described in
+[Publication to DevHub](#publication-to-devhub-plp-325).
 
 Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 
@@ -30,7 +31,7 @@ Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 | `omitted` | records that were not emitted, each with `issue`, `kind`, `reason` (and `rank`, `role`). |
 | `counts`, `issues`, `export_schema` | records per kind, the sorted issue list, the schema id. |
 
-Records are not sent as JSON Lines because the DevHub batch body is an object `{schema_version, records}`; a
+Records are not stored as JSON Lines because the DevHub batch body is an object `{schema_version, records}`; a
 transmitter takes `batches[i]` as is and looks up `provenance` by `record_id`.
 
 ## Common fields
@@ -160,3 +161,51 @@ the `at` of the first routed invocation of the same role and issue at `to_tier`,
 Run once on a copy of the state:
 `python3 tooling/foundry_cli.py routing kpi-export PLP-316 PLP-317 PLP-318 --output <file> --root <worktree>`
 prints the counts per kind and writes the file; running it twice produced identical bytes (checked on 2026-10-27).
+
+## Publication to DevHub (PLP-325)
+
+`python3 tooling/foundry_cli.py routing kpi-publish FILE --project KEY [--url URL] [--root DIR]`
+(`tooling/foundry/kpi_publish.py`, PLP-ADR-0061) sends each `batches[i]` of a `foundry-kpi-export.v1` file, as is, to
+`POST <url>/api/economics/v2/projects/<KEY>/observations:batch` (route and result shape: DevHub `docs/TRACKER_API.md`,
+"devhub-observations.v2", read, not run by this change). `provenance`, `omitted` and `counts` are not sent.
+
+Status of each documented artifact (AGENTS.md#R5):
+
+| Artifact | Status |
+|---|---|
+| verb `routing kpi-publish` and its options | documented here; `routing.py` registers it |
+| config key `DEVHUB_METRICS_TOKEN` | secret, resolved by `config.get` from the environment, then the keychain service `patolabs.foundry` (`_KEYCHAIN_SECRETS` in `config.py`), never from a plaintext file (`write_settings` refuses it). Dedicated to this write: `DEVHUB_TRACKER_TOKEN` is never used. DevHub requires the scope `foundry:metrics:write` for a write (`docs/TRACKER_API.md` of DevHub) |
+| config key `DEVHUB_URL` | unchanged; `--url` overrides it; validated by `devhub.validate_base_url` (HTTPS outside loopback) |
+| capability `kpi_publication_supported` | `trackers/base.py`, default `False`; `True` only in `DevHubTracker` (`trackers/devhub.py`). The active tracker (`foundry._effective_tracker_selection`) is read without instantiating it; any other adapter is refused, exit status 2, nothing sent |
+
+Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
+
+- Explicit only: `routing.py` is the only importer of `kpi_publish`; no hook, gate, merge or campaign imports it, and
+  `kpi_export.py` stays free of network code
+  (`test_only_the_cli_verb_imports_the_publisher_and_the_reader_stays_offline`).
+- Project key explicit: the document is refused, before any request, if one record `anchor.issue_id` does not start with
+  `<KEY>-`, or if a batch is malformed (`test_document_of_another_project_is_refused_before_any_request`).
+- Idempotence is DevHub's: records keep their `record_id`, so a second identical publication is answered `replayed`
+  per record (`test_publish_reports_created_replayed_and_refusals_and_republication_replays`). What DevHub answers for
+  a changed body under the same `record_id` (`idempotency_conflict`, see "Common fields") is reported as a refusal
+  with its code; it is not retried or rewritten.
+- Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
+  per-batch entries (`index`, `records`, and `error` when the whole batch failed) and `refusals` (`record_id`, `code`).
+  A batch-level failure (`http_<status>_<code>`, `tracker_unavailable`, `contract_mismatch`, `invalid_response`,
+  `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
+  (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
+- Exit status: 0 when every record is `created` or `replayed`, 1 when any record is refused or unsent, 2 for a refusal
+  before any request. Nothing else in Foundry reads this result; a failure changes no routing, gate, merge or campaign
+  (only `routing.py` calls the module; `test_run_exit_status_and_report`).
+- Bounds: at most `MAX_BATCH_RECORDS` (100) records and `MAX_BATCH_BYTES` (1 MiB) per batch, redirects are never
+  followed, `timeout` 10 s per request.
+
+The tests use a simulated loopback server whose answers follow the DevHub document cited above. Observed once on
+2026-10-28, on a disposable DevHub instance built from DevHub `9c5e504` on `127.0.0.1` (procedure of
+`devhub-requirements.md`, "Bring up a disposable instance"; project, anchor issues and a credential with
+`tracker:read` and `foundry:metrics:write` seeded by SQL), with a real export of 3 batches (100, 100, 38 records):
+the first run reported 238 `created`, exit status 0; the identical second run 238 `replayed`, exit status 0; the
+database then held 14 `attempt` and 224 `review_round` records. A wrong token gave `http_401_unauthenticated` on each
+batch, 238 `unsent`, exit status 1; `--project PLP` on that file was refused before any request, exit status 2. Not
+observed: a per-record refusal from the real server (covered by the simulated server only) and a changed body under
+the same `record_id`.
