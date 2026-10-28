@@ -305,14 +305,14 @@ no gain. Statuses:
 - **Not verified:** the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host, and the return to
   2.2.0 through an official manager (not tried, PAT-162).
 
-**Release 2.7.0, minor source candidate prepared under PLP-333:** both Foundry
-manifests declare **2.7.0**. This preparation carries PLP-334, PLP-332, PLP-330, PLP-329,
-PLP-328, PLP-326 and PLP-14 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md), removes their fragments,
-adds the [release note](plugins/foundry/docs/release-2.7.0.md),
-[upgrade and rollback guide](plugins/foundry/docs/migration-2.7.0.md) and freeze entry,
+**Release 2.8.0, minor source candidate prepared under PLP-339:** both Foundry
+manifests declare **2.8.0**. This preparation carries PLP-335 and PLP-325 into the dated
+[CHANGELOG](plugins/foundry/CHANGELOG.md), removes their fragments,
+adds the [release note](plugins/foundry/docs/release-2.8.0.md),
+[upgrade and rollback guide](plugins/foundry/docs/migration-2.8.0.md) and freeze entry,
 and updates the README references and CI release-version comment.
-Behaviour sources are in [kpi-export.md](plugins/foundry/docs/kpi-export.md),
-[devhub-tracker.md](plugins/foundry/docs/devhub-tracker.md) and the pages they link. The tag `foundry-v2.7.0`, host installation and listed/installed/loaded-version
+Behaviour sources are in [kpi-export.md](plugins/foundry/docs/kpi-export.md) and the pages it links.
+The tag `foundry-v2.8.0`, host installation and listed/installed/loaded-version
 readbacks are not done or claimed here.
 Merge, tag and host update retain separate agreements
 ([release skill](plugins/foundry/skills/release/SKILL.md), steps 5–7).
@@ -352,7 +352,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.7.0 (both host manifests; source candidate). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.8.0 (both host manifests; source candidate). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |

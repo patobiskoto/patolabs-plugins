@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.8.0 — 2026-10-28
+
+Minor release for publishing KPI records to DevHub: the new explicit verb
+`routing kpi-publish` sends a `routing kpi-export` file to DevHub with the new secret
+`DEVHUB_METRICS_TOKEN` and the new adapter capability `kpi_publication_supported`
+(PLP-325). PLP-335 changes documentation only. Preparation status and upgrade references
+are in `docs/release-2.8.0.md` and `docs/migration-2.8.0.md`.
+
+- PLP-335: the async-launch marker (`_is_background_launch`, `hooks/observe_agent.py`) is now recorded as observed in a real `PostToolUse` hook payload (2026-10-28, Foundry 2.7.0, background Agent), no longer as deduced; which of its two keys carried it stays not observed; the cause it relies on, `PostToolUse` firing at launch for a background Agent, is now recorded as observed too; no code change (`docs/model-routing.md`).
+- PLP-325: new explicit verb `routing kpi-publish FILE --project KEY` sends the batches of a `foundry-kpi-export.v1` file to DevHub `observations:batch` and reports `created`/`replayed`/refused per record; it needs the new secret `DEVHUB_METRICS_TOKEN` (stored with `configure credential --name DEVHUB_METRICS_TOKEN`, or the environment) and the new adapter capability `kpi_publication_supported` (DevHub only); no hook, gate, merge or campaign uses it (`docs/kpi-export.md`).
+
 ## 2.7.0 — 2026-10-28
 
 Minor release for the escalation time, the KPI export readers and DevHub transitions:
