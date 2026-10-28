@@ -1003,9 +1003,12 @@ class DevHubTracker(Tracker):
     def verify_project_identity(self, project: Project) -> bool:
         """Read back the exact project before a binding is published (DHN-41, PAT-314).
 
-        One ``GET /projects/resolve`` on the project's canonical repository; ``True`` only
-        when the server answers the same key, id and canonical repository.  An absent
-        or non-canonical ``canonical_repo``, or a 404, is ``False``; other errors raise.
+        One ``GET /projects/resolve`` on the project's canonical repository; the answer must
+        carry the same key, id and canonical repository.  An absent or non-canonical
+        ``canonical_repo``, a 404 or a contradicting answer is ``False``; other errors raise.
+        Once the identity holds, one ``GET /governance/projects/:key`` reads the governance
+        mode (PAT-321): ``manual`` raises ``DevHubGovernanceModeError``, an older server
+        without the route (mode unknown) is not refused, and only then is the result ``True``.
         """
         canonical = project.extra.get("canonical_repo")
         try:

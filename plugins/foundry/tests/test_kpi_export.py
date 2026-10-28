@@ -6,8 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from foundry import escalation, invocation_log, kpi_export
 from foundry.escalation import EscalationStore
+from foundry.routing import RoutingConfigError
 from test_review_turns import _attempt, _hex, _proof, _receipt, _snapshot
 from test_token_attribution import TOOL_USE, _claude_request, _claude_tree
 
@@ -250,6 +253,49 @@ def test_threshold_pricing_is_applied_per_request(tmp_path):
     assert 2566064 != round(0.5 * 1005 + 0.05 * 10050 + 0.625 * 100500 + 2.5 * 1005000)
 
 
+def test_amount_is_partial_only_when_a_one_hour_cache_write_may_be_included():
+    grid = json.loads((PLUGIN_ROOT / "tooling" / "foundry" / "pricing-v1.json").read_text())
+    tokens = {"input_tokens": 5, "cached_input_tokens": 50, "cache_write_input_tokens": 500, "output_tokens": 5000}
+    no_write = {**tokens, "cache_write_input_tokens": 0}
+
+    def completeness(model, usage):
+        return kpi_export._amount(grid, "claude", model, "2026-10-28", usage)[0]["completeness"]
+
+    # the sonnet-5.5 profiles ask for 1h cache writes (PAT-134), priced at the 5m rate: a lower bound
+    assert completeness("sonnet-5.5", tokens) == "partial"
+    assert completeness("claude-sonnet-5-5", tokens) == "partial"
+    assert completeness("sonnet-5.5", no_write) == "complete"
+    # the other pins carry no 1h request; the number itself does not change
+    assert completeness("opus-5.5", tokens) == "complete"
+    assert completeness("claude-sonnet-5", tokens) == "complete"
+    assert kpi_export._amount(grid, "claude", "sonnet-5.5", "2026-10-28", tokens)[0]["amount_micros"] == "51265"
+
+
+def test_partial_amount_says_so_in_its_provenance(tmp_path):
+    state = tmp_path / "state"
+    _routed(state, "PLP-1", "implementer", invocation_log.claude_invocation_id(TOOL_USE), model="sonnet-5.5",
+            at="2026-10-28T00:00:00.000000Z")
+    main = _claude_tree(tmp_path / "t", [], [("exact", [_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a")],
+                                              {"toolUseId": TOOL_USE}, "plain text")])
+    data, records = _records(_build(state, claude_sessions=[main]))
+    assert records[0]["amount"]["completeness"] == "partial"
+    assert "lower bound" in data["provenance"][records[0]["record_id"]]["from"]["amount"]
+
+
+def test_attempt_provenance_tells_a_routed_attempt_from_a_background_launch(tmp_path):
+    state = tmp_path / "state"
+    _routed(state, "PLP-1", "implementer", "a" * 16, host="codex", at="2026-10-28T00:00:00.000000Z")
+    _routed(state, "PLP-1", "implementer", "b" * 16, at="2026-10-28T00:01:00.000000Z")
+    invocation_log._append(invocation_log._path(REPO, state), {
+        "event": "completed", "id": "b" * 16, "at": "2026-10-28T00:01:01.000000Z",
+        "status": "unknown", "failure_class": "unknown"})
+    data, records = _records(_build(state))
+    by_host = {r["host"]: data["provenance"][r["record_id"]]["from"]["status"] for r in records}
+    assert "no completion event" in by_host["codex"] and "background" not in by_host["codex"]
+    assert "background launch" in by_host["claude"] and "no completion event" not in by_host["claude"]
+    assert {r["status"] for r in records} == {"unknown"}
+
+
 def test_threshold_amount_stays_null_without_request_granularity():
     grid = json.loads((PLUGIN_ROOT / "tooling" / "foundry" / "pricing-v1.json").read_text())
     tokens = {"input_tokens": 5, "cached_input_tokens": 50, "cache_write_input_tokens": 500, "output_tokens": 5000}
@@ -333,6 +379,23 @@ def test_only_escalated_receipts_carry_decided_at_and_old_ledgers_stay_valid(tmp
         "key-00000001"]
 
 
+@pytest.mark.parametrize("action, stamp", [
+    ("failure_recorded", "2026-10-05T12:00:00Z"),  # a receipt that is not an escalation
+    ("escalated", "2026-10-05 12:00:00"),  # malformed timestamp
+    ("escalated", 1790899200),  # not a string
+])
+def test_ledger_with_a_misplaced_or_malformed_decided_at_is_invalid(tmp_path, action, stamp):
+    _escalate(tmp_path)
+    store = EscalationStore(REPO, state_dir=tmp_path)
+    path = store.directory / "PLP-1.json"
+    ledger = json.loads(path.read_text())
+    target = [r for r in ledger["failure_receipts"].values() if r["decision"]["action"] == action]
+    assert len(target) == 1
+    target[0]["decided_at"] = stamp
+    with pytest.raises(RoutingConfigError, match="état d'escalade invalide pour PLP-1"):
+        store._normalize_state(ledger, "PLP-1")
+
+
 def test_no_decision_path_reads_decided_at():
     root = PLUGIN_ROOT / "tooling" / "foundry"
     readers = {p.name for p in root.rglob("*.py") if "decided_at" in p.read_text()}
@@ -398,7 +461,8 @@ def test_module_has_no_network_tracker_or_write_surface():
     source = (PLUGIN_ROOT / "tooling" / "foundry" / "kpi_export.py").read_text()
     imports = set(re.findall(r"^(?:from|import) ([\w.]+)", source, re.M))
     assert imports <= {"__future__", "hashlib", "json", "os", "re", "datetime", "decimal", "pathlib", "foundry",
-                       "foundry.escalation", "foundry.routing"}
+                       "foundry.escalation", "foundry.routing",
+                       "foundry.routing_facades"}  # only the CLAUDE_CACHE_TTL_1H_PINS constant is read (PLP-14)
     assert not re.search(r"\b(write_text|write_bytes|urlopen|socket|subprocess|record_routed|_append|"
                          r"mkdir|unlink|replace|rename|open\(.*['\"][wax])", source)
     assert "O_RDONLY" in source and "O_WRONLY" not in source and "O_CREAT" not in source
