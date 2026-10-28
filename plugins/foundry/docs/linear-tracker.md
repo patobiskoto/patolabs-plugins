@@ -1154,7 +1154,7 @@ the top of `set_state`; `_project_native_state` then reads the State again witho
 is still `backlog`, and the receipt chain is not read again afterwards: the window is wider than
 S1 to S2, with the same schema as the repair branch that follows it (bounded detection, not CAS).
 The other providers keep their behaviour from before PAT-165 for these transitions, except
-DevHub when an expected state is given (PLP-332, below):
+DevHub (PLP-332 with an expected state, PLP-334 read-back of the answer, below):
 `write.transition` adds no check for them (`guarded_backlog_return_supported` is `True`
 on Linear only). YouTrack writes the State through its bounded `set_state`
 (`youtrack.py`); GitHub Projects refuses `backlog` in its own `set_state`
