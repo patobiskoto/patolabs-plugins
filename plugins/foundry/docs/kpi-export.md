@@ -174,7 +174,7 @@ Status of each documented artifact (AGENTS.md#R5):
 | Artifact | Status |
 |---|---|
 | verb `routing kpi-publish` and its options | documented here; `routing.py` registers it |
-| config key `DEVHUB_METRICS_TOKEN` | secret, resolved by `config.get` from the environment, then the keychain service `patolabs.foundry` (`_KEYCHAIN_SECRETS` in `config.py`), never from a plaintext file (`write_settings` refuses it). Dedicated to this write: `DEVHUB_TRACKER_TOKEN` is never used. DevHub requires the scope `foundry:metrics:write` for a write (`docs/TRACKER_API.md` of DevHub) |
+| config key `DEVHUB_METRICS_TOKEN` | secret, resolved by `config.get` in its order: the environment variable, then `CLAUDE_PLUGIN_OPTION_DEVHUB_METRICS_TOKEN`, then the keychain service `patolabs.foundry` (`_KEYCHAIN_SECRETS` in `config.py`), then a line of the local config files (`_load_dev_files`); `write_settings` refuses to write it there. Store it in the keychain with `python3 tooling/foundry_cli.py configure credential --name DEVHUB_METRICS_TOKEN` (interactive, never on the command line); `configure show` reports `configured` or `missing`. Dedicated to this write: `DEVHUB_TRACKER_TOKEN` is never used. DevHub requires the scope `foundry:metrics:write` for a write (`docs/TRACKER_API.md` of DevHub) |
 | config key `DEVHUB_URL` | unchanged; `--url` overrides it; validated by `devhub.validate_base_url` (HTTPS outside loopback) |
 | capability `kpi_publication_supported` | `trackers/base.py`, default `False`; `True` only in `DevHubTracker` (`trackers/devhub.py`). The active tracker (`foundry._effective_tracker_selection`) is read without instantiating it; any other adapter is refused, exit status 2, nothing sent |
 
@@ -192,7 +192,7 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
 - Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
   per-batch entries (`index`, `records`, and `error` when the whole batch failed) and `refusals` (`record_id`, `code`).
   A batch-level failure (`http_<status>_<code>`, `tracker_unavailable`, `contract_mismatch`, `invalid_response`,
-  `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
+  `response_too_large`, `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
   (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
 - Exit status: 0 when every record is `created` or `replayed`, 1 when any record is refused or unsent, 2 for a refusal
   before any request. Nothing else in Foundry reads this result; a failure changes no routing, gate, merge or campaign
@@ -203,7 +203,7 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
 The tests use a simulated loopback server whose answers follow the DevHub document cited above. Observed once on
 2026-10-28, on a disposable DevHub instance built from DevHub `9c5e504` on `127.0.0.1` (procedure of
 `devhub-requirements.md`, "Bring up a disposable instance"; project, anchor issues and a credential with
-`tracker:read` and `foundry:metrics:write` seeded by SQL), with a real export of 3 batches (100, 100, 38 records):
+`tracker:read` and `foundry:metrics:write` seeded by SQL), with a real export of 3 batches (100, 100, 38 records) anchored on issues `DEVHUB-<n>`, published with `--project DEVHUB`:
 the first run reported 238 `created`, exit status 0; the identical second run 238 `replayed`, exit status 0; the
 database then held 14 `attempt` and 224 `review_round` records. A wrong token gave `http_401_unauthenticated` on each
 batch, 238 `unsent`, exit status 1; `--project PLP` on that file was refused before any request, exit status 2. Not

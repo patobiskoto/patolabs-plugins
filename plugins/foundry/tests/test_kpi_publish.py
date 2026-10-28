@@ -189,9 +189,41 @@ def test_metrics_token_is_a_keychain_secret_distinct_from_the_tracker_token():
 
 def test_only_the_cli_verb_imports_the_publisher_and_the_reader_stays_offline():
     tooling = PLUGIN_ROOT / "tooling"
-    importers = {p.name for p in tooling.rglob("*.py")
-                 if re.search(r"^\s*(from foundry import .*\bkpi_publish\b|from foundry\.kpi_publish\b)",
-                              p.read_text(), re.M)}
-    assert importers == {"routing.py"}
+    pattern = r"^\s*(from foundry import .*\bkpi_publish\b|from foundry\.kpi_publish\b|import foundry\.kpi_publish\b)"
+    importers = {p.relative_to(PLUGIN_ROOT).as_posix()
+                 for base in (tooling, PLUGIN_ROOT / "hooks") for p in base.rglob("*.py")
+                 if re.search(pattern, p.read_text(), re.M)}
+    assert importers == {"tooling/foundry/routing.py"}
     reader = (tooling / "foundry" / "kpi_export.py").read_text()
     assert "kpi_publish" not in reader and "urllib" not in reader
+
+
+def test_a_broken_http_answer_counts_the_batch_unsent_and_the_next_batch_is_still_sent(server, monkeypatch):
+    import http.client
+    srv = server()
+    real = kpi_publish.urllib.request.build_opener
+    calls = []
+
+    def opener(*handlers):
+        built = real(*handlers)
+        if not calls:
+            calls.append(1)
+            built.open = lambda *a, **k: (_ for _ in ()).throw(http.client.IncompleteRead(b""))
+        return built
+
+    monkeypatch.setattr(kpi_publish.urllib.request, "build_opener", opener)
+    report = kpi_publish.publish(_document(2, 2), "DEVHUB", url=srv.url, token=FAKE)
+    assert report["batches"][0]["error"] == "tracker_unavailable"
+    assert report["totals"]["unsent"] == 2 and len(srv.seen) == 1
+
+
+def test_configure_credential_accepts_the_metrics_token_and_show_reports_it(monkeypatch, capsys):
+    from foundry import configure
+    stored = []
+    monkeypatch.setattr(configure, "credential", stored.append)
+    configure.main(["credential", "--name", "DEVHUB_METRICS_TOKEN"])
+    assert stored == ["DEVHUB_METRICS_TOKEN"]
+    monkeypatch.setenv("DEVHUB_METRICS_TOKEN", FAKE)
+    configure.main(["show"])
+    out = capsys.readouterr().out
+    assert json.loads(out)["DEVHUB_METRICS_TOKEN"] == "configured" and FAKE not in out

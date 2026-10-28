@@ -371,7 +371,7 @@ After either installation, run `/foundry:configure` and `/foundry:doctor` in Cla
 or `$foundry:configure` and `$foundry:doctor` in Codex. Non-secret settings are shared in
 `~/.config/foundry/config.env`; credentials belong in the macOS keychain (or a secret
 manager-backed `YOUTRACK_TOKEN` / `LINEAR_API_TOKEN` / `DEVHUB_TRACKER_TOKEN` /
-`DEVHUB_TRACKER_PROOF_SECRET` / `DEVHUB_COMMAND_TOKEN` on other systems), never in a
+`DEVHUB_TRACKER_PROOF_SECRET` / `DEVHUB_COMMAND_TOKEN` / `DEVHUB_METRICS_TOKEN` on other systems), never in a
 repository or chat. Both runtimes also accept explicit provider and `FOUNDRY_*`
 environment variables. Linear's exact capability and binding contract is documented in
 [`docs/linear-tracker.md`](docs/linear-tracker.md).

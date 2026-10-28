@@ -6,6 +6,7 @@ Foundry reads its result. It never changes routing, delivery or tracker state.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import sys
@@ -94,7 +95,7 @@ def _post(url: str, project: str, token: str, body: bytes, timeout: float) -> di
         except Exception:
             pass
         return {"error": f"http_{error.code}_{code}"}
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         return {"error": "tracker_unavailable"}
     if len(raw) > MAX_RESPONSE_BYTES:
         return {"error": "response_too_large"}

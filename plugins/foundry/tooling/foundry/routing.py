@@ -2919,14 +2919,14 @@ def main(
                      help="Codex rollout log (coordinator or sub-agent)")
     kpi.add_argument("--repository", help="repo namespace; defaults to origin URL")
     kpi.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
-    kpi_publish = sub.add_parser(
+    kpi_publish_parser = sub.add_parser(
         "kpi-publish",
         help="send the batches of a kpi-export file to DevHub; the only network verb of the KPI export (PLP-325)",
     )
-    kpi_publish.add_argument("file", help="document written by `routing kpi-export`")
-    kpi_publish.add_argument("--project", required=True, help="DevHub project key; every record anchor must belong to it")
-    kpi_publish.add_argument("--url", help="DevHub base URL; defaults to DEVHUB_URL")
-    kpi_publish.add_argument("--root", help="Git worktree root used to find the active tracker")
+    kpi_publish_parser.add_argument("file", help="document written by `routing kpi-export`")
+    kpi_publish_parser.add_argument("--project", required=True, help="DevHub project key; every record anchor must belong to it")
+    kpi_publish_parser.add_argument("--url", help="DevHub base URL; defaults to DEVHUB_URL")
+    kpi_publish_parser.add_argument("--root", help="Git worktree root used to find the active tracker")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
