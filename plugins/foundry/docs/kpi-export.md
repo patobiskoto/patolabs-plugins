@@ -61,9 +61,9 @@ issue and the opaque invocation id (the invocation id itself is not emitted).
 | `attribution` | `exact`: the record carries the issue; `approximate` for `corrector` (the format requires `window` or `approximate`) | never |
 | `host`, `tier`, `effort`, `model.configured` | record `host`, `tier`, `effort`, `model_requested` (the model requested at routing) | not a valid `id` or not recorded |
 | `model.served` | none | always: the served model is not recorded locally |
-| `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` | never |
+| `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown`; a background Agent launch is also `unknown`/`unknown` (PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says so | never |
 | `started_at`, `observed_at` | `at` of the `routed` event | never |
-| `ended_at` | none: the completion time is not kept by the reader | always |
+| `ended_at` | none: the completion time is not kept by the reader, so a background launch has none either | always |
 | `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py` | no `--session`/`--codex-session` given, or the invocation is absent from the logs given |
 | `tokens.reasoning_output` | none: the per-invocation attachment carries the billing keys only; it is part of `output` and never enters a total | always |
 | `amount` | see below | no tokens, no price, or threshold pricing |

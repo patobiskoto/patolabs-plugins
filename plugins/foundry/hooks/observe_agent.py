@@ -30,6 +30,18 @@ from foundry.telemetry import TelemetryObserver  # noqa: E402
 from foundry import invocation_log  # noqa: E402
 
 
+def _is_background_launch(payload: dict) -> bool:
+    """True when ``tool_response`` carries the async-launch marker (PLP-329).
+
+    Observed in transcripts: the Agent ``toolUseResult`` of a background launch holds
+    ``isAsync: true`` / ``status: "async_launched"``. That the hook payload carries the
+    same object is deduced, not observed.
+    """
+    response = payload.get("tool_response")
+    return isinstance(response, dict) and (
+        response.get("isAsync") is True or response.get("status") == "async_launched")
+
+
 def observe(payload: object, *, environ=None) -> bool:
     """Consume and privately record one real host callback, if it was prepared."""
     if not isinstance(payload, dict):
@@ -37,7 +49,10 @@ def observe(payload: object, *, environ=None) -> bool:
     correlation = payload.get("tool_use_id")
     event_name = payload.get("hook_event_name")
     if event_name == "PostToolUse":
-        status, failure_class = "completed", "none"
+        # PLP-329: PostToolUse fires at launch for a background Agent; its real end is
+        # not observed (no hook wired), so the status stays unknown, never completed.
+        status, failure_class = (("unknown", "unknown") if _is_background_launch(payload)
+                                 else ("completed", "none"))
     elif event_name == "PostToolUseFailure":
         status, failure_class = "failed", "host"
     else:
