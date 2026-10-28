@@ -1093,6 +1093,26 @@ def test_route_signals_count_actual_fallbacks_and_only_override_warnings(
     assert row["signals"]["host_override_count"]["value"] == override_count
 
 
+def test_background_post_hook_completes_telemetry_as_unknown(tmp_path):
+    """PLP-329: a background launch is never recorded as a completed telemetry run."""
+    data_dir = tmp_path / "state"
+    data_dir.mkdir()
+    environ = {"FOUNDRY_DATA": str(data_dir)}
+    tool_input = {"subagent_type": "foundry:implementer", "prompt": _packet("x")}
+    route_agent.route_tool_input(
+        tool_input, cwd=tmp_path, environ=environ, correlation="host-tool-call-bg",
+    )
+    assert observe_agent.observe({
+        "hook_event_name": "PostToolUse", "tool_use_id": "host-tool-call-bg",
+        "tool_response": {"isAsync": True, "status": "async_launched"},
+    }, environ=environ)
+    rows = [json.loads(line) for line in
+            (data_dir / "telemetry" / "journal.ndjson").read_text().splitlines()]
+    assert [(r["event"], r["status"], r["failure_class"]) for r in rows] == [
+        ("invocation_completed", "unknown", "unknown"),
+    ]
+
+
 def test_real_claude_post_hook_main_is_silent_and_records_only_controlled_completion(
     tmp_path, monkeypatch, capsys,
 ):

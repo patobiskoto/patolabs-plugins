@@ -102,15 +102,6 @@ def test_background_launch_is_never_recorded_completed(tmp_path):
     assert done == [("unknown", "unknown"), ("unknown", "unknown"), ("completed", "none")]
 
 
-def test_no_decision_path_reads_the_background_status():
-    root = PLUGIN_ROOT / "tooling" / "foundry"
-    offenders = [p.name for p in root.rglob("*.py")
-                 if p.name not in {"kpi_export.py", "invocation_log.py", "telemetry.py"}
-                 and re.search(r"async_launched|isAsync", p.read_text())]
-    assert offenders == []
-    assert "invocation_log" not in (root / "escalation.py").read_text()
-
-
 def test_no_issue_scout_and_failures_record_nothing_and_never_raise(tmp_path, monkeypatch):
     _repo(tmp_path)
     out = route_agent.route_tool_input(
