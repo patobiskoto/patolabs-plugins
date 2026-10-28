@@ -124,7 +124,7 @@ test/review aggregates are known, consume it once with
 flags.
 
 Claude's real post-tool hook is completely silent: it privately maps `PostToolUse` to
-`completed/none` and `PostToolUseFailure` to `failed/host`, emits no token, context,
+`completed/none` (`unknown/unknown` for a background launch, `docs/model-routing.md` "Local invocation record") and `PostToolUseFailure` to `failed/host`, emits no token, context,
 instruction, or tool result, and cannot safely hand an aggregate-outcome bearer back to
 the coordinator. Timeout/cancellation detail and Claude aggregate outcomes are therefore
 unavailable rather than inferred. Missing capabilities, IO failure, or `observed=false` are fail-open and must not

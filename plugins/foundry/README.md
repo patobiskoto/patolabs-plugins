@@ -596,7 +596,7 @@ private append-only journal under `$FOUNDRY_DATA/telemetry`, never uploads, neve
 changes routing, and records no prompts, responses, code, paths, URLs, persistent
 identifiers, errors, or secrets. Each linked pair uses an observer-generated ephemeral
 one-time capability. Claude completion is observed privately by a completely silent
-post-Agent hook: it records only `completed/none` for `PostToolUse` or `failed/host` for
+post-Agent hook: it records only `completed/none` for `PostToolUse` (`unknown/unknown` for a background launch, `docs/model-routing.md` "Local invocation record", PLP-329) or `failed/host` for
 `PostToolUseFailure`, emits no context/bearer/instruction, and therefore cannot safely
 correlate a later aggregate outcome. Codex skills consume the plan's out-of-band
 capability only after a real subagent returns and must explicitly classify success, host

@@ -156,6 +156,10 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         status = item.get("status")
         status, failure = (("completed", "none") if status == "completed"
                            else ("failed", "host") if status == "failed" else ("unknown", "unknown"))
+        log_source = "invocation record (invocation_log.py)"
+        status_source = (log_source + " (last completion event)" if status != "unknown" else
+                         log_source + ": no completion event, or a background launch whose end the "
+                         "PostToolUse hook does not observe (PLP-329); no end time is emitted")
         material = {k: item.get(k) for k in invocation_log._FIELDS if k != "event"}
         attempt_id = "at-" + _digest("attempt", issue, item["id"])[:32]
         tokens = None
@@ -176,8 +180,8 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
             "effort": rec.put("effort", _id(item.get("effort")), log, "effort_not_recorded"),
             "model": {"configured": rec.put("model.configured", model, log + " (model requested)", "model_not_recorded"),
                       "served": rec.put("model.served", None, "", "the served model is not recorded locally")},
-            "status": rec.put("status", status, log + " (last completion event)"),
-            "failure_class": rec.put("failure_class", failure, log + " (last completion event)"),
+            "status": rec.put("status", status, status_source),
+            "failure_class": rec.put("failure_class", failure, status_source),
             "tokens": {
                 "input": None, "cached_input": None, "cache_write_input": None, "output": None,
                 "reasoning_output": rec.put("tokens.reasoning_output", None, "",

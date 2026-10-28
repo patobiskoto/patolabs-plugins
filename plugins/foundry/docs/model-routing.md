@@ -190,7 +190,7 @@ hook binds that projection to a keyed private callback entry. The real `PostTool
 `PostToolUseFailure` hook consumes it once and emits the private journal event, but is
 otherwise completely silent: no stdout/stderr, hook output, `additionalContext`, bearer,
 or telemetry instruction reaches the model. It maps only the trustworthy callback name:
-`PostToolUse` is `completed/none`, and `PostToolUseFailure` is `failed/host`. The current
+`PostToolUse` is `completed/none` (`unknown/unknown` for a background launch, see "Local invocation record" below, PLP-329), and `PostToolUseFailure` is `failed/host`. The current
 Claude hook boundary exposes no reliable finer timeout/cancellation class. Because a
 silent hook has no safe private return channel to the coordinator, Claude aggregate
 `run_outcome` correlation is unavailable rather than fabricated.
@@ -282,7 +282,7 @@ reviewer invocation that carries an issue (`FOUNDRY_ROUTE_REQUEST`), to
 (`registry.data_dir()`, the directory of the escalation and review-dedup stores, so it
 works with `FOUNDRY_DATA` unset; the opt-in telemetry journal is unchanged). Claude writes
 it from the `PreToolUse` hook (`hooks/route_agent.py`, only when the payload carries a `tool_use_id`, like the telemetry preparation) and updates the status from the
-`PostToolUse` hook (`hooks/observe_agent.py`: `completed`/`none` or `failed`/`host`);
+`PostToolUse` hook (`hooks/observe_agent.py`: `completed`/`none` or `failed`/`host`; PLP-329: `unknown`/`unknown` when `tool_response` is a dict with `isAsync` true or `status` `async_launched`, `_is_background_launch`). Cause, deduced and not observed: for a background Agent, `PostToolUse` fires at launch (a `completed` event 0.5 s after `routed` was observed on 2026-10-27 while the agent still worked). The marker is observed in the `toolUseResult` of session transcripts; that the hook payload's `tool_response` carries the same object is deduced. No hook for the real end is wired, and whether the host exposes the end of a background agent in a correlatable, verifiable way is unknown, so the status stays `unknown` with no end time invented; the Claude telemetry completion takes the same `unknown`/`unknown` (`COMPLETION_CLASSIFICATIONS`, `telemetry.py`). A synchronous return is unchanged. No routing or escalation decision reads it (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`);
 Codex writes it from `codex_spawn_plan` in `subagent` mode (`routing_facades.py`) and has
 no completion callback, so its status stays `routed`. A Codex `current_context` fallback,
 a deduplicated review, a Codex advisory (post-merge) review (`advisory=True`) and a local technical remediation are not invocations and are not

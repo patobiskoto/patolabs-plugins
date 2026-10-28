@@ -161,6 +161,20 @@ def test_attempts_tokens_and_estimated_amount(tmp_path):
     assert reviewer["ended_at"] is None and reviewer["effort"] == "xhigh" and reviewer["tier"] == "frontier"
 
 
+def test_background_launch_attempt_is_unknown_without_end_time_and_says_why(tmp_path):
+    """PLP-329: an `unknown` completion is never emitted as completed and has no end time."""
+    state = tmp_path / "state"
+    _routed(state, "PLP-1", "implementer", "e" * 16)
+    invocation_log._append(invocation_log._path(REPO, state), {
+        "event": "completed", "id": "e" * 16, "at": "2026-10-01T00:00:01.000000Z",
+        "status": "unknown", "failure_class": "unknown"})
+    data, records = _records(_build(state))
+    _check(records[0])
+    assert (records[0]["status"], records[0]["failure_class"], records[0]["ended_at"]) == (
+        "unknown", "unknown", None)
+    assert "background launch" in data["provenance"][records[0]["record_id"]]["from"]["status"]
+
+
 def test_unpriced_model_gives_a_null_amount_with_a_reason(tmp_path):
     state = tmp_path / "state"
     ident = invocation_log.claude_invocation_id(TOOL_USE)

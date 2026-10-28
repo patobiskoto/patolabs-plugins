@@ -86,6 +86,22 @@ def test_claude_routed_record_has_only_closed_fields_and_status_update(tmp_path)
     assert events[3]["status"] == "completed" and events[3]["failure_class"] == "none"
 
 
+def test_background_launch_is_never_recorded_completed(tmp_path):
+    """PLP-329: PostToolUse fires at launch for an async Agent; sync stays `completed`."""
+    _repo(tmp_path)
+    _claude(tmp_path, "implementer", "PLP-5", "toolu_bg_1")
+    _claude(tmp_path, "implementer", "PLP-5", "toolu_bg_2")
+    _claude(tmp_path, "implementer", "PLP-5", "toolu_sync")
+    for tid, response in (("toolu_bg_1", {"isAsync": True, "status": "async_launched"}),
+                          ("toolu_bg_2", {"status": "async_launched"}),
+                          ("toolu_sync", {"status": "completed", "content": []})):
+        observe_agent.observe({"hook_event_name": "PostToolUse", "tool_use_id": tid,
+                               "cwd": str(tmp_path), "tool_response": response}, environ={})
+    events, _ = _lines(tmp_path)
+    done = [(e["status"], e["failure_class"]) for e in events if e["event"] == "completed"]
+    assert done == [("unknown", "unknown"), ("unknown", "unknown"), ("completed", "none")]
+
+
 def test_no_issue_scout_and_failures_record_nothing_and_never_raise(tmp_path, monkeypatch):
     _repo(tmp_path)
     out = route_agent.route_tool_input(

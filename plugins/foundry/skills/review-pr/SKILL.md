@@ -195,7 +195,7 @@ kept `--claim-id`.
    state is known, consume it once through
    `telemetry outcome --capability <OUTCOME-CAPABILITY>` with controlled aggregate flags
    only. Claude's hook is completely silent and privately maps only `PostToolUse` to
-   `completed/none` and `PostToolUseFailure` to `failed/host`; timeout/cancellation
+   `completed/none` (`unknown/unknown` for a background launch, `docs/model-routing.md` "Local invocation record") and `PostToolUseFailure` to `failed/host`; timeout/cancellation
    detail and aggregate outcomes are unavailable at that host boundary, never inferred.
    Tokens never enter the reviewer packet. Missing state, IO failure, replay, or
    `observed=false` cannot change diff ownership, verdict, escalation, or any gate.

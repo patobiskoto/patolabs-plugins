@@ -159,7 +159,7 @@ review/test counters are known, consume it once using
 never enter the reviewer packet.
 
 Claude's post-tool hook emits no output/context/bearer. It privately records
-`PostToolUse` as `completed/none` and `PostToolUseFailure` as `failed/host`; the callback
+`PostToolUse` as `completed/none` (`unknown/unknown` for a background launch, `docs/model-routing.md` "Local invocation record") and `PostToolUseFailure` as `failed/host`; the callback
 does not expose trustworthy timeout/cancellation detail, and aggregate outcomes cannot
 be correlated without interfering with model context, so both remain unavailable.
 Missing state, IO failure, replay, or `observed=false`

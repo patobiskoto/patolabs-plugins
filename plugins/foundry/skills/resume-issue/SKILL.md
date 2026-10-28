@@ -253,7 +253,7 @@ Once aggregate test/review state is known, consume it once through `telemetry ou
 --capability <OUTCOME-CAPABILITY>` with controlled flags only.
 
 Claude's post-tool hook emits no output or context. Privately it records `PostToolUse` as
-`completed/none` and `PostToolUseFailure` as `failed/host`; the host boundary exposes no
+`completed/none` (`unknown/unknown` for a background launch, `docs/model-routing.md` "Local invocation record") and `PostToolUseFailure` as `failed/host`; the host boundary exposes no
 trustworthy timeout/cancellation detail and the silent hook cannot return an aggregate
 outcome bearer, so those Claude values remain unavailable. Tokens never enter task packets;
 absence, IO failure, replay, or `observed=false` cannot change retry, escalation, gates,

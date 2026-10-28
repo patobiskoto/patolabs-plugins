@@ -18,7 +18,7 @@ Les faits indisponibles sont `null` avec `unavailable`. Une absence de fait, mê
 | --- | --- | --- | --- |
 | Claude | `planned` | disponible | `PreToolUse` |
 | Claude | `delivered_to_host` | si stream disponible | `stream task_started` |
-| Claude | `terminal_observed` | disponible | `PostToolUse`, `PostToolUseFailure` ou terminal de stream |
+| Claude | `terminal_observed` | disponible | `PostToolUse` (sauf lancement en arrière-plan, `unknown/unknown`, voir `model-routing.md` « Local invocation record »), `PostToolUseFailure` ou terminal de stream |
 | Claude | `timeout_observed` | indisponible | aucune |
 | Claude | `cancellation_observed` | indisponible | aucune |
 | Codex | `planned` | disponible | plan explicite |
