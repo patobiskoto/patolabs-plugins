@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 2.7.0 — 2026-10-28
+
+Minor release for the escalation time and the KPI export readers:
+the escalation failure receipt gains an optional `decided_at` (PLP-326), the price grid
+covers the Claude 5.5 and Fable 5.1 models routed by Foundry (PLP-328), and a Claude Agent
+launched in the background is recorded `unknown` instead of `completed` (PLP-329).
+Foundry 2.6.0 and earlier reject a ledger holding a receipt with `decided_at`
+(`docs/migration-2.7.0.md`). PLP-330 changes tests only. Preparation status and upgrade
+references are in `docs/release-2.7.0.md` and `docs/migration-2.7.0.md`.
+
+- PLP-330: `tests/conftest.py` accepts both return shapes of pytest's mark-expression parser (a bare `ast.Expression` up to pytest 9.1, a tuple from 9.2), so collection no longer fails with `AttributeError` on pytest 9.2.
+- PLP-329: a Claude Agent launched in the background is no longer recorded `completed` in the local invocation record (PLP-316) at launch: `hooks/observe_agent.py` records `unknown`/`unknown` when `tool_response` carries `isAsync` true or `status` `async_launched` (deduced that the hook payload carries the marker seen in transcripts), and `routing kpi-export` emits that attempt as `unknown` with no end time and a provenance saying why; the real end stays unobserved (no hook wired). A synchronous launch is unchanged (`docs/model-routing.md`, `docs/kpi-export.md`).
+- PLP-328: the frozen price grid `pricing-v1.json` now prices the Claude models `sonnet-5.5`, `haiku-5.5`, `opus-5.5` and `fable-5.1` (Anthropic pricing page read on 2026-10-27, effective from that day; earlier validity unknown), so `routing kpi-export` gives an `estimated` amount for their attempts, `haiku-5.5` included: its 100000-token threshold is applied request by request (`over_threshold` in `cost_attribution.py`), and the amount stays `null` with reason `threshold_pricing_needs_per_request_tokens` only when per-request counts are missing (a codex row without request granularity). Existing entries and their `rate_version` are unchanged. `load_price_grid` no longer rejects a declared new version (`claude-sonnet-5-5`) as overlapping the historical wildcard (`claude-sonnet-5-*`); `price_for` also stops any `claude-sonnet-5-5-<suffix>` (dated or not) from matching it (`docs/cost-attribution.md`, `docs/kpi-export.md`).
+- PLP-326: every escalation receipt written from now on carries `decided_at`, the UTC time observed when the escalated decision was recorded (`escalation.py`); `routing kpi-export` uses it as the observed time of the `escalation` record and keeps the deduced upper bound, marked `deduced`, for older receipts. No routing or escalation decision reads it (`docs/kpi-export.md`). Foundry 2.6.0 and earlier reject a ledger holding such a receipt as invalid, so routing fails closed for that issue there: do not go back to such a version, or run one on another host, once a new escalation receipt exists.
+
 ## 2.6.0 — 2026-10-27
 
 Minor release for the local invocation record and the offline KPI readers of Epic
