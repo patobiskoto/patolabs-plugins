@@ -8,8 +8,8 @@ Minor release for the escalation time and the KPI export readers:
 the escalation failure receipt gains an optional `decided_at` (PLP-326), the price grid
 covers the Claude 5.5 and Fable 5.1 models routed by Foundry (PLP-328), and a Claude Agent
 launched in the background is recorded `unknown` instead of `completed` (PLP-329).
-Foundry 2.6.0 and earlier reject a ledger holding a receipt with `decided_at`
-(`docs/migration-2.7.0.md`). PLP-330 changes tests only. Preparation status and upgrade
+A return to 2.6.0, or a host left on it, is unsafe once a new escalation receipt exists
+(`docs/migration-2.7.0.md`, "Return to 2.6.0"). PLP-330 changes tests only. Preparation status and upgrade
 references are in `docs/release-2.7.0.md` and `docs/migration-2.7.0.md`.
 
 - PLP-330: `tests/conftest.py` accepts both return shapes of pytest's mark-expression parser (a bare `ast.Expression` up to pytest 9.1, a tuple from 9.2), so collection no longer fails with `AttributeError` on pytest 9.2.
