@@ -63,7 +63,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes ripgrep
-          pip install pytest pytest-xdist ruff==0.16.1
+          pip install pytest==9.2.0 pytest-xdist==3.8.0 ruff==0.16.1
       - name: Compile tooling
         run: python -m compileall tooling
       - name: Lint
@@ -130,7 +130,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes ripgrep
-          pip install pytest pytest-xdist
+          pip install pytest==9.2.0 pytest-xdist==3.8.0
       - name: Compile tooling and hooks
         run: python -m compileall tooling hooks
       - name: Validate model-routing invocation contract

@@ -4474,20 +4474,51 @@ def test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write(t
     assert [call[0] for call in tracker.calls] == ["GET"]
 
 
-def test_no_expected_state_still_writes_dropped_unguarded():
-    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="dropped", version=5)])
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_no_expected_state_still_writes_dropped_or_backlog_unguarded(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_the_read_version_is_sent_with_a_dropped_or_backlog_post(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert tracker.calls[1][3]["version"] == 4
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="ready", version=5)])
+    with pytest.raises(TrackerConflictError, match=f"answer carries native state ready, expected {target}"):
+        tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_an_answer_with_another_state_is_refused_without_an_expected_state(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="ready", version=5)])
+    with pytest.raises(TrackerConflictError, match=f"answer carries native state ready, expected {target}"):
+        tracker.set_state("TRAME-1", target, project=PROJECT)
+
+
+def test_an_answer_without_state_is_not_read_back_after_a_dropped_post():
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), None])
     tracker.set_state("TRAME-1", "dropped", project=PROJECT)
     assert [call[0] for call in tracker.calls] == ["GET", "POST"]
 
 
-@pytest.mark.parametrize("state, context", (
-    ("dropped", TransitionContext(expected_state="ready", merge_sha="c" * 40)),
-    ("dropped", TransitionContext(pr_url="https://x/pull/1")),
-    ("ready", TransitionContext(expected_state="backlog")),
-    ("in-progress", TransitionContext(expected_state="ready")),
+@pytest.mark.parametrize("state, context, cause", (
+    ("dropped", TransitionContext(expected_state="ready", merge_sha="c" * 40), "un champ de preuve"),
+    ("dropped", TransitionContext(pr_url="https://x/pull/1"), "un champ de preuve"),
+    ("dropped", TransitionContext(), "l'état attendu est absent"),
+    ("backlog", TransitionContext(), "l'état attendu est absent"),
+    ("ready", TransitionContext(expected_state="backlog"), "aucun contexte"),
+    ("in-progress", TransitionContext(expected_state="ready"), "aucun contexte"),
+    ("blocked", TransitionContext(expected_state="ready"), "aucun contexte"),
 ))
-def test_any_other_transition_context_is_refused_with_its_cause(state, context):
+def test_any_other_transition_context_is_refused_with_its_cause(state, context, cause):
     tracker = ScriptedTracker([])
-    with pytest.raises(ValueError, match="contexte de transition inattendu pour l'état"):
+    with pytest.raises(ValueError, match=f"contexte de transition inattendu pour l'état '{state}' : .*{cause}"):
         tracker.set_state("TRAME-1", state, context=context, project=PROJECT)
     assert tracker.calls == []

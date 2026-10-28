@@ -1153,7 +1153,8 @@ a return from `in-progress` has no such window). (2) The branch tests native `ba
 the top of `set_state`; `_project_native_state` then reads the State again without checking that it
 is still `backlog`, and the receipt chain is not read again afterwards: the window is wider than
 S1 to S2, with the same schema as the repair branch that follows it (bounded detection, not CAS).
-Other providers keep their behaviour from before PAT-165 for these transitions:
+The other providers keep their behaviour from before PAT-165 for these transitions, except
+DevHub (PLP-332 with an expected state, PLP-334 read-back of the answer, below):
 `write.transition` adds no check for them (`guarded_backlog_return_supported` is `True`
 on Linear only). YouTrack writes the State through its bounded `set_state`
 (`youtrack.py`); GitHub Projects refuses `backlog` in its own `set_state`
@@ -1163,7 +1164,7 @@ on Linear only). YouTrack writes the State through its bounded `set_state`
 `TrackerConflictError("DevHub <state> refused: native state is <read>, expected <expected>")`
 (PLP-332; `test_expected_state_guards_a_dropped_or_backlog_transition`,
 `test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`). Without an expected
-state it writes with no guard, as before PAT-165. See `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions".
+state it writes with no guard, as before PAT-165, but still reads back the answer (PLP-334). See `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions".
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,

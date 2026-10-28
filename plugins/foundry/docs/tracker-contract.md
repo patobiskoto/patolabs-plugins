@@ -720,12 +720,12 @@ request merged outside Foundry with no `state-done` receipt is not detected; `ed
 set-field <ISSUE-ID> State backlog` stays an unguarded grooming write. `issue start` on a
 returned issue rewrites the native State `in-progress` without a new receipt. The linked PR
 is neither closed nor modified and the command output names it. The capability flag is
-`guarded_backlog_return_supported` (`True` on Linear only). The other providers keep the
-behaviour they had before PAT-165 for these transitions: YouTrack writes the State through
+`guarded_backlog_return_supported` (`True` on Linear only). YouTrack and GitHub Projects keep the behaviour they had before PAT-165 for these transitions,
+and so does DevHub without an expected state except for the read-back of the answer (PLP-334): YouTrack writes the State through
 its bounded `set_state` (`youtrack.py`), GitHub Projects refuses `backlog` in its own
 `set_state` (`ghprojects.py`), DevHub keeps its own `set_state` check (`devhub.py`; since
-PLP-332 its `backlog` with an expected state only re-reads the issue and writes, or raises
-`TrackerConflictError` on a different state; any other context raises `ValueError`;
+PLP-332 its `backlog` with an expected state writes only after a re-read finds the expected state, and
+raises `TrackerConflictError` on a different state; any other context raises `ValueError`;
 `devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions"). Details: `linear-tracker.md`.
 
 YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
