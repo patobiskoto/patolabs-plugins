@@ -264,8 +264,13 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
             if record is not None:
                 if per_invocation is not None:
                     seen = per_invocation.setdefault(record["id"], {
-                        "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0)})
+                        "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0),
+                        "token_requests": [], "request_granularity": True})
                     seen["requests"] += len(row["token_requests"])
+                    seen["token_requests"].extend(
+                        {name: request[name] for name in BILLING_TOKEN_KEYS} for request in row["token_requests"])
+                    if row.get("request_granularity") is False:
+                        seen["request_granularity"] = False
                     for name in BILLING_TOKEN_KEYS:
                         seen["tokens"][name] += row["tokens"][name]
                 add(row["tokens"], len(row["token_requests"]), issue=record["issue"], method="exact", **common)

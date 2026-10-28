@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from foundry import cost_breakdown as cb
-from foundry.cost_attribution import PRICE_GRID_PATH, load_price_grid
+from foundry.cost_attribution import PRICE_GRID_PATH, load_price_grid, price_for
 
 RUNS = Path(__file__).resolve().parents[1] / "docs" / "qualification" / "pat-19-runs"
 
@@ -113,9 +113,11 @@ def test_haiku_4_5_stays_priced_only_by_the_existing_grid():
     assert any(e["model"] == "haiku-4.5" for e in load_price_grid(PRICE_GRID_PATH)["entries"])
 
 
-def test_existing_pricing_grid_is_untouched_and_has_no_5_5_entry():
+def test_the_breakdown_grid_stays_separate_from_the_frozen_grid():
+    """PLP-328 prices the 5.5 models in pricing-v1.json only from 2026-10-27; the breakdown grid is its own file."""
     assert cb.price_for(cb.load_grid(), "claude", "claude-sonnet-5-5", "2026-10-07") is not None
-    assert not any("5-5" in e["model"] or "5.5" in e["model"] for e in load_price_grid(PRICE_GRID_PATH)["entries"])
+    assert cb.GRID_PATH.name == "pricing-breakdown-v1.json" != PRICE_GRID_PATH.name
+    assert price_for(load_price_grid(PRICE_GRID_PATH), "claude", "claude-sonnet-5-5", "2026-10-07") is None
 
 
 def test_grid_is_dated_and_a_date_outside_the_window_has_no_price():

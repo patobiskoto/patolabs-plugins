@@ -114,7 +114,8 @@ class _Record:
         return {"from": dict(sorted(self.fields.items())), "null": dict(sorted(self.nulls.items()))}
 
 
-def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | None) -> tuple[dict | None, str | None]:
+def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | None,
+            requests: list | None = None) -> tuple[dict | None, str | None]:
     """An ``estimated`` amount from the frozen price grid, or None with a reason."""
     if tokens is None:
         return None, "no_tokens"
@@ -128,9 +129,15 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
     if price is None:
         return None, "no_price_for_model_and_date"
     if "context_threshold_tokens" in price:
-        return None, "threshold_pricing_needs_per_request_tokens"
-    total = sum(Decimal(str(tokens[name])) * Decimal(str(price["rates"][key]))
-                for key, name in _TOKEN_FIELDS)
+        if requests is None:
+            return None, "threshold_pricing_needs_per_request_tokens"
+        total = sum(Decimal(str(request[name]))
+                    * Decimal(str(price["over_threshold_rates" if cost_attribution.over_threshold(request, price)
+                                   else "rates"][key]))
+                    for request in requests for key, name in _TOKEN_FIELDS)
+    else:
+        total = sum(Decimal(str(tokens[name])) * Decimal(str(price["rates"][key]))
+                    for key, name in _TOKEN_FIELDS)
     version = "pricing-v1-" + hashlib.sha256(_canonical(price).encode("utf-8")).hexdigest()[:12]
     return {"amount_micros": str(total.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
             "currency": "USD", "unit": "micros", "method": "estimated",
@@ -157,7 +164,9 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         material["tokens"] = tokens
         rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
         model = _id(item.get("model_requested"))
-        amount, why = _amount(grid, item.get("host"), model, item["at"], tokens)
+        seen = usage[item["id"]] if tokens is not None else {}
+        requests = seen["token_requests"] if seen.get("request_granularity") is True else None
+        amount, why = _amount(grid, item.get("host"), model, item["at"], tokens, requests)
         log, host = "invocation record (invocation_log.py)", item.get("host")
         no_tokens = ("no session log given" if usage is None else "invocation absent from the given session logs")
         body = {

@@ -47,24 +47,57 @@ def _date(value: object) -> str:
     return value
 
 
+def _declared_apart(wildcard_stem: str, other: str) -> bool:
+    """True when ``other`` names a declared new wire version, not the wildcard's version.
+
+    A historical wildcard (``claude-sonnet-5-*``) must not capture a declared
+    newer version (``claude-sonnet-5-5``, whatever its suffix): the same exclusion rule
+    serves ``_matches`` (selection) and ``_overlap`` (grid loading).  Two
+    patterns whose canonical versions are equal, or undeclared, stay related.
+    """
+    from foundry.routing_facades import claude_policy_model
+    prefix = wildcard_stem.rstrip("-")
+    other = other.rstrip("-")
+    if not prefix or not other:
+        return False
+    canonical_prefix = claude_policy_model(prefix)
+    if canonical_prefix == prefix:
+        return False
+    cuts = [i for i, ch in enumerate(other) if ch == "-"] + [len(other)]
+    for cut in cuts:
+        base = other[:cut]
+        if len(base) < len(prefix):
+            continue
+        canonical_other = claude_policy_model(base)
+        if (canonical_other != base
+                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
+                != re.sub(r"-[0-9]{8}$", "", canonical_other)):
+            return True
+    return False
+
+
+def _cut_at_dash(pattern: str) -> bool:
+    # A wildcard whose stem does not end at '-' (``claude-sonnet-5-5-x*``) is treated as never
+    # apart, so it can report a false overlap; safe: the grid is refused, never mis-priced.
+    return not pattern.endswith("*") or pattern[:-1].endswith("-")
+
+
 def _overlap(left: str, right: str) -> bool:
     a, b = left.rstrip("*"), right.rstrip("*")
-    return left == right or (left.endswith("*") and b.startswith(a)) or (
-        right.endswith("*") and a.startswith(b))
+    if left == right:
+        return True
+    if left.endswith("*") and b.startswith(a):
+        return not (_declared_apart(a, b) and _cut_at_dash(right))
+    if right.endswith("*") and a.startswith(b):
+        return not (_declared_apart(b, a) and _cut_at_dash(left))
+    return False
 
 
 def _matches(pattern: str, model: str) -> bool:
     # A declared new wire version cannot inherit a historical wildcard rate.
     # Exact aliases and wildcards naming the new version still work in future grids.
     if pattern.endswith("*") and model.startswith(pattern[:-1]):
-        from foundry.routing_facades import claude_policy_model
-        prefix = pattern[:-1].rstrip("-")
-        canonical_prefix = claude_policy_model(prefix) if prefix else prefix
-        canonical_model = claude_policy_model(model)
-        if (canonical_prefix != prefix and canonical_model != model
-                and re.sub(r"-[0-9]{8}$", "", canonical_prefix)
-                != re.sub(r"-[0-9]{8}$", "", canonical_model)):
-            return False
+        return not _declared_apart(pattern[:-1], model)
     return model.startswith(pattern[:-1]) if pattern.endswith("*") else model == pattern
 
 
@@ -738,6 +771,12 @@ def _validated_usage(tokens: Mapping[str, object], *, allow_unavailable_reasonin
     return {**billing, "reasoning_output_tokens": parsed_reasoning}
 
 
+def over_threshold(tokens: Mapping[str, object], price: Mapping[str, object]) -> bool:
+    """Whether one request pays the over-threshold rates (context = input + cache read + cache write)."""
+    context = sum(tokens[name] for name in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens"))
+    return "context_threshold_tokens" in price and context > price["context_threshold_tokens"]
+
+
 def _price_chunk(tokens: Mapping[str, object], price: Mapping[str, object], *,
                  allow_unavailable_reasoning: bool = False) -> tuple[float, float, str]:
     """Apply the frozen grid to one request; shared by totals and position curves."""
@@ -747,8 +786,7 @@ def _price_chunk(tokens: Mapping[str, object], price: Mapping[str, object], *,
     standard = sum(normalized[name] * price["rates"][key] for name, key in (
         ("input_tokens", "input"), ("cached_input_tokens", "cached_input"),
         ("cache_write_input_tokens", "cache_write_input"), ("output_tokens", "output")))
-    context = sum(normalized[name] for name in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens"))
-    if "context_threshold_tokens" in price and context > price["context_threshold_tokens"]:
+    if over_threshold(normalized, price):
         current = sum(normalized[name] * price["over_threshold_rates"][key] for name, key in (
             ("input_tokens", "input"), ("cached_input_tokens", "cached_input"),
             ("cache_write_input_tokens", "cache_write_input"), ("output_tokens", "output")))
