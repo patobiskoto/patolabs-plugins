@@ -723,8 +723,10 @@ is neither closed nor modified and the command output names it. The capability f
 `guarded_backlog_return_supported` (`True` on Linear only). The other providers keep the
 behaviour they had before PAT-165 for these transitions: YouTrack writes the State through
 its bounded `set_state` (`youtrack.py`), GitHub Projects refuses `backlog` in its own
-`set_state` (`ghprojects.py`), DevHub keeps its own `set_state` check (`devhub.py`; its
-`backlog` with a context raises `ValueError`). Details: `linear-tracker.md`.
+`set_state` (`ghprojects.py`), DevHub keeps its own `set_state` check (`devhub.py`; since
+PLP-332 its `backlog` with an expected state only re-reads the issue and writes, or raises
+`TrackerConflictError` on a different state; any other context raises `ValueError`;
+`devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions"). Details: `linear-tracker.md`.
 
 YouTrack and Linear issue creation remain outside S5: they use provider-assigned or
 fresh client ids. GitHub Projects issue creation meets S5 within one Foundry data
