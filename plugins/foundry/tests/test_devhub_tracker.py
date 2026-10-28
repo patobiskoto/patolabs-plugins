@@ -3593,6 +3593,30 @@ def test_registry_binding_fails_closed_with_the_governance_message(monkeypatch, 
         )
 
 
+def test_registry_binding_keeps_the_generic_message_for_another_adapters_conflict(
+    monkeypatch, tmp_path,
+):
+    import subprocess
+    import foundry
+    from foundry import registry
+    from foundry.trackers.base import TrackerConflictError
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", "https://github.com/o/app.git"],
+        check=True,
+    )
+
+    class Conflicting:
+        def verify_project_identity(self, project):
+            raise TrackerConflictError("detail of another adapter")
+
+    monkeypatch.setattr(foundry, "tracker", lambda name, cwd=None: Conflicting())
+    with pytest.raises(ValueError, match="indisponibles à la relecture") as caught:
+        registry.verify_existing_project("youtrack", "app", "APP", "0-1", cwd=str(tmp_path))
+    assert "detail of another adapter" not in str(caught.value)
+
+
 def _state_refusal(path="/issues/TRAME-1/state"):
     return DevHubTrackerError("POST", path, 403, "authority_boundary")
 
@@ -3607,6 +3631,59 @@ def test_authority_boundary_on_a_write_is_a_governance_refusal_when_the_project_
     with pytest.raises(DevHubGovernanceModeError, match="'manual'"):
         tracker.set_adr_status(OLD, "accepted", project=PROJECT)
     assert tracker.calls[2][:2] == ("GET", "/governance/projects/TRAME")
+
+
+def _guarded_write_cases():
+    """Every write wrapped by `_governance_guard`, as (id, scripted reads before the write, call)."""
+    review = TransitionContext(
+        pr_url=issue_raw()["pr_url"], head_sha="a" * 40,
+        base_sha="d" * 40, review_digest="b" * 64,
+    )
+    newer = TransitionContext(
+        pr_url=review.pr_url, head_sha="e" * 40, base_sha=review.base_sha,
+        review_digest=review.review_digest,
+    )
+    done = TransitionContext(
+        pr_url=review.pr_url, head_sha=review.head_sha, base_sha=review.base_sha,
+        review_digest=review.review_digest, merge_sha="c" * 40,
+    )
+    decision = human_decision()
+    return [
+        ("set_state review back to in-progress",
+         [issue_raw(state="review", version=4), receipt_page([receipt_raw(1)])],
+         lambda t: t.set_state("TRAME-1", "review", context=newer, project=PROJECT)),
+        ("set_state review", [issue_raw()],
+         lambda t: t.set_state("TRAME-1", "review", context=review, project=PROJECT)),
+        ("set_state done", [issue_raw(state="review", version=4)],
+         lambda t: t.set_state("TRAME-1", "done", context=done, project=PROJECT)),
+        ("acceptance override",
+         [issue_raw(state="review", version=4), receipt_page([receipt_raw(1)])],
+         lambda t: t.project_acceptance_override(
+             "TRAME-1", OVERRIDE, REVIEW, project=PROJECT)),
+        ("human acceptance", [ready_issue(), receipt_page([])],
+         lambda t: t.accept_issue("TRAME-1", decision, project=PROJECT)),
+        ("supersede", [_supersede_listing()],
+         lambda t: t.supersede_adr(OLD, NEW, project=PROJECT)),
+        ("ADR import", [], lambda t: import_adr(t)),
+        ("Epic closure", [], lambda t: t.close_epic(PROJECT, closure_receipt_model())),
+    ]
+
+
+@pytest.mark.parametrize(
+    "reads, call", [case[1:] for case in _guarded_write_cases()],
+    ids=[case[0] for case in _guarded_write_cases()],
+)
+def test_every_guarded_write_names_a_manual_governance_after_an_authority_boundary(
+    monkeypatch, reads, call,
+):
+    from foundry.trackers.devhub import DevHubGovernanceModeError
+
+    monkeypatch.setattr("foundry.trackers.devhub.registry.load", lambda: {})
+    tracker = ScriptedTracker([*reads, _state_refusal(), governance_raw("manual")])
+    with pytest.raises(DevHubGovernanceModeError, match="'manual'"):
+        call(tracker)
+    assert tracker.calls[-1][:2] == ("GET", "/governance/projects/TRAME")
+    assert not tracker.responses
 
 
 def test_authority_boundary_on_a_write_stands_when_the_project_is_foundry_governed():
@@ -4377,4 +4454,71 @@ def test_a_terminal_issue_date_after_year_9999_is_refused_before_any_write():
     tracker._preflight_issues([record(253_402_300_799_999)])
     with pytest.raises(TrackerConflictError, match="dates source"):
         tracker._preflight_issues([record(253_402_300_800_000)])
+    assert tracker.calls == []
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_expected_state_guards_a_dropped_or_backlog_transition(target):
+    """PLP-332: re-read, write only when the state read is the expected one."""
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+    assert tracker.calls[1][2] == {"state": target}
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write(target):
+    tracker = ScriptedTracker([issue_raw(state="in-progress", version=4)])
+    with pytest.raises(TrackerConflictError, match="native state is in-progress, expected ready"):
+        tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_no_expected_state_still_writes_dropped_or_backlog_unguarded(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_the_read_version_is_sent_with_a_dropped_or_backlog_post(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert tracker.calls[1][3]["version"] == 4
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="ready", version=5)])
+    with pytest.raises(TrackerConflictError, match=f"answer carries native state ready, expected {target}"):
+        tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_an_answer_with_another_state_is_refused_without_an_expected_state(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="ready", version=5)])
+    with pytest.raises(TrackerConflictError, match=f"answer carries native state ready, expected {target}"):
+        tracker.set_state("TRAME-1", target, project=PROJECT)
+
+
+def test_an_answer_without_state_is_not_read_back_after_a_dropped_post():
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), None])
+    tracker.set_state("TRAME-1", "dropped", project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("state, context, cause", (
+    ("dropped", TransitionContext(expected_state="ready", merge_sha="c" * 40), "un champ de preuve"),
+    ("dropped", TransitionContext(pr_url="https://x/pull/1"), "un champ de preuve"),
+    ("dropped", TransitionContext(), "l'état attendu est absent"),
+    ("backlog", TransitionContext(), "l'état attendu est absent"),
+    ("ready", TransitionContext(expected_state="backlog"), "aucun contexte"),
+    ("in-progress", TransitionContext(expected_state="ready"), "aucun contexte"),
+    ("blocked", TransitionContext(expected_state="ready"), "aucun contexte"),
+))
+def test_any_other_transition_context_is_refused_with_its_cause(state, context, cause):
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError, match=f"contexte de transition inattendu pour l'état '{state}' : .*{cause}"):
+        tracker.set_state("TRAME-1", state, context=context, project=PROJECT)
     assert tracker.calls == []

@@ -65,6 +65,7 @@ _MAX_ADR_ITEMS = 1_000
 _MAX_ADR_PAGES = 100
 _MAX_RECEIPT_ITEMS = 1_000
 _MAX_RECEIPT_PAGES = 100
+_EXPECTED_STATE_TARGETS = frozenset({"backlog", "dropped"})
 _STATES = {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
 _START_TRANSITION_PATHS = {
     "backlog": ("ready", "in-progress"),
@@ -1003,9 +1004,12 @@ class DevHubTracker(Tracker):
     def verify_project_identity(self, project: Project) -> bool:
         """Read back the exact project before a binding is published (DHN-41, PAT-314).
 
-        One ``GET /projects/resolve`` on the project's canonical repository; ``True`` only
-        when the server answers the same key, id and canonical repository.  An absent
-        or non-canonical ``canonical_repo``, or a 404, is ``False``; other errors raise.
+        One ``GET /projects/resolve`` on the project's canonical repository; the answer must
+        carry the same key, id and canonical repository.  An absent or non-canonical
+        ``canonical_repo``, a 404 or a contradicting answer is ``False``; other errors raise.
+        Once the identity holds, one ``GET /governance/projects/:key`` reads the governance
+        mode (PAT-321): ``manual`` raises ``DevHubGovernanceModeError``, an older server
+        without the route (mode unknown) is not refused, and only then is the result ``True``.
         """
         canonical = project.extra.get("canonical_repo")
         try:
@@ -1426,9 +1430,33 @@ class DevHubTracker(Tracker):
             )):
                 raise ValueError("preuve done incomplète")
         elif context is not None:
-            raise ValueError("preuve de transition inattendue")
+            # PLP-332: `dropped` and `backlog` accept a bare predecessor coordinate
+            # (`edit transition <ID> <state> <expected-state>`) and nothing else.
+            if state not in _EXPECTED_STATE_TARGETS:
+                raise ValueError(
+                    f"contexte de transition inattendu pour l'état '{state}' : "
+                    "cet état n'admet aucun contexte, pas même un état attendu"
+                )
+            if any(getattr(context, key) for key in (*_RECEIPT_COORDINATES, "merge_sha")):
+                raise ValueError(
+                    f"contexte de transition inattendu pour l'état '{state}' : "
+                    "un champ de preuve a été passé, seul l'état attendu est admis"
+                )
+            if not context.expected_state:
+                raise ValueError(
+                    f"contexte de transition inattendu pour l'état '{state}' : "
+                    "l'état attendu est absent"
+                )
         project_key = self._require_issue_binding(issue_id, project)
         raw = self._bound_issue_raw(issue_id, project)
+        if context is not None and state in _EXPECTED_STATE_TARGETS:
+            # Bounded detection, not a CAS (PAT-ADR-0006): one fresh read, then one
+            # write.  An edit landing between the two is not detected by this check.
+            if raw.get("state") != context.expected_state:
+                raise TrackerConflictError(
+                    f"DevHub {state} refused: native state is {raw.get('state')}, "
+                    f"expected {context.expected_state}"
+                )
         if state == "review" and raw.get("state") == "review":
             # DevHub answers review -> review with the stored issue and no new
             # receipt (`transitionTrackerIssue`: `row.state === state`). A new PR
@@ -1458,10 +1486,17 @@ class DevHubTracker(Tracker):
                 resource_id=issue_id, version=raw["version"], context=context,
             )
         with self._governance_guard(project_key):
-            self._application_req(
+            answer = self._application_req(
                 "POST", f"/issues/{urllib.parse.quote(issue_id, safe='')}/state",
                 {"state": state}, version=raw["version"], proof=proof, idempotent=True,
             )
+        if state in _EXPECTED_STATE_TARGETS and isinstance(answer, dict) and "state" in answer:
+            # PLP-334 (PAT-ADR-0006 S3): the answer is the stored issue; no extra request.
+            if answer["state"] != state:
+                raise TrackerConflictError(
+                    f"DevHub {state} refused: the answer carries native state "
+                    f"{answer['state']}, expected {state}"
+                )
 
     @staticmethod
     def _stale_error(exc: DevHubTrackerError):

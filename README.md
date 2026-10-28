@@ -306,13 +306,13 @@ no gain. Statuses:
   2.2.0 through an official manager (not tried, PAT-162).
 
 **Release 2.7.0, minor source candidate prepared under PLP-333:** both Foundry
-manifests declare **2.7.0**. This preparation carries PLP-330, PLP-329, PLP-328 and
-PLP-326 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md), removes their fragments,
+manifests declare **2.7.0**. This preparation carries PLP-334, PLP-332, PLP-330, PLP-329,
+PLP-328, PLP-326 and PLP-14 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md), removes their fragments,
 adds the [release note](plugins/foundry/docs/release-2.7.0.md),
 [upgrade and rollback guide](plugins/foundry/docs/migration-2.7.0.md) and freeze entry,
 and updates the README references and CI release-version comment.
-Behaviour sources are in [kpi-export.md](plugins/foundry/docs/kpi-export.md) and the pages
-it links. The tag `foundry-v2.7.0`, host installation and listed/installed/loaded-version
+Behaviour sources are in [kpi-export.md](plugins/foundry/docs/kpi-export.md),
+[devhub-tracker.md](plugins/foundry/docs/devhub-tracker.md) and the pages they link. The tag `foundry-v2.7.0`, host installation and listed/installed/loaded-version
 readbacks are not done or claimed here.
 Merge, tag and host update retain separate agreements
 ([release skill](plugins/foundry/skills/release/SKILL.md), steps 5–7).

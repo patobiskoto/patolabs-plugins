@@ -371,6 +371,45 @@ per-call key and never raises `IssueCreationValidationError`; a client identifie
 `DevHubTracker._project_key`). Unknown: what the campaign does after a creation whose
 answer is lost beyond the two same-key attempts of one call.
 
+## Guarded `dropped` and `backlog` transitions (PLP-332)
+
+`edit transition <ID> dropped|backlog <expected-state>` builds a `TransitionContext` that carries
+only `expected_state` (`edit.py::transition`). `DevHubTracker.set_state` (`trackers/devhub.py`,
+`_EXPECTED_STATE_TARGETS`) then reads the issue once (`_bound_issue_raw`) and sends the
+`POST /issues/:id/state` only when the state read equals the expected state; otherwise it raises
+`TrackerConflictError` naming both, with no write (`DevHub dropped refused: native state is
+in-progress, expected ready`). Before PLP-332 any such context was refused with `preuve de transition
+inattendue`. This is bounded detection, not a CAS (PAT-ADR-0006): an edit landing between the read
+and the write is not detected by this check. The write carries the version read (`version=` in
+`set_state`). DevHub declares `expected_version` enforced with 409 `version_conflict`
+(`devhub-requirements.md:274` and `:596`, answer of the DevHub agent, `2edcea2`); that declaration
+is observed live only on the comment route (DHN-06,
+`tests/integration/test_devhub_live_conformance.py:303-316`), not on this route, so the window is
+stated as not closed. Without an expected state the command writes with no guard on the state read; the read-back below
+still applies. Any other context stays refused with `ValueError` whose text names the state and one of three
+causes (`set_state`): the state admits no context at all, not even an expected state (`ready`,
+`in-progress`, `blocked`); a proof field (`pr_url`, `head_sha`, `base_sha`, `review_digest`,
+`merge_sha`) was passed on `dropped`/`backlog`; or the expected state is missing on `dropped`/`backlog`.
+`review` and `done` are unchanged.
+
+Read-back (PLP-334, PAT-ADR-0006 S3): the `dropped`/`backlog` POST, with or without an expected
+state, is the only one whose answer `set_state` inspects. When the answer is an object carrying `state` and that state differs from the
+target, `set_state` raises `TrackerConflictError` (`the answer carries native state <state>,
+expected <target>`). That the answer is the stored issue is deduced from what DevHub answers to
+`review -> review` (`2edcea2:src/tracker/store.ts:1686`, section "Append-only lifecycle receipts"),
+not observed on this route; an answer with no `state` (or no body) is accepted without a read-back,
+so that case stays unverified. No extra request is made. Tests: `test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post`,
+`test_an_answer_with_another_state_is_refused_without_an_expected_state`,
+`test_an_answer_without_state_is_not_read_back_after_a_dropped_post`.
+
+Replay (deduced from `set_state`): after a lost POST answer, a replay of the same command re-reads
+the issue, finds the target state and fails closed (`native state is <target>, expected <state>`)
+instead of converging; the adapter keeps no key for it. Offline tests: `tests/test_devhub_tracker.py` (`test_expected_state_guards_a_dropped_or_backlog_transition`,
+`test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`,
+`test_no_expected_state_still_writes_dropped_or_backlog_unguarded`,
+`test_the_read_version_is_sent_with_a_dropped_or_backlog_post`,
+`test_any_other_transition_context_is_refused_with_its_cause`); no live test.
+
 ## Epic closure over a dropped child (PAT-313, DHN-24)
 
 The DevHub server closes an Epic whose direct children are all `done` or `dropped`, and
@@ -418,9 +457,10 @@ at `8028000`), both read in source, not run. DevHub documents the refusal in `TR
 since DEVHUB-116 (`12ca158:docs/TRACKER_API.md`, route table rows of the Epic closure and of the import, lines 320 and 322), which was not merged when this
 section was written (PAT-321); that merge is what PAT-326 follows.
 
-A project is in mode `manual` or `foundry`; DevHub refuses Foundry writes (proof-bound
-transitions and the routes of this page) outside `foundry`, with 403 `authority_boundary`.
-That code is shared with other authority refusals (for example a decided ADR, see
+A project is in mode `manual` or `foundry`; DevHub refuses the routes listed under "Guard
+on writes" below outside `foundry`, with 403 `authority_boundary` (source of each route
+there). Whether DevHub refuses any other Foundry write outside `foundry` is not established
+by this page: unknown. That code is shared with other authority refusals (for example a decided ADR, see
 `link_adr_issue`), so the adapter never names a governance cause from the code alone.
 
 - Identity read-back. `verify_project_identity` (`trackers/devhub.py`), after the identity
@@ -449,11 +489,18 @@ That code is shared with other authority refusals (for example a decided ADR, se
   wraps both already. On the status route governance is checked before the
   `superseded` refusal (409), so a Manual project gets 403 first (see "Proof-bound ADR
   supersession").
-- Callers. `registry.verify_existing_project` turns a `TrackerConflictError` of the
-  read-back into a `ValueError` carrying its message (any other exception keeps the generic
-  message), so a binding fails closed naming the mode; `registry bootstrap devhub` reaches
-  this path since PAT-323. `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
+- Callers. `registry.verify_existing_project` turns a `DevHubGovernanceModeError` of the
+  read-back, and only that error, into a `ValueError` carrying its message (any other
+  exception, a `TrackerConflictError` of another adapter included, keeps the generic
+  message, PLP-14), so a binding fails closed naming the mode; `registry bootstrap devhub`
+  reaches this path since PAT-323. `doctor.registered_project_diagnostic` calls `verify_project_identity` only for
   `ghprojects`, so `doctor` does not read the governance mode of a DevHub project.
+- Not read at resolution. `resolve_checkout_project`, the DevHub checkout resolution
+  (`_read_back_registered` in `trackers/devhub.py`: one `GET /projects/resolve`, no
+  governance read), does not read the mode. A `manual` project is therefore named only after
+  a 403 `authority_boundary` on one of the wrapped routes above, or by the identity read-back
+  of `registry bootstrap devhub` or of `setup_project.setup`, which also calls
+  `verify_project_identity` and relays only `DevHubGovernanceModeError`.
 
 Tests: `tests/test_devhub_tracker.py`, section "PAT-321" (offline, scripted transport).
 Observed on 2026-10-21 on a disposable instance built from DevHub `8028000` (never

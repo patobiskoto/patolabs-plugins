@@ -22,6 +22,7 @@ from pathlib import Path
 from foundry import campaign_effects, cost_attribution, invocation_log, registry, review_turns, token_attribution
 from foundry.escalation import EscalationStore, _strict_json_loads
 from foundry.routing import RoutingConfigError
+from foundry.routing_facades import CLAUDE_CACHE_TTL_1H_PINS
 
 EXPORT_SCHEMA = "foundry-kpi-export.v1"
 RECORD_SCHEMA = "devhub-observations.v2"
@@ -139,9 +140,14 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
         total = sum(Decimal(str(tokens[name])) * Decimal(str(price["rates"][key]))
                     for key, name in _TOKEN_FIELDS)
     version = "pricing-v1-" + hashlib.sha256(_canonical(price).encode("utf-8")).hexdigest()[:12]
+    # The host-log reader sums 5m and 1h cache writes (``cost_attribution._normalized_claude_usage``) and the
+    # grid has the 5m write rate only; the profiles of these pins ask for 1h writes (PAT-134), so a write
+    # on one of them may be underpriced: the amount is then a lower bound, ``partial`` (PLP-14).
+    one_hour = (host == "claude" and price["model"] in CLAUDE_CACHE_TTL_1H_PINS
+                and tokens["cache_write_input_tokens"] > 0)
     return {"amount_micros": str(total.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
             "currency": "USD", "unit": "micros", "method": "estimated",
-            "completeness": "complete", "rate_version": version}, None
+            "completeness": "partial" if one_hour else "complete", "rate_version": version}, None
 
 
 def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) -> tuple[list, list]:
@@ -153,13 +159,17 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         if started is None:
             continue
         role = "corrector" if item["role"] == "implementer" and item.get("correction") is True else item["role"]
-        status = item.get("status")
+        raw_status = status = item.get("status")
         status, failure = (("completed", "none") if status == "completed"
                            else ("failed", "host") if status == "failed" else ("unknown", "unknown"))
         log_source = "invocation record (invocation_log.py)"
-        status_source = (log_source + " (last completion event)" if status != "unknown" else
-                         log_source + ": no completion event, or a background launch whose end the "
-                         "PostToolUse hook does not observe (PLP-329); no end time is emitted")
+        if status != "unknown":
+            status_source = log_source + " (last completion event)"
+        elif raw_status == "unknown":  # written only by hooks/observe_agent.py for a background launch
+            status_source = (log_source + ": background launch whose end the PostToolUse hook "
+                             "does not observe (PLP-329); no end time is emitted")
+        else:  # `routed`: no completion event, every Codex attempt included
+            status_source = log_source + ": no completion event; no end time is emitted"
         material = {k: item.get(k) for k in invocation_log._FIELDS if k != "event"}
         attempt_id = "at-" + _digest("attempt", issue, item["id"])[:32]
         tokens = None
@@ -188,7 +198,10 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                                             "per-invocation attachment carries billing keys only"),
             },
             "amount": rec.put("amount", amount, "pricing-v1.json grid applied to the tokens (cost_attribution.price_for); "
-                              "API-equivalent estimate, not an invoice", why),
+                              "API-equivalent estimate, not an invoice"
+                              + ("; partial: a 1h cache write of this model would be priced at the 5m rate, "
+                                 "so the amount is a lower bound" if amount and amount["completeness"] == "partial"
+                                 else ""), why),
         }
         for key, name in _TOKEN_FIELDS:
             body["tokens"][key] = rec.put(f"tokens.{key}", None if tokens is None else tokens[name],
