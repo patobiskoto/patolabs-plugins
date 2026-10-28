@@ -204,7 +204,9 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     """Attach every readable token slice of the given logs; see the module docstring.
 
     ``per_invocation``, when a dict is given, is filled with the ``exact`` tokens keyed by
-    invocation id (``requests`` and ``tokens``); the returned report is unchanged (PLP-319).
+    invocation id (``requests``, ``tokens``, the per-request ``token_requests`` and
+    ``request_granularity``, false when a host log cannot give them, see `cost_attribution.read_host_log`); the returned
+    report is unchanged (PLP-319, PLP-328).
     """
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])
