@@ -76,14 +76,20 @@ def _declared_apart(wildcard_stem: str, other: str) -> bool:
     return False
 
 
+def _cut_at_dash(pattern: str) -> bool:
+    # A wildcard stem not ending at '-' (``claude-sonnet-5-5*``) is never apart:
+    # ``_matches`` finds no declared cut inside the models it captures.
+    return not pattern.endswith("*") or pattern[:-1].endswith("-")
+
+
 def _overlap(left: str, right: str) -> bool:
     a, b = left.rstrip("*"), right.rstrip("*")
     if left == right:
         return True
     if left.endswith("*") and b.startswith(a):
-        return not _declared_apart(a, b)
+        return not (_declared_apart(a, b) and _cut_at_dash(right))
     if right.endswith("*") and a.startswith(b):
-        return not _declared_apart(b, a)
+        return not (_declared_apart(b, a) and _cut_at_dash(left))
     return False
 
 

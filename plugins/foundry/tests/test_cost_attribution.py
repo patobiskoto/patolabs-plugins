@@ -91,6 +91,13 @@ def test_declared_new_version_is_not_an_overlap_of_the_historical_wildcard_but_r
             _grid(tmp_path, [other, _entry(host="claude", model="x", aliases=[alias])])
 
 
+def test_wildcard_not_cut_at_a_dash_overlaps_the_historical_wildcard(tmp_path):
+    old = _entry(host="claude", model="sonnet-5", aliases=["claude-sonnet-5-*"])
+    new = _entry(host="claude", model="sonnet-5.5", aliases=["claude-sonnet-5-5*"])
+    with pytest.raises(CostAttributionError, match="overlapping"):
+        _grid(tmp_path, [old, new])
+
+
 def test_reader_extracts_only_five_counters_and_resolves_codex_session_cwd(tmp_path):
     log = tmp_path / "rollout.jsonl"
     log.write_text("\n".join([

@@ -144,7 +144,7 @@ malformée est ignorée.
 
 ## Entrées Claude 5.5 et Fable 5.1 de la grille (PLP-328)
 
-`pricing-v1.json` porte, pour l'hôte `claude`, les entrées `sonnet-5.5`, `haiku-5.5`, `opus-5.5` et `fable-5.1`, avec la source `https://platform.claude.com/docs/en/about-claude/pricing` (tableau « Model pricing », tarifs de l'API directe, USD par million de tokens), lue le 2026-10-27 (`captured_at`). Les colonnes sont reportées comme pour les entrées existantes : `input` = entrée de base, `cache_write_input` = écriture de cache à 5 min, `cached_input` = lecture de cache, `output` = sortie.
+`pricing-v1.json` porte, pour l'hôte `claude`, les entrées `sonnet-5.5`, `haiku-5.5`, `opus-5.5` et `fable-5.1`, avec la source `https://platform.claude.com/docs/en/about-claude/pricing` (tableau « Model pricing », tarifs de l'API directe, USD par million de tokens), lue le 2026-10-27 (`captured_at` ; la date seule est connue, la partie heure `T00:00:00Z` est un remplissage, comme dans `qualification/pat-19-cost-breakdown-v1.md`). Les colonnes sont reportées comme pour les entrées existantes : `input` = entrée de base, `cache_write_input` = écriture de cache à 5 min, `cached_input` = lecture de cache, `output` = sortie.
 
 | Modèle | `input` | `cache_write_input` | `cached_input` | `output` |
 |---|---|---|---|---|
