@@ -204,7 +204,7 @@ def _attempt_amount(tmp_path, name, model, day):
     return records[0]["amount"], data["provenance"][records[0]["record_id"]]["null"].get("amount")
 
 
-def test_the_new_models_get_an_estimated_amount_except_the_threshold_one(tmp_path):
+def test_every_new_model_gets_an_estimated_amount(tmp_path):
     # tokens of the synthetic request: 5 input, 50 cached, 500 cache write, 5000 output
     expected = {"sonnet-5.5": "51265", "claude-sonnet-5-5": "51265", "claude-sonnet-5-5-20261101": "51265",
                 "opus-5.5": "102530", "claude-opus-5-5": "102530", "fable-5.1": "256313"}
@@ -212,12 +212,36 @@ def test_the_new_models_get_an_estimated_amount_except_the_threshold_one(tmp_pat
         amount, why = _attempt_amount(tmp_path, f"m{n}", model, "2026-10-28")
         assert (amount["amount_micros"], amount["method"], why) == (micros, "estimated", None), model
         assert amount["rate_version"].startswith("pricing-v1-")
-    # haiku-5.5 is priced by a 100000-token threshold; the export has no per-request counts
-    assert _attempt_amount(tmp_path, "h", "haiku-5.5", "2026-10-28") == (
-        None, "threshold_pricing_needs_per_request_tokens")
+    # haiku-5.5 is priced request by request: context 555 is under the 100000 threshold,
+    # 0.5 + 0.5 + 62.5 + 2500 = 2563.5 rounded half up
+    amount, why = _attempt_amount(tmp_path, "h", "haiku-5.5", "2026-10-28")
+    assert (amount["amount_micros"], amount["method"], why) == ("2564", "estimated", None)
     # the historical models keep their own rate, and the new entries start on 2026-10-27
     assert _attempt_amount(tmp_path, "s", "claude-sonnet-5", "2026-10-28")[0]["amount_micros"] == "51270"
     assert _attempt_amount(tmp_path, "e", "sonnet-5.5", "2026-10-26") == (None, "no_price_for_model_and_date")
+
+
+def test_threshold_pricing_is_applied_per_request(tmp_path):
+    state = tmp_path / "state"
+    _routed(state, "PLP-1", "implementer", invocation_log.claude_invocation_id(TOOL_USE), model="haiku-5.5",
+            at="2026-10-28T00:00:00.000000Z")
+    # request 1: context 555 (base rates); request 2 (x1000): context 111000 > 100000 (over rates)
+    requests = [_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a"),
+                _claude_request("2026-10-28T10:41:00.000Z", 1000, "sub1", "b")]
+    main = _claude_tree(tmp_path / "t", [], [("exact", requests, {"toolUseId": TOOL_USE}, "plain text")])
+    _, records = _records(_build(state, claude_sessions=[main]))
+    # base: 0.5 + 0.5 + 62.5 + 2500 = 2563.5 ; over: 500 + 500 + 62500 + 2500000 = 2563500 ; sum 2566063.5
+    assert records[0]["amount"]["amount_micros"] == "2566064"
+    # the same totals priced as one request would be over the threshold as a whole: 2576317.5
+    assert 2566064 != round(0.5 * 1005 + 0.05 * 10050 + 0.625 * 100500 + 2.5 * 1005000)
+
+
+def test_threshold_amount_stays_null_without_request_granularity():
+    grid = json.loads((PLUGIN_ROOT / "tooling" / "foundry" / "pricing-v1.json").read_text())
+    tokens = {"input_tokens": 5, "cached_input_tokens": 50, "cache_write_input_tokens": 500, "output_tokens": 5000}
+    assert kpi_export._amount(grid, "claude", "haiku-5.5", "2026-10-28", tokens, None) == (
+        None, "threshold_pricing_needs_per_request_tokens")
+    assert kpi_export._amount(grid, "claude", "haiku-5.5", "2026-10-28", tokens, [tokens])[0]["amount_micros"] == "2564"
 
 
 def _escalate(state, issue="PLP-1"):

@@ -77,8 +77,8 @@ def _declared_apart(wildcard_stem: str, other: str) -> bool:
 
 
 def _cut_at_dash(pattern: str) -> bool:
-    # A wildcard stem not ending at '-' (``claude-sonnet-5-5*``) is never apart:
-    # ``_matches`` finds no declared cut inside the models it captures.
+    # A wildcard whose stem does not end at '-' (``claude-sonnet-5-5-x*``) is treated as never
+    # apart, so it can report a false overlap; safe: the grid is refused, never mis-priced.
     return not pattern.endswith("*") or pattern[:-1].endswith("-")
 
 
@@ -771,6 +771,12 @@ def _validated_usage(tokens: Mapping[str, object], *, allow_unavailable_reasonin
     return {**billing, "reasoning_output_tokens": parsed_reasoning}
 
 
+def over_threshold(tokens: Mapping[str, object], price: Mapping[str, object]) -> bool:
+    """Whether one request pays the over-threshold rates (context = input + cache read + cache write)."""
+    context = sum(tokens[name] for name in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens"))
+    return "context_threshold_tokens" in price and context > price["context_threshold_tokens"]
+
+
 def _price_chunk(tokens: Mapping[str, object], price: Mapping[str, object], *,
                  allow_unavailable_reasoning: bool = False) -> tuple[float, float, str]:
     """Apply the frozen grid to one request; shared by totals and position curves."""
@@ -780,8 +786,7 @@ def _price_chunk(tokens: Mapping[str, object], price: Mapping[str, object], *,
     standard = sum(normalized[name] * price["rates"][key] for name, key in (
         ("input_tokens", "input"), ("cached_input_tokens", "cached_input"),
         ("cache_write_input_tokens", "cache_write_input"), ("output_tokens", "output")))
-    context = sum(normalized[name] for name in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens"))
-    if "context_threshold_tokens" in price and context > price["context_threshold_tokens"]:
+    if over_threshold(normalized, price):
         current = sum(normalized[name] * price["over_threshold_rates"][key] for name, key in (
             ("input_tokens", "input"), ("cached_input_tokens", "cached_input"),
             ("cache_write_input_tokens", "cache_write_input"), ("output_tokens", "output")))
