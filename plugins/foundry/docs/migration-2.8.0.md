@@ -16,8 +16,8 @@ reference. `routing kpi-publish` reads its input file and writes no local file
 One configuration key is added: the secret `DEVHUB_METRICS_TOKEN`, used only by
 `routing kpi-publish`. Its resolution order, its storage with
 `configure credential --name DEVHUB_METRICS_TOKEN` and the DevHub scope it needs are in
-[kpi-export.md](kpi-export.md#publication-to-devhub-plp-325). Nothing else reads it, and
-no hook, gate, merge or campaign runs `routing kpi-publish` (same page). A missing token
+[kpi-export.md](kpi-export.md#publication-to-devhub-plp-325). Nothing else uses it
+(`configure show` reports only whether it is set), and no hook, gate, merge or campaign runs `routing kpi-publish` (same page). A missing token
 changes nothing until the verb is run; the verb then refuses with exit status 2 and sends
 nothing.
 
