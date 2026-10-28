@@ -45,7 +45,7 @@ An official-manager downgrade to 2.6.0 has not been exercised here, and no rever
 migration is provided. Foundry 2.6.0 and earlier accept only the four failure receipt keys
 (`set(receipt) != _FAILURE_RECEIPT_KEYS` in their `escalation.py`), so they treat an
 escalation ledger holding a receipt with `decided_at` as invalid, and routing fails closed
-for that issue (deduced from the 2.6.0 source, not run; sources: [kpi-export.md](kpi-export.md#escalation)
+for that issue (deduced from the source of the tags `foundry-v2.0.0`, `foundry-v2.3.0`, `foundry-v2.5.0` and `foundry-v2.6.0`, which all carry that check; other earlier versions not checked; not run; sources: [kpi-export.md](kpi-export.md#escalation)
 and the PLP-326 fragment, assembled in the CHANGELOG). The same holds when one host runs
 2.6.0 and the other 2.7.0 against the same data directory, once a new escalation receipt
 exists. Do not return to 2.6.0 or earlier, nor leave one host on it, after the first new
