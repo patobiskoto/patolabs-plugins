@@ -24,9 +24,8 @@ That the real hook payload of a background launch carries the `isAsync` / `async
 marker that `_is_background_launch` reads is deduced from transcripts, not observed in a
 hook payload (`hooks/observe_agent.py`, docstring of `_is_background_launch`).
 
-One compatibility consequence is stated in [migration-2.7.0.md](migration-2.7.0.md):
-Foundry 2.6.0 and earlier reject an escalation failure receipt carrying `decided_at`
-(deduced from their source, not run).
+One compatibility consequence, for a return to 2.6.0 or a host left on it, is stated in
+[migration-2.7.0.md](migration-2.7.0.md), "Return to 2.6.0".
 
 ## Publication status
 
