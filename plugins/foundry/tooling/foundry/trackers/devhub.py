@@ -65,6 +65,7 @@ _MAX_ADR_ITEMS = 1_000
 _MAX_ADR_PAGES = 100
 _MAX_RECEIPT_ITEMS = 1_000
 _MAX_RECEIPT_PAGES = 100
+_EXPECTED_STATE_TARGETS = frozenset({"backlog", "dropped"})
 _STATES = {"backlog", "ready", "in-progress", "review", "blocked", "done", "dropped"}
 _START_TRANSITION_PATHS = {
     "backlog": ("ready", "in-progress"),
@@ -1429,9 +1430,28 @@ class DevHubTracker(Tracker):
             )):
                 raise ValueError("preuve done incomplète")
         elif context is not None:
-            raise ValueError("preuve de transition inattendue")
+            # PLP-332: `dropped` and `backlog` accept a bare predecessor coordinate
+            # (`edit transition <ID> <state> <expected-state>`) and nothing else.
+            if (
+                state not in _EXPECTED_STATE_TARGETS
+                or not context.expected_state
+                or any(getattr(context, key) for key in (*_RECEIPT_COORDINATES, "merge_sha"))
+            ):
+                raise ValueError(
+                    f"contexte de transition inattendu pour l'état '{state}' : "
+                    "seul un état attendu est admis pour backlog et dropped, "
+                    "aucune preuve pour les autres états"
+                )
         project_key = self._require_issue_binding(issue_id, project)
         raw = self._bound_issue_raw(issue_id, project)
+        if context is not None and state in _EXPECTED_STATE_TARGETS:
+            # Bounded detection, not a CAS (PAT-ADR-0006): one fresh read, then one
+            # write.  An edit landing between the two is not detected by this check.
+            if raw.get("state") != context.expected_state:
+                raise TrackerConflictError(
+                    f"DevHub {state} refused: native state is {raw.get('state')}, "
+                    f"expected {context.expected_state}"
+                )
         if state == "review" and raw.get("state") == "review":
             # DevHub answers review -> review with the stored issue and no new
             # receipt (`transitionTrackerIssue`: `row.state === state`). A new PR

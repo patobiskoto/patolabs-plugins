@@ -346,11 +346,11 @@ def test_strict_read_between_start_and_open_pr_fails_closed_after_a_return_from_
     assert tracker.observe_issue(issue_id).projection_status == "disagreement"
 
 
-def test_devhub_refuses_a_backlog_context():
-    """PAT-205: DevHub only declares the flag; its own check refuses the context."""
+def test_devhub_refuses_a_proof_in_a_backlog_context():
+    """PLP-332: only a bare expected state is admitted for ``backlog``; the cause is named."""
     tracker = object.__new__(DevHubTracker)
-    with pytest.raises(ValueError, match="preuve de transition inattendue"):
-        tracker.set_state("DEMO-1", "backlog", context=TransitionContext(expected_state="review"))
+    with pytest.raises(ValueError, match="contexte de transition inattendu pour l'état 'backlog'"):
+        tracker.set_state("DEMO-1", "backlog", context=TransitionContext(pr_url="https://x/pull/1", expected_state="review"))
 
 
 @pytest.mark.parametrize("upto", ("in-progress", "review"))
