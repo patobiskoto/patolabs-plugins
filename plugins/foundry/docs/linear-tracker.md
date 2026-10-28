@@ -1164,7 +1164,7 @@ on Linear only). YouTrack writes the State through its bounded `set_state`
 `TrackerConflictError("DevHub <state> refused: native state is <read>, expected <expected>")`
 (PLP-332; `test_expected_state_guards_a_dropped_or_backlog_transition`,
 `test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`). Without an expected
-state it writes with no guard, as before PAT-165. See `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions".
+state it writes with no guard, as before PAT-165, but still reads back the answer (PLP-334). See `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions".
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,

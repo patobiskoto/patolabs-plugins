@@ -4495,6 +4495,13 @@ def test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post
         tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
 
 
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_an_answer_with_another_state_is_refused_without_an_expected_state(target):
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="ready", version=5)])
+    with pytest.raises(TrackerConflictError, match=f"answer carries native state ready, expected {target}"):
+        tracker.set_state("TRAME-1", target, project=PROJECT)
+
+
 def test_an_answer_without_state_is_not_read_back_after_a_dropped_post():
     tracker = ScriptedTracker([issue_raw(state="ready", version=4), None])
     tracker.set_state("TRAME-1", "dropped", project=PROJECT)

@@ -385,24 +385,25 @@ and the write is not detected by this check. The write carries the version read 
 (`devhub-requirements.md:274` and `:596`, answer of the DevHub agent, `2edcea2`); that declaration
 is observed live only on the comment route (DHN-06,
 `tests/integration/test_devhub_live_conformance.py:303-316`), not on this route, so the window is
-stated as not closed. Without an expected state the command writes unguarded, as
-before. Any other context stays refused with `ValueError` whose text names the state and one of three
+stated as not closed. Without an expected state the command writes with no guard on the state read; the read-back below
+still applies. Any other context stays refused with `ValueError` whose text names the state and one of three
 causes (`set_state`): the state admits no context at all, not even an expected state (`ready`,
 `in-progress`, `blocked`); a proof field (`pr_url`, `head_sha`, `base_sha`, `review_digest`,
 `merge_sha`) was passed on `dropped`/`backlog`; or the expected state is missing on `dropped`/`backlog`.
 `review` and `done` are unchanged.
 
-Read-back (PLP-334, PAT-ADR-0006 S3): the `dropped`/`backlog` POST is the only one whose answer
-`set_state` inspects. When the answer is an object carrying `state` and that state differs from the
+Read-back (PLP-334, PAT-ADR-0006 S3): the `dropped`/`backlog` POST, with or without an expected
+state, is the only one whose answer `set_state` inspects. When the answer is an object carrying `state` and that state differs from the
 target, `set_state` raises `TrackerConflictError` (`the answer carries native state <state>,
-expected <target>`). That the answer is the stored issue is deduced from the comment of the
-`review -> review` branch above (line 207 of this page), not observed on this route; an answer with
-no `state` (or no body) is accepted without a read-back, so the absence of a read-back in that case
-is not closed. No extra request is made. Tests: `test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post`,
+expected <target>`). That the answer is the stored issue is deduced from what DevHub answers to
+`review -> review` (`2edcea2:src/tracker/store.ts:1686`, section "Append-only lifecycle receipts"),
+not observed on this route; an answer with no `state` (or no body) is accepted without a read-back,
+so that case stays unverified. No extra request is made. Tests: `test_an_answer_with_another_state_is_refused_after_a_dropped_or_backlog_post`,
+`test_an_answer_with_another_state_is_refused_without_an_expected_state`,
 `test_an_answer_without_state_is_not_read_back_after_a_dropped_post`.
 
 Replay (deduced from `set_state`): after a lost POST answer, a replay of the same command re-reads
-the issue, finds the target state and fails closed (`native state is dropped, expected <state>`)
+the issue, finds the target state and fails closed (`native state is <target>, expected <state>`)
 instead of converging; the adapter keeps no key for it. Offline tests: `tests/test_devhub_tracker.py` (`test_expected_state_guards_a_dropped_or_backlog_transition`,
 `test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`,
 `test_no_expected_state_still_writes_dropped_or_backlog_unguarded`,
