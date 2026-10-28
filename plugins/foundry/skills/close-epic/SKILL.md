@@ -101,7 +101,8 @@ no acceptance proof and the server receipt binds it with its state, and an Epic 
 children are all dropped and named closes there (the done-child rule above is Linear's) (`docs/devhub-tracker.md`,
 "Epic closure over a dropped child"). Never invent the list and never cancel an issue to make the command pass:
 abandoning is the maintainer's decision, done with
-`edit transition <ISSUE-ID> dropped <expected-state>`.
+`edit transition <ISSUE-ID> dropped <expected-state>` (on DevHub the state is re-read and a
+different one refuses without writing, a bounded check and not a CAS; `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions").
 
 This path performs no Git or code-host operation and never reuses the code-issue
 `done` transition. It requires an explicit human `accepted` verdict and nonempty Epic

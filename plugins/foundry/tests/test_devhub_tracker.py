@@ -4378,3 +4378,39 @@ def test_a_terminal_issue_date_after_year_9999_is_refused_before_any_write():
     with pytest.raises(TrackerConflictError, match="dates source"):
         tracker._preflight_issues([record(253_402_300_800_000)])
     assert tracker.calls == []
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_expected_state_guards_a_dropped_or_backlog_transition(target):
+    """PLP-332: re-read, write only when the state read is the expected one."""
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state=target, version=5)])
+    tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+    assert tracker.calls[1][2] == {"state": target}
+
+
+@pytest.mark.parametrize("target", ("dropped", "backlog"))
+def test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write(target):
+    tracker = ScriptedTracker([issue_raw(state="in-progress", version=4)])
+    with pytest.raises(TrackerConflictError, match="native state is in-progress, expected ready"):
+        tracker.set_state("TRAME-1", target, context=TransitionContext(expected_state="ready"), project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET"]
+
+
+def test_no_expected_state_still_writes_dropped_unguarded():
+    tracker = ScriptedTracker([issue_raw(state="ready", version=4), issue_raw(state="dropped", version=5)])
+    tracker.set_state("TRAME-1", "dropped", project=PROJECT)
+    assert [call[0] for call in tracker.calls] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("state, context", (
+    ("dropped", TransitionContext(expected_state="ready", merge_sha="c" * 40)),
+    ("dropped", TransitionContext(pr_url="https://x/pull/1")),
+    ("ready", TransitionContext(expected_state="backlog")),
+    ("in-progress", TransitionContext(expected_state="ready")),
+))
+def test_any_other_transition_context_is_refused_with_its_cause(state, context):
+    tracker = ScriptedTracker([])
+    with pytest.raises(ValueError, match="contexte de transition inattendu pour l'état"):
+        tracker.set_state("TRAME-1", state, context=context, project=PROJECT)
+    assert tracker.calls == []

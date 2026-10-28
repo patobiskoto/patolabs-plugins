@@ -371,6 +371,26 @@ per-call key and never raises `IssueCreationValidationError`; a client identifie
 `DevHubTracker._project_key`). Unknown: what the campaign does after a creation whose
 answer is lost beyond the two same-key attempts of one call.
 
+## Guarded `dropped` and `backlog` transitions (PLP-332)
+
+`edit transition <ID> dropped|backlog <expected-state>` builds a `TransitionContext` that carries
+only `expected_state` (`edit.py::transition`). `DevHubTracker.set_state` (`trackers/devhub.py`,
+`_EXPECTED_STATE_TARGETS`) then reads the issue once (`_bound_issue_raw`) and sends the
+`POST /issues/:id/state` only when the state read equals the expected state; otherwise it raises
+`TrackerConflictError` naming both, with no write (`DevHub dropped refused: native state is
+in-progress, expected ready`). Before PLP-332 any such context was refused with `preuve de transition
+inattendue`. This is bounded detection, not a CAS (PAT-ADR-0006): an edit landing between the read
+and the write is not detected by this check. The write carries the version read (`version=` in
+`set_state`); whether the server refuses a stale version on this route is not observed here, so
+the window is stated as not closed. Without an expected state the command writes unguarded, as
+before. Any other context stays refused with `ValueError` naming the state and the cause: a proof
+field (`pr_url`, `head_sha`, `base_sha`, `review_digest`, `merge_sha`) on `dropped`/`backlog`, or any
+context on `ready`, `in-progress` or `blocked`, or a context without `expected_state` on `dropped`/`backlog`. `review` and `done`
+are unchanged. Offline tests: `tests/test_devhub_tracker.py` (`test_expected_state_guards_a_dropped_or_backlog_transition`,
+`test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`,
+`test_no_expected_state_still_writes_dropped_unguarded`,
+`test_any_other_transition_context_is_refused_with_its_cause`); no live test.
+
 ## Epic closure over a dropped child (PAT-313, DHN-24)
 
 The DevHub server closes an Epic whose direct children are all `done` or `dropped`, and

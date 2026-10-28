@@ -1158,11 +1158,12 @@ Other providers keep their behaviour from before PAT-165 for these transitions:
 on Linear only). YouTrack writes the State through its bounded `set_state`
 (`youtrack.py`); GitHub Projects refuses `backlog` in its own `set_state`
 (`TrackerCapabilityUnavailableError`, capability `set_state`), before any read. DevHub's
-`set_state` refuses a context for any state other than review and done with
-`ValueError("preuve de transition inattendue")`, a message that does not name the cause, so
-`edit transition <ID> backlog <expected-state>` fails there (`test_devhub_refuses_a_backlog_context`);
-without an expected state it writes `backlog` with no guard, as before PAT-165 (`devhub.py::set_state`
-has no `backlog` check).
+`set_state` (`devhub.py`, `_EXPECTED_STATE_TARGETS`) reads the issue and writes `dropped` or
+`backlog` only when the state read equals the expected state, otherwise it raises
+`TrackerConflictError("DevHub <state> refused: native state is <read>, expected <expected>")`
+(PLP-332; `test_expected_state_guards_a_dropped_or_backlog_transition`,
+`test_divergent_state_refuses_a_dropped_or_backlog_transition_without_write`). Without an expected
+state it writes with no guard, as before PAT-165. See `docs/devhub-tracker.md`, "Guarded `dropped` and `backlog` transitions".
 
 Native `done` is stricter: it is never interpreted as Foundry completion by itself. A
 normal read accepts it only when a valid `state-done` receipt snapshots that exact state,
