@@ -260,14 +260,14 @@ the tag and the host update each need the maintainer's explicit authorization, a
 are recorded on the release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not
 verified: the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host.
 
-**Release 2.6.0, minor source candidate prepared under PLP-327:** both Foundry
-manifests declare **2.6.0**. This preparation carries PLP-319, PLP-318, PLP-317 and
-PLP-316 into the dated [CHANGELOG](CHANGELOG.md), removes their fragments,
-adds the [release note](docs/release-2.6.0.md),
-[upgrade and rollback guide](docs/migration-2.6.0.md) and freeze entry,
+**Release 2.7.0, minor source candidate prepared under PLP-333:** both Foundry
+manifests declare **2.7.0**. This preparation carries PLP-334, PLP-332, PLP-330, PLP-329,
+PLP-328, PLP-326 and PLP-14 into the dated [CHANGELOG](CHANGELOG.md), removes their fragments,
+adds the [release note](docs/release-2.7.0.md),
+[upgrade and rollback guide](docs/migration-2.7.0.md) and freeze entry,
 and updates the README references and CI release-version comment.
-Behaviour sources are in [kpi-export.md](docs/kpi-export.md) and the pages
-it links. The tag `foundry-v2.6.0`, host installation and listed/installed/loaded-version
+Behaviour sources are in [kpi-export.md](docs/kpi-export.md),
+[devhub-tracker.md](docs/devhub-tracker.md) and the pages they link. The tag `foundry-v2.7.0`, host installation and listed/installed/loaded-version
 readbacks are not done or claimed here.
 Merge, tag and host update retain separate agreements
 ([release skill](skills/release/SKILL.md), steps 5–7).
@@ -391,7 +391,8 @@ is in [`docs/migration-1.2.0.md`](docs/migration-1.2.0.md); the upgrade from 1.2
 2.3.0 is in [`docs/migration-2.3.0.md`](docs/migration-2.3.0.md); the upgrade
 from 2.3.0 to 2.4.0 is in [`docs/migration-2.4.0.md`](docs/migration-2.4.0.md); the upgrade
 from 2.4.0 to 2.5.0 is in [`docs/migration-2.5.0.md`](docs/migration-2.5.0.md); the upgrade
-from 2.5.0 to 2.6.0 is in [`docs/migration-2.6.0.md`](docs/migration-2.6.0.md). The former
+from 2.5.0 to 2.6.0 is in [`docs/migration-2.6.0.md`](docs/migration-2.6.0.md); the prepared upgrade
+from 2.6.0 to 2.7.0 is in [`docs/migration-2.7.0.md`](docs/migration-2.7.0.md). The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -882,7 +883,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.4.0, 2.5.0 and 2.6.0, all published and tagged), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.4.0, 2.5.0 and 2.6.0, all published and tagged, and the prepared 2.7.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
