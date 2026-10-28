@@ -460,7 +460,8 @@ by this page: unknown. That code is shared with other authority refusals (for ex
   (`_read_back_registered` in `trackers/devhub.py`: one `GET /projects/resolve`, no
   governance read), does not read the mode. A `manual` project is therefore named only after
   a 403 `authority_boundary` on one of the wrapped routes above, or by the identity read-back
-  of `registry bootstrap devhub`.
+  of `registry bootstrap devhub` or of `setup_project.setup`, which also calls
+  `verify_project_identity` and relays only `DevHubGovernanceModeError`.
 
 Tests: `tests/test_devhub_tracker.py`, section "PAT-321" (offline, scripted transport).
 Observed on 2026-10-21 on a disposable instance built from DevHub `8028000` (never

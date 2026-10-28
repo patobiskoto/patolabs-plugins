@@ -242,15 +242,19 @@ def test_threshold_pricing_is_applied_per_request(tmp_path):
     state = tmp_path / "state"
     _routed(state, "PLP-1", "implementer", invocation_log.claude_invocation_id(TOOL_USE), model="haiku-5.5",
             at="2026-10-28T00:00:00.000000Z")
-    # request 1: context 555 (base rates); request 2 (x1000): context 111000 > 100000 (over rates)
+    # request 1 (n=5 of _claude_request): context 555, base rates; request 2 (n=1000): context 111000 > 100000, over rates
     requests = [_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a"),
                 _claude_request("2026-10-28T10:41:00.000Z", 1000, "sub1", "b")]
     main = _claude_tree(tmp_path / "t", [], [("exact", requests, {"toolUseId": TOOL_USE}, "plain text")])
     _, records = _records(_build(state, claude_sessions=[main]))
     # base: 0.5 + 0.5 + 62.5 + 2500 = 2563.5 ; over: 500 + 500 + 62500 + 2500000 = 2563500 ; sum 2566063.5
     assert records[0]["amount"]["amount_micros"] == "2566064"
-    # the same totals priced as one request would be over the threshold as a whole: 2576317.5
-    assert 2566064 != round(0.5 * 1005 + 0.05 * 10050 + 0.625 * 100500 + 2.5 * 1005000)
+    # the same totals priced as one request are over the threshold as a whole: 2576317.5, not the sum above
+    grid = json.loads((PLUGIN_ROOT / "tooling" / "foundry" / "pricing-v1.json").read_text())
+    totals = {"input_tokens": 1005, "cached_input_tokens": 10050, "cache_write_input_tokens": 100500,
+              "output_tokens": 1005000}
+    one, _ = kpi_export._amount(grid, "claude", "haiku-5.5", "2026-10-28", totals, [totals])
+    assert one["amount_micros"] == "2576318"
 
 
 def test_amount_is_partial_only_when_a_one_hour_cache_write_may_be_included():

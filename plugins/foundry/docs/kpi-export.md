@@ -47,7 +47,8 @@ transmitter takes `batches[i]` as is and looks up `provenance` by `record_id`.
   (unknown: how DevHub answers `idempotency_conflict` in that case, not observed).
 - The `source.fingerprint` of an `attempt` does not include the price grid. An attempt exported with `amount` null
   before a price entry existed (PLP-328 added entries on 2026-10-27) and exported again once priced, or whose `amount`
-  changes after a grid change, keeps the same `record_id` with a different body (deduced from the fingerprint material
+  changes after a grid change or after its `completeness` turns `partial` (PLP-14, Sonnet 5.5 cache writes), keeps the
+  same `record_id` with a different body (deduced from the fingerprint material
   in `_attempts`; `record_id` is not changed). The transmitter must handle that case; how DevHub answers is unknown, not
   observed.
 - `started_at`, `observed_at`, `ended_at`: epoch milliseconds converted from source timestamps; the module reads no
