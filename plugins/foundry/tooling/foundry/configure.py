@@ -91,6 +91,7 @@ def show() -> None:
         "DEVHUB_TRACKER_TOKEN": "configured" if config.get("DEVHUB_TRACKER_TOKEN") else "missing",
         "DEVHUB_TRACKER_PROOF_SECRET": "configured" if config.get("DEVHUB_TRACKER_PROOF_SECRET") else "missing",
         "DEVHUB_COMMAND_TOKEN": "configured" if config.get("DEVHUB_COMMAND_TOKEN") else "missing",
+        "DEVHUB_METRICS_TOKEN": "configured" if config.get("DEVHUB_METRICS_TOKEN") else "missing",
         "FOUNDRY_TRACKER": config.tracker_name(),
         "FOUNDRY_CODEHOST": config.codehost_name(),
         "config_file": str(config.default_config_path()),
@@ -113,7 +114,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=[
             "YOUTRACK_TOKEN", "DEVHUB_TRACKER_TOKEN",
             "DEVHUB_TRACKER_PROOF_SECRET", "DEVHUB_COMMAND_TOKEN",
-            "LINEAR_API_TOKEN",
+            "DEVHUB_METRICS_TOKEN", "LINEAR_API_TOKEN",
         ],
     )
     sub.add_parser("show", help="show resolved settings with the token redacted")

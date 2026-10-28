@@ -183,6 +183,8 @@ class Tracker(ABC):
     project_provisioning_supported: bool = False
     project_provisioning_requires_repository: bool = False
     epic_subgraph_supported: bool = False
+    # PLP-325 / PLP-ADR-0061: `routing kpi-publish` may send a foundry-kpi-export.v1 document.
+    kpi_publication_supported: bool = False
     append_only_lifecycle_supported: bool = False
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False

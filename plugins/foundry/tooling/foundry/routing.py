@@ -2919,6 +2919,14 @@ def main(
                      help="Codex rollout log (coordinator or sub-agent)")
     kpi.add_argument("--repository", help="repo namespace; defaults to origin URL")
     kpi.add_argument("--root", help="Git worktree root used to derive the default repo namespace")
+    kpi_publish_parser = sub.add_parser(
+        "kpi-publish",
+        help="send the batches of a kpi-export file to DevHub; the only network verb of the KPI export (PLP-325)",
+    )
+    kpi_publish_parser.add_argument("file", help="document written by `routing kpi-export`")
+    kpi_publish_parser.add_argument("--project", required=True, help="DevHub project key; every record anchor must belong to it")
+    kpi_publish_parser.add_argument("--url", help="DevHub base URL; defaults to DEVHUB_URL")
+    kpi_publish_parser.add_argument("--root", help="Git worktree root used to find the active tracker")
     read_review = sub.add_parser(
         "read-review", help="emit only a currently claimed and hash-matched diff",
     )
@@ -3427,6 +3435,10 @@ def main(
             Path(args.output).write_bytes(document)
             print(json.dumps(json.loads(document)["counts"], sort_keys=True))
             return
+        if args.command == "kpi-publish":
+            from foundry import kpi_publish
+
+            sys.exit(kpi_publish.run(args.file, args.project, url=args.url, root=args.root))
         if args.command == "review-invocations":
             from foundry import invocation_log
 
