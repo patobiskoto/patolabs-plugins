@@ -902,6 +902,51 @@ def test_check_runs_falls_back_to_suites_and_keeps_latest_per_app(monkeypatch):
     assert any("/commits/sha/check-suites" in call for call in calls)
 
 
+def _primary_check_runs(monkeypatch, runs):
+    host = GitHubCodeHost()
+    monkeypatch.setattr(host, "_gh", lambda *_a, **_k: json.dumps(
+        {"total": len(runs), "batch": runs}))
+    return [(c.name, c.conclusion) for c in host.check_runs("owner/repo", "sha")]
+
+
+def test_check_runs_primary_route_keeps_newest_run_per_app_and_name(monkeypatch):
+    # PLP-336: an older workflow run (other check suite) left cancelled/red next to a
+    # newer green run of the same check on the same sha
+    runs = [
+        {"id": 100, "name": "plan", "status": "completed",
+         "conclusion": "cancelled", "app": "github-actions"},
+        {"id": 200, "name": "plan", "status": "completed",
+         "conclusion": "success", "app": "github-actions"},
+        {"id": 150, "name": "build", "status": "completed",
+         "conclusion": "failure", "app": "github-actions"},
+    ]
+    assert _primary_check_runs(monkeypatch, runs) == [
+        ("plan", "success"), ("build", "failure")]
+    assert _primary_check_runs(monkeypatch, runs[::-1]) == [
+        ("build", "failure"), ("plan", "success")]
+
+
+def test_check_runs_primary_route_keeps_same_name_from_two_apps(monkeypatch):
+    runs = [
+        {"id": 100, "name": "test", "status": "completed",
+         "conclusion": "failure", "app": "other-ci"},
+        {"id": 200, "name": "test", "status": "completed",
+         "conclusion": "success", "app": "github-actions"},
+    ]
+    assert sorted(_primary_check_runs(monkeypatch, runs)) == [
+        ("test", "failure"), ("test", "success")]
+
+
+def test_check_runs_primary_route_newest_red_still_blocks(monkeypatch):
+    runs = [
+        {"id": 100, "name": "plan", "status": "completed",
+         "conclusion": "success", "app": "github-actions"},
+        {"id": 200, "name": "plan", "status": "completed",
+         "conclusion": "failure", "app": "github-actions"},
+    ]
+    assert _primary_check_runs(monkeypatch, runs) == [("plan", "failure")]
+
+
 def test_check_runs_does_not_mask_non_404_errors(monkeypatch):
     host = GitHubCodeHost()
 

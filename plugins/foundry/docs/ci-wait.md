@@ -37,3 +37,39 @@ python3 tooling/foundry_cli.py issue wait-ci <PR-NUMBER> [--timeout=SECONDS] [--
   interpreter's behaviour on an uncaught exception, checked on the non-numeric PR number in
   `tests/test_issue_wait_ci.py`), not through `SystemExit`.
 - A push during the wait is not followed: the verdict is for the printed `sha`.
+
+## Limits of the CI gate's check-run reading (PLP-336)
+
+R5 status (AGENTS.md#R5, FOUNDRY-ADR-0018): documents the check-run deduplication of
+`GitHubCodeHost.check_runs` (`tooling/foundry/codehosts/github.py`,
+`_newest_per_app_and_name`), which feeds `write.ci_gate` for `issue wait-ci` and
+`issue merge`. The gate semantics of FOUNDRY-ADR-0002 are unchanged.
+
+Observed on 2026-10-29 (read-only `gh api`, a private repository of the maintainer, PR of
+2026-10-28, head sha carrying 3 runs of one workflow `ci`, each in its own check suite:
+two `workflow_dispatch` runs and one `pull_request` run):
+
+- `commits/{sha}/check-runs` with the default filter returned `total_count` 20: 7 + 7 + 6
+  check-runs, one group per suite; the same check names (`check`, `tracker-planning`, ...)
+  appeared once per suite, all from app `github-actions`.
+- the same endpoint with `filter=all` returned `total_count` 40; the 20 extra were earlier
+  attempts inside the same suites, among them `cancelled` and `failure` runs.
+- Conclusion, observed for the structure: the default filter supersedes reruns within one
+  check suite only, not distinct check suites (distinct workflow runs) on the same sha. The
+  earlier belief that the aggregate endpoint is latest-only across runs was wrong. That an
+  older run's `cancelled` check was what blocked the gate at the time of the original report
+  is deduced, not observed (the state at that moment was not captured).
+
+What `check_runs` now does, on the aggregate route and on the check-suites fallback alike:
+keep, for each (app, check name), the run with the highest check-run id.
+
+- Deduplicated: the same app and the same check name across suites or workflow runs of one
+  sha; the highest id wins, a newer red run still blocks. Reruns inside a suite are already
+  superseded by GitHub's default filter.
+- Not deduplicated: the same check name published by two different apps (both kept, so a
+  red one from either app blocks); commit statuses (the combined status endpoint already
+  returns the latest per context, `commit_statuses`; no cross-source merge by name,
+  FOUNDRY-ADR-0002).
+- Residual risk, deduced: two different workflows of the same app that publish the same job
+  name collapse to the newest; a red one with the lower id is then not seen. "Newest" is the
+  highest id, not a timestamp (same rule as before on the fallback route).

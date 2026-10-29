@@ -113,7 +113,9 @@ class GitHubCodeHost(CodeHost):
                            f"{endpoint}?per_page={self._PER_PAGE}&page={page}",
                            "--jq", "{total: .total_count, "
                                    "batch: [.check_runs[] "
-                                   "| {id, name, status, conclusion}]}")
+                                   "| {id, name, status, conclusion, "
+                                   "app: (.app.slug // .app.name "
+                                   "// \"unknown\")}]}")
             d = json.loads(out or '{"total": 0, "batch": []}')
             records.extend(d["batch"])
             if len(records) >= d["total"] or not d["batch"]:
@@ -127,10 +129,10 @@ class GitHubCodeHost(CodeHost):
     def _check_runs_via_suites(self, repo, sha) -> list[Check]:
         """Fallback when the aggregate commit/check-runs route is unavailable.
 
-        A SHA can have several suites for the same app after a workflow rerun. Keep
-        the newest run for each (app, check-name), matching the aggregate endpoint's
-        latest-only semantics rather than letting an obsolete red run block a newer
-        green one.
+        A SHA can have several suites for the same app (one per workflow run). Keep
+        the newest run (highest id) for each (suite app, check-name), the same rule
+        as `_newest_per_app_and_name` on the primary route, rather than letting an
+        obsolete red run block a newer green one.
         """
         suites, page = [], 1
         while True:
@@ -159,6 +161,21 @@ class GitHubCodeHost(CodeHost):
                       conclusion=run.get("conclusion"))
                 for run in latest.values()]
 
+    @staticmethod
+    def _newest_per_app_and_name(records) -> list[dict]:
+        """Keep the highest-id run per (app, check-name); different apps both stay.
+
+        GitHub's default `filter=latest` only supersedes reruns inside one check suite,
+        not distinct workflow runs on the same sha (PLP-336, docs/ci-wait.md "Limits").
+        """
+        latest = {}
+        for run in records:
+            key = (run.get("app") or "unknown", run["name"])
+            previous = latest.get(key)
+            if previous is None or int(run["id"]) > int(previous["id"]):
+                latest[key] = run
+        return list(latest.values())
+
     def check_runs(self, repo, sha) -> list[Check]:
         # paginate explicitly (API default: 30/page) and terminate on the response's
         # OWN total_count — trusting the batch size would truncate silently if the
@@ -174,7 +191,7 @@ class GitHubCodeHost(CodeHost):
             return self._check_runs_via_suites(repo, sha)
         return [Check(name=run["name"], status=run["status"],
                       conclusion=run.get("conclusion"))
-                for run in records]
+                for run in self._newest_per_app_and_name(records)]
 
     def commit_statuses(self, repo, sha) -> list[Check]:
         # the legacy status API (Jenkins, CircleCI…) — invisible to check-runs.
