@@ -3,7 +3,9 @@
 `python3 tooling/foundry_cli.py routing kpi-export ISSUE... --output FILE [--session <claude-main.jsonl>]...
 [--codex-session <rollout.jsonl>]... [--repository NS] [--root DIR]` (`tooling/foundry/kpi_export.py`, document
 schema `foundry-kpi-export.v1`, records of contract `devhub-observations.v2`, PLP-ADR-0061, DEVHUB-ADR-0017)
-writes one local file with the attempt, review-round and escalation records of the listed issues. This verb sends
+writes one local file with the attempt, review-round and escalation records of the listed issues. Without `--session` and
+`--codex-session`, the CLI verb searches the session logs itself ([Finding the session logs](#finding-the-session-logs-plp-342)).
+This verb sends
 nothing; the transmission is the separate, explicit verb `routing kpi-publish` described in
 [Publication to DevHub](#publication-to-devhub-plp-325).
 
@@ -32,7 +34,7 @@ Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 | `counts`, `issues`, `export_schema` | records per kind, the sorted issue list, the schema id. |
 
 Records are not stored as JSON Lines because the DevHub batch body is an object `{schema_version, records}`; a
-transmitter takes `batches[i]` as is and looks up `provenance` by `record_id`.
+transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a record when a published ledger holds its chain, see "Publication to DevHub") and looks up `provenance` by `record_id`.
 
 ## Common fields
 
@@ -42,16 +44,18 @@ transmitter takes `batches[i]` as is and looks up `provenance` by `record_id`.
   record fields and tokens, the review-turn fields, the escalation receipt fields); `schema` names the source:
   `foundry-invocation-log`, `review-turns.v1`, `escalation-ledger.v1`.
 - `anchor` = `{type: "issue", command_id: null, issue_id}`: no command plan is recorded locally.
-- `revision` 1, `supersedes_id` null, always: no source holds a revision. A source that changes after the record was
-  published (a completion event, tokens found later) changes the fingerprint and so the `record_id`; the export cannot
-  know what was published, so the transmitter must treat such a record as a new revision of the same chain
-  (unknown: how DevHub answers `idempotency_conflict` in that case, not observed).
+- `revision` 1, `supersedes_id` null, always, in the export: no source holds a revision and the export cannot know
+  what was published. A source that changes after publication (a completion event, tokens found later) changes the
+  fingerprint and so the `record_id`; the revision is then decided by the publisher, which keeps what it published
+  ([Revisions](#revisions-plp-342)).
 - The `source.fingerprint` of an `attempt` does not include the price grid. An attempt exported with `amount` null
   before a price entry existed (PLP-328 added entries on 2026-10-27) and exported again once priced, or whose `amount`
   changes after a grid change or after its `completeness` turns `partial` (PLP-14, Sonnet 5.5 cache writes), keeps the
   same `record_id` with a different body (deduced from the fingerprint material
-  in `_attempts`; `record_id` is not changed). The transmitter must handle that case; how DevHub answers is unknown, not
-  observed.
+  in `_attempts`; `record_id` is not changed). The publisher does not treat it as a revision, since the fingerprint is
+  unchanged (and DevHub refuses a revision whose fingerprint is already published, `idempotency_conflict`, PLP-342, DevHub
+  source read, not run): DevHub answers `idempotency_conflict` for the same `record_id` with a different body (same
+  source, read, not run) and the publisher reports it as a refusal.
 - `started_at`, `observed_at`, `ended_at`: epoch milliseconds converted from source timestamps; the module reads no
   clock. A time no source holds is not invented: the record is omitted (`no_recorded_time`) or `ended_at` is `null`.
 - Unknown is `null`, never `0`.
@@ -71,7 +75,7 @@ issue and the opaque invocation id (the invocation id itself is not emitted).
 | `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` (raw log status `routed`, every Codex attempt included; `provenance`: "no completion event"); a background Agent launch is also `unknown`/`unknown` (raw log status `unknown`, written by `hooks/observe_agent.py`; PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says "background launch" (`_attempts` in `kpi_export.py` branches on the raw status, PLP-14) | never |
 | `started_at`, `observed_at` | `at` of the `routed` event | never |
 | `ended_at` | none: the completion time is not kept by the reader, so a background launch has none either | always |
-| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py` | no `--session`/`--codex-session` given, or the invocation is absent from the logs given |
+| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py` | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs |
 | `tokens.reasoning_output` | none: the per-invocation attachment carries the billing keys only; it is part of `output` and never enters a total | always |
 | `amount` | see below | no tokens, no price, or a threshold entry (`haiku-5.5`) whose per-request counts are missing |
 
@@ -156,6 +160,33 @@ the `at` of the first routed invocation of the same role and issue at `to_tier`,
 `provenance`); with no `decided_at` the record is omitted (`no_recorded_time`) when the invocation record has none.
 `attribution` is `exact` (the ledger is keyed by issue).
 
+## Finding the session logs (PLP-342)
+
+When neither `--session` nor `--codex-session` is given, `routing kpi-export` calls `kpi_sessions.discover`
+(`tooling/foundry/kpi_sessions.py`, PLP-ADR-0062); the pure reader `kpi_export.py` is unchanged and still receives
+explicit paths. Explicit options disable the search. The search reads only:
+
+- the invocation record of the issues (`invocation_log.records_by_id`) for the invocation ids to look for;
+- Claude: `~/.claude/projects/<slug>/*.jsonl` (`CLAUDE_PROJECTS`), where `<slug>` is the path of a checkout of this
+  repository with every non-alphanumeric character replaced by `-` (`claude_slug`; the same rule as the directory names
+  observed under `~/.claude/projects` on 2026-10-29). The checkouts are the worktrees listed by `git worktree list`
+  (`repository_roots`), else `--root`. A main log is selected when a log of its `subagents/` directory has a
+  `toolUseId` (`.meta.json`) whose invocation id is one of the issue's (`token_attribution._meta_id`);
+- Codex: `~/.codex/sessions/**/rollout-*.jsonl` (`CODEX_SESSIONS`), selected when the rollout's `agent_path`
+  execution id is one of the issue's (`token_attribution._codex_meta`) and the `cwd` of its `session_meta` is a
+  checkout path or below it.
+
+An invocation id found in more than one log is ambiguous: no log that holds it is selected, so the other invocations
+of the issue held by those logs stay unavailable too (`_unambiguous`;
+`test_a_log_holding_an_ambiguous_id_is_not_selected_for_its_other_ids`). Nothing found
+or ambiguous leaves `tokens` null and the `amount` null, the same `unavailable` as without a log; the module never
+guesses and the CLI test checks that its output holds no path (`test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when_nothing_is_found`).
+Besides the closed-vocabulary identifiers of `token_attribution`, the Codex search reads the `cwd` path of the
+`session_meta` (`_codex_cwd`), only to keep rollouts of this repository; it is never emitted. Residual limits: a Codex coordinator log without an
+invocation of the issue is not selected (its requests are not attributed `exact` anyway); a Claude session whose
+project directory is a checkout that git no longer lists is not searched; the search reads the first line of every
+rollout file under `~/.codex/sessions` (cost unmeasured).
+
 ## Procedure and sample
 
 Run once on a copy of the state:
@@ -165,7 +196,7 @@ prints the counts per kind and writes the file; running it twice produced identi
 ## Publication to DevHub (PLP-325)
 
 `python3 tooling/foundry_cli.py routing kpi-publish FILE --project KEY [--url URL] [--root DIR]`
-(`tooling/foundry/kpi_publish.py`, PLP-ADR-0061) sends each `batches[i]` of a `foundry-kpi-export.v1` file, as is, to
+(`tooling/foundry/kpi_publish.py`, PLP-ADR-0061) sends each `batches[i]` of a `foundry-kpi-export.v1` file to
 `POST <url>/api/economics/v2/projects/<KEY>/observations:batch` (route and result shape: DevHub `docs/TRACKER_API.md`,
 "devhub-observations.v2", read, not run by this change). `provenance`, `omitted` and `counts` are not sent.
 
@@ -176,6 +207,8 @@ Status of each documented artifact (AGENTS.md#R5):
 | verb `routing kpi-publish` and its options | documented here; `routing.py` registers it |
 | config key `DEVHUB_METRICS_TOKEN` | secret, resolved by `config.get` in its order: the environment variable, then `CLAUDE_PLUGIN_OPTION_DEVHUB_METRICS_TOKEN`, then the keychain service `patolabs.foundry` (`_KEYCHAIN_SECRETS` in `config.py`), then a line of the local config files (`_load_dev_files`); `write_settings` refuses to write it there. Store it in the keychain with `python3 tooling/foundry_cli.py configure credential --name DEVHUB_METRICS_TOKEN` (interactive, never on the command line); `configure show` reports `configured` or `missing`. Dedicated to this write: `DEVHUB_TRACKER_TOKEN` is never used. DevHub requires the scope `foundry:metrics:write` for a write (`docs/TRACKER_API.md` of DevHub) |
 | config key `DEVHUB_URL` | unchanged; `--url` overrides it; validated by `devhub.validate_base_url` (HTTPS outside loopback) |
+| local file `<state dir>/kpi-publish/<hash>.json` (`PublishedLedger`, `kpi_publish.py`) | new, PLP-342: what was published per chain, see [Revisions](#revisions-plp-342); state dir is `registry.data_dir()` (`FOUNDRY_DATA`, else `~/.config/foundry`) |
+| verb `routing kpi-export`, search of the session logs | documented in [Finding the session logs](#finding-the-session-logs-plp-342) |
 | capability `kpi_publication_supported` | `trackers/base.py`, default `False`; `True` only in `DevHubTracker` (`trackers/devhub.py`). The active tracker (`foundry._effective_tracker_selection`) is read without instantiating it; any other adapter is refused, exit status 2, nothing sent |
 
 Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
@@ -190,7 +223,7 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
   a changed body under the same `record_id` (`idempotency_conflict`, see "Common fields") is reported as a refusal
   with its code; it is not retried or rewritten.
 - Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
-  per-batch entries (`index`, `records`, and `error` when the whole batch failed) and `refusals` (`record_id`, `code`).
+  per-batch entries (`index`, `records`, `error` when the whole batch failed, and `ledger_error` set to `published ledger not written` when saving the published ledger after the batch raised `OSError`, `publish` in `kpi_publish.py`; it does not change `totals`) and `refusals` (`record_id`, `code`).
   A batch-level failure (`http_<status>_<code>`, `tracker_unavailable`, `contract_mismatch`, `invalid_response`,
   `response_too_large`, `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
   (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
@@ -209,3 +242,40 @@ database then held 14 `attempt` and 224 `review_round` records. A wrong token ga
 batch, 238 `unsent`, exit status 1; `--project PLP` on that file was refused before any request, exit status 2. Not
 observed: a per-record refusal from the real server (covered by the simulated server only) and a changed body under
 the same `record_id`.
+
+### Revisions (PLP-342)
+
+Foundry keeps locally what it published (`PublishedLedger`, `kpi_publish.py`, schema `foundry-kpi-published.v1`):
+one file per DevHub URL and project, one entry per chain `kind|issue|attempt_id` holding the `record_id`, `revision`,
+`supersedes_id`, `source.fingerprint`, `started_at` and `observed_at` of the record last answered `created` or `replayed`
+(an `error` or an unsent batch never updates it; the file is replaced atomically after each batch, mode 0600; it holds
+no secret, path or content: `test_ledger_is_updated_from_created_and_replayed_answers_only`). Before sending, each
+record is compared with its chain entry (`PublishedLedger.revise`):
+
+- no entry: sent as exported (revision 1);
+- same fingerprint: sent with the revision, `supersedes_id` and `observed_at` of the entry, so a re-publication of a
+  revision stays identical and is `replayed`;
+- other fingerprint: sent with `revision` = entry + 1, `supersedes_id` = the entry's `record_id` and `observed_at`
+  = the larger of the two; the `record_id` is already new, being derived from the fingerprint. It is never a second
+  independent record (`test_a_changed_source_is_published_as_a_revision_and_an_unchanged_one_replays`).
+
+DevHub's rules for a revision (chain key kind, anchor, `attempt_id`; revision = previous + 1; `supersedes_id` = previous
+`record_id`; same `started_at`, `source.system` and `source.producer`; `observed_at` not earlier; fingerprint not already
+published; answers `correction_conflict` or `idempotency_conflict` otherwise) were read from the DevHub source and
+confirmed by DevHub for this change, not run live here; the tests use a simulated server that applies a reduced form of
+them. The batches are sent in order and records are applied by DevHub in send order; the export emits one record per chain (deduced: `attempt_id` is derived from the identity of the source, one fingerprint per source), so a revision never shares a request with its predecessor.
+
+Limits, stated as such:
+
+- Loss of the ledger: an unchanged record is republished as revision 1 and answered `replayed`; a record that was
+  already revised is sent again as revision 1 and refused `idempotency_conflict` (same `record_id` as the revision,
+  different body, deduced from the DevHub rule above;
+  `test_loss_of_the_ledger_republishes_an_unchanged_record_as_replayed_and_a_revised_one_is_refused`). No read-back from
+  `GET /observations?issue=` is implemented.
+- Records published before PLP-342 have no entry: a source changed since then is sent as revision 1 and DevHub
+  refuses it as `correction_conflict`, reported in `refusals`. An unchanged one is `replayed` and gets an entry.
+- A source that returns to an earlier fingerprint, or a changed `amount` with an unchanged fingerprint (price grid
+  update), is refused `idempotency_conflict`: not a revision.
+- A revision whose `started_at` differs from the previous (an escalation start that is an upper bound deduced from the
+  first routed invocation) is sent as is and refused `correction_conflict` if DevHub applies the rule.
+- Two concurrent publications to the same project have no lock: last writer wins on the ledger file (not exercised).
