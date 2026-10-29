@@ -128,7 +128,7 @@ class BlockingHeadersConnection(FakeConnection):
 
     def getresponse(self):
         self.getresponse_entered.set()
-        if not self.closed_event.wait(1.0):
+        if not self.closed_event.wait(10.0):
             raise OSError("test connection was not closed within its bound")
         raise OSError("connection closed")
 
@@ -1345,10 +1345,13 @@ def test_real_total_deadline_bounds_headers_with_frozen_accounting_clock():
     seen = []
     limits = local_scout.replace(
         local_scout.LocalScoutLimits(),
-        connection_timeout_seconds=0.05,
-        total_timeout_seconds=0.05,
+        connection_timeout_seconds=1.0,
+        total_timeout_seconds=1.0,
     )
 
+    # PLP-338: the deadline must expire while the worker is blocked in getresponse(), not before
+    # the worker thread reaches it (then it sees ``cancelled`` and returns): a 1 s deadline leaves
+    # a slow runner time to get there, and the bounds below are generous multiples of it.
     started = time.monotonic()
     with pytest.raises(local_scout.LocalScoutError) as error:
         local_scout.preprocess_diff(
@@ -1361,9 +1364,9 @@ def test_real_total_deadline_bounds_headers_with_frozen_accounting_clock():
 
     assert error.value.code == local_scout.LOCAL_SCOUT_UNAVAILABLE
     assert "time limit" in error.value.message
-    assert elapsed < 0.5
-    assert seen[0].getresponse_entered.wait(0.5)
-    assert seen[0].closed_event.wait(0.5)
+    assert 0.9 <= elapsed < 5.0
+    assert seen[0].getresponse_entered.wait(5.0)
+    assert seen[0].closed_event.wait(5.0)
 
 
 def test_headerless_oversized_response_is_progressively_read_to_only_limit_plus_one():
