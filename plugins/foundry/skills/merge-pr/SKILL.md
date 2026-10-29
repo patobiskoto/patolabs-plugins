@@ -210,6 +210,13 @@ failure classification, do not fabricate a proof or mark the claim completed, an
 the human recovery protocol if work later resumes. Do not run a second reviewer workflow
 on the same diff.
 
+After a terminal `blocked` proof the same diff stays deduplicated: no new round is possible
+on it. `prepare-review` then refuses with "active private claim required", because the claim
+has `should_run=false`; `recover-review` refuses a completed review. A new round needs a
+correction that changes the diff (a new commit; the diff hash is that of the diff bytes, not
+of the PR description). A block that needs no diff change is described in
+`docs/review-rounds.md` ("A blocked diff stays deduplicated").
+
 ### 2b. After integrating the main branch into the PR (PAT-173)
 
 If the only change since a terminal `mergeable` review is an integration (merge) of the
