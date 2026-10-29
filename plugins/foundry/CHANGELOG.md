@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.8.1 — 2026-10-29
+
+Patch release: the CI gate of `issue merge` and `issue wait-ci` no longer blocks on
+check-runs of an older workflow run on the same sha when a newer run of the same check is
+green (PLP-336). The deduplication rule and its limits are in `docs/ci-wait.md`.
+
+- PLP-336: The CI gate no longer blocks on an obsolete `cancelled` or failed check-run of an older workflow run on the same sha: `check_runs` keeps the newest run per (app, check name) on the aggregate route as it already did on the fallback; the limits are in `docs/ci-wait.md`.
+
 ## 2.8.0 — 2026-10-28
 
 Minor release for publishing KPI records to DevHub: the new explicit verb
