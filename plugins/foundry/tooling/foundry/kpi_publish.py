@@ -6,10 +6,13 @@ Foundry reads its result. It never changes routing, delivery or tracker state.
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
+import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +29,91 @@ MAX_RESPONSE_BYTES = 1 << 20
 _PROJECT = re.compile(r"[A-Za-z][A-Za-z0-9]{0,31}\Z")
 _CODE = re.compile(r"[a-z0-9_]{1,80}\Z")
 _STATUSES = {"created", "replayed", "error"}
+LEDGER_SCHEMA = "foundry-kpi-published.v1"
+_LEDGER_KEYS = ("record_id", "revision", "supersedes_id", "fingerprint", "started_at", "observed_at")
+
+
+class PublishedLedger:
+    """What was published, per chain, kept locally (PLP-342, PLP-ADR-0062).
+
+    One JSON file per (DevHub URL, project) under ``<state_dir>/kpi-publish/``. An entry holds the
+    record id, revision, supersedes id, source fingerprint and two times of the record last
+    ``created`` or ``replayed`` for the chain ``kind|issue|attempt_id``: opaque ids and numbers
+    only, no secret, no path, no token, no content. An unreadable file counts as empty: the next
+    publication then sends revision 1 again, which DevHub answers ``replayed`` for an unchanged
+    record (same record id, same body) and refuses for a record that was revised before the loss.
+    """
+
+    def __init__(self, state_dir, url: str, project: str):
+        name = hashlib.sha256(f"{url}\n{project}".encode("utf-8")).hexdigest()[:32]
+        self.path = Path(state_dir) / "kpi-publish" / f"{name}.json"
+        self.chains: dict[str, dict] = {}
+        self.dirty = False
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            chains = data["chains"] if data.get("schema") == LEDGER_SCHEMA else {}
+            self.chains = {k: v for k, v in chains.items() if isinstance(k, str) and isinstance(v, dict)
+                           and set(v) == set(_LEDGER_KEYS) and isinstance(v["fingerprint"], str)
+                           and isinstance(v["record_id"], str) and isinstance(v["revision"], int)
+                           and isinstance(v["started_at"], int) and isinstance(v["observed_at"], int)}
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            self.chains = {}
+
+    @staticmethod
+    def chain_key(record: dict) -> str | None:
+        source, anchor = record.get("source"), record.get("anchor")
+        if (not isinstance(source, dict) or not isinstance(anchor, dict)
+                or not isinstance(source.get("fingerprint"), str)
+                or not all(isinstance(record.get(k), str) for k in ("kind", "attempt_id"))
+                or not isinstance(anchor.get("issue_id"), str)
+                or not all(isinstance(record.get(k), int) for k in ("started_at", "observed_at"))):
+            return None
+        return f"{record['kind']}|{anchor['issue_id']}|{record['attempt_id']}"
+
+    def revise(self, record: dict) -> dict:
+        """The record to send: unchanged for a new chain, else the revision this ledger implies."""
+        key = self.chain_key(record)
+        entry = self.chains.get(key) if key else None
+        if entry is None:
+            return record
+        if entry["fingerprint"] == record["source"]["fingerprint"]:
+            # Same source as the last published record: send the body that was published.
+            return {**record, "revision": entry["revision"], "supersedes_id": entry["supersedes_id"],
+                    "observed_at": entry["observed_at"]}
+        return {**record, "revision": entry["revision"] + 1, "supersedes_id": entry["record_id"],
+                "observed_at": max(record["observed_at"], entry["observed_at"])}
+
+    def note(self, record: dict) -> None:
+        """Remember a record DevHub answered ``created`` or ``replayed``."""
+        key = self.chain_key(record)
+        if key is None or not isinstance(record.get("revision"), int):
+            return
+        entry = {"record_id": record["record_id"], "revision": record["revision"],
+                 "supersedes_id": record.get("supersedes_id"), "fingerprint": record["source"]["fingerprint"],
+                 "started_at": record["started_at"], "observed_at": record["observed_at"]}
+        if self.chains.get(key) != entry:
+            self.chains[key] = entry
+            self.dirty = True
+
+    def save(self) -> None:
+        """Atomic replace, mode 0600."""
+        if not self.dirty:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor, temporary = tempfile.mkstemp(prefix=".kpi-published-", dir=self.path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump({"schema": LEDGER_SCHEMA, "chains": self.chains}, handle, sort_keys=True,
+                          separators=(",", ":"))
+                handle.write("\n")
+            os.replace(temporary, self.path)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+        self.dirty = False
 
 
 class PublishError(Exception):
@@ -106,12 +194,19 @@ def _post(url: str, project: str, token: str, body: bytes, timeout: float) -> di
     return {"payload": payload}
 
 
-def publish(document: dict, project: str, *, url: str, token: str, timeout: float = 10.0) -> dict:
-    """Send each batch once, in order, and report per record. No retry: a republication is idempotent."""
+def publish(document: dict, project: str, *, url: str, token: str, timeout: float = 10.0,
+            ledger: PublishedLedger | None = None) -> dict:
+    """Send each batch once, in order, and report per record. No retry: a republication is idempotent.
+
+    With a ``ledger`` (PLP-342) a record whose chain was already published with another source
+    fingerprint is sent as the next revision (``revision`` + 1, ``supersedes_id`` the previous
+    ``record_id``); the ledger is updated from the per-record ``created``/``replayed`` answers only,
+    after each batch. Without one the batches are sent as they are."""
     totals = {"created": 0, "replayed": 0, "refused": 0, "unsent": 0}
     batch_reports, refusals = [], []
     for index, batch in enumerate(document["batches"]):
-        records = batch["records"]
+        records = [ledger.revise(r) for r in batch["records"]] if ledger else batch["records"]
+        batch = {**batch, "records": records}
         body = json.dumps(batch, ensure_ascii=False, separators=(",", ":")).encode()
         report = {"index": index, "records": len(records)}
         if len(body) > MAX_BATCH_BYTES:
@@ -132,7 +227,7 @@ def publish(document: dict, project: str, *, url: str, token: str, timeout: floa
             report["error"] = outcome["error"]
             totals["unsent"] += len(records)
         else:
-            for result in results:
+            for result, sent in zip(results, records):
                 if result["status"] == "error":
                     code = result.get("code")
                     code = code if isinstance(code, str) and _CODE.fullmatch(code) else "unknown"
@@ -140,6 +235,13 @@ def publish(document: dict, project: str, *, url: str, token: str, timeout: floa
                     refusals.append({"record_id": result["record_id"], "code": code})
                 else:
                     totals[result["status"]] += 1
+                    if ledger:
+                        ledger.note(sent)
+        if ledger:
+            try:
+                ledger.save()
+            except OSError:
+                report["ledger_error"] = "published ledger not written"
         batch_reports.append(report)
     return {"schema": REPORT_SCHEMA, "project": project, "totals": totals,
             "batches": batch_reports, "refusals": refusals}
@@ -164,7 +266,7 @@ def _adapter_class(name: str):
 def run(path: str, project: str, *, url: str | None = None, root: str | None = None) -> int:
     """CLI body: refuse without a write unless the active adapter declares the capability. Exit status only."""
     import foundry
-    from foundry import config
+    from foundry import config, registry
     from foundry.trackers import devhub
 
     try:
@@ -187,7 +289,8 @@ def run(path: str, project: str, *, url: str | None = None, root: str | None = N
     except SystemExit as exc:  # config.require/require_public: missing URL or token, nothing sent
         print(f"kpi-publish refused: {exc}", file=sys.stderr)
         return 2
-    report = publish(document, project, url=base, token=token)
+    report = publish(document, project, url=base, token=token,
+                     ledger=PublishedLedger(registry.data_dir(), base, project))
     print(json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True))
     totals = report["totals"]
     return 1 if totals["refused"] or totals["unsent"] else 0

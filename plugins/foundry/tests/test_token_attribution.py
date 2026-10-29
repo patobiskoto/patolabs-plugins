@@ -303,4 +303,4 @@ def test_only_the_cli_verb_imports_token_attribution():
     importers = {p.name for p in (PLUGIN_ROOT / "tooling").rglob("*.py")
                  if re.search(r"^\s*(from foundry import .*\btoken_attribution\b|from foundry\.token_attribution\b|import foundry\.token_attribution)",
                               p.read_text(), re.M)}
-    assert importers == {"routing.py", "kpi_export.py"}  # the CLI verb and the PLP-319 export
+    assert importers == {"routing.py", "kpi_export.py", "kpi_sessions.py"}  # the CLI verb, the PLP-319 export and the PLP-342 discovery

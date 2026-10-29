@@ -2914,7 +2914,8 @@ def main(
     kpi.add_argument("issue", nargs="+")
     kpi.add_argument("--output", required=True, help="the only file written")
     kpi.add_argument("--session", action="append", default=[],
-                     help="Claude main session log; its subagents/ logs are included")
+                     help="Claude main session log; its subagents/ logs are included "
+                          "(without --session and --codex-session the logs of the issues are searched, PLP-342)")
     kpi.add_argument("--codex-session", action="append", default=[],
                      help="Codex rollout log (coordinator or sub-agent)")
     kpi.add_argument("--repository", help="repo namespace; defaults to origin URL")
@@ -3428,9 +3429,16 @@ def main(
         if args.command == "kpi-export":
             from foundry import kpi_export
 
+            repository = args.repository or repository_identity(args.root)
+            claude_sessions, codex_sessions = args.session, args.codex_session
+            if not claude_sessions and not codex_sessions:  # PLP-342: find the logs of the issues
+                from foundry import kpi_sessions
+
+                claude_sessions, codex_sessions = kpi_sessions.discover(
+                    sorted(set(args.issue)), repository, roots=kpi_sessions.repository_roots(args.root))
             document = kpi_export.build(
-                args.issue, args.repository or repository_identity(args.root),
-                claude_sessions=args.session, codex_sessions=args.codex_session,
+                args.issue, repository,
+                claude_sessions=claude_sessions, codex_sessions=codex_sessions,
             )
             Path(args.output).write_bytes(document)
             print(json.dumps(json.loads(document)["counts"], sort_keys=True))

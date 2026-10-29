@@ -227,3 +227,89 @@ def test_configure_credential_accepts_the_metrics_token_and_show_reports_it(monk
     configure.main(["show"])
     out = capsys.readouterr().out
     assert json.loads(out)["DEVHUB_METRICS_TOKEN"] == "configured" and FAKE not in out
+
+
+# PLP-342: revisions and the local ledger of what was published
+
+def _chain_record(n, fingerprint, *, observed=2000, issue="DEVHUB-1"):
+    return {"record_id": f"kpi-{n}", "kind": "attempt", "attempt_id": "at-1", "revision": 1, "supersedes_id": None,
+            "anchor": {"type": "issue", "command_id": None, "issue_id": issue}, "started_at": 1000,
+            "observed_at": observed, "source": {"system": "foundry", "fingerprint": fingerprint}}
+
+
+def _doc(record):
+    return {"export_schema": "foundry-kpi-export.v1",
+            "batches": [{"schema_version": "devhub-observations.v2", "records": [record]}]}
+
+
+def _devhub_like(server, batch):
+    """Chain rules of DevHub reduced to what the tests need: same id + same body replays, else conflict."""
+    results = []
+    for record in batch["records"]:
+        key = record["record_id"]
+        body = json.dumps(record, sort_keys=True)
+        if key in server.bodies:
+            status = ("replayed", None) if server.bodies[key] == body else ("error", "idempotency_conflict")
+        elif record["revision"] > 1 and record["supersedes_id"] not in server.bodies:
+            status = ("error", "correction_conflict")
+        else:
+            server.bodies[key] = body
+            status = ("created", None)
+        results.append({"record_id": key, "status": status[0], "code": status[1]})
+    return 200, {"schema_version": "devhub-observations.v2", "results": results}, CONTRACT
+
+
+def _revision_server(server):
+    srv = server(_devhub_like)
+    srv.bodies = {}
+    return srv
+
+
+def _send(srv, tmp_path, record, state="state"):
+    ledger = kpi_publish.PublishedLedger(tmp_path / state, srv.url, "DEVHUB")
+    return kpi_publish.publish(_doc(record), "DEVHUB", url=srv.url, token=FAKE, ledger=ledger)
+
+
+def test_a_changed_source_is_published_as_a_revision_and_an_unchanged_one_replays(server, tmp_path):
+    srv = _revision_server(server)
+    assert _send(srv, tmp_path, _chain_record(1, "f1"))["totals"]["created"] == 1
+    assert _send(srv, tmp_path, _chain_record(1, "f1"))["totals"]["replayed"] == 1
+    second = _send(srv, tmp_path, _chain_record(2, "f2", observed=1500))  # observed_at never goes back
+    assert second["totals"] == {"created": 1, "replayed": 0, "refused": 0, "unsent": 0}
+    sent = srv.seen[-1][2]["records"][0]
+    assert (sent["record_id"], sent["revision"], sent["supersedes_id"], sent["observed_at"]) == ("kpi-2", 2, "kpi-1", 2000)
+    # the export keeps producing the revision-1 body of the new source: the same revision is sent again
+    again = _send(srv, tmp_path, _chain_record(2, "f2", observed=1500))
+    assert again["totals"]["replayed"] == 1 and srv.seen[-1][2]["records"][0]["revision"] == 2
+    third = _send(srv, tmp_path, _chain_record(3, "f3"))
+    assert third["totals"]["created"] == 1 and srv.seen[-1][2]["records"][0]["supersedes_id"] == "kpi-2"
+
+
+def test_loss_of_the_ledger_republishes_an_unchanged_record_as_replayed_and_a_revised_one_is_refused(server, tmp_path):
+    srv = _revision_server(server)
+    _send(srv, tmp_path, _chain_record(1, "f1"))
+    assert _send(srv, tmp_path, _chain_record(1, "f1"), state="lost")["totals"]["replayed"] == 1
+    _send(srv, tmp_path, _chain_record(2, "f2"))
+    lost = _send(srv, tmp_path, _chain_record(2, "f2"), state="lost-again")
+    assert lost["totals"]["refused"] == 1 and lost["refusals"] == [{"record_id": "kpi-2", "code": "idempotency_conflict"}]
+
+
+def test_ledger_is_updated_from_created_and_replayed_answers_only(server, tmp_path):
+    srv = server(lambda s, b: (200, {"schema_version": "devhub-observations.v2", "results": [
+        {"record_id": r["record_id"], "status": "error", "code": "anchor_conflict"} for r in b["records"]]}, CONTRACT))
+    _send(srv, tmp_path, _chain_record(1, "f1"))
+    assert not (tmp_path / "state").exists()
+    srv2 = _revision_server(server)
+    _send(srv2, tmp_path, _chain_record(1, "f1"))
+    files = list((tmp_path / "state" / "kpi-publish").iterdir())
+    assert len(files) == 1 and (files[0].stat().st_mode & 0o777) == 0o600
+    text = files[0].read_text()
+    assert "DEVHUB-1" in text and FAKE not in text and str(tmp_path) not in text and "http" not in text
+
+
+def test_an_unreadable_ledger_counts_as_empty(server, tmp_path):
+    srv = _revision_server(server)
+    ledger = kpi_publish.PublishedLedger(tmp_path / "state", srv.url, "DEVHUB")
+    ledger.path.parent.mkdir(parents=True)
+    ledger.path.write_text("{not json")
+    assert kpi_publish.PublishedLedger(tmp_path / "state", srv.url, "DEVHUB").chains == {}
