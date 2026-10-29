@@ -2279,11 +2279,14 @@ def test_pat111_ac3_a_comparison_with_an_unsettled_local_start_is_inconclusive(t
     runner, campaign, _, tasks = make_runner(tmp_path, "compare", FIX_ALL)
     campaign["rules"]["comparison"]["tasks"] = 1
     runner.compare(tasks[:1], "cand-a", ("A", "B", "C"))
-    clean = lfr.report(campaign, results(runner), ledger_of(runner))["comparison"]
+    # PLP-338: the economy verdict compares measured wall_seconds (time_ratio_max); pin them so the
+    # decision does not depend on the speed of the machine
+    recs = [{**r, "wall_seconds": 1.0} if "wall_seconds" in r else r for r in results(runner)]
+    clean = lfr.report(campaign, recs, ledger_of(runner))["comparison"]
     assert clean["decision"] == "retained" and clean["warnings"] == []
     hole = {"kind": "attempt_started", "attempt_dir": "attempt-l01-0099-pr1-C-local-cand-a", "path": "C",
             "candidate": "cand-a", "dry_run": True}
-    rep = lfr.report(campaign, results(runner), [*ledger_of(runner), hole])
+    rep = lfr.report(campaign, recs, [*ledger_of(runner), hole])
     assert rep["comparison"]["decision"] == "inconclusive" and rep["comparison"]["recommendation"] is None
     assert rep["comparison"]["warnings"] == [
         "attempt_started_without_settled:attempt-l01-0099-pr1-C-local-cand-a"]
