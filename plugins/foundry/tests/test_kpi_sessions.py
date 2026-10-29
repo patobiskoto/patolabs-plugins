@@ -72,6 +72,19 @@ def test_an_id_found_in_two_logs_is_ambiguous_and_nothing_is_found_leaves_nothin
     assert _find(tmp_path) == ([], [])
 
 
+def test_a_log_holding_an_ambiguous_id_is_not_selected_for_its_other_ids(tmp_path):
+    state = tmp_path / "state"
+    for tool in ("toolu_X", TOOL_USE, "toolu_Z"):
+        _seed(state, "PLP-1", invocation_log.claude_invocation_id(tool), "claude")
+    only_y = _claude(tmp_path / "projects", ROOT, "s-0", "toolu_X")        # X is unique to this log
+    _claude(tmp_path / "projects", ROOT, "s-1", TOOL_USE)                   # Y is in this log and
+    mixed = _claude(tmp_path / "projects", ROOT, "s-2", TOOL_USE)           # in this one, with Z
+    extra = mixed.parent / "s-2" / "subagents" / "agent-b.jsonl"
+    _write(extra, [{"type": "user"}])
+    extra.with_name("agent-b.meta.json").write_text(json.dumps({"toolUseId": "toolu_Z"}))
+    assert _find(tmp_path) == ([str(only_y)], [])
+
+
 def test_slug_matches_the_directory_names_of_the_host():
     assert kpi_sessions.claude_slug(Path("/Users/x/.codex/worktrees/a_b")) == "-Users-x--codex-worktrees-a-b"
 
@@ -97,6 +110,7 @@ def test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when
     assert main.exists()
     done = subprocess.run(cmd, capture_output=True, text=True, env=env)
     assert done.returncode == 0, done.stderr
+    assert str(home) not in done.stdout + done.stderr and str(root) not in done.stdout + done.stderr
     # the discovered log holds no request: still unavailable, never guessed
     assert json.loads(out.read_text())["batches"][0]["records"][0]["tokens"]["input"] is None
 

@@ -5,8 +5,10 @@ record (``invocation_log``) carries for one of the issues, and only when it lies
 directories of this repository: Claude ``<projects_dir>/<slug of a checkout path>/*.jsonl`` and
 Codex rollouts whose ``session_meta`` ``cwd`` is a checkout path. The checkouts are the worktrees of
 the repository (``git worktree list``). An invocation id found in more than one log is ambiguous:
-none of those logs is selected for it. Nothing is guessed; nothing found leaves the tokens
-``unavailable`` in the export. Only closed-vocabulary identifiers are read (``token_attribution``).
+no log holding it is selected, so the other invocations of those logs stay unavailable too.
+Nothing is guessed; nothing found leaves the tokens ``unavailable`` in the export. Only
+closed-vocabulary identifiers are read (``token_attribution``), plus the ``cwd`` path of a Codex
+``session_meta``, used only to filter and never emitted.
 """
 from __future__ import annotations
 
@@ -46,8 +48,9 @@ def _issue_ids(issues, repository: str, state_dir) -> set[str]:
 
 
 def _unambiguous(found: dict[str, set[Path]]) -> list[str]:
-    """Logs that hold at least one id found in no other log; sorted for a stable result."""
-    return sorted({str(next(iter(paths))) for paths in found.values() if len(paths) == 1})
+    """Logs that hold no id found in another log; sorted for a stable result."""
+    ambiguous = {p for paths in found.values() if len(paths) > 1 for p in paths}
+    return sorted({str(p) for paths in found.values() for p in paths} - {str(p) for p in ambiguous})
 
 
 def discover(issues, repository: str, *, roots, claude_projects=None, codex_sessions=None,

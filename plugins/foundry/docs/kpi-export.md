@@ -34,7 +34,7 @@ Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 | `counts`, `issues`, `export_schema` | records per kind, the sorted issue list, the schema id. |
 
 Records are not stored as JSON Lines because the DevHub batch body is an object `{schema_version, records}`; a
-transmitter takes `batches[i]` as is and looks up `provenance` by `record_id`.
+transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a record when a published ledger holds its chain, see "Publication to DevHub") and looks up `provenance` by `record_id`.
 
 ## Common fields
 
@@ -176,9 +176,13 @@ explicit paths. Explicit options disable the search. The search reads only:
   execution id is one of the issue's (`token_attribution._codex_meta`) and the `cwd` of its `session_meta` is a
   checkout path or below it.
 
-An invocation id found in more than one log is ambiguous: the logs that hold it are not selected for it. Nothing found
+An invocation id found in more than one log is ambiguous: no log that holds it is selected, so the other invocations
+of the issue held by those logs stay unavailable too (`_unambiguous`;
+`test_a_log_holding_an_ambiguous_id_is_not_selected_for_its_other_ids`). Nothing found
 or ambiguous leaves `tokens` null and the `amount` null, the same `unavailable` as without a log; the module never
-guesses and prints no path (`tests/test_kpi_sessions.py`). Residual limits: a Codex coordinator log without an
+guesses and the CLI test checks that its output holds no path (`test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when_nothing_is_found`).
+Besides the closed-vocabulary identifiers of `token_attribution`, the Codex search reads the `cwd` path of the
+`session_meta` (`_codex_cwd`), only to keep rollouts of this repository; it is never emitted. Residual limits: a Codex coordinator log without an
 invocation of the issue is not selected (its requests are not attributed `exact` anyway); a Claude session whose
 project directory is a checkout that git no longer lists is not searched; the search reads the first line of every
 rollout file under `~/.codex/sessions` (cost unmeasured).
@@ -192,7 +196,7 @@ prints the counts per kind and writes the file; running it twice produced identi
 ## Publication to DevHub (PLP-325)
 
 `python3 tooling/foundry_cli.py routing kpi-publish FILE --project KEY [--url URL] [--root DIR]`
-(`tooling/foundry/kpi_publish.py`, PLP-ADR-0061) sends each `batches[i]` of a `foundry-kpi-export.v1` file, as is, to
+(`tooling/foundry/kpi_publish.py`, PLP-ADR-0061) sends each `batches[i]` of a `foundry-kpi-export.v1` file to
 `POST <url>/api/economics/v2/projects/<KEY>/observations:batch` (route and result shape: DevHub `docs/TRACKER_API.md`,
 "devhub-observations.v2", read, not run by this change). `provenance`, `omitted` and `counts` are not sent.
 
@@ -219,7 +223,7 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
   a changed body under the same `record_id` (`idempotency_conflict`, see "Common fields") is reported as a refusal
   with its code; it is not retried or rewritten.
 - Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
-  per-batch entries (`index`, `records`, and `error` when the whole batch failed) and `refusals` (`record_id`, `code`).
+  per-batch entries (`index`, `records`, `error` when the whole batch failed, and `ledger_error` set to `published ledger not written` when saving the published ledger after the batch raised `OSError`, `publish` in `kpi_publish.py`; it does not change `totals`) and `refusals` (`record_id`, `code`).
   A batch-level failure (`http_<status>_<code>`, `tracker_unavailable`, `contract_mismatch`, `invalid_response`,
   `response_too_large`, `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
   (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
