@@ -116,7 +116,7 @@ class _Record:
 
 
 def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | None,
-            requests: list | None = None) -> tuple[dict | None, str | None]:
+            requests: list | None = None, lower_bound: int = 0) -> tuple[dict | None, str | None]:
     """An ``estimated`` amount from the frozen price grid, or None with a reason."""
     if tokens is None:
         return None, "no_tokens"
@@ -147,7 +147,7 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
                 and tokens["cache_write_input_tokens"] > 0)
     return {"amount_micros": str(total.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
             "currency": "USD", "unit": "micros", "method": "estimated",
-            "completeness": "partial" if one_hour else "complete", "rate_version": version}, None
+            "completeness": "partial" if one_hour or lower_bound else "complete", "rate_version": version}, None
 
 
 def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) -> tuple[list, list]:
@@ -176,11 +176,14 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         if usage is not None and item["id"] in usage:
             tokens = {name: usage[item["id"]]["tokens"][name] for _, name in _TOKEN_FIELDS}
         material["tokens"] = tokens
+        bounded = usage[item["id"]].get("lower_bound_requests", 0) if tokens is not None else 0
+        if bounded:  # PLP-344: only an affected record changes its fingerprint
+            material["tokens_lower_bound_requests"] = bounded
         rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
         model = _id(item.get("model_requested"))
         seen = usage[item["id"]] if tokens is not None else {}
         requests = seen["token_requests"] if seen.get("request_granularity") is True else None
-        amount, why = _amount(grid, item.get("host"), model, item["at"], tokens, requests)
+        amount, why = _amount(grid, item.get("host"), model, item["at"], tokens, requests, bounded)
         log, host = "invocation record (invocation_log.py)", item.get("host")
         no_tokens = ("no session log given" if usage is None else "invocation absent from the given session logs")
         body = {
@@ -201,11 +204,16 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                               "API-equivalent estimate, not an invoice"
                               + ("; partial: a 1h cache write of this model would be priced at the 5m rate, "
                                  "so the amount is a lower bound" if amount and amount["completeness"] == "partial"
-                                 else ""), why),
+                                 else "")
+                              + ("; partial: the tokens are a lower bound (see tokens.*), so the amount is too"
+                                 if amount and bounded else ""), why),
         }
         for key, name in _TOKEN_FIELDS:
-            body["tokens"][key] = rec.put(f"tokens.{key}", None if tokens is None else tokens[name],
-                                          "host log slice of the invocation (token_attribution, method exact)", no_tokens)
+            body["tokens"][key] = rec.put(
+                f"tokens.{key}", None if tokens is None else tokens[name],
+                "host log slice of the invocation (token_attribution, method exact)"
+                + (f"; lower bound: {bounded} request(s) of the log have no terminal snapshot, counted with "
+                   "the largest value observed" if bounded else ""), no_tokens)
         corrector = role == "corrector"
         out.append((rec, rec.finish(started, None, started, "approximate" if corrector else "exact",
                                     "at of the routed event of the invocation record", body)))

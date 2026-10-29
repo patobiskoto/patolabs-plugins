@@ -304,3 +304,35 @@ def test_only_the_cli_verb_imports_token_attribution():
                  if re.search(r"^\s*(from foundry import .*\btoken_attribution\b|from foundry\.token_attribution\b|import foundry\.token_attribution)",
                               p.read_text(), re.M)}
     assert importers == {"routing.py", "kpi_export.py", "kpi_sessions.py"}  # the CLI verb, the PLP-319 export and the PLP-342 discovery
+
+
+def _partial(request):
+    request["message"]["stop_reason"] = None
+    return request
+
+
+def test_requests_without_terminal_snapshot_mark_their_slice_as_a_lower_bound(tmp_path):
+    """PLP-344: only the affected slices and the totals carry the marker."""
+    state = tmp_path / "state"
+    _seed(state, "implementer", "PLP-1", invocation_log.claude_invocation_id(TOOL_USE), "claude")
+    main = _claude_tree(tmp_path, [], [("exact", [_claude_request("2026-10-01T10:40:00.000Z", 5, "sub1", "a"),
+                                                  _partial(_claude_request("2026-10-01T10:41:00.000Z", 2, "sub1", "b"))],
+                                        {"toolUseId": TOOL_USE}, "plain text")])
+    result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state)
+    (exact,) = _by(result, method="exact")
+    assert exact["requests"] == 2 and exact["lower_bound_requests"] == 1
+    assert result["totals"]["lower_bound_requests"] == 1
+    clean = _claude_tree(tmp_path / "c", [], [("exact", [_claude_request("2026-10-01T10:40:00.000Z", 5, "sub1", "a")],
+                                               {"toolUseId": TOOL_USE}, "plain text")])
+    again = token_attribution.report(claude_sessions=[clean], repository=REPO, state_dir=state)
+    assert "lower_bound_requests" not in again["totals"]
+    assert all("lower_bound_requests" not in s for s in again["slices"])
+
+
+def test_a_log_with_a_lower_bound_request_is_no_longer_unreadable(tmp_path):
+    state = tmp_path / "state"
+    main = _claude_tree(tmp_path, [_claude_request("2026-10-01T10:00:00.000Z")], [("x", [_partial(_claude_request("2026-10-01T10:40:00.000Z", 2, "sub1", "b"))],
+                                        None, "plain text")])
+    result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state)
+    assert result["unreadable_logs"] == {"coordinator": 0, "subagent": 0}
+    assert result["totals"]["lower_bound_requests"] == 1

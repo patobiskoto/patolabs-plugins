@@ -57,8 +57,18 @@ Les blocs natifs corrélés par session, agent, `requestId` et `message.id`
 représentent une seule requête. Le lecteur retient son snapshot terminal plutôt que
 d’additionner les compteurs intermédiaires et finaux. Deux snapshots terminaux
 contradictoires ou une identité de modèle divergente sont refusés. Une requête
-corrélée sans snapshot terminal rend le journal inexploitable : aucun total final
-n’est certifié à partir d’un compteur partiel, même avec une ventilation du raisonnement.
+corrélée sans aucun snapshot terminal (aucun enregistrement avec `stop_reason` non nul) est
+comptée avec la plus grande valeur observée de chaque compteur (PLP-344) : borne basse, jamais
+une valeur exacte. Le lecteur la marque : `read_host_log` ajoute à la ligne `lower_bound_requests`
+(nombre de requêtes concernées) et `request_lower_bound` (un booléen par entrée de `token_requests`),
+et à `diagnostics` `lower_bound_records` (`[{"reason": "no_terminal_snapshot", "count": N}]`,
+`LOWER_BOUND_REASON`) ; ces clés n’existent que lorsque N > 0, la sortie des autres journaux est
+inchangée. Un snapshot terminal l’emporte toujours sur les enregistrements non terminaux.
+Le raisonnement d’une telle requête vaut `unavailable` si l’un de ses enregistrements l’est ou s’il
+dépasse l’output retenu. Restent bloquants (journal refusé) : identité de modèle ou de session
+divergente, deux snapshots terminaux contradictoires, usage incomplet. Cause de l’absence de
+snapshot : inconnue (côté hôte) ; observé le 2026-10-29 sur des journaux de sous-agents de Claude Code
+2.1.286, 2.1.299 et 2.1.304, avec un `output_tokens` partiel.
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
 sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
@@ -178,9 +188,9 @@ uniquement un identifiant d'issue, un rôle, un identifiant d'invocation opaque 
 ni prompt, ni chemin, ni commande, ni identifiant de session hôte (`test_replayable_deterministic_and_content_free`).
 
 Sortie (`schema: token-attribution.v1`) : `slices` (par `issue`, `method`, `role`, `role_source`, `host`,
-`scope` coordinator|subagent, `reason`, `issues`, `requests`, `tokens` = `BILLING_TOKEN_KEYS`), `totals` (somme des
+`scope` coordinator|subagent, `reason`, `issues`, `requests`, `tokens` = `BILLING_TOKEN_KEYS`, et `lower_bound_requests` seulement si > 0 : nombre de requêtes de la tranche sans snapshot terminal, dont les compteurs sont alors des bornes basses, PLP-344), `totals` (somme des
 tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `windows`, `invocation_log`
-(`read`|`unreadable`), `unreadable_logs` (`coordinator`, `subagent`).
+(`read`|`unreadable`), `unreadable_logs` (`coordinator`, `subagent`). `totals.lower_bound_requests` (somme des tranches) n’existe que si > 0 : le total est alors une borne basse.
 
 | `method` | Condition observée | Source |
 |---|---|---|
@@ -203,5 +213,4 @@ sous-agent Claude (`role_source: packet_header`, seul ce mot est lu) ; sinon le 
 Observé sur une session Claude locale (2026-10-22, 93 journaux de sous-agents) : l'en-tête `Resolved role:` est
 présent dans 92 d'entre eux ; l'enregistrement d'invocations lu avec la configuration par défaut contenait 0 entrée, donc le
 lien `exact` n'a pas été observé sur des données réelles (inconnu) et seul le test synthétique l'établit. Limite observée
-sur la même session : 93 journaux de sous-agents sur 93 sont refusés par `read_host_log` (« request has no terminal snapshot »,
-garantie de complétude Claude ci-dessus, inchangée) ; ils sont comptés dans `unreadable_logs.subagent`, jamais devinés.
+sur la même session avant PLP-344 : 93 journaux de sous-agents sur 93 étaient refusés par `read_host_log` (« request has no terminal snapshot »). Depuis PLP-344 un tel journal est lu et sa tranche est marquée `lower_bound_requests` (« Complétude Claude ») ; le nombre de journaux désormais lisibles sur cette session n’a pas été mesuré (inconnu).

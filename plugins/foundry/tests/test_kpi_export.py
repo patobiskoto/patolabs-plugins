@@ -496,3 +496,31 @@ def test_cli_verb_writes_only_the_named_file(tmp_path):
     first = out.read_bytes()
     assert subprocess.run(cmd, capture_output=True, env=env).returncode == 0 and out.read_bytes() == first
     assert json.loads(first)["export_schema"] == "foundry-kpi-export.v1"
+
+
+def test_lower_bound_tokens_are_said_in_the_provenance_and_change_only_that_record(tmp_path):
+    """PLP-344: a request with no terminal snapshot is never presented as exact."""
+    state = tmp_path / "state"
+    ident = invocation_log.claude_invocation_id(TOOL_USE)
+    _routed(state, "PLP-1", "implementer", ident, model="sonnet-5", at="2026-10-01T00:00:00.000000Z")
+
+    def build(root, request):
+        main = _claude_tree(root, [], [("exact", [request], {"toolUseId": TOOL_USE}, "plain text")])
+        data, records = _records(_build(state, claude_sessions=[main]))
+        return data, records[0]
+
+    exact_request = _claude_request("2026-10-01T10:40:00.000Z", 5, "sub1", "a")
+    partial_request = json.loads(json.dumps(exact_request))
+    partial_request["message"]["stop_reason"] = None
+    clean_data, clean = build(tmp_path / "e", exact_request)
+    data, partial = build(tmp_path / "p", partial_request)
+    _check(partial)
+    assert partial["tokens"] == clean["tokens"] and partial["amount"]["completeness"] == "partial"
+    assert clean["amount"]["completeness"] == "complete"
+    assert partial["source"]["fingerprint"] != clean["source"]["fingerprint"]
+    assert partial["record_id"] != clean["record_id"]
+    fields = data["provenance"][partial["record_id"]]["from"]
+    for name in ("input", "cached_input", "cache_write_input", "output"):
+        assert "lower bound: 1 request(s)" in fields[f"tokens.{name}"]
+    assert "tokens are a lower bound" in fields["amount"]
+    assert "lower bound" not in clean_data["provenance"][clean["record_id"]]["from"]["tokens.output"]

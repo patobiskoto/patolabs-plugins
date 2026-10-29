@@ -75,7 +75,7 @@ issue and the opaque invocation id (the invocation id itself is not emitted).
 | `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` (raw log status `routed`, every Codex attempt included; `provenance`: "no completion event"); a background Agent launch is also `unknown`/`unknown` (raw log status `unknown`, written by `hooks/observe_agent.py`; PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says "background launch" (`_attempts` in `kpi_export.py` branches on the raw status, PLP-14) | never |
 | `started_at`, `observed_at` | `at` of the `routed` event | never |
 | `ended_at` | none: the completion time is not kept by the reader, so a background launch has none either | always |
-| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py` | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs |
+| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py`; a lower bound when `lower_bound_requests` is above 0 (see "Tokens that are a lower bound" below) | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs |
 | `tokens.reasoning_output` | none: the per-invocation attachment carries the billing keys only; it is part of `output` and never enters a total | always |
 | `amount` | see below | no tokens, no price, or a threshold entry (`haiku-5.5`) whose per-request counts are missing |
 
@@ -106,6 +106,25 @@ unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h w
 against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0 against 2.5 USD per million tokens for `sonnet-5.5`
 (the 2.5 is the grid value, `pricing-v1.json`); the 1h rate is not a grid key and is not applied. Whether the 1h cache
 lifetime applies on a given host or subscription state is unknown (R7 of the process contract).
+
+### Tokens that are a lower bound (PLP-344)
+
+A Claude request of the invocation's log can have no record with a non-null `stop_reason` (observed on 2026-10-29 in
+subagent logs of Claude Code 2.1.286, 2.1.299 and 2.1.304; cause unknown, host side). `read_host_log` counts it with the
+largest value observed for each counter and the slice carries `lower_bound_requests`
+([cost-attribution.md](cost-attribution.md), "Complétude Claude"). The export then says so in three places, only for
+an attempt whose slice has `lower_bound_requests` above 0 (`_attempts` in `kpi_export.py`):
+
+- `provenance.from` of each of `tokens.input`, `cached_input`, `cache_write_input` and `output` ends with
+  "lower bound: N request(s) of the log have no terminal snapshot, counted with the largest value observed". The values
+  themselves are unchanged: the DevHub record is `strict` and has no field for this (see `provenance` in "Output document"), so no value is flagged inside the record.
+- `amount.completeness` is `partial` (the value already used for a lower-bound amount in the 1h cache-write case above) and the `provenance` of `amount` adds "the tokens are a lower bound".
+- The fingerprint material gains `tokens_lower_bound_requests` = N, so the `source.fingerprint` and the `record_id` of that
+  attempt differ from those of an exact reading, and the publisher sends it as a revision of a record it already
+  published ("Publication to DevHub"). An attempt with no such request has the same material, fingerprint and
+  `record_id` as before (`test_lower_bound_tokens_are_said_in_the_provenance_and_change_only_that_record`).
+
+Before PLP-344 such a log was rejected whole and the tokens were `null` (`unavailable`).
 
 Not exported: the coordinator's own tokens and the tokens of sub-agents without an invocation record (methods `window`,
 `approximate`, `overlap`, `unattributed` of `routing token-attribution`). No coordinator attempt is emitted.
