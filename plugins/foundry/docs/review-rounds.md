@@ -333,6 +333,26 @@ read-review --since`: `docs/review-packet.md`); the tool checks that the head pa
 ancestor of HEAD, not that it is the head of the previous round. Before PAT-283 the range
 was a declaration too, and the send text did not say that the review was partial.
 
+## A blocked diff stays deduplicated (PLP-341)
+
+- Observed (`routing_facades.py`, the `mode=deduplicated` plan: "ce hash de diff possède une
+  review terminée et reste dédupliqué."; `review_packet.py`, `RoutingConfigError("active private
+  claim required")` when the claim does not have `should_run` true; `routing.py`,
+  `_assert_recoverable`: "une review terminée est terminale et ne peut pas être récupérée."):
+  once a terminal proof with `quality=blocked` is recorded, a new round on an identical diff is
+  refused. `prepare-review` fails with "active private claim required" and `recover-review`
+  refuses the completed review. Only a correction that changes the diff gives a new hash and so
+  a new round (`review_diff_hash` is the SHA-256 of the `git diff --binary` bytes, `routing.py`).
+- Deduced from `git_diff` and `review_diff_hash` (the PR description is not an input): a block
+  that needs no diff change, for example a false PR description, can be corrected in the PR body
+  but the correction does not change the hash, so the blocked proof cannot be replaced by a new
+  review of the same diff. What remains possible is a commit that changes the diff (an empty
+  commit leaves `base...head` and so the hash unchanged, deduced from `git_diff`). In a
+  campaign, the description-only correction of PAT-227 (`docs/campaign-effects.md`, "The
+  description correction") is decided for a validated round with remarks marked "fix before
+  merge", not for a blocked one (deduced from `review_fix_description` in `campaign_review.py`
+  and that page). Whether a blocked proof can be superseded without a diff change is unknown.
+
 ## Limits
 
 - The deferral moves part of the rounds to the follow-up issue instead of removing them;
