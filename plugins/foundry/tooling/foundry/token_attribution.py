@@ -231,7 +231,7 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     slices: dict[tuple, dict] = {}
 
     def add(row_tokens: dict, requests: int, *, issue, method, role, role_source, host, scope,
-            reason=None, issues=None) -> None:
+            reason=None, issues=None, lower_bound: int = 0) -> None:
         key = (method, issue or "", role or "", role_source or "", host, scope, reason or "",
                tuple(issues or ()))
         entry = slices.setdefault(key, {
@@ -239,6 +239,8 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
             "host": host, "scope": scope, "reason": reason, "issues": list(issues) if issues else None,
             "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0)})
         entry["requests"] += requests
+        if lower_bound:  # PLP-344: key present only when a request is a lower bound
+            entry["lower_bound_requests"] = entry.get("lower_bound_requests", 0) + lower_bound
         for name in BILLING_TOKEN_KEYS:
             entry["tokens"][name] += row_tokens[name]
 
@@ -269,29 +271,38 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                         "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0),
                         "token_requests": [], "request_granularity": True})
                     seen["requests"] += len(row["token_requests"])
+                    if row.get("lower_bound_requests"):
+                        seen["lower_bound_requests"] = (seen.get("lower_bound_requests", 0)
+                                                        + row["lower_bound_requests"])
                     seen["token_requests"].extend(
                         {name: request[name] for name in BILLING_TOKEN_KEYS} for request in row["token_requests"])
                     if row.get("request_granularity") is False:
                         seen["request_granularity"] = False
                     for name in BILLING_TOKEN_KEYS:
                         seen["tokens"][name] += row["tokens"][name]
-                add(row["tokens"], len(row["token_requests"]), issue=record["issue"], method="exact", **common)
+                add(row["tokens"], len(row["token_requests"]), issue=record["issue"], method="exact",
+                    lower_bound=row.get("lower_bound_requests", 0), **common)
                 continue
             requests, times = row["token_requests"], row.get("request_at", [])
+            flags = row.get("request_lower_bound", [])
             for position, tokens in enumerate(requests):
+                bound = 1 if flags and flags[position] else 0
                 when = _time(times[position]) if len(times) == len(requests) else None
                 kind, value = _classify(when, parent_windows or [])
                 if kind == "one":
-                    add(tokens, 1, issue=value, method="approximate" if subagent else "window", **common)
+                    add(tokens, 1, issue=value, method="approximate" if subagent else "window", lower_bound=bound, **common)
                 elif kind == "overlap":
-                    add(tokens, 1, issue=None, method="overlap", issues=value, **common)
+                    add(tokens, 1, issue=None, method="overlap", issues=value, lower_bound=bound, **common)
                 else:
                     if value == "no_window" and subagent and (host, unit["parent"] or "") in lost_parents:
                         value = "parent_unreadable"
-                    add(tokens, 1, issue=None, method="unattributed", reason=value, **common)
+                    add(tokens, 1, issue=None, method="unattributed", reason=value, lower_bound=bound, **common)
     ordered = [slices[k] for k in sorted(slices, key=lambda k: (METHODS.index(k[0]),) + k[1:])]
     totals = {"requests": sum(s["requests"] for s in ordered),
               "tokens": {n: sum(s["tokens"][n] for s in ordered) for n in BILLING_TOKEN_KEYS}}
+    bounded = sum(s.get("lower_bound_requests", 0) for s in ordered)
+    if bounded:  # PLP-344: present only when some request has no terminal snapshot
+        totals["lower_bound_requests"] = bounded
     listed = []
     for (host, _), items in sorted(windows.items(), key=lambda kv: kv[0]):
         for w in items:

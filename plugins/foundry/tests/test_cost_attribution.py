@@ -1232,13 +1232,80 @@ def test_claude_conflicting_correlated_usage_fails_closed(tmp_path, changed):
 
 
 @pytest.mark.parametrize("reasoning", [None, 1])
-def test_claude_partial_only_never_certifies_final_usage(tmp_path, reasoning):
+def test_claude_request_without_terminal_snapshot_is_a_marked_lower_bound(tmp_path, reasoning):
+    """PLP-344: counted, never exact; the slice carries the number of affected requests."""
     log = tmp_path / "partial.jsonl"
     log.write_text(json.dumps(_claude_stream_record(reasoning=reasoning)))
     diagnostics = {}
-    with pytest.raises(CostAttributionError, match="no terminal snapshot"):
-        read_host_log("claude", log, diagnostics=diagnostics)
-    assert diagnostics == {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert rows[0]["tokens"]["output_tokens"] == 2
+    assert rows[0]["lower_bound_requests"] == 1 and rows[0]["request_lower_bound"] == [True]
+    assert diagnostics["billable_records"] == 1
+    assert diagnostics["lower_bound_records"] == [{"reason": "no_terminal_snapshot", "count": 1}]
+
+
+def test_claude_non_terminal_records_keep_the_largest_of_each_counter(tmp_path):
+    log = tmp_path / "partial.jsonl"
+    first = _claude_stream_record(output=8)
+    first["message"]["usage"]["input_tokens"] = 11
+    later = _claude_stream_record(output=3)
+    later["message"]["usage"]["cache_read_input_tokens"] = 25
+    exact = _claude_stream_record("req-2", "msg-2", terminal=True, output=50, reasoning=10)
+    log.write_text("\n".join(json.dumps(r) for r in [first, later, exact]))
+    diagnostics = {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert rows[0]["token_requests"][0] == {
+        "input_tokens": 11, "cached_input_tokens": 25, "cache_write_input_tokens": 30,
+        "output_tokens": 8, "reasoning_output_tokens": "unavailable"}
+    assert rows[0]["request_lower_bound"] == [True, False] and rows[0]["lower_bound_requests"] == 1
+    assert diagnostics["billable_records"] == 2
+    assert diagnostics["lower_bound_records"] == [{"reason": "no_terminal_snapshot", "count": 1}]
+
+
+def test_claude_log_with_only_terminal_requests_carries_no_lower_bound_marker(tmp_path):
+    log = tmp_path / "exact.jsonl"
+    log.write_text(json.dumps(_claude_stream_record(terminal=True, output=100, reasoning=25)))
+    diagnostics = {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert "lower_bound_requests" not in rows[0] and "request_lower_bound" not in rows[0]
+    assert "lower_bound_records" not in diagnostics
+
+
+def test_claude_terminal_snapshot_wins_over_larger_non_terminal_records(tmp_path):
+    log = tmp_path / "mixed.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [
+        _claude_stream_record(output=900), _claude_stream_record(terminal=True, output=100, reasoning=25),
+        _claude_stream_record(output=950)]))
+    diagnostics = {}
+    rows = read_host_log("claude", log, diagnostics=diagnostics)
+    assert rows[0]["tokens"]["output_tokens"] == 100 and "lower_bound_requests" not in rows[0]
+    assert "lower_bound_records" not in diagnostics
+
+
+def test_claude_non_terminal_identity_change_stays_blocking(tmp_path):
+    log = tmp_path / "changed.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in [
+        _claude_stream_record(), _claude_stream_record(model="other-model")]))
+    with pytest.raises(CostAttributionError, match="changed"):
+        read_host_log("claude", log)
+
+
+def test_claude_incomplete_usage_stays_blocking_beside_a_lower_bound_request(tmp_path):
+    log = tmp_path / "incomplete.jsonl"
+    broken = _claude_stream_record("req-2", "msg-2")
+    del broken["message"]["usage"]["output_tokens"]
+    log.write_text("\n".join(json.dumps(r) for r in [_claude_stream_record(), broken]))
+    with pytest.raises(CostAttributionError, match="incomplete"):
+        read_host_log("claude", log)
+
+
+def test_cli_reader_completeness_counts_lower_bound_requests(tmp_path, capsys):
+    from foundry import cost_attribution
+    log = tmp_path / "partial.jsonl"
+    log.write_text(json.dumps(_claude_stream_record()))
+    cost_attribution.main(["--host", "claude", "--log", str(log)])
+    out = json.loads(capsys.readouterr().out)
+    assert out["reader_completeness"]["lower_bound_records"] == [{"reason": "no_terminal_snapshot", "count": 1}]
 
 
 def test_claude_terminal_snapshot_crossing_midnight_uses_completion_date(tmp_path):

@@ -24,6 +24,9 @@ REASONING_DEGRADATION_REASONS = (
     "incoherent_reasoning_output_tokens",
 )
 EXCLUSION_REASONS = ("synthetic_model",)
+# PLP-344: a correlated Claude request with no record carrying a ``stop_reason`` (host side, cause
+# unknown) counts with the largest value observed for each counter: a lower bound, never exact.
+LOWER_BOUND_REASON = "no_terminal_snapshot"
 PLAN_OBSERVATION_RECORD_KEYS = frozenset({
     "record_type", "host", "session_id", "occurred_on",
     "plan_usage_observations", "provenance",
@@ -248,8 +251,12 @@ def _claude_usage(value: object) -> tuple[dict | None, str | None]:
 
 
 def _reader_completeness(degraded: Mapping[str, int], excluded: Mapping[str, int],
-                         billable_records: int) -> dict:
-    """Return content-free reasoning completeness and billing-record coverage."""
+                         billable_records: int, lower_bound: int = 0) -> dict:
+    """Return content-free reasoning completeness and billing-record coverage.
+
+    ``lower_bound_records`` (PLP-344) is present only when ``lower_bound`` > 0, so the
+    output is otherwise byte-identical to the historical one.
+    """
     affected = [{"reason": reason, "count": degraded[reason]}
                 for reason in REASONING_DEGRADATION_REASONS if degraded[reason]]
     exclusions = [{"reason": reason, "count": excluded[reason]}
@@ -257,7 +264,22 @@ def _reader_completeness(degraded: Mapping[str, int], excluded: Mapping[str, int
     return {"completeness": "unavailable" if affected else "available",
             "billable_records": billable_records,
             "affected_records": affected,
-            "excluded_records": exclusions}
+            "excluded_records": exclusions,
+            **({"lower_bound_records": [{"reason": LOWER_BOUND_REASON, "count": lower_bound}]}
+               if lower_bound else {})}
+
+
+def _max_partial_usage(previous: Mapping[str, object], current: Mapping[str, object],
+                       previous_reason: str | None, reason: str | None) -> tuple[dict, str | None]:
+    """Merge two non-terminal snapshots of one request: the largest value of each counter (PLP-344)."""
+    merged = {key: max(previous[key], current[key]) for key in BILLING_TOKEN_KEYS}
+    first, second = previous["reasoning_output_tokens"], current["reasoning_output_tokens"]
+    if first == "unavailable" or second == "unavailable":
+        return {**merged, "reasoning_output_tokens": "unavailable"}, reason or previous_reason
+    reasoning = max(first, second)
+    if reasoning > merged["output_tokens"]:
+        return {**merged, "reasoning_output_tokens": "unavailable"}, "incoherent_reasoning_output_tokens"
+    return {**merged, "reasoning_output_tokens": reasoning}, None
 
 
 def _add_tokens(total: dict, value: Mapping[str, object]) -> None:
@@ -557,6 +579,11 @@ def read_host_log(host: str, log_path: str | Path,
                     if terminal and previous[3:5] != value[3:5]:
                         raise CostAttributionError("host terminal usage conflicts")
                     continue
+                if not terminal:
+                    # Successive non-terminal records: keep the largest of each counter, not the last.
+                    merged, merged_reason = _max_partial_usage(previous[3], tokens, previous[4],
+                                                               degradation_reason)
+                    value = (*value[:3], merged, merged_reason, *value[5:])
             claude_requests[identity] = value
             cwd = raw.get("cwd") if isinstance(raw.get("cwd"), str) else cwd
     finally:
@@ -671,10 +698,10 @@ def read_host_log(host: str, log_path: str | Path,
                 row["position_data_ambiguous"] = True
             rows.append(row)
         return [*rows, *codex_plan_rows]
+    claude_lower_bound = 0
     for (session, model, occurred_on, tokens, degradation_reason, terminal, correlated,
          request_timestamp) in claude_requests.values():
-        if correlated and not terminal:
-            raise CostAttributionError("host token usage unavailable: request has no terminal snapshot")
+        partial = correlated and not terminal
         claude_billable_records += 1
         if degradation_reason is not None:
             claude_degradations[degradation_reason] += 1
@@ -685,6 +712,10 @@ def read_host_log(host: str, log_path: str | Path,
                                           "token_requests": [], "request_ranks": []})
         _add_tokens(row["tokens"], tokens)
         row["token_requests"].append(tokens)
+        row.setdefault("request_lower_bound", []).append(partial)
+        if partial:
+            claude_lower_bound += 1
+            row["lower_bound_requests"] = row.get("lower_bound_requests", 0) + 1
         if timestamps:
             row.setdefault("request_at", []).append(request_timestamp)
         claude_rank += 1
@@ -693,13 +724,15 @@ def read_host_log(host: str, log_path: str | Path,
     if not rows:
         raise CostAttributionError("host log has no exploitable token usage")
     for row in rows:
+        if not row.get("lower_bound_requests"):
+            row.pop("request_lower_bound", None)
         row.update({"project": resolve_project("claude", claude_path_slug=slug, codex_cwd=cwd,
                                                  registry_data=registry_data),
                     "epic": None, "issue": None, "provenance": "host_reported",
                     "plan_usage_percent": "unavailable"})
     if diagnostics is not None:
         diagnostics.update(_reader_completeness(
-            claude_degradations, claude_exclusions, claude_billable_records))
+            claude_degradations, claude_exclusions, claude_billable_records, claude_lower_bound))
     return rows
 
 
@@ -1105,6 +1138,7 @@ def main(argv: list[str] | None = None) -> None:
     reader_degradations = dict.fromkeys(REASONING_DEGRADATION_REASONS, 0)
     reader_exclusions = dict.fromkeys(EXCLUSION_REASONS, 0)
     reader_billable_records = 0
+    reader_lower_bound = 0
     rows = []
     for log in args.log:
         reader_diagnostics: dict = {}
@@ -1112,6 +1146,8 @@ def main(argv: list[str] | None = None) -> None:
         reader_billable_records += reader_diagnostics.get("billable_records", 0)
         for affected in reader_diagnostics.get("affected_records", []):
             reader_degradations[affected["reason"]] += affected["count"]
+        for bound in reader_diagnostics.get("lower_bound_records", []):
+            reader_lower_bound += bound["count"]
         for exclusion in reader_diagnostics.get("excluded_records", []):
             reader_exclusions[exclusion["reason"]] += exclusion["count"]
     if args.session_attribution:
@@ -1123,7 +1159,7 @@ def main(argv: list[str] | None = None) -> None:
     result = reconcile_pilot_v1(rows, grid, args.pilot_v1_results) if args.pilot_v1_results else aggregate(rows, grid, start=args.start, end=args.end, discovered_models=discovered, session_comparisons=comparisons)
     if args.host == "claude":
         result["reader_completeness"] = _reader_completeness(
-            reader_degradations, reader_exclusions, reader_billable_records)
+            reader_degradations, reader_exclusions, reader_billable_records, reader_lower_bound)
     print(json.dumps(result, sort_keys=True))
 
 

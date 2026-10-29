@@ -100,7 +100,8 @@ def _tokens(files: list[tuple[Path, str, str]]) -> dict:
     unreadable = 0
     for path, host, klass in files:
         try:
-            rows = read_host_log(host, path)
+            diagnostics: dict = {}
+            rows = read_host_log(host, path, diagnostics=diagnostics)
         except CostAttributionError:
             unreadable += 1
             continue
@@ -110,6 +111,9 @@ def _tokens(files: list[tuple[Path, str, str]]) -> dict:
                 continue
             for key in BILLING_TOKEN_KEYS:
                 bucket[_TOKEN_NAMES[key]] += row["tokens"][key]
+        for bound in diagnostics.get("lower_bound_records", []):
+            # PLP-344: this class holds requests with no terminal snapshot; its counters are lower bounds.
+            bucket["lower_bound_requests"] = bucket.get("lower_bound_requests", 0) + bound["count"]
         totals[klass] = bucket
     return {**totals, "unreadable_logs": unreadable, "scope": TOKENS_SCOPE}
 

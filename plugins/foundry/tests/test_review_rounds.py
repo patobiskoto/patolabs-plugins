@@ -164,3 +164,19 @@ def test_codex_rollout_is_reported_unclassified_and_render_prints_tokens(tmp_pat
     assert (f"tokens ({review_rounds.TOKENS_SCOPE}) codex_unclassified: "
             "input 1, cache_read 2, cache_write 3, output 4") in text
     assert "coordinator: unknown" in text
+
+
+def test_tokens_mark_a_class_holding_requests_without_terminal_snapshot(tmp_path):
+    """PLP-344: the counters of that class are lower bounds; other classes carry no marker."""
+    main = tmp_path / "sess.jsonl"
+    main.write_text(_claude_line("s", 10) + "\n")
+    sub = tmp_path / "sess" / "subagents"
+    sub.mkdir(parents=True)
+    partial = json.loads(_claude_line("s", 1, "a1"))
+    partial["message"]["stop_reason"] = None
+    (sub / "agent-1.jsonl").write_text(json.dumps(partial) + "\n")
+    result = review_rounds.report("PAT-1", REPO, state_dir=tmp_path, claude_sessions=[main])
+    assert result["tokens"]["unreadable_logs"] == 0
+    assert result["tokens"]["subagents"]["lower_bound_requests"] == 1
+    assert "lower_bound_requests" not in result["tokens"]["coordinator"]
+    assert "lower_bound_requests 1" in review_rounds.render(result)

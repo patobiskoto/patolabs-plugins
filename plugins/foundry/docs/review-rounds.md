@@ -86,7 +86,10 @@ source.
   carries enough to make it is unknown. A class with no readable log is `null`
   (unknown), never 0; sub-agent logs not found under that path are not counted, so a
   sub-agent total is a lower bound. `unreadable_logs` is one count over all classes: a class
-  that has some unreadable logs is a lower bound too. Whether an older Claude host wrote
+  that has some unreadable logs is a lower bound too. A Claude request with no terminal snapshot is
+  read, not rejected (PLP-344, [cost-attribution.md](cost-attribution.md), "Complétude Claude"): its class
+  then carries `lower_bound_requests` (the number of such requests, key present only when above 0, printed
+  by the text output) and its counters are lower bounds too. Whether an older Claude host wrote
   sub-agent records into the main log, which would then be counted as coordinator, is
   unknown.
 - Output holds counts only: no claim or proof identifier, prompt or log content.
