@@ -3165,6 +3165,8 @@ def premium_tokens(session_id: str, session_log: Mapping[str, Any],
     rows = [r for r in rows if "tokens" in r]
     if not rows or any(r.get("session_id") != session_id for r in rows):
         return None, "log_session_id_mismatch"
+    if any(r.get("lower_bound_requests") for r in rows):  # PLP-344: a lower bound is not a measure
+        return None, "host_log_lower_bound"
     total: dict[str, int | None] = dict.fromkeys(TOKEN_CLASSES, 0)
     for row in rows:
         model_total = None if by_model is None else by_model.setdefault(

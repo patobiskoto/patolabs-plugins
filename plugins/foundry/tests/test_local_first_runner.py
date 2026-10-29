@@ -708,6 +708,11 @@ def test_premium_tokens_are_attached_by_session_id_and_unknown_is_never_zero(tmp
     tokens, reason = lfr.premium_tokens("sess-5", cfg)
     assert tokens is None and reason.startswith("host_log_unreadable")
     assert lfr.billing_total(None) is None
+    (projects / "lb").mkdir()  # PLP-344: a request without a terminal snapshot is a lower bound, so unknown
+    row = {"type": "assistant", "timestamp": "2026-10-05T10:00:00Z", "sessionId": "sess-6", "requestId": "r0",
+           "message": {"model": "m", "id": "i0", "stop_reason": None, "usage": usage}}
+    (projects / "lb" / "sess-6.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+    assert lfr.premium_tokens("sess-6", cfg) == (None, "host_log_lower_bound")
 
 
 def test_stream_parser_reads_steps_tokens_and_declared_speeds():

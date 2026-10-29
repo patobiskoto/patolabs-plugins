@@ -614,7 +614,7 @@ vitesses, `timed_out`, `step_limit_hit`, code et signal de sortie, `ended_by_ext
   (`local.nominal_max_seconds`).
 - **Tokens premium** : chaque exécution cloud reçoit un identifiant de session généré par le lanceur
   (`--session-id`) ; le journal de session de l'hôte est retrouvé par cet identifiant (jamais par
-  fenêtre de temps) et lu par `cost_attribution.read_host_log`. Journal absent, ambigu, illisible, d'une
+  fenêtre de temps) et lu par `cost_attribution.read_host_log`. Journal absent, ambigu, illisible, avec une requête sans état terminal (borne inférieure, PLP-344 ; raison `host_log_lower_bound`), d'une
   autre session ou de disposition non vérifiée : tous les compteurs de l'exécution sont inconnus. Le
   détail par modèle (`premium.by_model`) est consigné et repris par le rapport. La classe de raisonnement que l'hôte ne
   rapporte pas est inconnue. Rôles : `implementer`, `corrector`, `reviewer`.
