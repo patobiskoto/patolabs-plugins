@@ -814,12 +814,14 @@ pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark
 ```
 
 The second command runs, alone, the four tests marked `timing_sensitive` (declared in
-`pytest.ini`): three in `tests/test_local_scout.py` that assert a 0.5 s deadline, and
+`pytest.ini`): three in `tests/test_local_scout.py` that assert a wall-clock bound on a short deadline, and
 `tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
 which races a reader thread against a producer. Only the last one was observed to fail
 under parallel load: one local `-n 4` run during PAT-142 (200 steps seen, bound is below
-200; that run was not recorded). The three scout tests are marked because they assert a
-wall-clock bound, not because a failure was observed. Other unmarked tests also assert a
+200; that run was not recorded). The three scout tests were marked because they assert a
+wall-clock bound, not because a failure was observed; one of them,
+`test_real_total_deadline_bounds_headers_with_frozen_accounting_clock`, later failed 4 times out of 4 in
+the serial step of the CI job `foundry-python-min` (PLP-338), and now uses a 1 s deadline with bounds below 5 s. Other unmarked tests also assert a
 bound on time (for example `test_local_attempt_is_bounded_in_time_and_the_group_is_killed`);
 they were not observed to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
 parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
