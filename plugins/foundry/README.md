@@ -827,9 +827,9 @@ uses a 1 s deadline with bounds below 5 s (the two other scout tests got the sam
 PLP-337, for the same race, deduced: no failure of theirs was observed). Other unmarked
 tests also assert a bound on time (for example
 `test_local_attempt_is_bounded_in_time_and_the_group_is_killed`); they were not observed
-to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
-parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
-step: 4 passed in 2.84s. The log does not show the number of xdist workers.
+to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the parallel step without a
+failure: 6332 passed, 10 skipped in 310.58s, then the serial step: 4 passed in 2.84s.
+The log does not show the number of xdist workers.
 
 `tests/test_local_first_runner.py::test_B1_an_interrupted_execution_kills_the_whole_process_group[2-KeyboardInterrupt]`
 used to fail when launched from a background job of a non-interactive shell (`cmd &`).
