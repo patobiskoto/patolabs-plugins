@@ -826,8 +826,8 @@ times out of 4 in the serial step of the CI job `foundry-python-min` (PLP-338), 
 uses a 1 s deadline with bounds below 5 s (the two other scout tests got the same in
 PLP-337, for the same race, deduced: no failure of theirs was observed). Other unmarked
 tests also assert a bound on time (for example
-`test_local_attempt_is_bounded_in_time_and_the_group_is_killed`); they
-were not observed to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
+`test_local_attempt_is_bounded_in_time_and_the_group_is_killed`); they were not observed
+to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
 parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
 step: 4 passed in 2.84s. The log does not show the number of xdist workers.
 
