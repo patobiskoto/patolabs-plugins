@@ -123,9 +123,12 @@ Run `doctor` before the first write. It resolves the canonical repository remote
 compares the credential-free `host/owner/repo` identity of the actual `origin` remote with
 the registered `canonical_repo`. HTTPS, URL-style SSH, scp-style SSH and ssh-config
 aliases are normalized without DNS resolution. A missing, contradictory, or
-same-basename/different-owner binding is refused before mutation. Cut over only a new
-project with no prior tracker writes; Foundry performs no dual-write and does not
-migrate YouTrack data.
+same-basename/different-owner binding is refused before mutation. `registry bootstrap
+devhub` is for a project with no prior tracker writes. A project with history in another
+tracker (YouTrack, Linear) goes through `cutover preflight|copy|activate devhub`, which
+copies the source tracker bound to the checkout (`tooling/foundry/cutover.py`,
+`tooling/foundry/migration.py`) and refuses a target equal to the source; see "Selective
+cutover target" below. Foundry performs no dual-write.
 
 `registry register` canonicalizes authenticated remote forms to credential-free
 `host/owner/repo` before persistence. Legacy records are sanitized in memory before
