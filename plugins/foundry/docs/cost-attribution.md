@@ -88,15 +88,15 @@ et `request_parent_reported` (un booléen par entrée de `token_requests`), `dia
 d’outil du parent ». Sinon, le comportement PLP-344 est inchangé et `diagnostics` gagne `parent_refused_records`
 (`[{"reason", "count"}]`, raisons fermées `PARENT_REFUSAL_REASONS` : `parent_unreadable`, `no_agent_link`,
 `no_parent_result`, `ambiguous_parent_result`, `tool_use_mismatch`, `unreadable_parent_usage`, `input_differs`,
-`output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Ces deux clés
-n’existent qu’au niveau de `read_host_log` : son seul appelant qui passe `parent=` (`token_attribution.py`, ligne
-`read_host_log(..., parent=link)`) ne passe pas `diagnostics`, donc elles ne remontent ni
-dans `routing token-attribution` ni dans `routing kpi-export` (seul `tokens_parent_reported_requests` paraît dans
-`routing kpi-export`, voir [kpi-export.md](kpi-export.md)). La raison de dégradation du raisonnement d’une requête complétée est celle de
-l’`usage` du parent, jamais celle du journal : le compteur du journal est un instantané partiel, l’écart avec le parent
-n’est pas connu. Si le parent n’a pas le compteur de raisonnement, la requête compte `missing_reasoning_output_tokens`
-et `completeness` passe à `unavailable`, même si le journal l’avait (test
-`test_parent_usage_without_reasoning_degrades_even_if_the_log_had_it`). Sans `parent`
+`output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Les clés
+`parent_completed_records` et `parent_refused_records` n’existent qu’au niveau de `read_host_log` : son seul appelant
+qui passe `parent=` (`token_attribution.py`, ligne `read_host_log(..., parent=link)`) ne passe pas `diagnostics`, donc
+elles ne remontent ni dans `routing token-attribution` ni dans `routing kpi-export` (seul
+`tokens_parent_reported_requests` paraît dans `routing kpi-export`, voir [kpi-export.md](kpi-export.md)). La raison de
+dégradation du raisonnement d’une requête complétée est celle de l’`usage` du parent, jamais celle du journal : le
+compteur du journal est un instantané partiel, l’écart avec le parent n’est pas connu. Si le parent n’a pas le
+compteur de raisonnement, la requête compte `missing_reasoning_output_tokens` et `completeness` passe à `unavailable`,
+même si le journal l’avait (test `test_parent_usage_without_reasoning_degrades_even_if_the_log_had_it`). Sans `parent`
 (valeur par défaut), la sortie est inchangée. Avec `parent`, restent en borne basse (écart inconnu) les requêtes
 autres que la dernière et une dernière requête dont la complétion est refusée. Mesure : [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md), section « PLP-345 ».
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
