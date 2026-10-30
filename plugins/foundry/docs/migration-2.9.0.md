@@ -48,7 +48,7 @@ published, `<state dir>/kpi-publish/<hash>.json` (`PublishedLedger`, `kpi_publis
   attempts in `omitted` (`no_recorded_time`); see
   [kpi-export.md](kpi-export.md#tokens-that-are-a-lower-bound-plp-344) and the PLP-321, PLP-344
   and PLP-345 entries of the [CHANGELOG](../CHANGELOG.md).
-- **`foundry:release`.** It has a fourth STOP, GitHub Release, after the tag
+- **`foundry:release`.** It has a new STOP, GitHub Release, after the tag
   ([release skill](../skills/release/SKILL.md), step 7); the steps after it move up by one,
   and the record on the release ticket gains the Release URL and state.
 
@@ -69,7 +69,7 @@ They are examples, not procedures run for 2.9.0 on either host. The host-update 
 
 To verify the version after an authorized update, use the
 [loaded-version evidence requirements](migration-1.0.0.md#verify-the-version-actually-loaded)
-and [release readbacks](../skills/release/SKILL.md), steps 7–10, with `2.9.0` as the
+and [release readbacks](../skills/release/SKILL.md), steps 8–10, with `2.9.0` as the
 expected version. Manager listing, installed manifest and session-loaded version
 remain separate observations per host; none is supplied by this preparation.
 

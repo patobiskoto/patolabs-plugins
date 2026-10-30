@@ -6,8 +6,8 @@
       "date": "2026-10-30",
       "changelog_sha256": "7095ebb7b896b7f8bd620134c62b070361fca62c2632b867ca55ab4c33cdb2d8",
       "documents": {
-        "docs/migration-2.9.0.md": "495f97aaa735f4300b6ff6ce7d47380870d9d8db97bf7d7846584a563dc5fc0b",
-        "docs/release-2.9.0.md": "49d69929f0662b71a815aace624209189a79d888c5adb823fd45d246b94fe1e8"
+        "docs/migration-2.9.0.md": "2cc0229cd23b507b2c23a5c509377fbd43f7d9e93333829afc185c91af029fea",
+        "docs/release-2.9.0.md": "b3562c627ffb649dc9e0636f5eacc6904ae9f4a9eed3081e69b338473c7fcfba"
       }
     },
     "2.8.1": {

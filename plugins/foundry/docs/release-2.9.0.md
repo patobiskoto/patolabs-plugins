@@ -50,6 +50,6 @@ The changelog section and these release pages are frozen by `freeze_entry` in
 | Dated changelog and the eleven fragments | Updated: byte-identical entries assembled into `2.9.0 — 2026-10-30`; fragments removed |
 | Release note and migration guide | New: this page and [migration-2.9.0.md](migration-2.9.0.md) |
 | Root and Foundry READMEs | Updated: source-candidate status, version, release/migration pointers and release-version list |
-| `scripts/ci_plan.py` release-version comment | Updated: `2.8.0` marked published and tagged, `2.9.0` added; executable code unchanged |
+| `scripts/ci_plan.py` release-version comment | Updated: `2.8.1` marked published and tagged, `2.9.0` added; executable code unchanged |
 | `tests/fixtures/release-history.json` | Updated: `2.9.0` entry added; earlier entries retained |
 | CLI, configuration and behaviour implementation | No change in this preparation; the source documentation of each issue is linked above |
