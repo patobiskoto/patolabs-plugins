@@ -217,7 +217,8 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
 
     ``per_invocation``, when a dict is given, is filled with the ``exact`` tokens keyed by
     invocation id (``requests``, ``tokens``, the per-request ``token_requests`` and
-    ``request_granularity``, false when a host log cannot give them, see `cost_attribution.read_host_log`); the returned
+    ``request_granularity``, false when a host log cannot give them, see `cost_attribution.read_host_log`) and,
+    only when above 0, ``lower_bound_requests`` and ``parent_reported_requests`` (PLP-344, PLP-345); the returned
     report is unchanged (PLP-319, PLP-328).
     """
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)

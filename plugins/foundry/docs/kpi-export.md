@@ -76,7 +76,7 @@ issue and the opaque invocation id (the invocation id itself is not emitted).
 | `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` (raw log status `routed`, every Codex attempt included; `provenance`: "no completion event"); a background Agent launch is also `unknown`/`unknown` (raw log status `unknown`, written by `hooks/observe_agent.py`; PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says "background launch" (`_attempts` in `kpi_export.py` branches on the raw status, PLP-14) | never |
 | `started_at`, `observed_at` | `at` of the `routed` event | never |
 | `ended_at` | none: the completion time is not kept by the reader, so a background launch has none either | always |
-| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py`; a lower bound when `lower_bound_requests` is above 0 (see "Tokens that are a lower bound" below) | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs |
+| `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py`; a lower bound when `lower_bound_requests` is above 0 (see "Tokens that are a lower bound" below) | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs, or the log was found but `cost_attribution.read_host_log` rejected it as a whole (`CostAttributionError`, counted as unreadable by `token_attribution.report`; `unavailable`, see "Tokens that are a lower bound" for what is no longer rejected since PLP-344) |
 | `tokens.reasoning_output` | none: the per-invocation attachment carries the billing keys only; it is part of `output` and never enters a total | always |
 | `amount` | see below | no tokens, no price, or a threshold entry (`haiku-5.5`) whose per-request counts are missing |
 
@@ -102,7 +102,9 @@ request, with `over_threshold_rates` for a request whose context exceeds the thr
 for 1h cache writes (`CLAUDE_CACHE_TTL_1H_PINS`, `routing_facades.py`, PAT-134). The rule (`_amount`, PLP-14): for a
 Claude attempt whose grid entry is one of those pins and whose `cache_write_input` is above zero, `completeness` is
 `partial` (DevHub's enum is `complete`, `partial`, `unknown`: `src/tracker/observation-contract.ts:29` in the DevHub
-repository, read, not run), and `provenance` says the amount is a lower bound; otherwise it is `complete`. The number is
+repository, read, not run), and `provenance` says the amount is a lower bound. An attempt whose slice has `lower_bound_requests`
+above 0 is also `partial`, whatever the model ("Tokens that are a lower bound" below); in every other case it is
+`complete`. The number is
 unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write rate is 2 times the base input rate
 against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0 against 2.5 USD per million tokens for `sonnet-5.5`
 (the 2.5 is the grid value, `pricing-v1.json`); the 1h rate is not a grid key and is not applied. Whether the 1h cache
@@ -216,10 +218,12 @@ of the issue held by those logs stay unavailable too (`_unambiguous`;
 or ambiguous leaves `tokens` null and the `amount` null, the same `unavailable` as without a log; the module never
 guesses and the CLI test checks that its output holds no path (`test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when_nothing_is_found`).
 Besides the closed-vocabulary identifiers of `token_attribution`, the Codex search reads the `cwd` path of the
-`session_meta` (`_codex_cwd`), only to keep rollouts of this repository; it is never emitted. Residual limits: a Codex coordinator log without an
+`session_meta` (`_codex_cwd`), only to keep rollouts of this repository; it is never emitted. This is the one path the reader reads, a filter and not an
+output: FOUNDRY-ADR-0015 says the reader extracts no file path, and PLP-ADR-0063 (item 3 of its decision) names this read as the exception. Residual limits: a Codex coordinator log without an
 invocation of the issue is not selected (its requests are not attributed `exact` anyway); a Claude session whose
 project directory is a checkout that git no longer lists is not searched; the search reads the first line of every
-rollout file under `~/.codex/sessions` (cost unmeasured).
+rollout file under `~/.codex/sessions` (cost unmeasured). The only external command is `git worktree list`, bounded by
+`GIT_TIMEOUT_SECONDS` (10 s, `kpi_sessions.py`); on timeout the given root is the only checkout searched.
 
 ## Procedure
 
@@ -247,15 +251,20 @@ Status of each documented artifact (AGENTS.md#R5):
 
 Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
 
-- Explicit only: `routing.py` and, since PLP-343, `kpi_merge.py` are the only importers of `kpi_publish`; no hook, gate
-  or campaign imports it, and `kpi_export.py` stays free of network code
+- Explicit only: `routing.py` and, since PLP-343, `kpi_merge.py` are the only importers of `kpi_publish`; no hook or
+  gate imports it (a campaign runs `issue merge`, which publishes, see "Publication at merge"), and `kpi_export.py` stays free of network code
   (`test_only_the_cli_verb_and_the_merge_step_import_the_publisher_and_the_reader_stays_offline`).
 - Project key explicit: the document is refused, before any request, if one record `anchor.issue_id` does not start with
   `<KEY>-`, or if a batch is malformed (`test_document_of_another_project_is_refused_before_any_request`).
 - Idempotence is DevHub's: records keep their `record_id`, so a second identical publication is answered `replayed`
   per record (`test_publish_reports_created_replayed_and_refusals_and_republication_replays`). What DevHub answers for
-  a changed body under the same `record_id` (`idempotency_conflict`, see "Common fields") is reported as a refusal
-  with its code; it is not retried or rewritten.
+  a changed body under the same `record_id` is, per DevHub's answer of 2026-10-28 (a DevHub statement, not run by
+  Foundry; sources it cites: `src/tracker/observation-store.ts:36` and `:101-113`, test
+  `tests/economic.integration.test.ts:376`), HTTP 200 for the batch and `{status: "error", code:
+  "idempotency_conflict"}` for that record only, the other records being processed. It is reported as a refusal with
+  its code (`refusals`); it is not retried or rewritten. DevHub names no whole-batch 409 for this case (whole-batch
+  errors: authentication, scope, project, size); had one occurred, it would be `http_409_idempotency_conflict` with
+  the whole batch `unsent` (deduced from the batch-failure codes below, not observed).
 - Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
   `revised` (PLP-343: how many of the `created` records carry a `supersedes_id`, `publish` in `kpi_publish.py`),
   per-batch entries (`index`, `records`, `error` when the whole batch failed, and `ledger_error` set to `published ledger not written` when saving the published ledger after the batch raised `OSError`, `publish` in `kpi_publish.py`; it does not change `totals`) and `refusals` (`record_id`, `code`).
@@ -263,7 +272,7 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
   `response_too_large`, `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
   (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
 - Exit status: 0 when every record is `created` or `replayed`, 1 when any record is refused or unsent, 2 for a refusal
-  before any request. Nothing else in Foundry reads this result; a failure changes no routing, gate, merge or campaign
+  before any request. Only `kpi_merge.summary` reads the report (to print one line); a failure changes no routing, gate, merge or campaign
   (`routing.py` calls the module; `test_run_exit_status_and_report`; the merge step does not use the exit status, see
   [Publication at merge](#publication-at-merge-plp-343)).
 - Bounds: at most `MAX_BATCH_RECORDS` (100) records and `MAX_BATCH_BYTES` (1 MiB) per batch, redirects are never
@@ -307,13 +316,17 @@ Limits, stated as such:
   already revised is sent again as revision 1 and refused `idempotency_conflict` (same `record_id` as the revision,
   different body, deduced from the DevHub rule above;
   `test_loss_of_the_ledger_republishes_an_unchanged_record_as_replayed_and_a_revised_one_is_refused`). No read-back from
-  `GET /observations?issue=` is implemented.
+  `GET /observations?issue=` is implemented, so the chain stays blocked: every later change of that source goes out as
+  revision 1 and is refused `correction_conflict` until the ledger is restored (accepted limit, PLP-ADR-0063,
+  "Conséquences").
 - Records published before PLP-342 have no entry: a source changed since then is sent as revision 1 and DevHub
   refuses it as `correction_conflict`, reported in `refusals`. An unchanged one is `replayed` and gets an entry.
 - A source that returns to an earlier fingerprint, or a changed `amount` with an unchanged fingerprint (price grid
   update), is refused `idempotency_conflict`: not a revision.
 - A revision whose `started_at` differs from the previous (an escalation start that is an estimate deduced from the
   first routed invocation) is sent as is and refused `correction_conflict` if DevHub applies the rule.
+- `started_at` is stored in each ledger entry but `PublishedLedger.revise` does not compare it: DevHub applies the
+  `started_at` rule (previous bullet).
 - Two concurrent publications to the same project have no lock: last writer wins on the ledger file (not exercised).
 
 ## Publication at merge (PLP-343)
@@ -328,7 +341,7 @@ Status of each documented artifact (AGENTS.md#R5):
 
 | Artifact | Status |
 |---|---|
-| step after the `done` transition of `issue merge` | new, PLP-343; it runs before the local cleanup report, so it also runs when the merge exits 3 (`EXIT_LOCAL_CLEANUP_FAILED`); it does not run when the merge is refused, nor on the resume path of an already merged PR (that path returns earlier; catch up with the manual verbs) |
+| step after the `done` transition of `issue merge` | new, PLP-343; it runs before the local cleanup report, so it also runs when the merge exits 3 (`EXIT_LOCAL_CLEANUP_FAILED`); it does not run when the merge is refused, nor when the issue is already `done` (the early return of `issue.merge` for trackers with `bounded_transition_proofs`, `issue.py`; catch up with the manual verbs); a PR already merged whose issue is not yet `done` goes through the normal path and publishes |
 | what it does | `kpi_sessions.discover` for the issue, `kpi_export.build`, `kpi_publish.validate_document`, `kpi_publish.endpoint` (URL and token, the same resolution as `routing kpi-publish`), `kpi_publish.publish` with the `PublishedLedger`; the project key is the part of the issue id before the first `-`; the export is held in memory, no file is written besides the ledger |
 | capability | the tracker instance of the merge must have `kpi_publication_supported` true (`trackers/base.py`); otherwise nothing is published and nothing is printed |
 | output | on success exactly one line on standard output, `kpi: created=N revised=N replayed=N refused=N not_sent=N` (`kpi_merge.summary`; `created` excludes the `revised` ones, `not_sent` is `unsent` of the report); when `refused` or `not_sent` is above zero the same line followed by `; run ... to catch up` goes to standard error as the one warning. A failure before any request gives one warning line `kpi: publication skipped (<reason>); run ...`. Lines hold counts and fixed words: no path, URL, token or server message (`test_the_step_never_raises_whatever_fails_inside_it`, `test_an_unexpected_exception_becomes_a_warning_without_detail`) |
@@ -342,6 +355,9 @@ Cases covered by `tests/test_kpi_merge.py`: success, replay and revision; no cap
 `merge` (`test_merge_runs_the_step_after_done_and_a_failing_step_changes_neither_output_nor_exit`,
 `test_merge_exit_code_is_unchanged_when_the_real_step_explodes`).
 
+A campaign runs `issue merge` (`campaign_effects.py`, `campaign_runtime.py`), so publication also happens at campaign
+merges, in the same process, with the same one-line output.
+
 Limits, stated as such:
 
 - Figures can be partial at merge (for example a completion event written later): a later manual
@@ -350,5 +366,9 @@ Limits, stated as such:
 - Extra cost of a merge: one local log search and one HTTP request per batch, no model call (deduced from the imports
   of `kpi_export.py` and `kpi_publish.py`; not measured).
 - The merge step has no retry and no timeout other than the 10 s per request of `publish`; the log search is not
-  bounded in time (cost unmeasured, see [Finding the session logs](#finding-the-session-logs-plp-342)).
+  bounded in time (cost unmeasured, see [Finding the session logs](#finding-the-session-logs-plp-342)). In a campaign
+  the merge effect is killed after `COMMAND_TIMEOUT_SECONDS` (30 minutes, `campaign_effects.py`); if the log search
+  exceeded that delay, an already-done merge would count as a failed effect (deduced, not observed), so publication
+  would then act as a gate there. No bound is added; the search time is unmeasured. When there is no `DEVHUB_URL` or
+  token, the step stops before any log is read (`kpi_merge.publish_after_merge`, `endpoint()` first).
 - Not run against a real DevHub here: the tests use the simulated server.

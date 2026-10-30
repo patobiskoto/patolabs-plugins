@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from foundry import invocation_log, kpi_sessions
+from test_token_attribution import _claude_request
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPO = "synthetic-repository"
@@ -76,13 +77,13 @@ def test_a_log_holding_an_ambiguous_id_is_not_selected_for_its_other_ids(tmp_pat
     state = tmp_path / "state"
     for tool in ("toolu_X", TOOL_USE, "toolu_Z"):
         _seed(state, "PLP-1", invocation_log.claude_invocation_id(tool), "claude")
-    only_y = _claude(tmp_path / "projects", ROOT, "s-0", "toolu_X")        # X is unique to this log
+    only_x = _claude(tmp_path / "projects", ROOT, "s-0", "toolu_X")        # X is unique to this log
     _claude(tmp_path / "projects", ROOT, "s-1", TOOL_USE)                   # Y is in this log and
     mixed = _claude(tmp_path / "projects", ROOT, "s-2", TOOL_USE)           # in this one, with Z
     extra = mixed.parent / "s-2" / "subagents" / "agent-b.jsonl"
     _write(extra, [{"type": "user"}])
     extra.with_name("agent-b.meta.json").write_text(json.dumps({"toolUseId": "toolu_Z"}))
-    assert _find(tmp_path) == ([str(only_y)], [])
+    assert _find(tmp_path) == ([str(only_x)], [])
 
 
 def test_slug_matches_the_directory_names_of_the_host():
@@ -113,6 +114,14 @@ def test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when
     assert str(home) not in done.stdout + done.stderr and str(root) not in done.stdout + done.stderr
     # the discovered log holds no request: still unavailable, never guessed
     assert json.loads(out.read_text())["batches"][0]["records"][0]["tokens"]["input"] is None
+    # a subagent journal with a terminal snapshot is an observable only the discovery can supply
+    request = _claude_request("2026-10-01T10:40:00.000Z", 5, "sub1", "a")
+    sub = main.parent / "s-1" / "subagents" / "agent-a.jsonl"
+    _write(sub, [{"type": "user", "timestamp": request["timestamp"], "message": {"content": "plain text"}}, request])
+    found = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    assert found.returncode == 0, found.stderr
+    assert str(home) not in found.stdout + found.stderr and str(root) not in found.stdout + found.stderr
+    assert json.loads(out.read_text())["batches"][0]["records"][0]["tokens"]["input"] == 5
 
 
 def test_only_the_cli_verb_and_the_merge_step_import_the_discovery():
@@ -120,3 +129,15 @@ def test_only_the_cli_verb_and_the_merge_step_import_the_discovery():
                  if re.search(r"^\s*(from foundry import .*\bkpi_sessions\b|from foundry\.kpi_sessions\b)",
                               p.read_text(), re.M)}
     assert importers == {"routing.py", "kpi_merge.py"}  # PLP-343
+
+
+def test_git_worktree_list_is_bounded_and_a_timeout_falls_back_to_the_given_root(tmp_path, monkeypatch):
+    seen = {}
+
+    def slow(*args, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(kpi_sessions.subprocess, "run", slow)
+    assert kpi_sessions.repository_roots(tmp_path) == [tmp_path.resolve()]
+    assert seen["timeout"] == kpi_sessions.GIT_TIMEOUT_SECONDS

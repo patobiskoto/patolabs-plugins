@@ -2,8 +2,9 @@
 
 The publisher is distinct from the pure reader `kpi_export.py` (FOUNDRY-ADR-0015): it is reached only by
 the explicit CLI verb `routing kpi-publish` and, since PLP-343 (PLP-ADR-0063), by the step that follows a
-successful `issue merge` (`kpi_merge.py`), never by a hook, a gate or a campaign, and nothing in Foundry
-reads its result. It never changes routing, delivery or tracker state.
+successful `issue merge` (`kpi_merge.py`), never by a hook or a gate. `issue merge` also runs in a campaign
+(`campaign_effects.py`, `campaign_runtime.py`), so publication also happens at campaign merges. Only
+`kpi_merge.summary` reads its report, to print one line. It never changes routing, delivery or tracker state.
 """
 from __future__ import annotations
 
@@ -128,8 +129,6 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def load_document(path: str, project: str) -> dict:
     """Read and validate the document and the project binding; no network."""
-    if not _PROJECT.fullmatch(project):
-        raise PublishError("invalid project key")
     try:
         raw = Path(path).read_bytes()
     except OSError:

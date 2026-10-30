@@ -4,7 +4,9 @@ The body is the published ``## <version> — <date>`` section of ``CHANGELOG.md`
 the release contract's own ``changelog_sections`` (``tests/test_release_contract.py``). A
 body over ``GITHUB_BODY_LIMIT`` characters is cut at a line boundary and ends with a link to
 the CHANGELOG at the tag ``foundry-v<version>``. A version with no section, or an empty one,
-is refused with a non-zero exit and nothing printed. Without ``--output`` the body goes to
+is refused with a non-zero exit and nothing printed, and so is a version that is not a plain
+semver. A cut body is signalled by one line on standard error. The unit in which GitHub counts
+its 125,000 limit is unknown: the helper counts Python code points. Without ``--output`` the body goes to
 standard output; with it, to that one file. Nothing else is written; the release step passes
 the file to ``gh release create --notes-file``.
 """
@@ -19,12 +21,14 @@ import test_release_contract as contract  # noqa: E402
 
 # Documented GitHub limit on the body of a Release (characters).
 GITHUB_BODY_LIMIT = 125000
+TRUNCATED_MARK = "_Truncated:"
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
 def release_body(version, repo, limit=GITHUB_BODY_LIMIT):
     """Return the Release body, or raise ``ValueError`` when the section is absent or empty."""
-    contract.parse_version(version)
+    if not contract.SEMVER.fullmatch(version):  # explicit: parse_version asserts, and -O removes asserts
+        raise ValueError(f"not a plain semver version: {version!r}")
     sections = {v: text for v, _date, text in contract.changelog_sections()}
     if version not in sections:
         raise ValueError(f"no published CHANGELOG section for {version}")
@@ -57,6 +61,8 @@ def main(argv=None):
         body = release_body(args.version, args.repo)
     except ValueError as error:
         sys.exit(str(error))
+    if body.rstrip("\n").rsplit("\n", 1)[-1].startswith(TRUNCATED_MARK):
+        print(f"release_notes: the body was cut below {GITHUB_BODY_LIMIT} characters", file=sys.stderr)
     if args.output:
         Path(args.output).write_text(body, encoding="utf-8")
     else:

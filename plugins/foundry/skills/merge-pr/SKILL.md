@@ -212,7 +212,9 @@ on the same diff.
 
 After a terminal `blocked` proof the same diff stays deduplicated: no new round is possible
 on it. `prepare-review` then refuses with "active private claim required", because the claim
-has `should_run=false`; `recover-review` refuses a completed review. A new round needs a
+has `should_run=false` (with the same HEAD; with a different HEAD `claim-review` refuses earlier,
+"le HEAD a changé depuis le claim : réservez le nouveau diff avant de relancer un reviewer.",
+`_assert_current_head` in `routing.py`); `recover-review` refuses a completed review. A new round needs a
 correction that changes the diff (a new commit; the diff hash is that of the diff bytes, not
 of the PR description). A block that needs no diff change is described in
 `docs/review-rounds.md` ("A blocked diff stays deduplicated").

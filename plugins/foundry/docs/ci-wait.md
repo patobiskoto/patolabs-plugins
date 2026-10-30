@@ -43,7 +43,9 @@ python3 tooling/foundry_cli.py issue wait-ci <PR-NUMBER> [--timeout=SECONDS] [--
 R5 status (AGENTS.md#R5, FOUNDRY-ADR-0018): documents the check-run deduplication of
 `GitHubCodeHost.check_runs` (`tooling/foundry/codehosts/github.py`,
 `_newest_per_app_and_name`), which feeds `write.ci_gate` for `issue wait-ci` and
-`issue merge`. The gate semantics of FOUNDRY-ADR-0002 are unchanged.
+`issue merge`, and also `evidence_plane.capture_ci_receipts` (`foundry-ci-receipt.v1`,
+source `check_runs`) and the `check_runs` of the review packet (`review_packet.py`): the
+counts of those two follow the deduplicated set too. The gate semantics of FOUNDRY-ADR-0002 are unchanged.
 
 Observed on 2026-10-29 (read-only `gh api`, a private repository of the maintainer, PR of
 2026-10-28, head sha carrying 3 runs of one workflow `ci`, each in its own check suite:
@@ -73,3 +75,12 @@ keep, for each (app, check name), the run with the highest check-run id.
 - Residual risk, deduced: two different workflows of the same app that publish the same job
   name collapse to the newest; a red one with the lower id is then not seen. "Newest" is the
   highest id, not a timestamp (same rule as before on the fallback route).
+  This is a gate opening in a real case, not only a theoretical one. Adding the workflow
+  identity to the key is a behaviour change left to intake (AGENTS.md#R3), not made here.
+- The jq expression of `_check_run_records` that names the app (`.app.slug // .app.name // "unknown"`)
+  is run for real in `tests/test_pure.py`
+  (`test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_unknown`) with the system
+  `jq`, not with the jq embedded in `gh` (unknown whether both agree on `//` for a null `app`; the
+  expression uses only the alternative operator).
+- The counts above are given as counts; the raw API answer of 2026-10-29 was not kept and cannot
+  be reproduced after the fact.

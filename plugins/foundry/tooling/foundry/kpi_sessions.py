@@ -21,6 +21,7 @@ from foundry import invocation_log, token_attribution
 
 CLAUDE_PROJECTS = "~/.claude/projects"
 CODEX_SESSIONS = "~/.codex/sessions"
+GIT_TIMEOUT_SECONDS = 10
 
 
 def repository_roots(root: str | os.PathLike | None) -> list[Path]:
@@ -29,10 +30,10 @@ def repository_roots(root: str | os.PathLike | None) -> list[Path]:
     found: list[Path] = []
     try:
         done = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=start,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS)
         if done.returncode == 0:
             found = [Path(line[9:]) for line in done.stdout.splitlines() if line.startswith("worktree ")]
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return found or [start]
 

@@ -6,6 +6,8 @@ link-normalization contract of the YouTrack adapter, repo-url parsing, and AC pa
 """
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -706,6 +708,27 @@ def test_suite_signals_ci_grace_window():
               "created_at": stale}, now) is False         # schedule-only steady state
     # undatable queued suite: err on the refusing side
     assert f({"status": "queued", "latest_check_runs_count": 0}, now) is True
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs a jq binary")
+def test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_unknown(monkeypatch):
+    """PLP-337: the jq of `_check_run_records` run for real (system jq stands in for the one embedded in gh)."""
+    host = GitHubCodeHost()
+    page = {"total_count": 3, "check_runs": [
+        {"id": 1, "name": "a", "status": "completed", "conclusion": "success",
+         "app": {"slug": "github-actions", "name": "GitHub Actions"}},
+        {"id": 2, "name": "b", "status": "completed", "conclusion": "failure", "app": {"name": "Legacy CI"}},
+        {"id": 3, "name": "c", "status": "completed", "conclusion": "success", "app": None}]}
+
+    def gh_with_jq(*args, **_kwargs):
+        expression = args[args.index("--jq") + 1]
+        done = subprocess.run(["jq", "-c", expression], input=json.dumps(page), capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    monkeypatch.setattr(host, "_gh", gh_with_jq)
+    records = host._check_run_records("repos/o/r/commits/sha/check-runs")
+    assert [(r["id"], r["app"]) for r in records] == [(1, "github-actions"), (2, "Legacy CI"), (3, "unknown")]
 
 
 def test_ci_expected_paginates_until_active_suite_on_last_page(monkeypatch):

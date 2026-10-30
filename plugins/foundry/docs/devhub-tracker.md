@@ -124,7 +124,7 @@ compares the credential-free `host/owner/repo` identity of the actual `origin` r
 the registered `canonical_repo`. HTTPS, URL-style SSH, scp-style SSH and ssh-config
 aliases are normalized without DNS resolution. A missing, contradictory, or
 same-basename/different-owner binding is refused before mutation. `registry bootstrap
-devhub` is for a project with no prior tracker writes. A project with history in another
+devhub` is for a project with no prior writes in another tracker. A project with history in another
 tracker (YouTrack, Linear) goes through `cutover preflight|copy|activate devhub`, which
 copies the source tracker bound to the checkout (`tooling/foundry/cutover.py`,
 `tooling/foundry/migration.py`) and refuses a target equal to the source; see "Selective

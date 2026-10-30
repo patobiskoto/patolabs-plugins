@@ -47,6 +47,12 @@
       "description": "Narrow service credential with command claim/event scopes only. Stored in your OS keychain.",
       "sensitive": true
     },
+    "DEVHUB_METRICS_TOKEN": {
+      "type": "string",
+      "title": "DevHub metrics write token",
+      "description": "Service credential with the scope foundry:metrics:write only, used by kpi-publish and the publication at merge. Stored in your OS keychain.",
+      "sensitive": true
+    },
     "FOUNDRY_TRACKER": {
       "type": "string",
       "title": "Tracker provider",

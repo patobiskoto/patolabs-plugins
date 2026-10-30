@@ -143,7 +143,7 @@ class DripResponse(FakeResponse):
 
     def read(self, _amount):
         self.entered.set()
-        if not self.aborted.wait(1.0):
+        if not self.aborted.wait(10.0):
             raise OSError("test response was not aborted within its bound")
         raise OSError("connection closed")
 
@@ -1350,8 +1350,11 @@ def test_real_total_deadline_bounds_headers_with_frozen_accounting_clock():
     )
 
     # PLP-338: the deadline must expire while the worker is blocked in getresponse(), not before
-    # the worker thread reaches it (then it sees ``cancelled`` and returns): a 1 s deadline leaves
-    # a slow runner time to get there, and the bounds below are generous multiples of it.
+    # the worker thread reaches it. Two paths avoid getresponse() when the deadline is short: the
+    # worker sees ``cancelled`` and returns, or ``_set_attached_socket_timeout`` ->
+    # ``_remaining_wall_timeout`` raises because the deadline already passed (``local_scout.py``,
+    # just before getresponse()). A 1 s deadline leaves a slow runner time to get there, and
+    # the bounds below are generous multiples of it.
     started = time.monotonic()
     with pytest.raises(local_scout.LocalScoutError) as error:
         local_scout.preprocess_diff(
@@ -1395,9 +1398,10 @@ def test_total_deadline_aborts_a_blocked_drip_read_and_closes_connection():
     connection_created = threading.Event()
     limits = local_scout.replace(
         local_scout.LocalScoutLimits(),
-        connection_timeout_seconds=0.05,
-        total_timeout_seconds=0.05,
+        connection_timeout_seconds=1.0,
+        total_timeout_seconds=1.0,
     )
+    # PLP-337 (as PLP-338): the worker must reach read() before the deadline expires
     started = time.monotonic()
     with pytest.raises(local_scout.LocalScoutError) as error:
         local_scout.preprocess_diff(
@@ -1407,11 +1411,11 @@ def test_total_deadline_aborts_a_blocked_drip_read_and_closes_connection():
     elapsed = time.monotonic() - started
     assert error.value.code == local_scout.LOCAL_SCOUT_UNAVAILABLE
     assert "time limit" in error.value.message
-    assert elapsed < 0.5
-    assert connection_created.wait(0.5)
-    assert response.entered.wait(0.5)
-    assert response.aborted.wait(0.5)
-    assert seen[0].closed_event.wait(0.5)
+    assert 0.9 <= elapsed < 5.0
+    assert connection_created.wait(5.0)
+    assert response.entered.wait(5.0)
+    assert response.aborted.wait(5.0)
+    assert seen[0].closed_event.wait(5.0)
     assert seen[0].closed
 
 
@@ -1422,9 +1426,10 @@ def test_total_deadline_returns_when_will_close_response_detaches_connection_soc
     connection_created = threading.Event()
     limits = local_scout.replace(
         local_scout.LocalScoutLimits(),
-        connection_timeout_seconds=0.05,
-        total_timeout_seconds=0.05,
+        connection_timeout_seconds=1.0,
+        total_timeout_seconds=1.0,
     )
+    # PLP-337 (as PLP-338): the worker must reach read() before the deadline expires
     started = time.monotonic()
     with pytest.raises(local_scout.LocalScoutError) as error:
         local_scout.preprocess_diff(
@@ -1433,11 +1438,11 @@ def test_total_deadline_returns_when_will_close_response_detaches_connection_soc
         )
     elapsed = time.monotonic() - started
     assert error.value.code == local_scout.LOCAL_SCOUT_UNAVAILABLE
-    assert elapsed < 0.5
-    assert connection_created.wait(0.5)
-    assert response.entered.wait(0.5)
-    assert response.aborted.wait(0.5)
-    assert seen[0].closed_event.wait(0.5)
+    assert 0.9 <= elapsed < 5.0
+    assert connection_created.wait(5.0)
+    assert response.entered.wait(5.0)
+    assert response.aborted.wait(5.0)
+    assert seen[0].closed_event.wait(5.0)
     assert seen[0].closed
     assert seen[0].sock is None
 
