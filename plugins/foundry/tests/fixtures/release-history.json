@@ -2,6 +2,14 @@
   "_contract": "Frozen evidence for every published Foundry release (FOUNDRY-136). The release-contract test asserts this file covers exactly the versioned CHANGELOG sections, that each section still hashes to its frozen digest, and that every listed document still exists byte-for-byte. Content assertions for a release are made once, at publication, and frozen here instead of being reconducted literally in the test forever.",
   "_freeze": "A failing or missing entry prints the exact JSON block to paste. Editing a digest is a deliberate act: it means a published release section or document was rewritten.",
   "releases": {
+    "2.9.0": {
+      "date": "2026-10-30",
+      "changelog_sha256": "7095ebb7b896b7f8bd620134c62b070361fca62c2632b867ca55ab4c33cdb2d8",
+      "documents": {
+        "docs/migration-2.9.0.md": "2cc0229cd23b507b2c23a5c509377fbd43f7d9e93333829afc185c91af029fea",
+        "docs/release-2.9.0.md": "b3562c627ffb649dc9e0636f5eacc6904ae9f4a9eed3081e69b338473c7fcfba"
+      }
+    },
     "2.8.1": {
       "date": "2026-10-29",
       "changelog_sha256": "ab254e355cad5b8a5a96d45cd0bd207304e8abfa43d84097bbc7d9590dc17115",
