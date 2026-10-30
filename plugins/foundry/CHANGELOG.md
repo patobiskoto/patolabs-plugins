@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 2.9.0 — 2026-10-30
+
+Minor release for publishing KPI records at merge and for finding the session logs: a
+successful `issue merge` now reads the session logs of the merged issue and publishes its
+KPI records to a tracker that declares `kpi_publication_supported`, never as a gate
+(PLP-343, PLP-ADR-0063); `routing kpi-export` without `--session` or `--codex-session`
+now searches the logs itself and `routing kpi-publish` sends a changed record as a revision
+(PLP-342); the Claude plugin manifest declares the `DEVHUB_METRICS_TOKEN` option (PLP-337);
+`foundry:release` gains a GitHub Release STOP (PLP-29). The other entries change readers,
+documentation or tests. Preparation status and upgrade references are in
+`docs/release-2.9.0.md` and `docs/migration-2.9.0.md`.
+
+- PLP-345: the last request of a Claude subagent log with no terminal snapshot takes its counters from the parent's `toolUseResult.usage` when the link is strict (one result for the `agentId`, same `toolUseId` as the `*.meta.json`, equal input counters), so it is no longer a lower bound and a fully completed `routing kpi-export` attempt is no longer `partial` (a revision for DevHub); any other case keeps the PLP-344 lower bound with a closed refusal reason in `diagnostics`; see `docs/cost-attribution.md` and `docs/kpi-export.md`.
+- PLP-344: a Claude log with requests that have no terminal snapshot (no record with a `stop_reason`, observed in subagent logs of Claude Code 2.1.286, 2.1.299 and 2.1.304) is no longer rejected whole: `read_host_log` counts those requests with the largest value observed for each counter and marks the slice `lower_bound_requests`; `routing token-attribution`, `rounds-report` and `routing kpi-export` propagate the marker (the KPI `provenance` says "lower bound" and the amount is `partial`); an identity change, a conflicting terminal usage or an incomplete log stay blocking; see `docs/cost-attribution.md` and `docs/kpi-export.md`.
+- PLP-343: a successful `issue merge` now reads the session logs of the merged issue and publishes its KPI records to a tracker that declares the capability (PLP-ADR-0063): one summary line (`kpi: created=… revised=… replayed=… refused=… not_sent=…`) or one warning line, never a gate, merge output and exit code unchanged; `routing kpi-publish` reports `revised`; see `docs/kpi-export.md`, "Publication at merge".
+- PLP-342: `routing kpi-export` without `--session`/`--codex-session` now finds the Claude and Codex session logs of the issues itself (only in this repository's host log directories, only logs holding an invocation recorded for the issue; none or ambiguous stays `unavailable`), and `routing kpi-publish` keeps a local ledger of what it published and sends a record whose source changed as a revision (`revision` + 1, `supersedes_id`) instead of an independent record; see `docs/kpi-export.md`.
+- PLP-341: Documented that a terminal `blocked` proof keeps its diff deduplicated (`prepare-review` refuses with "active private claim required", `recover-review` refuses a completed review, a new round needs a diff-changing correction) and what is observed or deduced for a block that needs no diff change; see `docs/review-rounds.md`.
+- PLP-338: Made two flaky tests deterministic (`test_pat111_ac3_a_comparison_with_an_unsettled_local_start_is_inconclusive` pins the measured `wall_seconds` its decision compares; `test_real_total_deadline_bounds_headers_with_frozen_accounting_clock` uses a 1 s real deadline so the worker reaches `getresponse()` first); tests only.
+- PLP-337: nits deferred from earlier tickets: the Claude plugin manifest declares the `DEVHUB_METRICS_TOKEN` option (sensitive); `issue merge` reads the DevHub URL and token before searching the session logs; `git worktree list` of the log search has a 10 s timeout; `scripts/release_notes.py` prints one line on standard error when it cuts the body and refuses a malformed version with a message; documentation and test corrections (`docs/kpi-export.md`, `docs/ci-wait.md`, `docs/cost-attribution.md`, `docs/review-rounds.md`).
+- PLP-324: Qualified Claude subagent logs without a terminal record on real local logs (`docs/qualification/plp-324-subagent-terminal-snapshots.md`): input and cache counters match the terminal snapshot, `output_tokens` does not, so the PLP-344 lower bound stays; method `exact` observed on a real session. Documentation only, no reader change.
+- PLP-322: `docs/devhub-tracker.md` no longer says Foundry does not migrate YouTrack data; a project with history goes through `cutover preflight|copy|activate devhub`, `registry bootstrap devhub` stays for a project with no prior writes.
+- PLP-321: `routing kpi-export` now lists an attempt without a readable time in `omitted` (`no_recorded_time`), puts `supersedes_id` under `provenance.null`, names the escalation time an estimate and no longer fails on a non-hashable `pr` in the campaign journal; `routing token-attribution` counts one log once whatever the path spelling; `routing review-turns` keeps `receipt_unreadable` instead of the journal count; documentation corrections in `docs/model-routing.md`, `docs/cost-attribution.md`, `docs/review-rounds.md`, `docs/kpi-export.md` and the PLP-324 qualification page.
+- PLP-29: `foundry:release` gains a STOP "GitHub Release" after the tag (steps after it move up by one): `gh release create foundry-v<version> --verify-tag --latest` publishes the `## <version>` section of `CHANGELOG.md` printed by the new read-only helper `scripts/release_notes.py` (cut at a line boundary below 125,000 characters, with a link to the CHANGELOG at the tag), and the Release URL, state and Latest mark join the readback recorded on the release ticket (`skills/release/SKILL.md`).
+
 ## 2.8.1 — 2026-10-29
 
 Patch release: the CI gate of `issue merge` and `issue wait-ci` no longer blocks on
