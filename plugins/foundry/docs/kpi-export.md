@@ -216,7 +216,7 @@ An invocation id found in more than one log is ambiguous: no log that holds it i
 of the issue held by those logs stay unavailable too (`_unambiguous`;
 `test_a_log_holding_an_ambiguous_id_is_not_selected_for_its_other_ids`). Nothing found
 or ambiguous leaves `tokens` null and the `amount` null, the same `unavailable` as without a log; the module never
-guesses and the CLI test checks that its output holds no path (`test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when_nothing_is_found`).
+guesses and the CLI test checks that its output holds no path (`test_cli_without_session_uses_the_discovery_for_tokens`).
 Besides the closed-vocabulary identifiers of `token_attribution`, the Codex search reads the `cwd` path of the
 `session_meta` (`_codex_cwd`), only to keep rollouts of this repository; it is never emitted. This is the one path the reader reads, a filter and not an
 output: FOUNDRY-ADR-0015 says the reader extracts no file path, and PLP-ADR-0063 (item 3 of its decision) names this read as the exception. Residual limits: a Codex coordinator log without an

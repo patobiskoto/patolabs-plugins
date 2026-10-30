@@ -75,8 +75,8 @@ keep, for each (app, check name), the run with the highest check-run id.
 - Residual risk, deduced: two different workflows of the same app that publish the same job
   name collapse to the newest; a red one with the lower id is then not seen. "Newest" is the
   highest id, not a timestamp (same rule as before on the fallback route).
-  This is a gate opening in a real case, not only a theoretical one. Adding the workflow
-  identity to the key is a behaviour change left to intake (AGENTS.md#R3), not made here.
+  This is a gate opening in a realistic configuration (deduced, not observed). Adding the workflow
+  identity to the key is a behaviour change, tracked by PLP-347 (AGENTS.md#R3), not made here.
 - The jq expression of `_check_run_records` that names the app (`.app.slug // .app.name // "unknown"`)
   is run for real in `tests/test_pure.py`
   (`test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_unknown`) with the system

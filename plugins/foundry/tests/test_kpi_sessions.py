@@ -90,7 +90,7 @@ def test_slug_matches_the_directory_names_of_the_host():
     assert kpi_sessions.claude_slug(Path("/Users/x/.codex/worktrees/a_b")) == "-Users-x--codex-worktrees-a-b"
 
 
-def test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when_nothing_is_found(tmp_path):
+def test_cli_without_session_uses_the_discovery_for_tokens(tmp_path):
     state, home = tmp_path / "state", tmp_path / "home"
     root = tmp_path / "repo"
     root.mkdir()

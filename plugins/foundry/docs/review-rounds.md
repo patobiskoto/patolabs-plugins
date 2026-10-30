@@ -362,8 +362,8 @@ was a declaration too, and the send text did not say that the review was partial
   campaign, the description-only correction of PAT-227 (`docs/campaign-effects.md`, "The
   description correction") is decided for a validated round with remarks marked "fix before
   merge", not for a blocked one (deduced from `campaign_cadence._ticket_step`: the `review_blocked`
-  branch, `correct`, comes before the `review_fix_description` branch; the constant
-  `review_fix_description` is in `campaign_review.py`, and that page). A blocked ticket of a campaign
+  branch, `correct`, comes before the `review_fix_description` branch; the value
+  `review_fix_description` is `DESCRIPTION_REASON` in `campaign_review.py`). A blocked ticket of a campaign
   gets `correct`/`review_blocked`, bounded by `_bounded` (`MAX_CORRECTIONS`); a correction that does
   not change the diff leaves the `blocked` proof, so `correct` recurs up to that bound (deduced from
   `_ticket_step` and `_bounded`, not run). Whether a blocked proof can be superseded without a diff change is unknown.

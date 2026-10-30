@@ -4,7 +4,8 @@ The body is the published ``## <version> — <date>`` section of ``CHANGELOG.md`
 the release contract's own ``changelog_sections`` (``tests/test_release_contract.py``). A
 body over ``GITHUB_BODY_LIMIT`` characters is cut at a line boundary and ends with a link to
 the CHANGELOG at the tag ``foundry-v<version>``. A version with no section, or an empty one,
-is refused with a non-zero exit and nothing printed, and so is a version that is not a plain
+is refused with a non-zero exit, its message on standard error, nothing on standard output
+and no file written, and so is a version that is not a plain
 semver. A cut body is signalled by one line on standard error. The unit in which GitHub counts
 its 125,000 limit is unknown: the helper counts Python code points. Without ``--output`` the body goes to
 standard output; with it, to that one file. Nothing else is written; the release step passes
