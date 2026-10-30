@@ -2,13 +2,13 @@
 name: release
 description: >
   Chains the steps of a Foundry publication: scope, release branch and PR that satisfy the
-  release contract (freeze entry included), then three separate STOPs for merge, tag and
-  host update (each needs its own explicit agreement), and the readback record on the
+  release contract (freeze entry included), then four separate STOPs for merge, tag, GitHub Release
+  and host update (each needs its own explicit agreement), and the readback record on the
   release ticket. USE WHEN the user invokes
   /foundry:release (Claude Code), $foundry:release (Codex), "publie Foundry", "prépare la
   release", or "release 1.4.0".
 argument-hint: "<RELEASE-ISSUE-ID> <VERSION>"
-allowed-tools: Bash(python3:*), Bash(git rm:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git fetch:*), Bash(git ls-remote:*)
+allowed-tools: Bash(python3:*), Bash(git rm:*), Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git fetch:*), Bash(git ls-remote:*), Bash(gh release view:*), Bash(gh release list:*), Bash(gh repo view:*)
 ---
 
 # release — prepare, then stop before every irreversible step
@@ -29,8 +29,8 @@ written is in the strings that the migration guide must contain (step 2).
 Contract this skill serves: `tests/test_release_contract.py`
 (`release_requirements`, `changelog_sections`, `release_documents`, `freeze_entry`) and the
 "Release rule" and "Freeze rule" of `README.md`. The skill never merges, tags or updates a
-host by itself: steps 5, 6 and 7 are STOPs. The host commands of the paragraph above and of
-steps 6 to 8 were not run
+host by itself: steps 5, 6, 7 and 8 are STOPs. The host commands of the paragraph above and of
+steps 6 to 9 were not run
 when this skill was written (documented from the 1.3.0 publication, ticket PAT-199, PR
 #145); treat their output as the authority, not this text.
 
@@ -129,7 +129,7 @@ through `foundry:merge-pr`. Expect several rounds on frozen pages: a false sente
 is "fix before merge" (`AGENTS.md#R9(b)`), never deferred.
 
 ## 5. STOP — merge
-Agreement, for steps 5, 6 and 7: each STOP needs its own explicit agreement from the
+Agreement, for steps 5, 6, 7 and 8: each STOP needs its own explicit agreement from the
 maintainer in this conversation, asked after the result of the previous step is shown and
 waited for. Invoking this skill, an agreement given for another step, or a standing
 instruction phrased generally does not count, unless the maintainer explicitly said it
@@ -165,7 +165,39 @@ prefix rule, not run; the `PreToolUse` Bash guard lets a tag push through, `hook
 `refs/tags/foundry-v<version>^{}` lists the commit: record the `^{}` value as the tagged
 commit and compare it with the merge commit.
 
-## 7. STOP — host update
+## 7. STOP — GitHub Release
+Do not create the GitHub Release without the maintainer's explicit agreement, asked after the
+tag readback of step 6 is shown. It publishes the notes of the tag `foundry-v<version>`: title
+`Foundry <version>`, body the `## <version>` section of `CHANGELOG.md`, marked Latest. First
+print the body with the read-only helper of the release worktree, from its repository root
+(`scripts/release_notes.py`; `<owner>/<repo>` is the output of the `gh repo view` line):
+```bash
+gh repo view --json nameWithOwner --jq .nameWithOwner
+python3 plugins/foundry/scripts/release_notes.py <version> --repo <owner>/<repo> --output <notes-file>
+```
+It refuses, with a non-zero exit and no file written, a version with no `CHANGELOG.md` section
+and an empty section: stop there. A section over `GITHUB_BODY_LIMIT` (125,000 characters,
+`scripts/release_notes.py`) is cut at a line boundary and ends with a link to the CHANGELOG at
+the tag; show the maintainer whether the body was cut. Then create the Release; `--verify-tag`
+makes `gh` abort, creating nothing, when the tag is not in `origin`:
+```text
+gh release create foundry-v<version> --verify-tag --title "Foundry <version>" --notes-file <notes-file> --latest
+```
+`allowed-tools` lists only `gh release view`, `gh release list` and `gh repo view`, so the
+host's own permission prompt applies to the creation unless the user's own permission settings
+already allow it, on top of this STOP (deduced from the prefix rule, not run; the `PreToolUse`
+Bash guard denies only `gh pr create` and `gh pr merge`, `hooks/guard_bash.py`). If the creation
+fails, stop: report the error, run no later step as if the Release existed, and record the
+failure at step 10. Read back, and keep the result for step 10:
+```bash
+gh release view foundry-v<version> --json url,isDraft,isPrerelease,tagName
+gh release list --json tagName,isLatest --jq '.[] | select(.tagName=="foundry-v<version>")'
+```
+The Release is as expected when `isDraft` and `isPrerelease` are false and `isLatest` is true
+(`gh release list --help` and `gh release view --help` list these fields; `isLatest` exists on
+the list only).
+
+## 8. STOP — host update
 Do not update any host without the maintainer's explicit agreement; the update changes the
 installation of the maintainer's machine. `claude` and `codex` are not in `allowed-tools`,
 so the host's own permission prompt applies. Claude Code, then read back:
@@ -187,14 +219,15 @@ Read the installed `plugin.json` of each host (path taken from the listing) and 
 `version` with the released one. The listed version and the installed manifest are two
 readbacks; neither proves the version a session loads.
 
-## 8. Loaded version
+## 9. Loaded version
 Open a new headless session on each host (`claude -p ...`, `codex exec ...`) asked, without
 tools, to quote the installed Foundry path; the version in that path is the loaded
 version. Then exercise the new verbs of the release read-only with the installed CLI
 (`foundry_cli.py query ...`); never a write. Anything not run is reported as not verified.
 
-## 9. Record on the release ticket
+## 10. Record on the release ticket
 Write one `edit comment` on the release ticket, using the command of step 1, with: tag and
-commit (the `^{}` line of `ls-remote`), listed version per host, installed-manifest version per host,
+commit (the `^{}` line of `ls-remote`), the Release URL, its state (draft, prerelease) and its
+Latest mark from the step 7 readback, listed version per host, installed-manifest version per host,
 loaded version per host, verbs exercised, and what was not verified. A readback that failed
 or was skipped is written as such, not omitted.

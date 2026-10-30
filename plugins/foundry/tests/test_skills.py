@@ -73,11 +73,12 @@ def test_skill_form(path):
             # foundry tooling goes through the launcher
             # (one read-only helper script of the release skill, PAT-166, is the exception)
             if "foundry" in line and first == "python3":
-                # the two helpers are an exception of the release skill alone (PAT-205)
+                # the three helpers are an exception of the release skill alone (PAT-205)
                 is_release = os.path.basename(os.path.dirname(path)) == "release"
                 assert "foundry_cli.py" in line or (is_release and (
                     "/scripts/release_freeze_entry.py" in line
-                    or "/scripts/changelog_assemble.py" in line)), \
+                    or "/scripts/changelog_assemble.py" in line
+                    or "/scripts/release_notes.py" in line)), \
                     f"foundry invocations go through foundry_cli.py: {line}"
 
 
@@ -385,8 +386,8 @@ def test_release_skill_names_every_step_and_every_stop():
     for heading in (
         "## 1. Scope", "## 2. Release branch", "## 3. Writing rules for frozen pages",
         "## 4. Pull request and review", "## 5. STOP — merge", "## 6. STOP — tag",
-        "## 7. STOP — host update", "## 8. Loaded version",
-        "## 9. Record on the release ticket",
+        "## 7. STOP — GitHub Release", "## 8. STOP — host update", "## 9. Loaded version",
+        "## 10. Record on the release ticket",
     ):
         assert heading in raw
     for token in (
@@ -406,19 +407,22 @@ def test_release_skill_names_every_step_and_every_stop():
         assert token in text, token
     assert "Do not merge without the maintainer's explicit agreement" in text
     assert "Do not tag without the maintainer's explicit agreement" in text
+    assert "Do not create the GitHub Release without the maintainer's explicit agreement" in text
     assert "Do not update any host without the maintainer's explicit agreement" in text
     assert "were not run when this skill was written" in text
     # tag and host-update commands only appear after their own STOP section
     assert raw.index("git tag -a") > raw.index("## 6. STOP — tag")
-    assert raw.index("claude plugin update") > raw.index("## 7. STOP — host update")
+    assert raw.index("claude plugin update") > raw.index("## 8. STOP — host update")
     # (the migration-guide strings of step 2 are not commands: a command starts its line)
-    assert raw.index("\ncodex plugin add") > raw.index("## 7. STOP — host update")
+    assert raw.index("\ncodex plugin add") > raw.index("## 8. STOP — host update")
     assert raw.count("git tag -a") == 1 and raw.count("git push origin") == 1
     # irreversible commands only appear after their own STOP section
     stops = {"git push origin": "## 6. STOP — tag",
-             "codex plugin remove": "## 7. STOP — host update",
-             "claude plugin marketplace update": "## 7. STOP — host update",
-             "codex plugin marketplace upgrade": "## 7. STOP — host update"}
+             "gh release create": "## 7. STOP — GitHub Release",
+             "python3 plugins/foundry/scripts/release_notes.py": "## 7. STOP — GitHub Release",
+             "codex plugin remove": "## 8. STOP — host update",
+             "claude plugin marketplace update": "## 8. STOP — host update",
+             "codex plugin marketplace upgrade": "## 8. STOP — host update"}
     for command, stop in stops.items():
         assert raw.index("\n" + command) > raw.index(stop), command
     # each STOP needs its own agreement; claude/codex stay out of allowed-tools
@@ -428,6 +432,16 @@ def test_release_skill_names_every_step_and_every_stop():
     assert ("Invoking this skill, an agreement given for another step, or a standing "
             "instruction phrased generally does not count, unless the maintainer "
             "explicitly said it covers that step") in text
+    # PLP-29: the Release step is its own STOP; creation stays outside allowed-tools
+    step7 = raw[raw.index("## 7. STOP — GitHub Release"):raw.index("## 8. STOP — host update")]
+    for token in ("--verify-tag", '--title "Foundry <version>"', "--notes-file <notes-file>",
+                  "--latest", "GITHUB_BODY_LIMIT", "isDraft", "isPrerelease", "isLatest",
+                  "no later step as if the Release existed", "release_notes.py"):
+        assert token in _flat(step7), token
+    assert raw.count("gh release create") == 1 and "gh release create" in step7
+    assert "gh release create" not in _frontmatter(raw)["allowed-tools"]
+    assert "Bash(gh:*)" not in _frontmatter(raw)["allowed-tools"]
+    assert "the Release URL, its state (draft, prerelease) and its Latest mark" in text
     allowed = _allowed_binaries(_frontmatter(raw))
     assert "claude" not in allowed and "codex" not in allowed, allowed
     # the freeze helper runs from the release worktree, never the installed plugin copy
