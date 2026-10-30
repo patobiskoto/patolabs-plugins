@@ -121,17 +121,6 @@ def _classify(when: datetime | None, windows: list[dict]) -> tuple[str, object]:
     return "none", "no_window"
 
 
-def _meta_id(path: Path) -> str | None:
-    try:
-        meta = json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    tool_use = meta.get("toolUseId") if isinstance(meta, dict) else None
-    if isinstance(tool_use, str) and _TOOL_USE_ID.fullmatch(tool_use):
-        return invocation_log.claude_invocation_id(tool_use)
-    return None
-
-
 def _meta_tool_use_id(path: Path) -> str | None:
     """The raw ``toolUseId`` of the sibling ``*.meta.json``, the link to the parent's tool result (PLP-345)."""
     try:
@@ -140,6 +129,11 @@ def _meta_tool_use_id(path: Path) -> str | None:
         return None
     tool_use = meta.get("toolUseId") if isinstance(meta, dict) else None
     return tool_use if isinstance(tool_use, str) and _TOOL_USE_ID.fullmatch(tool_use) else None
+
+
+def _meta_id(path: Path) -> str | None:
+    tool_use = _meta_tool_use_id(path)
+    return invocation_log.claude_invocation_id(tool_use) if tool_use else None
 
 
 def _packet_role(path: Path) -> str | None:

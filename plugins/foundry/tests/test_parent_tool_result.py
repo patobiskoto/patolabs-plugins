@@ -63,6 +63,19 @@ def test_linked_and_equal_input_takes_the_parent_counters(tmp_path):
     assert "lower_bound_records" not in diagnostics and "parent_refused_records" not in diagnostics
 
 
+def test_parent_usage_without_reasoning_degrades_even_if_the_log_had_it(tmp_path):
+    with_reasoning = {**USAGE, "reasoning_output_tokens": 3}
+    log = [_request(1, terminal=True, usage=with_reasoning),
+           _request(2, terminal=False, usage={**with_reasoning, "output_tokens": 7})]
+    rows, diagnostics = _read(tmp_path, log, _link(tmp_path, [_result()]))
+    (row,) = rows
+    assert row["tokens"]["output_tokens"] == 9000 + 9000
+    assert row["tokens"]["reasoning_output_tokens"] == "unavailable"
+    assert diagnostics["completeness"] == "unavailable"
+    assert diagnostics["affected_records"] == [{"reason": "missing_reasoning_output_tokens", "count": 1}]
+    assert diagnostics["parent_completed_records"] == [{"source": "parent_tool_result", "count": 1}]
+
+
 def test_without_a_link_the_plp_344_lower_bound_is_unchanged(tmp_path):
     rows, diagnostics = _read(tmp_path, _partial_log(), None)
     (row,) = rows
