@@ -430,7 +430,7 @@ Skills keep one shared implementation. Use `/foundry:<skill>` in Claude Code and
 | `foundry:next-issue` | pick the most valuable unblocked issue (reasoned) |
 | `foundry:start-issue` → `foundry:open-pr` → `foundry:merge-pr` | gated execution |
 | `foundry:close-epic` | human-verdict, audited non-atomic closure of a completed non-code Epic on the V1 trackers; bounded detection, no CAS; Linear-only nominative `--accept-override` waiver (PAT-ADR-0014); `--accept-dropped` naming of abandoned nodes on Linear (PAT-ADR-0017) and of the abandoned direct children on DevHub (PAT-ADR-0030) |
-| `foundry:release` | chain a Foundry publication: release PR with its freeze entry, then separate STOPs for merge, tag and host update, and the readback record |
+| `foundry:release` | chain a Foundry publication: release PR with its freeze entry, then separate STOPs for merge, tag, GitHub Release and host update, and the readback record |
 | `foundry:resume-issue` | resume mid-flight work from tracker notes + git state |
 | `foundry:intake` | new idea → issue / refine / ADR / rejected-by-ADR |
 | `foundry:groom` · `foundry:blockers` | backlog health · what's stuck |
