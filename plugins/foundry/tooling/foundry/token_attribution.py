@@ -184,9 +184,11 @@ def _claude_units(paths: list[str]) -> list[dict]:
         for sub in sorted((main.parent / main.stem / "subagents").rglob("*.jsonl")):
             if sub not in seen:
                 seen.add(sub)
+                tool_use = _meta_tool_use_id(sub)  # one read of the sibling *.meta.json (PLP-346)
+                invocation_id = invocation_log.claude_invocation_id(tool_use) if tool_use else None
                 units.append({"host": "claude", "path": sub, "parent": str(main), "subagent": True,
-                              "invocation_id": _meta_id(sub), "header_role": _packet_role(sub),
-                              "tool_use_id": _meta_tool_use_id(sub)})
+                              "invocation_id": invocation_id, "header_role": _packet_role(sub),
+                              "tool_use_id": tool_use})
     return units
 
 

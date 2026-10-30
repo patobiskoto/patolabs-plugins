@@ -91,8 +91,8 @@ d’outil du parent ». Sinon, le comportement PLP-344 est inchangé et `diagnos
 `output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Ces deux clés
 n’existent qu’au niveau de `read_host_log` : son seul appelant qui passe `parent=` (`token_attribution.py`, ligne
 `read_host_log(..., parent=link)`) ne passe pas `diagnostics`, donc elles ne remontent ni
-dans `routing token-attribution` ni dans `routing kpi-export` (seul `tokens_parent_reported_requests` y paraît, voir
-[kpi-export.md](kpi-export.md)). La raison de dégradation du raisonnement d’une requête complétée est celle de
+dans `routing token-attribution` ni dans `routing kpi-export` (seul `tokens_parent_reported_requests` paraît dans
+`routing kpi-export`, voir [kpi-export.md](kpi-export.md)). La raison de dégradation du raisonnement d’une requête complétée est celle de
 l’`usage` du parent, jamais celle du journal : le compteur du journal est un instantané partiel, l’écart avec le parent
 n’est pas connu. Si le parent n’a pas le compteur de raisonnement, la requête compte `missing_reasoning_output_tokens`
 et `completeness` passe à `unavailable`, même si le journal l’avait (test
