@@ -103,7 +103,7 @@ It is read-only and offline: it reads the proof store, the review ledger, the ca
 receipt, the campaign attempts journal (`campaign_effects.read_attempts`, file
 `campaign-attempts.jsonl` of the state directory) and the PLP-316 invocation record and writes nothing
 (`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory,
-journal included, before and after). No gate, routing or merge reads it; only the CLI verb and the offline export `kpi_export.py` (PLP-319) import it
+journal included, before and after). No gate, routing or merge reads it; only the CLI verb and the offline export `kpi_export.py` (PLP-319, itself run by the merge step `kpi_merge.py`, PLP-343) import it
 (`test_only_the_cli_verb_imports_review_turns`); it changes neither the proof format nor
 `record-review-proof`. Per turn, with the source of each field (`sources` emits one entry per field, `unrecorded` excepted; `test_sources_cover_every_emitted_field`):
 

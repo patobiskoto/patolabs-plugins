@@ -1,8 +1,9 @@
 """PLP-325: send the batches of a `foundry-kpi-export.v1` document to DevHub (PLP-ADR-0061).
 
 The publisher is distinct from the pure reader `kpi_export.py` (FOUNDRY-ADR-0015): it is reached only by
-the explicit CLI verb `routing kpi-publish`, never by a hook, a gate, a merge or a campaign, and nothing in
-Foundry reads its result. It never changes routing, delivery or tracker state.
+the explicit CLI verb `routing kpi-publish` and, since PLP-343 (PLP-ADR-0063), by the step that follows a
+successful `issue merge` (`kpi_merge.py`), never by a hook, a gate or a campaign, and nothing in Foundry
+reads its result. It never changes routing, delivery or tracker state.
 """
 from __future__ import annotations
 
@@ -139,6 +140,13 @@ def load_document(path: str, project: str) -> dict:
         document = json.loads(raw)
     except (UnicodeError, json.JSONDecodeError):
         raise PublishError("export file is not valid JSON") from None
+    return validate_document(document, project)
+
+
+def validate_document(document, project: str) -> dict:
+    """Validate a parsed export document and its project binding; no network."""
+    if not _PROJECT.fullmatch(project):
+        raise PublishError("invalid project key")
     if not isinstance(document, dict) or document.get("export_schema") != EXPORT_SCHEMA:
         raise PublishError(f"export file is not a {EXPORT_SCHEMA} document")
     batches = document.get("batches")
@@ -203,6 +211,7 @@ def publish(document: dict, project: str, *, url: str, token: str, timeout: floa
     ``record_id``); the ledger is updated from the per-record ``created``/``replayed`` answers only,
     after each batch. Without one the batches are sent as they are."""
     totals = {"created": 0, "replayed": 0, "refused": 0, "unsent": 0}
+    revised = 0  # PLP-343: records answered ``created`` that supersede a published record
     batch_reports, refusals = [], []
     for index, batch in enumerate(document["batches"]):
         records = [ledger.revise(r) for r in batch["records"]] if ledger else batch["records"]
@@ -235,6 +244,7 @@ def publish(document: dict, project: str, *, url: str, token: str, timeout: floa
                     refusals.append({"record_id": result["record_id"], "code": code})
                 else:
                     totals[result["status"]] += 1
+                    revised += result["status"] == "created" and bool(sent.get("supersedes_id"))
                     if ledger:
                         ledger.note(sent)
         if ledger:
@@ -244,7 +254,7 @@ def publish(document: dict, project: str, *, url: str, token: str, timeout: floa
                 report["ledger_error"] = "published ledger not written"
         batch_reports.append(report)
     return {"schema": REPORT_SCHEMA, "project": project, "totals": totals,
-            "batches": batch_reports, "refusals": refusals}
+            "revised": revised, "batches": batch_reports, "refusals": refusals}
 
 
 def _adapter_class(name: str):
@@ -263,11 +273,26 @@ def _adapter_class(name: str):
     return None
 
 
+def endpoint(url: str | None = None) -> tuple[str, str]:
+    """(validated DevHub base URL, bearer token) from the config; PublishError or SystemExit when unusable."""
+    from foundry import config
+    from foundry.trackers import devhub
+
+    base = (url or config.require_public("DEVHUB_URL")).rstrip("/")
+    try:
+        devhub.validate_base_url(base)
+    except ValueError as exc:
+        raise PublishError(str(exc)) from None
+    token = config.require(TOKEN_KEY)
+    if not token.isascii() or any(ord(c) <= 0x20 or ord(c) == 0x7f for c in token):
+        raise PublishError(f"{TOKEN_KEY} is not a valid bearer token")
+    return base, token
+
+
 def run(path: str, project: str, *, url: str | None = None, root: str | None = None) -> int:
     """CLI body: refuse without a write unless the active adapter declares the capability. Exit status only."""
     import foundry
-    from foundry import config, registry
-    from foundry.trackers import devhub
+    from foundry import registry
 
     try:
         name, _binding = foundry._effective_tracker_selection(root)
@@ -275,14 +300,7 @@ def run(path: str, project: str, *, url: str | None = None, root: str | None = N
         if not getattr(adapter, "kpi_publication_supported", False):
             raise PublishError(f"tracker '{name}' does not declare KPI publication; nothing sent")
         document = load_document(path, project)
-        base = (url or config.require_public("DEVHUB_URL")).rstrip("/")
-        try:
-            devhub.validate_base_url(base)
-        except ValueError as exc:
-            raise PublishError(str(exc)) from None
-        token = config.require(TOKEN_KEY)
-        if not token.isascii() or any(ord(c) <= 0x20 or ord(c) == 0x7f for c in token):
-            raise PublishError(f"{TOKEN_KEY} is not a valid bearer token")
+        base, token = endpoint(url)
     except PublishError as exc:
         print(f"kpi-publish refused: {exc}", file=sys.stderr)
         return 2

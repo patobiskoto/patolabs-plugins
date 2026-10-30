@@ -187,13 +187,13 @@ def test_metrics_token_is_a_keychain_secret_distinct_from_the_tracker_token():
     assert config._secret_setting("DEVHUB_METRICS_TOKEN")
 
 
-def test_only_the_cli_verb_imports_the_publisher_and_the_reader_stays_offline():
+def test_only_the_cli_verb_and_the_merge_step_import_the_publisher_and_the_reader_stays_offline():
     tooling = PLUGIN_ROOT / "tooling"
     pattern = r"^\s*(from foundry import .*\bkpi_publish\b|from foundry\.kpi_publish\b|import foundry\.kpi_publish\b)"
     importers = {p.relative_to(PLUGIN_ROOT).as_posix()
                  for base in (tooling, PLUGIN_ROOT / "hooks") for p in base.rglob("*.py")
                  if re.search(pattern, p.read_text(), re.M)}
-    assert importers == {"tooling/foundry/routing.py"}
+    assert importers == {"tooling/foundry/routing.py", "tooling/foundry/kpi_merge.py"}  # PLP-343
     reader = (tooling / "foundry" / "kpi_export.py").read_text()
     assert "kpi_publish" not in reader and "urllib" not in reader
 
