@@ -336,3 +336,20 @@ def test_a_log_with_a_lower_bound_request_is_no_longer_unreadable(tmp_path):
     result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state)
     assert result["unreadable_logs"] == {"coordinator": 0, "subagent": 0}
     assert result["totals"]["lower_bound_requests"] == 1
+
+
+def test_the_same_log_in_absolute_and_relative_spelling_is_counted_once(tmp_path, monkeypatch):
+    """PLP-321: dedup compares resolved paths, for both hosts."""
+    state = tmp_path / "state"
+    main = _claude_tree(tmp_path, [_claude_request("2026-10-01T10:00:00.000Z", 1)], [])
+    monkeypatch.chdir(tmp_path)
+    once = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state)
+    twice = token_attribution.report(
+        claude_sessions=[main, Path("proj") / "s-main.jsonl", Path("proj") / ".." / "proj" / "s-main.jsonl"],
+        repository=REPO, state_dir=state)
+    assert twice["slices"] == once["slices"] and twice["totals"] == once["totals"]
+    rollout = _codex_log(tmp_path / "r.jsonl", "sid-1", [("turn", "2026-10-01T10:00:00.000Z", 1)])
+    codex_once = token_attribution.report(codex_sessions=[rollout], repository=REPO, state_dir=state)
+    codex_twice = token_attribution.report(codex_sessions=[rollout, Path("r.jsonl")],
+                                           repository=REPO, state_dir=state)
+    assert codex_twice["totals"] == codex_once["totals"]

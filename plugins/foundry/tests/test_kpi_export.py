@@ -454,11 +454,38 @@ def test_output_is_content_free(tmp_path):
 
 
 def test_rejects_an_invalid_issue_identifier(tmp_path):
-    try:
+    with pytest.raises(ValueError):
         _build(tmp_path, issues=("../x",))
-    except ValueError:
-        return
-    raise AssertionError("an invalid issue identifier was accepted")
+
+
+def test_an_attempt_without_a_readable_time_is_omitted_with_its_reason(tmp_path):
+    """PLP-321: no silent skip; the format announces `no_recorded_time`."""
+    _routed(tmp_path, "PLP-1", "implementer", "a" * 16, at="not-a-time")
+    _routed(tmp_path, "PLP-1", "implementer", "b" * 16)
+    data, records = _records(_build(tmp_path))
+    assert [r["kind"] for r in records] == ["attempt"]
+    assert data["omitted"] == [{"issue": "PLP-1", "kind": "attempt", "reason": "no_recorded_time"}]
+
+
+def test_supersedes_id_is_a_provenance_null_not_a_source(tmp_path):
+    _routed(tmp_path, "PLP-1", "implementer", "a" * 16)
+    data, records = _records(_build(tmp_path))
+    prov = data["provenance"][records[0]["record_id"]]
+    assert "supersedes_id" in prov["null"] and "supersedes_id" not in prov["from"]
+
+
+def test_an_unhashable_pull_request_value_in_the_journal_is_ambiguous_not_an_error(tmp_path):
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable", "2026-10-01T10:00:00Z")
+    head = proof["coordinates"]["head"]
+    with (tmp_path / "campaign-attempts.jsonl").open("a") as handle:
+        for pr in (42, [42]):
+            handle.write(json.dumps({
+                "event": "started", "kind": "review", "ticket": "PLP-1", "schema_version": "foundry-campaign-attempts.v1",
+                "attempt": "a" * 8, "epic": "PLP-E", "at": "2026-10-01T00:00:00Z", "route": None, "session_id": None,
+                "fingerprint": {"state": "review", "branch_sha": head, "pr": pr, "pr_head": head}}) + "\n")
+    data, records = _records(_build(tmp_path))
+    assert records[0]["pr_number"] is None
+    assert data["provenance"][records[0]["record_id"]]["null"]["pr_number"] == "ambiguous"
 
 
 def test_module_has_no_network_tracker_or_write_surface():

@@ -172,7 +172,7 @@ def _codex_meta(path: Path) -> dict | None:
 def _claude_units(paths: list[str]) -> list[dict]:
     units, seen = [], set()
     for raw in paths:
-        main = Path(raw)
+        main = Path(raw).resolve()  # PLP-321: absolute and relative spellings are one log
         if main not in seen:
             seen.add(main)
             units.append({"host": "claude", "path": main, "parent": str(main), "subagent": False})
@@ -187,7 +187,7 @@ def _claude_units(paths: list[str]) -> list[dict]:
 def _codex_units(paths: list[str]) -> list[dict]:
     units, seen = [], set()
     for raw in paths:
-        path = Path(raw)
+        path = Path(raw).resolve()  # PLP-321: same as _claude_units
         if path in seen:
             continue
         seen.add(path)

@@ -3,7 +3,9 @@
 
 The pre-hook stores a private, sanitized route projection keyed by an HMAC of
 ``tool_use_id``. This post-hook consumes it once. No tool input, response, error,
-session, repository, issue, user, or machine value enters telemetry. The hook emits no
+session, repository, issue, user, or machine value enters telemetry. It also appends a
+``completed`` status event to the local invocation record (PLP-316, ``invocation_log.py``;
+``unknown`` for a background launch, PLP-329); that record is read by no gate. The hook emits no
 output or model context on success; an internal failure (or an unsupported Python) prints
 one ``systemMessage`` and still fails open (PAT-265).
 """

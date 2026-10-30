@@ -297,11 +297,29 @@ a larger file is neither appended to nor read, with no rotation. An I/O or git e
 returns `False` and changes no routing result, hook output, gate or merge. A value not
 observed is `null` (the requested model is not the served model; no served model is
 recorded). No gate, routing decision or merge reads the file, and the review-proof format
-is unchanged (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`).
+is unchanged (`tests/test_invocation_log.py::test_no_decision_path_reads_the_log`, which also
+checks `hooks/` and `scripts/`: only `route_agent.py` and `observe_agent.py` name the module, to write).
+Boundary with FOUNDRY-ADR-0008 (PLP-321): this record is not the passive, opt-in telemetry
+of that ADR (`FOUNDRY_DATA`); it is operating state in `registry.data_dir()`, kept with the
+escalation and review-dedup stores. Efforts (R7): the stored `effort` is the **requested**
+effort, `route.effort` of the resolved route (`record_routed`, `invocation_log.py`); it is
+neither the transmitted effort nor an observed one, and the log holds no other. The field is
+not renamed (`effort_requested`) because `review_turns.py` (`reviewer_effort`) and `kpi_export.py`
+read the stored name and existing records would stop matching.
+Limits of the reviewed head and of the record (PLP-321). Deduced from the code, not observed: for a Claude
+reviewer, `head` is `git_head` of the `cwd` of the `PreToolUse` payload (`hooks/route_agent.py`), not of
+the root reserved by the review claim, which that hook does not receive; launched from another
+worktree it records that worktree's `HEAD` instead of `null`, and `routing review-invocations` then
+attributes by that head. A Codex reviewer takes the root of its claim (`codex_spawn_plan`,
+`review_claim["root"]`). The `routed` event is written by `route_agent` before the hook returns; if
+another `PreToolUse` hook then denies the Agent, the event stays with status `routed` for an
+invocation that never ran, and nothing removes it (no completion callback fires for a denied call).
 The readers outside routing are three offline commands that only read it: `routing token-attribution` (PLP-317, `token_attribution.py`), `routing review-turns` (PLP-318, `review_turns.py`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue") and `routing kpi-export` (PLP-319, `kpi_export.py`, [kpi-export.md](kpi-export.md)). For the first: [cost-attribution.md](cost-attribution.md), "Rattachement des tokens à une issue et à un rôle".
 
 `routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR] [--repository NAMESPACE]`
-(`--repository` defaults to the identity derived from the origin URL of `--root`) prints
+(`--repository` defaults to `repository_identity(--root)` (`routing.py`): the URL of the `origin` remote,
+or the path of the project root when there is no `origin` remote; an explicit value must be identical to
+the identity used at write time, since only its sha256 names the file) prints
 `invocations_for_diff`: the first recorded reviewer invocation of the issue whose head is
 `--head` (and whose recorded base, when both are known, equals `--base`; Claude reviewers
 record no base), and the implementer invocations of the issue recorded, in append order,
