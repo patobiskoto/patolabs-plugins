@@ -183,6 +183,9 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         bounded = usage[item["id"]].get("lower_bound_requests", 0) if tokens is not None else 0
         if bounded:  # PLP-344: only an affected record changes its fingerprint
             material["tokens_lower_bound_requests"] = bounded
+        reported = usage[item["id"]].get("parent_reported_requests", 0) if tokens is not None else 0
+        if reported:  # PLP-345: the last request's counters come from the parent tool result
+            material["tokens_parent_reported_requests"] = reported
         rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
         model = _id(item.get("model_requested"))
         seen = usage[item["id"]] if tokens is not None else {}
@@ -218,7 +221,9 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                 f"tokens.{key}", None if tokens is None else tokens[name],
                 "host log slice of the invocation (token_attribution, method exact)"
                 + (f"; lower bound: {bounded} request(s) of the log have no terminal snapshot, counted with "
-                   "the largest value observed" if bounded else ""), no_tokens)
+                   "the largest value observed" if bounded else "")
+                + (f"; {reported} request(s) of the log, the last one of the subagent, take their counters from the "
+                   "parent tool result (toolUseResult.usage, host_reported)" if reported else ""), no_tokens)
         corrector = role == "corrector"
         out.append((rec, rec.finish(started, None, started, "approximate" if corrector else "exact",
                                     "at of the routed event of the invocation record", body)))

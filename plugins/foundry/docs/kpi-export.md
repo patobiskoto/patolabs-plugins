@@ -127,6 +127,19 @@ an attempt whose slice has `lower_bound_requests` above 0 (`_attempts` in `kpi_e
 
 Before PLP-344 such a log was rejected whole and the tokens were `null` (`unavailable`).
 
+PLP-345: the last request of a subagent log with no terminal record can take its counters from the parent's tool result
+(`toolUseResult.usage`, rules in [cost-attribution.md](cost-attribution.md), "Complétude Claude"). Such a request is no
+longer in `lower_bound_requests`. An attempt whose requests without a terminal record were all completed that way is no
+longer `amount.completeness: partial` for that cause and its token `provenance` has no "lower bound" sentence (the 1h
+cache-write cause above is independent and unchanged); an attempt that still has such a request stays `partial`. Each
+`tokens.*` provenance of an attempt with completed requests adds "N request(s) of the log, the last one of the subagent,
+take their counters from the parent tool result (toolUseResult.usage, host_reported)". The fingerprint material gains
+`tokens_parent_reported_requests` = N (`_attempts` in `kpi_export.py`) only when N is above 0, and the token values change
+with the completed output, so `source.fingerprint` and `record_id` of that attempt differ from the PLP-344 ones and the
+publisher sends a revision of a record it already published ("Publication to DevHub"), not a duplicate. An attempt with
+no completed request keeps its material, fingerprint and `record_id`
+(`test_parent_reported_last_request_makes_a_complete_record_and_a_still_partial_one_stays_partial`).
+
 Not exported: the coordinator's own tokens and the tokens of sub-agents without an invocation record (methods `window`,
 `approximate`, `overlap`, `unattributed` of `routing token-attribution`). No coordinator attempt is emitted.
 

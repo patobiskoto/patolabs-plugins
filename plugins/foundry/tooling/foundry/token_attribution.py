@@ -30,7 +30,8 @@ from datetime import datetime
 from pathlib import Path
 
 from foundry import invocation_log
-from foundry.cost_attribution import BILLING_TOKEN_KEYS, CostAttributionError, read_host_log
+from foundry.cost_attribution import (BILLING_TOKEN_KEYS, CostAttributionError, ParentLink, read_host_log,
+                                      read_parent_results)
 from foundry.routing_facades import AGENT_IDENTITIES
 
 SCHEMA = "token-attribution.v1"
@@ -131,6 +132,16 @@ def _meta_id(path: Path) -> str | None:
     return None
 
 
+def _meta_tool_use_id(path: Path) -> str | None:
+    """The raw ``toolUseId`` of the sibling ``*.meta.json``, the link to the parent's tool result (PLP-345)."""
+    try:
+        meta = json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tool_use = meta.get("toolUseId") if isinstance(meta, dict) else None
+    return tool_use if isinstance(tool_use, str) and _TOOL_USE_ID.fullmatch(tool_use) else None
+
+
 def _packet_role(path: Path) -> str | None:
     """Role token of the Foundry routed packet header; nothing else of the prompt is kept."""
     try:
@@ -180,7 +191,8 @@ def _claude_units(paths: list[str]) -> list[dict]:
             if sub not in seen:
                 seen.add(sub)
                 units.append({"host": "claude", "path": sub, "parent": str(main), "subagent": True,
-                              "invocation_id": _meta_id(sub), "header_role": _packet_role(sub)})
+                              "invocation_id": _meta_id(sub), "header_role": _packet_role(sub),
+                              "tool_use_id": _meta_tool_use_id(sub)})
     return units
 
 
@@ -211,9 +223,15 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])
     unreadable, rows_of, lost_parents = {"coordinator": 0, "subagent": 0}, {}, set()
+    parent_results: dict[str, dict | None] = {}  # PLP-345: each parent log is indexed once
     for index, unit in enumerate(units):
+        link = None
+        if unit["host"] == "claude" and unit["subagent"]:
+            if unit["parent"] not in parent_results:
+                parent_results[unit["parent"]] = read_parent_results(unit["parent"])
+            link = ParentLink(parent_results[unit["parent"]], unit.get("tool_use_id"))
         try:
-            rows_of[index] = read_host_log(unit["host"], unit["path"], timestamps=True)
+            rows_of[index] = read_host_log(unit["host"], unit["path"], timestamps=True, parent=link)
         except (CostAttributionError, OSError, UnicodeDecodeError):
             unreadable["subagent" if unit["subagent"] else "coordinator"] += 1
             if not unit["subagent"]:
@@ -271,6 +289,9 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                         "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0),
                         "token_requests": [], "request_granularity": True})
                     seen["requests"] += len(row["token_requests"])
+                    if row.get("parent_reported_requests"):  # PLP-345
+                        seen["parent_reported_requests"] = (seen.get("parent_reported_requests", 0)
+                                                            + row["parent_reported_requests"])
                     if row.get("lower_bound_requests"):
                         seen["lower_bound_requests"] = (seen.get("lower_bound_requests", 0)
                                                         + row["lower_bound_requests"])
