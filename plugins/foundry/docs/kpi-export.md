@@ -6,8 +6,9 @@ schema `foundry-kpi-export.v1`, records of contract `devhub-observations.v2`, PL
 writes one local file with the attempt, review-round and escalation records of the listed issues. Without `--session` and
 `--codex-session`, the CLI verb searches the session logs itself ([Finding the session logs](#finding-the-session-logs-plp-342)).
 This verb sends
-nothing; the transmission is the separate, explicit verb `routing kpi-publish` described in
-[Publication to DevHub](#publication-to-devhub-plp-325).
+nothing; the transmission is the separate verb `routing kpi-publish` described in
+[Publication to DevHub](#publication-to-devhub-plp-325), which a successful `issue merge` also runs for the merged
+issue ([Publication at merge](#publication-at-merge-plp-343)).
 
 Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 
@@ -19,8 +20,8 @@ Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 - Deterministic: no clock, JSON with sorted keys and a final newline; the same state and the same session logs give
   the same bytes (`test_same_inputs_same_bytes_and_read_only`). Issue order and duplicates on the command line do not
   matter.
-- No gate, routing or merge reads the output: only the CLI verb imports the module
-  (`test_only_the_cli_verb_imports_kpi_export`); `kpi_export` itself imports `review_turns` and `token_attribution`, which the importer allow-lists of `tests/test_review_turns.py` and `tests/test_token_attribution.py` now list.
+- No gate, routing or merge reads the output: only the CLI verb and the merge step `kpi_merge.py` (PLP-343) import the
+  module (`test_only_the_cli_verb_and_the_merge_step_import_kpi_export`); `kpi_export` itself imports `review_turns` and `token_attribution`, which the importer allow-lists of `tests/test_review_turns.py` and `tests/test_token_attribution.py` now list.
 - Content-free: no prompt, path, command, session or tool-use identifier, proof identifier or remark text
   (`test_output_is_content_free`).
 
@@ -232,9 +233,9 @@ Status of each documented artifact (AGENTS.md#R5):
 
 Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
 
-- Explicit only: `routing.py` is the only importer of `kpi_publish`; no hook, gate, merge or campaign imports it, and
-  `kpi_export.py` stays free of network code
-  (`test_only_the_cli_verb_imports_the_publisher_and_the_reader_stays_offline`).
+- Explicit only: `routing.py` and, since PLP-343, `kpi_merge.py` are the only importers of `kpi_publish`; no hook, gate
+  or campaign imports it, and `kpi_export.py` stays free of network code
+  (`test_only_the_cli_verb_and_the_merge_step_import_the_publisher_and_the_reader_stays_offline`).
 - Project key explicit: the document is refused, before any request, if one record `anchor.issue_id` does not start with
   `<KEY>-`, or if a batch is malformed (`test_document_of_another_project_is_refused_before_any_request`).
 - Idempotence is DevHub's: records keep their `record_id`, so a second identical publication is answered `replayed`
@@ -242,13 +243,15 @@ Behaviour, each point proved by a test of `tests/test_kpi_publish.py`:
   a changed body under the same `record_id` (`idempotency_conflict`, see "Common fields") is reported as a refusal
   with its code; it is not retried or rewritten.
 - Report on standard output, JSON `foundry-kpi-publish.v1`: `totals` (`created`, `replayed`, `refused`, `unsent`),
+  `revised` (PLP-343: how many of the `created` records carry a `supersedes_id`, `publish` in `kpi_publish.py`),
   per-batch entries (`index`, `records`, `error` when the whole batch failed, and `ledger_error` set to `published ledger not written` when saving the published ledger after the batch raised `OSError`, `publish` in `kpi_publish.py`; it does not change `totals`) and `refusals` (`record_id`, `code`).
   A batch-level failure (`http_<status>_<code>`, `tracker_unavailable`, `contract_mismatch`, `invalid_response`,
   `response_too_large`, `batch_too_large`) counts its records as `unsent`; the next batch is still tried; there is no retry
   (`test_batch_failures_are_reported_and_next_batch_still_sent`). Neither the token nor a server message is printed.
 - Exit status: 0 when every record is `created` or `replayed`, 1 when any record is refused or unsent, 2 for a refusal
   before any request. Nothing else in Foundry reads this result; a failure changes no routing, gate, merge or campaign
-  (only `routing.py` calls the module; `test_run_exit_status_and_report`).
+  (`routing.py` calls the module; `test_run_exit_status_and_report`; the merge step does not use the exit status, see
+  [Publication at merge](#publication-at-merge-plp-343)).
 - Bounds: at most `MAX_BATCH_RECORDS` (100) records and `MAX_BATCH_BYTES` (1 MiB) per batch, redirects are never
   followed, `timeout` 10 s per request.
 
@@ -298,3 +301,40 @@ Limits, stated as such:
 - A revision whose `started_at` differs from the previous (an escalation start that is an upper bound deduced from the
   first routed invocation) is sent as is and refused `correction_conflict` if DevHub applies the rule.
 - Two concurrent publications to the same project have no lock: last writer wins on the ledger file (not exercised).
+
+## Publication at merge (PLP-343)
+
+A successful `issue merge` counts as the explicit request to read the session logs and to publish, for the merged
+issue only (PLP-ADR-0063, which amends PLP-ADR-0061 and FOUNDRY-ADR-0015 on that single point; the rest of both is
+unchanged). The step is `_publish_kpi_after_merge` in `tooling/foundry/issue.py`, calling
+`kpi_merge.publish_after_merge` (`tooling/foundry/kpi_merge.py`) in the `issue merge` process, never in a hook
+(FOUNDRY-ADR-0008).
+
+Status of each documented artifact (AGENTS.md#R5):
+
+| Artifact | Status |
+|---|---|
+| step after the `done` transition of `issue merge` | new, PLP-343; it runs before the local cleanup report, so it also runs when the merge exits 3 (`EXIT_LOCAL_CLEANUP_FAILED`); it does not run when the merge is refused, nor on the resume path of an already merged PR (that path returns earlier; catch up with the manual verbs) |
+| what it does | `kpi_sessions.discover` for the issue, `kpi_export.build`, `kpi_publish.validate_document`, `kpi_publish.endpoint` (URL and token, the same resolution as `routing kpi-publish`), `kpi_publish.publish` with the `PublishedLedger`; the project key is the part of the issue id before the first `-`; the export is held in memory, no file is written besides the ledger |
+| capability | the tracker instance of the merge must have `kpi_publication_supported` true (`trackers/base.py`); otherwise nothing is published and nothing is printed |
+| output | on success exactly one line on standard output, `kpi: created=N revised=N replayed=N refused=N not_sent=N` (`kpi_merge.summary`; `created` excludes the `revised` ones, `not_sent` is `unsent` of the report); when `refused` or `not_sent` is above zero the same line followed by `; run ... to catch up` goes to standard error as the one warning. A failure before any request gives one warning line `kpi: publication skipped (<reason>); run ...`. Lines hold counts and fixed words: no path, URL, token or server message (`test_the_step_never_raises_whatever_fails_inside_it`, `test_an_unexpected_exception_becomes_a_warning_without_detail`) |
+| exit code and merge output | unchanged: the step catches every exception and `SystemExit`, including an unexpected one (`_publish_kpi_after_merge`, `kpi_merge.publish_after_merge`); only `KeyboardInterrupt` passes |
+| tests | `tests/test_kpi_merge.py`: simulated loopback server, fake token, no real keychain, no real logs; `tests/conftest.py::_no_kpi_publication_after_merge` replaces the step by a no-op in every other test |
+
+Cases covered by `tests/test_kpi_merge.py`: success, replay and revision; no capability; token absent
+(`test_token_absent_is_one_warning_and_nothing_is_sent`); tracker unreachable
+(`test_tracker_unreachable_is_a_warning_with_the_count_not_sent`); refusal
+(`test_a_refusal_is_a_warning_with_the_count_refused`); unexpected exception; document of another project; the wiring in
+`merge` (`test_merge_runs_the_step_after_done_and_a_failing_step_changes_neither_output_nor_exit`,
+`test_merge_exit_code_is_unchanged_when_the_real_step_explodes`).
+
+Limits, stated as such:
+
+- Figures can be partial at merge (for example a completion event written later): a later manual
+  `routing kpi-export` then `routing kpi-publish` sends a revision ([Revisions](#revisions-plp-342)); nothing
+  publishes the issue again by itself after its merge.
+- Extra cost of a merge: one local log search and one HTTP request per batch, no model call (deduced from the imports
+  of `kpi_export.py` and `kpi_publish.py`; not measured).
+- The merge step has no retry and no timeout other than the 10 s per request of `publish`; the log search is not
+  bounded in time (cost unmeasured, see [Finding the session logs](#finding-the-session-logs-plp-342)).
+- Not run against a real DevHub here: the tests use the simulated server.

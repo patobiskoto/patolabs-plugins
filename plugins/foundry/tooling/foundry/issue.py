@@ -1012,7 +1012,27 @@ def merge(issue_id, pr_number, flags=()):
     # tags exactly this commit; origin/<default> would be racy if another PR lands
     print(f"✅ PR #{pr_number} mergée ({ci_note}) · {ac_note} · sha mergé {merged_sha} · "
           f"{issue_id} → done{cleanup}")
+    # Before the cleanup report, which can exit 3 after a reported success: the step runs in both cases.
+    _publish_kpi_after_merge(tr, issue_id)
     _report_local_cleanup(cleanup_mode, branch)
+
+
+def _publish_kpi_after_merge(tr, issue_id) -> None:
+    """PLP-343 (PLP-ADR-0063): after the merge and ``done``, publish the issue's KPI records. Never a gate.
+
+    One line on stdout (summary) or one warning line on stderr; the merge result and exit code do not depend
+    on this step, which tests stub through this function (``tests/conftest.py``)."""
+    try:
+        from foundry import kpi_merge
+
+        line, warning = kpi_merge.publish_after_merge(tr, issue_id, repository_identity())
+        if line:
+            print(line, file=sys.stderr if warning else sys.stdout)
+    except BaseException as exc:  # includes SystemExit: the merge is done, nothing here may change its exit
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        print("kpi: publication skipped (unexpected error); run `routing kpi-export` then "
+              "`routing kpi-publish` to catch up", file=sys.stderr)
 
 
 _SECRET = re.compile(

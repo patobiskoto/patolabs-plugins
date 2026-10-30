@@ -115,8 +115,8 @@ def test_cli_without_session_uses_the_discovery_and_tokens_stay_unavailable_when
     assert json.loads(out.read_text())["batches"][0]["records"][0]["tokens"]["input"] is None
 
 
-def test_only_the_cli_verb_imports_the_discovery():
+def test_only_the_cli_verb_and_the_merge_step_import_the_discovery():
     importers = {p.name for p in (PLUGIN_ROOT / "tooling").rglob("*.py")
                  if re.search(r"^\s*(from foundry import .*\bkpi_sessions\b|from foundry\.kpi_sessions\b)",
                               p.read_text(), re.M)}
-    assert importers == {"routing.py"}
+    assert importers == {"routing.py", "kpi_merge.py"}  # PLP-343

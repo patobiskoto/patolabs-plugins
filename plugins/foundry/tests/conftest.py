@@ -138,6 +138,23 @@ def assert_state_resolvers_isolated(root: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_kpi_publication_after_merge(monkeypatch: pytest.MonkeyPatch):
+    """PLP-343: `issue merge` never reads logs nor publishes during the suite.
+
+    The step is replaced by a no-op that keeps the real function in ``__wrapped__``;
+    `tests/test_kpi_merge.py` calls that one against fakes."""
+    from foundry import issue
+
+    real = issue._publish_kpi_after_merge
+
+    def disabled(tr, issue_id):
+        return None
+
+    disabled.__wrapped__ = real
+    monkeypatch.setattr(issue, "_publish_kpi_after_merge", disabled)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_foundry_state(
     monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
     tmp_path_factory: pytest.TempPathFactory,

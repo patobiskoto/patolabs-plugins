@@ -472,11 +472,11 @@ def test_module_has_no_network_tracker_or_write_surface():
     assert "O_RDONLY" in source and "O_WRONLY" not in source and "O_CREAT" not in source
 
 
-def test_only_the_cli_verb_imports_kpi_export():
+def test_only_the_cli_verb_and_the_merge_step_import_kpi_export():
     importers = {p.name for p in (PLUGIN_ROOT / "tooling").rglob("*.py")
                  if re.search(r"^\s*(from foundry import .*\bkpi_export\b|from foundry\.kpi_export\b)",
                               p.read_text(), re.M)}
-    assert importers == {"routing.py"}
+    assert importers == {"routing.py", "kpi_merge.py"}  # PLP-343
 
 
 def test_cli_verb_writes_only_the_named_file(tmp_path):

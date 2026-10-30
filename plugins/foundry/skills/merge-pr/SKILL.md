@@ -422,6 +422,13 @@ the merge: run the command printed on standard error (`git checkout <default> &&
 its reason as the message; in a linked worktree the cleanup is left to the host and this code
 is not used.
 
+After the `done` transition, `issue merge` also publishes the KPI records of the merged issue to the tracker
+that declares `kpi_publication_supported` (PLP-343, PLP-ADR-0063; `kpi_merge.py`, `docs/kpi-export.md`,
+"Publication at merge"). It is never a gate: it prints one summary line (`kpi: created=… revised=… replayed=…
+refused=… not_sent=…`) on standard output, or one warning line on standard error when it could not publish,
+and the merge output and exit code are the same either way. After a warning, catch up by hand with
+`routing kpi-export` then `routing kpi-publish`; do not re-run the merge.
+
 ### If a gate blocks
 🔴 review finding or failed human test → put the issue back in the loop, fix, retry:
 ```bash
