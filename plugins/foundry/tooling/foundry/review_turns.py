@@ -35,7 +35,8 @@ SOURCES = {
     "criteria_pass": "acceptance proof criteria verdicts",
     "criteria": "acceptance proof criteria verdicts",
     "remarks": "campaign remarks receipt bound to the proof identifier (review_remarks.py); "
-               "else fix_before_merge + non_blocking of the matching campaign attempts journal record",
+               "else, when no receipt exists, fix_before_merge + non_blocking of the matching "
+               "campaign attempts journal record; blocking findings are counted nowhere",
     "reviewer_model": "first reviewer record of the invocation log for the issue and head (model requested)",
     "reviewer_effort": "same invocation log record (effort requested)",
     "reviewer_host": "same invocation log record (host)",
@@ -114,10 +115,12 @@ def report(issue: str, repository: str, *, state_dir=None) -> dict:
         if journal_why:
             unrecorded["type"] = journal_why
         count, why = _remarks(remarks_store, proof)
-        if why and campaign:
-            count, why = campaign["fix_before_merge"] + campaign["non_blocking"], None
-        elif why == "no_campaign_receipt" and journal_why != "no_campaign_record":
-            why = journal_why
+        if why == "no_campaign_receipt":
+            if campaign:
+                count, why = campaign["fix_before_merge"] + campaign["non_blocking"], None
+            elif journal_why != "no_campaign_record":
+                why = journal_why
+        # PLP-321: an unreadable receipt is not replaced by the journal count: its reason stays
         if why:
             unrecorded["remarks"] = why
         base = coordinates["base"] if _SHA.fullmatch(coordinates["base"]) else None

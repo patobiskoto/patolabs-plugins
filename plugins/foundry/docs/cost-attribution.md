@@ -70,7 +70,7 @@ divergente, deux snapshots terminaux contradictoires, usage incomplet. Cause de 
 snapshot : inconnue (côté hôte) ; observé le 2026-10-29 sur des journaux de sous-agents de Claude Code
 2.1.286, 2.1.299 et 2.1.304, avec un `output_tokens` partiel. Mesure du 2026-10-30 (PLP-324,
 [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md)) : input et cache de ces
-requêtes égaux à ceux du snapshot terminal quand il existe, `output_tokens` très inférieur (observé) ; la borne basse reste donc la règle.
+requêtes : égaux à ceux du snapshot terminal de la même requête sur les requêtes qui en ont un, et à la figure du parent sur la dernière requête de 71 invocations (observé, deux écarts de cache non expliqués) ; pour les autres requêtes sans snapshot terminal c'est déduit, sans figure indépendante ; `output_tokens` très inférieur (observé) ; la borne basse reste donc la règle.
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
 sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
@@ -197,10 +197,10 @@ tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `wi
 | `method` | Condition observée | Source |
 |---|---|---|
 | `exact` | un journal de sous-agent dont l'identifiant d'invocation est dans l'enregistrement local, qui porte l'issue | Claude : `toolUseId` du `agent-*.meta.json` voisin, haché par `invocation_log.claude_invocation_id` ; Codex : suffixe de 16 hexadécimaux de `agent_path` (identifiant d'exécution de `_codex_execution_name`, `routing_facades.py`) |
-| `window` | requête du coordinateur dans exactement une fenêtre | appels Bash (Claude) ou `exec` (Codex) `foundry_cli.py issue start <ID>` puis le premier `issue merge <ID>` suivant, du même journal |
+| `window` | requête du coordinateur dans exactement une fenêtre | appels Bash (Claude) ; pour Codex, les `arguments` de tout `function_call` et l'`input` de tout `custom_tool_call`, `apply_patch` compris (`_calls`, `token_attribution.py`) : `foundry_cli.py issue start <ID>` puis le premier `issue merge <ID>` suivant, du même journal. Limite : un patch qui contient littéralement `foundry_cli.py issue start <ID>` ouvre une fenêtre, et un patch qui contient `foundry_cli.py issue merge <ID>` peut la fermer plus tôt (`_WINDOW_CALL`, `token_attribution.py`) |
 | `approximate` | requête d'un sous-agent sans enregistrement, dans exactement une fenêtre de son coordinateur (historique antérieur à PLP-316) | idem ; c'est une présomption temporelle, pas un lien |
 | `overlap` | requête dans plusieurs fenêtres | `issues` nomme les issues ; les tokens ne sont jamais répartis |
-| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp`, `parent_unreadable` (sous-agent dont le journal de coordinateur est refusé par `read_host_log` : ses fenêtres ne sont pas calculées) |
+| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp`, `parent_unreadable` (sous-agent dont le journal de coordinateur n'a pas pu être lu : refusé par `read_host_log` (`CostAttributionError`), ou exception d'E/S ou d'UTF-8 rattrapée par `report()` : ses fenêtres ne sont pas calculées) |
 
 Une fenêtre sans `issue merge` est ouverte (`closed: false`) : elle n'attribue rien seule (`window_unclosed`) et
 compte comme recouvrement avec toute fenêtre qui contient la requête. Un recouvrement est aussi déclaré dans

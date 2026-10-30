@@ -8,7 +8,7 @@ Legend. **observed**: read on the local logs by the procedure below. **deduced**
 
 Is the usage of a Claude subagent request that has no terminal record (no record with a non-null `stop_reason`) complete?
 
-- Input, cache-creation and cache-read counters: **complete on every comparison made** (observed, 3,466 of 3,466 requests, and 69 of 71 parent comparisons; the two differences are listed below).
+- Input, cache-creation and cache-read counters: **complete on every comparison made** (observed, 3,466 of 3,466 requests, and 69 of 71 parent comparisons; the two differences are listed below); for requests that have neither a terminal record nor a parent figure this is **deduced** (see "Decision and limits").
 - `output_tokens`: **not complete** (observed). The non-terminal records carry an early streaming figure, not the final output. The reader's rule (largest `output_tokens` seen, marked `lower_bound_requests`) is therefore the right one and cannot be promoted to an exact rule.
 - Cause of the missing terminal record: **unknown** (host side; the logs only show that the records stop before the final one).
 
@@ -45,13 +45,15 @@ Independent source: for a subagent invocation, the main log holds a tool result 
 | unattributed | coordinator | no | 2 | 2,782 |
 | window | coordinator | no | 3 | 59 |
 
-The table and the totals come from two successive runs on the live log: the first gave 7,656 requests and 1,200 `exact` requests, the second the table (7,657 requests, 1,201 `exact`); deduced: the session grew between them. Method `exact` is therefore observed on real Claude data (35 slices), which closes the gap stated in [cost-attribution.md](../cost-attribution.md) ("le lien `exact` n'a pas été observé sur des données réelles"). Every `exact` slice carries the lower-bound mark: no `exact` slice has an exact token total on this session (observed). The two earlier main logs tested hold no subagent log (1 request each, `unattributed`).
+The table and the totals come from two successive runs on the live log: the first gave 7,656 requests and 1,200 `exact` requests, the second the table (7,657 requests, 1,201 `exact`); deduced: the session grew between them. Method `exact` is therefore observed on real Claude data (35 slices), which closes the gap stated in [cost-attribution.md](../cost-attribution.md) ("le lien `exact` n'a pas été observé sur des données réelles"; wording before PLP-324, since rewritten by this same change). Every `exact` slice carries the lower-bound mark: no `exact` slice has an exact token total on this session (observed). The two earlier main logs tested hold no subagent log (1 request each, `unattributed`).
 
 ## Decision and limits
 
-- The reader and FOUNDRY-ADR-0015 stay unchanged. The documented limit is: the `output_tokens` of a request without terminal record is a lower bound, input and cache are complete.
+- The reader and FOUNDRY-ADR-0015 stay unchanged. The documented limit is: the `output_tokens` of a request without terminal record is a lower bound. Input and cache complete: **observed** on the 3,466 requests that also have a terminal record (finding 6) and on the last request of 71 invocations (finding 4, with the two cache differences listed there); **deduced**, not observed, for every other request without a terminal record (not last, no terminal record: no independent figure exists for it, finding 7).
 - Any KPI amount computed from these slices underestimates the output component; the size of the underestimate on non-last requests is unknown (finding 7).
 - Limits of the comparison: one project directory, one user; the parent figure is the only independent source and covers the last request only; 106 of 719 invocations could be matched; the meaning of the 2+2 unexplained differences is unknown.
+- Fields read outside the list of FOUNDRY-ADR-0015 (declared, as PAT-134 declared its own, [pat-134-subagent-cache-1h.md](pat-134-subagent-cache-1h.md)): the ad hoc measurement script read `toolUseResult` of the main logs, `toolUseId` of the `*.meta.json`, `version` and `stop_reason` of the records, beyond counters, model alias, timestamp and session identifier. Only aggregate counts were committed, on this page; nothing else was kept.
+- Not replayable from the repository (limit): the measurement script is not committed (a script reading the user's own session logs is not shipped), so the figures above cannot be recomputed from this repository; the procedure section describes it and nothing more.
 - Reproduction: the procedure is described, not shipped as a script; no test reads real logs. The reader behaviour on synthetic non-terminal requests is covered by the PLP-344 tests (`tests/test_cost_attribution.py`).
 
 ## Documentation status (R5)

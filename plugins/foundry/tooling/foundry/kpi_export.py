@@ -100,7 +100,6 @@ class _Record:
             "attempt_id": "derived by sha256 (see docs/kpi-export.md); no source identifier is emitted",
             "attribution": "fixed by the record kind and its source (docs/kpi-export.md)",
             "revision": "constant 1 (no revision exists in the sources)",
-            "supersedes_id": "constant null (revision 1)",
             "started_at": time_source, "observed_at": time_source,
             "source.fingerprint": "sha256 of the canonical source material (docs/kpi-export.md)",
         })
@@ -108,6 +107,7 @@ class _Record:
             self.fields["ended_at"] = time_source
         else:
             self.nulls["ended_at"] = "no end time is recorded in the source"
+        self.nulls["supersedes_id"] = "constant null (revision 1): the export cannot know what was published"
         self.body = record
         return record
 
@@ -156,10 +156,11 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
 def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) -> tuple[list, list]:
     if records is None:
         return [], [{"issue": issue, "kind": "attempt", "reason": "invocation_log_unreadable"}]
-    out = []
+    out, omitted = [], []
     for item in (r for r in records.values() if r.get("issue") == issue):
         started = _epoch_ms(item.get("at"))
         if started is None:
+            omitted.append({"issue": issue, "kind": "attempt", "reason": "no_recorded_time"})
             continue
         role = "corrector" if item["role"] == "implementer" and item.get("correction") is True else item["role"]
         raw_status = status = item.get("status")
@@ -223,7 +224,7 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                                     "at of the routed event of the invocation record", body)))
         if corrector:
             rec.fields["attribution"] = "approximate: the corrector role is a claim made at routing (correction flag)"
-    return out, []
+    return out, omitted
 
 
 def _implementer_model(issue: str, head: str, base: str | None, repository: str, state_dir) -> tuple[str | None, str]:
@@ -251,14 +252,15 @@ def _pull_requests(journal: Path) -> list[dict] | None:
 def _pr_number(started: list[dict] | None, issue: str, head: str) -> tuple[int | None, str]:
     if started is None:
         return None, "attempts_journal_unreadable"
-    numbers = {r["fingerprint"].get("pr") for r in started
-               if r.get("ticket") == issue and r["fingerprint"].get("pr_head") == head}
-    numbers.discard(None)
+    # a list, not a set: a journal value that is not hashable must not raise (PLP-321)
+    numbers = [r["fingerprint"].get("pr") for r in started
+               if r.get("ticket") == issue and r["fingerprint"].get("pr_head") == head]
+    numbers = [n for n in numbers if n is not None]
     if not numbers:
         return None, "no_campaign_record_of_a_pull_request"
-    if len(numbers) != 1 or not all(type(n) is int and n >= 1 for n in numbers):
+    if not all(type(n) is int and n >= 1 for n in numbers) or len(set(numbers)) != 1:
         return None, "ambiguous"
-    return numbers.pop(), ""
+    return numbers[0], ""
 
 
 def _rounds(issue: str, repository: str, state_dir, journal: Path) -> tuple[list, list]:
@@ -333,6 +335,8 @@ def _escalations(issue: str, repository: str, state_dir, records: dict | None) -
     except OSError:
         return [], [{"issue": issue, "kind": "escalation", "reason": "escalation_ledger_unreadable"}]
     try:
+        # Private calls kept on purpose (PLP-321): the public ``EscalationStore.status`` does not return
+        # the failure receipts or their ``decided_at``, and a new public reader is outside this change.
         with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
             state = store._normalize_state(_strict_json_loads(handle.read()), issue)
     except (OSError, ValueError, RecursionError, RoutingConfigError):
@@ -378,8 +382,8 @@ def _escalations(issue: str, repository: str, state_dir, records: dict | None) -
         }
         time_source = ("observed: decided_at of the escalation ledger failure receipt (escalation.py), written when "
                        "the decision was recorded" if observed is not None else
-                       "deduced upper bound: at of the first routed invocation of the role in this "
-                       "issue at to_tier (the receipt has no decided_at)")
+                       "deduced estimate (neither a lower nor an upper bound): at of the first routed "
+                       "invocation of the role in this issue at to_tier (the receipt has no decided_at)")
         out.append((rec, rec.finish(when, None, when, "exact", time_source, body)))
     return out, omitted
 

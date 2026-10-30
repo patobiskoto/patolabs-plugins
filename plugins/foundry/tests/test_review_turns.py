@@ -177,7 +177,7 @@ def test_receipt_with_another_schema_version_is_unreadable(tmp_path):
 def test_sources_cover_every_emitted_field(tmp_path):
     _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
     turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
-    assert set(turn) - {"unrecorded"} <= set(review_turns.SOURCES)
+    assert set(turn) - {"unrecorded"} == set(review_turns.SOURCES)
 
 
 def test_no_proof_gives_no_turn(tmp_path):
@@ -220,3 +220,15 @@ def test_cli_verb_prints_sorted_json(tmp_path):
                           "--repository", REPO], capture_output=True, text=True, env=env)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout)["schema"] == "review-turns.v1"
+
+
+def test_an_unreadable_receipt_is_not_replaced_by_the_journal_count(tmp_path):
+    """PLP-321: the fallback is for a missing receipt only; the reason stays visible."""
+    proof = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable")
+    _attempt(tmp_path, "PLP-1", proof, partial=False, fix=2, non_blocking=1)
+    store = review_remarks.ReviewRemarksStore(REPO, tmp_path)
+    store.directory.mkdir(parents=True)
+    (store.directory / proof["proof_id"]).write_text("{not json")
+    turn = review_turns.report("PLP-1", REPO, state_dir=tmp_path)["turns"][0]
+    assert turn["remarks"] is None and turn["unrecorded"]["remarks"] == "receipt_unreadable"
+    assert turn["type"] == "full"

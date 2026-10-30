@@ -105,11 +105,12 @@ receipt, the campaign attempts journal (`campaign_effects.read_attempts`, file
 (`tests/test_review_turns.py::test_read_only_and_content_free` compares the state directory,
 journal included, before and after). No gate, routing or merge reads it; only the CLI verb and the offline export `kpi_export.py` (PLP-319, itself run by the merge step `kpi_merge.py`, PLP-343) import it
 (`test_only_the_cli_verb_imports_review_turns`); it changes neither the proof format nor
-`record-review-proof`. Per turn, with the source of each field (`sources` emits one entry per field, `unrecorded` excepted; `test_sources_cover_every_emitted_field`):
+`record-review-proof`. Top-level keys: `schema`, `issue`, `repository`, `sources`, `carried_proofs` (count of carried proofs of the issue, not turns), `unreadable_proofs` and `turns`. Per turn, with the source of each field (`sources` emits one entry per field, `unrecorded` excepted; `test_sources_cover_every_emitted_field`):
 
 - `rank`: order of the ledger `completed_at` bound to the proof diff hash, then
   `generation`; a turn without a recorded time ranks after the timed ones.
 - `head`, `base`: the proof `coordinates`.
+- `generation`: the proof `review.generation`.
 - `started_at`, `completed_at`: `claim.started_at` and `completed_at` of the review ledger record bound to the proof diff hash (PLP-319 reads `started_at` for [kpi-export.md](kpi-export.md)).
 - `verdict` (`validated` when quality is `mergeable` and every criterion passes, else
   `blocked`, as `review_rounds`), `quality`, `criteria_pass`, `criteria`: the proof.
@@ -117,7 +118,11 @@ journal included, before and after). No gate, routing or merge reads it; only th
   (`review_remarks.py`), checked against the receipt schema version and the proof's issue, diff
   hash and generation. Without a receipt, the count `fix_before_merge + non_blocking` of the
   matching campaign journal record (see `type`), which is the same number
-  (`campaign_review.py`, remark sums checked at parse time); a receipt always wins.
+  (`campaign_review.py`, remark sums checked at parse time); a readable receipt always wins, and
+  an unreadable one is not replaced by the journal count: `remarks` stays `null` with
+  `receipt_unreadable` (PLP-321). `remarks` counts only remarks (`fix_before_merge + non_blocking`):
+  the blocking findings of a blocked round are counted nowhere, so a blocked turn's `remarks` is not
+  the number of its findings.
 - `reviewer_model`, `reviewer_effort`, `reviewer_host`: the first reviewer record of the
   invocation log for this issue and this head (`invocation_log.invocations_for_diff`); this is
   the model requested at routing, not an observation of the model that ran.

@@ -66,7 +66,7 @@ def test_claude_routed_record_has_only_closed_fields_and_status_update(tmp_path)
     head = _repo(tmp_path)
     _claude(tmp_path, "implementer", "PLP-5", "toolu_secret_1")
     _claude(tmp_path, "reviewer", "PLP-5", "toolu_secret_2")
-    _claude(tmp_path, "implementer", None or "PLP-6", "toolu_3")
+    _claude(tmp_path, "implementer", "PLP-6", "toolu_3")
     events, path = _lines(tmp_path)
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     assert all(set(e) == set(invocation_log._FIELDS) for e in events)
@@ -189,7 +189,32 @@ def test_cli_verb_prints_json_or_null(tmp_path):
     assert out.returncode == 0 and json.loads(out.stdout) is None
 
 
+def test_codex_review_plan_with_a_claim_records_the_claimed_head_and_base(tmp_path):
+    """PLP-321: a successful Codex claim records head from the claim root and its base."""
+    base = _repo(tmp_path)
+    head = _commit(tmp_path, "b")
+    state = tmp_path / "state"
+    from foundry.routing_facades import codex_review_plan
+    plan = codex_review_plan(_packet(), root=tmp_path, base=base, state_dir=state,
+                             issue_id="PLP-8", claim_attempt_token="c" * 64)
+    assert plan["mode"] == "subagent" and plan["review_claim"]["should_run"] is True
+    path = invocation_log._path(invocation_log._repository(tmp_path), state)
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(events) == 1
+    assert (events[0]["role"], events[0]["head"], events[0]["base"]) == ("reviewer", head, base)
+
+
 def test_no_decision_path_reads_the_log():
+    # hooks/ and scripts/ too (PLP-321); the two hooks below only write
+    outside = [p.name for sub in ("hooks", "scripts") for p in (PLUGIN_ROOT / sub).rglob("*.py")
+               if p.name not in {"observe_agent.py", "route_agent.py"}
+               and re.search(r"\binvocation_log\b", p.read_text())]
+    assert outside == []
+    for name, writers in (("route_agent.py", {"record_routed"}),
+                          ("observe_agent.py", {"record_completion"})):
+        used = set(re.findall(r"invocation_log\.(\w+)\(",
+                              (PLUGIN_ROOT / "hooks" / name).read_text()))
+        assert used - {"claude_invocation_id"} == writers
     allowed = {"invocation_log.py", "routing_facades.py", "routing.py", "token_attribution.py",
                "review_turns.py", "kpi_export.py", "kpi_sessions.py"}
     offenders = [p.name for p in (PLUGIN_ROOT / "tooling" / "foundry").rglob("*.py")

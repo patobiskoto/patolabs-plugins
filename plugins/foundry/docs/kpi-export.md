@@ -45,7 +45,7 @@ transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a r
   record fields and tokens, the review-turn fields, the escalation receipt fields); `schema` names the source:
   `foundry-invocation-log`, `review-turns.v1`, `escalation-ledger.v1`.
 - `anchor` = `{type: "issue", command_id: null, issue_id}`: no command plan is recorded locally.
-- `revision` 1, `supersedes_id` null, always, in the export: no source holds a revision and the export cannot know
+- `revision` 1, `supersedes_id` null, always, in the export (`provenance.null`, not `from`, PLP-321): no source holds a revision and the export cannot know
   what was published. A source that changes after publication (a completion event, tokens found later) changes the
   fingerprint and so the `record_id`; the revision is then decided by the publisher, which keeps what it published
   ([Revisions](#revisions-plp-342)).
@@ -58,7 +58,7 @@ transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a r
   source read, not run): DevHub answers `idempotency_conflict` for the same `record_id` with a different body (same
   source, read, not run) and the publisher reports it as a refusal.
 - `started_at`, `observed_at`, `ended_at`: epoch milliseconds converted from source timestamps; the module reads no
-  clock. A time no source holds is not invented: the record is omitted (`no_recorded_time`) or `ended_at` is `null`.
+  clock. A time no source holds is not invented: the record is omitted (`no_recorded_time`; an attempt whose `at` is not a readable timestamp gets an `omitted` entry `{issue, kind: "attempt", reason: "no_recorded_time"}` since PLP-321, without `rank` or `role`) or `ended_at` is `null`.
 - Unknown is `null`, never `0`.
 
 ## `attempt`
@@ -131,7 +131,7 @@ Not exported: the coordinator's own tokens and the tokens of sub-agents without 
 `approximate`, `overlap`, `unattributed` of `routing token-attribution`). No coordinator attempt is emitted.
 
 Observed on 2026-10-27 on the maintainer machine: the invocation record held 0 entries for the default state directory,
-so the real sample below has no `attempt` record; the `exact` link and the amount are established by synthetic tests
+so no `attempt` record was exported on that run (no sample of it is committed here); the `exact` link and the amount are established by synthetic tests
 only (`test_attempts_tokens_and_estimated_amount`).
 
 ## `review_round`
@@ -145,7 +145,7 @@ of an issue"). `attempt_id` = `rr-` + 32 hex of sha256 of issue, head and rank, 
 | `head_sha`, `base_sha`, `rank` | turn `head`, `base`, `rank` | `base_sha`: the proof base is not a 40-hex sha |
 | `verdict` | turn `verdict` (`validated` becomes `mergeable`) | never |
 | `ac_total`, `ac_pass` | turn `criteria`, `criteria_pass` | never |
-| `remark_count` | turn `remarks` | no campaign receipt or journal record (reason copied from the turn `unrecorded`) |
+| `remark_count` | turn `remarks` | the turn `remarks` is `null`: no campaign receipt and no journal count, an unreadable receipt, or an unreadable or ambiguous journal (reason copied from the turn `unrecorded`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue") |
 | `review_type` | turn `type` (campaign journal); else `full` for rank 1 and for a turn that follows a `blocked` turn, deduced from AGENTS.md#R9 (the first review and the review after a blocking round are full) | the record is omitted instead (`review_type_unrecorded:<reason>`): the format forbids `null`, and a turn after a validated one may be partial or full, which no local source tells outside a campaign |
 | `reviewer_model` | turn `reviewer_model` (model requested) | no reviewer invocation recorded for the head |
 | `implementer_model` | `model_requested` of the implementer invocations of the window before that reviewer invocation (`invocation_log.invocations_for_diff`), when they all name the same model | no window, none, or several models |
@@ -176,8 +176,9 @@ other version was checked, the 1.x tags included. In those versions a ledger hol
 therefore invalid and routing fails closed for that issue (deduced from that code, not run). Do not go back to such a
 version, or run one on another host, once a new escalation receipt exists.
 `started_at` = `observed_at` is that `decided_at` (observed, said in `provenance`); for a receipt without it, it is
-the `at` of the first routed invocation of the same role and issue at `to_tier`, an upper bound (deduced, said in
-`provenance`); with no `decided_at` the record is omitted (`no_recorded_time`) when the invocation record has none.
+the `at` of the first routed invocation of the same role and issue at `to_tier`, an estimate (deduced, said in
+`provenance`; neither a lower nor an upper bound, since the role may have run at `to_tier` before the decision, and the
+`from_tier` invocations after it are not used); with no `decided_at` the record is omitted (`no_recorded_time`) when the invocation record has none.
 `attribution` is `exact` (the ledger is keyed by issue).
 
 ## Finding the session logs (PLP-342)
@@ -207,11 +208,11 @@ invocation of the issue is not selected (its requests are not attributed `exact`
 project directory is a checkout that git no longer lists is not searched; the search reads the first line of every
 rollout file under `~/.codex/sessions` (cost unmeasured).
 
-## Procedure and sample
+## Procedure
 
-Run once on a copy of the state:
-`python3 tooling/foundry_cli.py routing kpi-export PLP-316 PLP-317 PLP-318 --output <file> --root <worktree>`
-prints the counts per kind and writes the file; running it twice produced identical bytes (checked on 2026-10-27).
+Run once on a copy of the state: copy the state directory (`registry.data_dir()`, `~/.config/foundry` by default), then
+`FOUNDRY_DATA=<copy> python3 tooling/foundry_cli.py routing kpi-export <ISSUE>... --output <file> --root <worktree>`
+(`<ISSUE>...` are the issues to export; the run of 2026-10-27 named PLP-316, PLP-317 and PLP-318) prints the counts per kind and writes the file; running it twice produced identical bytes (checked on 2026-10-27).
 
 ## Publication to DevHub (PLP-325)
 
@@ -298,7 +299,7 @@ Limits, stated as such:
   refuses it as `correction_conflict`, reported in `refusals`. An unchanged one is `replayed` and gets an entry.
 - A source that returns to an earlier fingerprint, or a changed `amount` with an unchanged fingerprint (price grid
   update), is refused `idempotency_conflict`: not a revision.
-- A revision whose `started_at` differs from the previous (an escalation start that is an upper bound deduced from the
+- A revision whose `started_at` differs from the previous (an escalation start that is an estimate deduced from the
   first routed invocation) is sent as is and refused `correction_conflict` if DevHub applies the rule.
 - Two concurrent publications to the same project have no lock: last writer wins on the ledger file (not exercised).
 
