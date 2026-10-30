@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import config, issue, kpi_export, kpi_merge, kpi_publish, kpi_sessions, write
+from foundry import config, issue, kpi_export, kpi_merge, kpi_sessions
 from test_kpi_publish import CONTRACT, FAKE, _chain_record, _devhub_like, server  # noqa: F401
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
