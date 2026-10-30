@@ -86,8 +86,8 @@ d’outil du parent ». Sinon, le comportement PLP-344 est inchangé et `diagnos
 (`[{"reason", "count"}]`, raisons fermées `PARENT_REFUSAL_REASONS` : `parent_unreadable`, `no_agent_link`,
 `no_parent_result`, `ambiguous_parent_result`, `tool_use_mismatch`, `unreadable_parent_usage`, `input_differs`,
 `output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Sans `parent`
-(valeur par défaut), la sortie est inchangée ; seules les requêtes autres que la dernière restent en borne basse
-(écart inconnu). Mesure : [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md), section « PLP-345 ».
+(valeur par défaut), la sortie est inchangée. Avec `parent`, restent en borne basse (écart inconnu) les requêtes
+autres que la dernière et une dernière requête dont la complétion est refusée. Mesure : [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md), section « PLP-345 ».
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
 sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
