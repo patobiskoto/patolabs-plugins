@@ -145,7 +145,7 @@ of an issue"). `attempt_id` = `rr-` + 32 hex of sha256 of issue, head and rank, 
 | `head_sha`, `base_sha`, `rank` | turn `head`, `base`, `rank` | `base_sha`: the proof base is not a 40-hex sha |
 | `verdict` | turn `verdict` (`validated` becomes `mergeable`) | never |
 | `ac_total`, `ac_pass` | turn `criteria`, `criteria_pass` | never |
-| `remark_count` | turn `remarks` | no campaign receipt or journal record (reason copied from the turn `unrecorded`) |
+| `remark_count` | turn `remarks` | the turn `remarks` is `null`: no campaign receipt and no journal count, an unreadable receipt, or an unreadable or ambiguous journal (reason copied from the turn `unrecorded`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue") |
 | `review_type` | turn `type` (campaign journal); else `full` for rank 1 and for a turn that follows a `blocked` turn, deduced from AGENTS.md#R9 (the first review and the review after a blocking round are full) | the record is omitted instead (`review_type_unrecorded:<reason>`): the format forbids `null`, and a turn after a validated one may be partial or full, which no local source tells outside a campaign |
 | `reviewer_model` | turn `reviewer_model` (model requested) | no reviewer invocation recorded for the head |
 | `implementer_model` | `model_requested` of the implementer invocations of the window before that reviewer invocation (`invocation_log.invocations_for_diff`), when they all name the same model | no window, none, or several models |
@@ -208,12 +208,11 @@ invocation of the issue is not selected (its requests are not attributed `exact`
 project directory is a checkout that git no longer lists is not searched; the search reads the first line of every
 rollout file under `~/.codex/sessions` (cost unmeasured).
 
-## Procedure and sample
+## Procedure
 
 Run once on a copy of the state: copy the state directory (`registry.data_dir()`, `~/.config/foundry` by default), then
 `FOUNDRY_DATA=<copy> python3 tooling/foundry_cli.py routing kpi-export <ISSUE>... --output <file> --root <worktree>`
-(`<ISSUE>...` are the issues to export; the run of 2026-10-27 named PLP-316, PLP-317 and PLP-318, and the pull request that
-introduced the verb may list others) prints the counts per kind and writes the file; running it twice produced identical bytes (checked on 2026-10-27).
+(`<ISSUE>...` are the issues to export; the run of 2026-10-27 named PLP-316, PLP-317 and PLP-318) prints the counts per kind and writes the file; running it twice produced identical bytes (checked on 2026-10-27).
 
 ## Publication to DevHub (PLP-325)
 

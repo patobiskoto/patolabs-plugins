@@ -306,14 +306,14 @@ effort, `route.effort` of the resolved route (`record_routed`, `invocation_log.p
 neither the transmitted effort nor an observed one, and the log holds no other. The field is
 not renamed (`effort_requested`) because `review_turns.py` (`reviewer_effort`) and `kpi_export.py`
 read the stored name and existing records would stop matching.
-Limits of the reviewed head and of the record (PLP-321). Deduced from the code, not observed: for a Claude
+Limits of the reviewed head and of the record (PLP-321). Deduced from the code, not observed, except where stated: for a Claude
 reviewer, `head` is `git_head` of the `cwd` of the `PreToolUse` payload (`hooks/route_agent.py`), not of
 the root reserved by the review claim, which that hook does not receive; launched from another
 worktree it records that worktree's `HEAD` instead of `null`, and `routing review-invocations` then
-attributes by that head. A Codex reviewer takes the root of its claim (`codex_spawn_plan`,
-`review_claim["root"]`). The `routed` event is written by `route_agent` before the hook returns; if
+attributes by that head. A Codex reviewer takes the root of its claim (`root=review_root` passed by `codex_review_plan` to
+`codex_spawn_plan`, `routing_facades.py`). The `routed` event is written by `route_agent` before the hook returns; if
 another `PreToolUse` hook then denies the Agent, the event stays with status `routed` for an
-invocation that never ran, and nothing removes it (no completion callback fires for a denied call).
+invocation that never ran, and nothing in Foundry removes it. Whether the host fires a completion callback for a call denied by another hook is unknown (not observed); if one fired, `observe_agent` would record its status on that event (`record_completion`, `invocation_log.py`).
 The readers outside routing are three offline commands that only read it: `routing token-attribution` (PLP-317, `token_attribution.py`), `routing review-turns` (PLP-318, `review_turns.py`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue") and `routing kpi-export` (PLP-319, `kpi_export.py`, [kpi-export.md](kpi-export.md)). For the first: [cost-attribution.md](cost-attribution.md), "Rattachement des tokens à une issue et à un rôle".
 
 `routing review-invocations ISSUE --head <40-hex> [--base <40-hex>] [--root DIR] [--repository NAMESPACE]`
