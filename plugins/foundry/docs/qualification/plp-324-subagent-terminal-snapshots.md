@@ -1,6 +1,6 @@
 # PLP-324 - Claude subagent logs without a terminal record: is the usage complete?
 
-PLP-324 (Epic PLP-315). Frame: FOUNDRY-ADR-0015 (offline reader of host session logs; **not amended** by this page), AGENTS.md R5 and R9. Follows PLP-344, which made `read_host_log` accept a request with no terminal snapshot and count it as a marked lower bound ([cost-attribution.md](cost-attribution.md), "Complétude Claude"; [kpi-export.md](kpi-export.md)).
+PLP-324 (Epic PLP-315). Frame: FOUNDRY-ADR-0015 (offline reader of host session logs; **not amended** by this page), AGENTS.md R5 and R9. Follows PLP-344, which made `read_host_log` accept a request with no terminal snapshot and count it as a marked lower bound ([cost-attribution.md](../cost-attribution.md), "Complétude Claude"; [kpi-export.md](../kpi-export.md)).
 
 Legend. **observed**: read on the local logs by the procedure below. **deduced**: inferred from observed figures. **unknown**: not established. Only aggregate counts appear here; no path, session identifier, message content or name.
 
@@ -45,7 +45,7 @@ Independent source: for a subagent invocation, the main log holds a tool result 
 | unattributed | coordinator | no | 2 | 2,782 |
 | window | coordinator | no | 3 | 59 |
 
-The table and the totals come from two successive runs on the live log: the first gave 7,656 requests and 1,200 `exact` requests, the second the table (7,657 requests, 1,201 `exact`); deduced: the session grew between them. Method `exact` is therefore observed on real Claude data (35 slices), which closes the gap stated in [cost-attribution.md](cost-attribution.md) ("le lien `exact` n'a pas été observé sur des données réelles"). Every `exact` slice carries the lower-bound mark: no `exact` slice has an exact token total on this session (observed). The two earlier main logs tested hold no subagent log (1 request each, `unattributed`).
+The table and the totals come from two successive runs on the live log: the first gave 7,656 requests and 1,200 `exact` requests, the second the table (7,657 requests, 1,201 `exact`); deduced: the session grew between them. Method `exact` is therefore observed on real Claude data (35 slices), which closes the gap stated in [cost-attribution.md](../cost-attribution.md) ("le lien `exact` n'a pas été observé sur des données réelles"). Every `exact` slice carries the lower-bound mark: no `exact` slice has an exact token total on this session (observed). The two earlier main logs tested hold no subagent log (1 request each, `unattributed`).
 
 ## Decision and limits
 
@@ -56,4 +56,4 @@ The table and the totals come from two successive runs on the live log: the firs
 
 ## Documentation status (R5)
 
-Updated: [cost-attribution.md](cost-attribution.md), "Complétude Claude" and the `exact` observation sentence (pointers and the now-false "exact not observed" claim); changelog fragment `PLP-324`. No CLI verb, key or constant changed.
+Updated: [cost-attribution.md](../cost-attribution.md), "Complétude Claude" and the `exact` observation sentence (pointers and the now-false "exact not observed" claim); changelog fragment `PLP-324`. No CLI verb, key or constant changed.
