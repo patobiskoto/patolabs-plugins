@@ -814,18 +814,22 @@ pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark
 ```
 
 The second command runs, alone, the four tests marked `timing_sensitive` (declared in
-`pytest.ini`): three in `tests/test_local_scout.py` that assert a wall-clock bound on a short deadline, and
+`pytest.ini`): three in `tests/test_local_scout.py` that assert a wall-clock bound on a
+short deadline, and
 `tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
 which races a reader thread against a producer. Only the last one was observed to fail
 under parallel load: one local `-n 4` run during PAT-142 (200 steps seen, bound is below
 200; that run was not recorded). The three scout tests were marked because they assert a
 wall-clock bound, not because a failure was observed; one of them,
-`test_real_total_deadline_bounds_headers_with_frozen_accounting_clock`, later failed 4 times out of 4 in
-the serial step of the CI job `foundry-python-min` (PLP-338), and now uses a 1 s deadline with bounds below 5 s. Other unmarked tests also assert a
-bound on time (for example `test_local_attempt_is_bounded_in_time_and_the_group_is_killed`);
-they were not observed to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the
-parallel step without a failure: 6332 passed, 10 skipped in 310.58s, then the serial
-step: 4 passed in 2.84s. The log does not show the number of xdist workers.
+`test_real_total_deadline_bounds_headers_with_frozen_accounting_clock`, later failed 4
+times out of 4 in the serial step of the CI job `foundry-python-min` (PLP-338), and now
+uses a 1 s deadline with bounds below 5 s (the two other scout tests got the same in
+PLP-337, for the same race, deduced: no failure of theirs was observed). Other unmarked
+tests also assert a bound on time (for example
+`test_local_attempt_is_bounded_in_time_and_the_group_is_killed`); they were not observed
+to fail in parallel. CI run 38095058779 (head `d640c1a`) ran the parallel step without a
+failure: 6332 passed, 10 skipped in 310.58s, then the serial step: 4 passed in 2.84s.
+The log does not show the number of xdist workers.
 
 `tests/test_local_first_runner.py::test_B1_an_interrupted_execution_kills_the_whole_process_group[2-KeyboardInterrupt]`
 used to fail when launched from a background job of a non-interactive shell (`cmd &`).
@@ -877,10 +881,13 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `!cancelled()` condition is false; deduced from the condition, not shown by a run). `ci_gate` only tolerates `success`, `neutral` and
   `skipped` conclusions on completed checks; any other conclusion, `cancelled` included,
   is listed in `failing` and `passed` is false. So a `cancelled` check next to successes
-  blocks the merge gate by reading the code; no test in `tests/test_pure.py` feeds a
-  `cancelled` conclusion, and no run showed it. Residual risk: the gate reads all check
-  runs of the sha, so a cancelled run is expected to block until it is re-run; how it
-  treats the check runs of a re-run next to those of the cancelled one was not verified.
+  blocks the merge gate by reading the code; no test feeds a `cancelled` conclusion to
+  `ci_gate`, and no run showed it. Since PLP-336 `check_runs` keeps, for each (app, check
+  name), the run with the highest id (`docs/ci-wait.md`, "Limits of the CI gate's
+  check-run reading (PLP-336)"), so a newer re-run of the same check supersedes the
+  cancelled one; `tests/test_pure.py`
+  (`test_check_runs_primary_route_keeps_newest_run_per_app_and_name`) feeds a `cancelled`
+  conclusion to `check_runs` only. Residual risk: the limits listed in that section.
 - Release rule: a change is a release change, and runs everything even inside
   `plugins/ship-ios/`, when it touches a
   `plugin.json` or a `marketplace.json` directly inside a `.claude-plugin`,

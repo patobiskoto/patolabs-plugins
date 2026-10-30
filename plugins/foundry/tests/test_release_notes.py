@@ -61,3 +61,23 @@ def test_cli_refuses_without_writing_and_writes_only_the_output(tmp_path):
     )
     assert ok.stdout == "" and out.read_text(encoding="utf-8").startswith(f"## {version} ")
     assert [p.name for p in tmp_path.iterdir()] == ["notes.md"]
+
+
+def test_a_malformed_version_is_refused_as_a_value_error_not_an_assertion(monkeypatch):
+    _fake(monkeypatch, {"1.2.3": "## 1.2.3 — 2026-01-01\n\n- one"})
+    with pytest.raises(ValueError, match="not a plain semver version"):
+        release_notes.release_body("1.2.3-rc1", REPO)
+
+
+def test_cli_says_on_stderr_when_the_body_was_cut_and_stays_silent_otherwise(monkeypatch, tmp_path, capsys):
+    lines = [f"- entry {n} " + "x" * 40 for n in range(5000)]
+    _fake(monkeypatch, {"1.2.3": "## 1.2.3 — 2026-01-01\n\n" + "\n".join(lines),
+                        "1.2.4": "## 1.2.4 — 2026-01-02\n\n- short"})
+    out = tmp_path / "notes.md"
+    release_notes.main(["1.2.3", "--repo", REPO, "--output", str(out)])
+    assert capsys.readouterr().err == "release_notes: the body was cut below 125000 characters\n"
+    release_notes.main(["1.2.4", "--repo", REPO, "--output", str(out)])
+    assert capsys.readouterr().err == ""
+    with pytest.raises(SystemExit) as refused:
+        release_notes.main(["1.2.3-rc1", "--repo", REPO])
+    assert "not a plain semver version" in str(refused.value)

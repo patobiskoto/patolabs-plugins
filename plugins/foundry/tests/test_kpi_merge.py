@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import config, issue, kpi_export, kpi_merge, kpi_sessions
+from foundry import config, issue, kpi_export, kpi_merge, kpi_sessions, write
 from test_kpi_publish import CONTRACT, FAKE, _chain_record, _devhub_like, server  # noqa: F401
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -152,13 +152,30 @@ def test_merge_exit_code_is_unchanged_when_the_real_step_explodes(monkeypatch, t
     assert "✅ PR #12 mergée" in out and "kpi: publication skipped" in err
 
 
-def test_a_refused_merge_never_reaches_the_step(monkeypatch, capsys):
-    called = []
-    monkeypatch.setattr(issue, "_publish_kpi_after_merge", lambda tr, i: called.append(1))
-    monkeypatch.setattr(issue.foundry, "tracker", lambda: (_ for _ in ()).throw(SystemExit("refused")))
-    with pytest.raises(SystemExit):
+def test_a_merge_refused_by_a_red_ci_gate_never_reaches_the_step(monkeypatch, tmp_path):
+    events = _merge_harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(issue, "_publish_kpi_after_merge", lambda tr, i: events.append("kpi"))
+    monkeypatch.setattr(write, "ci_gate", lambda *a, **k: {
+        "passed": False, "waived": False, "total": 2, "pending": 0, "failing": 1, "reason": "red"})
+    with pytest.raises(SystemExit) as raised:
         issue.merge("DEMO-7", "12")
-    assert called == []
+    assert "CI non verte" in str(raised.value) and events == []
+
+
+def test_no_url_or_token_means_no_log_is_read(wired, monkeypatch):
+    calls = []
+    monkeypatch.setattr(kpi_sessions, "discover", lambda *a, **k: calls.append("discover") or ([], []))
+    monkeypatch.delenv("DEVHUB_METRICS_TOKEN")
+    monkeypatch.setattr(config, "get", lambda key, *a, **k: None)
+    line, warning = _publish()
+    assert warning and "DEVHUB_METRICS_TOKEN not configured" in line
+    assert calls == [] and wired["built"] == []
+
+
+def test_a_system_exit_raised_after_the_endpoint_is_named_unexpected(wired, monkeypatch):
+    monkeypatch.setattr(kpi_export, "build", lambda *a, **k: (_ for _ in ()).throw(SystemExit(2)))
+    line, warning = _publish()
+    assert warning and "unexpected SystemExit" in line and "not configured" not in line
 
 
 def test_only_the_merge_step_and_the_cli_import_the_publisher_and_no_hook_does():

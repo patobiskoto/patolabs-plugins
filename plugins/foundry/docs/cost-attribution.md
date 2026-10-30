@@ -63,7 +63,10 @@ une valeur exacte. Le lecteur la marque : `read_host_log` ajoute à la ligne `lo
 (nombre de requêtes concernées) et `request_lower_bound` (un booléen par entrée de `token_requests`),
 et à `diagnostics` `lower_bound_records` (`[{"reason": "no_terminal_snapshot", "count": N}]`,
 `LOWER_BOUND_REASON`) ; ces clés n’existent que lorsque N > 0, la sortie des autres journaux est
-inchangée. Un snapshot terminal l’emporte toujours sur les enregistrements non terminaux.
+inchangée. Un snapshot terminal l’emporte toujours sur les enregistrements non terminaux. Une requête sans
+snapshot terminal prend la date et l’horodatage de son **dernier** enregistrement non terminal (`read_host_log`, la
+valeur écrasée à chaque enregistrement de la même requête), que `token_attribution` emploie pour le classement par
+fenêtre ; une requête avec snapshot terminal garde ceux de son snapshot terminal.
 Le raisonnement d’une telle requête vaut `unavailable` si l’un de ses enregistrements l’est ou s’il
 dépasse l’output retenu. Restent bloquants (journal refusé) : identité de modèle ou de session
 divergente, deux snapshots terminaux contradictoires, usage incomplet. Cause de l’absence de
@@ -107,7 +110,10 @@ uniquement la ventilation du raisonnement. `billable_records` compte les requêt
 conservées pour la tarification, et `affected_records` donne les comptes content-free par
 motif : `missing_reasoning_output_tokens` ou
 `incoherent_reasoning_output_tokens`. Les requêtes concernées sont incluses dans
-`billable_records`; elles ne figurent pas dans `excluded_records`.
+`billable_records`; elles ne figurent pas dans `excluded_records`. Quand `lower_bound_records`
+(`LOWER_BOUND_REASON`) est présent, `aggregates`, `by`, `session_curves` et `session_comparisons` comptent ces
+requêtes de borne basse comme `pricing_derived` sans marqueur par groupe : leurs totaux sont alors des bornes basses ;
+seul `reader_completeness.lower_bound_records` le dit (`main` de `cost_attribution.py`).
 
 Les lignes dont le modèle vaut exactement `<synthetic>` ne sont pas des appels API. Elles
 sont exclues du coût sous le motif `synthetic_model` et ne dégradent pas à elles seules la

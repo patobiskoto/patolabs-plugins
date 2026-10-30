@@ -343,13 +343,16 @@ was a declaration too, and the send text did not say that the review was partial
 
 ## A blocked diff stays deduplicated (PLP-341)
 
-- Observed (`routing_facades.py`, the `mode=deduplicated` plan: "ce hash de diff possède une
+- Observed in the code (not run) (`routing_facades.py`, the `mode=deduplicated` plan: "ce hash de diff possède une
   review terminée et reste dédupliqué."; `review_packet.py`, `RoutingConfigError("active private
   claim required")` when the claim does not have `should_run` true; `routing.py`,
   `_assert_recoverable`: "une review terminée est terminale et ne peut pas être récupérée."):
   once a terminal proof with `quality=blocked` is recorded, a new round on an identical diff is
   refused. `prepare-review` fails with "active private claim required" and `recover-review`
-  refuses the completed review. Only a correction that changes the diff gives a new hash and so
+  refuses the completed review. That message applies with the same HEAD; with a different HEAD
+  (for example after an empty commit), `claim-review` refuses earlier through `_assert_current_head`
+  (`routing.py`): "le HEAD a changé depuis le claim : réservez le nouveau diff avant de relancer un
+  reviewer.", instead of returning `should_run=false` (read in the code, not run). Only a correction that changes the diff gives a new hash and so
   a new round (`review_diff_hash` is the SHA-256 of the `git diff --binary` bytes, `routing.py`).
 - Deduced from `git_diff` and `review_diff_hash` (the PR description is not an input): a block
   that needs no diff change, for example a false PR description, can be corrected in the PR body
@@ -358,8 +361,12 @@ was a declaration too, and the send text did not say that the review was partial
   commit leaves `base...head` and so the hash unchanged, deduced from `git_diff`). In a
   campaign, the description-only correction of PAT-227 (`docs/campaign-effects.md`, "The
   description correction") is decided for a validated round with remarks marked "fix before
-  merge", not for a blocked one (deduced from `review_fix_description` in `campaign_review.py`
-  and that page). Whether a blocked proof can be superseded without a diff change is unknown.
+  merge", not for a blocked one (deduced from `campaign_cadence._ticket_step`: the `review_blocked`
+  branch, `correct`, comes before the `review_fix_description` branch; the value
+  `review_fix_description` is `DESCRIPTION_REASON` in `campaign_review.py`). A blocked ticket of a campaign
+  gets `correct`/`review_blocked`, bounded by `_bounded` (`MAX_CORRECTIONS`); a correction that does
+  not change the diff leaves the `blocked` proof, so `correct` recurs up to that bound (deduced from
+  `_ticket_step` and `_bounded`, not run). Whether a blocked proof can be superseded without a diff change is unknown.
 
 ## Limits
 

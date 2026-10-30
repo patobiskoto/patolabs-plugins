@@ -175,10 +175,15 @@ print the body with the read-only helper of the release worktree, from its repos
 gh repo view --json nameWithOwner --jq .nameWithOwner
 python3 plugins/foundry/scripts/release_notes.py <version> --repo <owner>/<repo> --output <notes-file>
 ```
-It refuses, with a non-zero exit and no file written, a version with no `CHANGELOG.md` section
-and an empty section: stop there. A section over `GITHUB_BODY_LIMIT` (125,000 characters,
-`scripts/release_notes.py`) is cut at a line boundary and ends with a link to the CHANGELOG at
-the tag; show the maintainer whether the body was cut. Then create the Release; `--verify-tag`
+The helper imports `tests/test_release_contract.py` (so it needs `pytest`), as
+`release_freeze_entry.py` does. It refuses, with a non-zero exit and no file written, a version
+that is not a plain semver, a version with no `CHANGELOG.md` section and an empty section: stop
+there. A section over `GITHUB_BODY_LIMIT` (125,000 characters, `scripts/release_notes.py`) is cut
+at a line boundary and ends with a link to the CHANGELOG at the tag; the helper then prints one
+line on standard error (`release_notes: the body was cut below 125000 characters`) and the body
+ends with the `_Truncated:` line: show the maintainer whether the body was cut. GitHub's unit
+for that limit is unknown (the helper counts Python code points; the cut body of 1.1.0 is 124,940
+code points and 124,988 UTF-8 bytes, measured by running the helper); an overflow would make the creation below fail, which stops this step (deduced, not run). Then create the Release; `--verify-tag`
 makes `gh` abort, creating nothing, when the tag is not in `origin`:
 ```text
 gh release create foundry-v<version> --verify-tag --title "Foundry <version>" --notes-file <notes-file> --latest
@@ -186,7 +191,7 @@ gh release create foundry-v<version> --verify-tag --title "Foundry <version>" --
 `allowed-tools` lists only `gh release view`, `gh release list` and `gh repo view`, so the
 host's own permission prompt applies to the creation unless the user's own permission settings
 already allow it, on top of this STOP (deduced from the prefix rule, not run; the `PreToolUse`
-Bash guard denies only `gh pr create` and `gh pr merge`, `hooks/guard_bash.py`). If the creation
+Bash guard denies, among `gh` commands, only `gh pr create` and `gh pr merge`, `hooks/guard_bash.py`). If the creation
 fails, stop: report the error, run no later step as if the Release existed, and record the
 failure at step 10. Read back, and keep the result for step 10:
 ```bash
