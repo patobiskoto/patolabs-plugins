@@ -68,7 +68,9 @@ Le raisonnement d’une telle requête vaut `unavailable` si l’un de ses enreg
 dépasse l’output retenu. Restent bloquants (journal refusé) : identité de modèle ou de session
 divergente, deux snapshots terminaux contradictoires, usage incomplet. Cause de l’absence de
 snapshot : inconnue (côté hôte) ; observé le 2026-10-29 sur des journaux de sous-agents de Claude Code
-2.1.286, 2.1.299 et 2.1.304, avec un `output_tokens` partiel.
+2.1.286, 2.1.299 et 2.1.304, avec un `output_tokens` partiel. Mesure du 2026-10-30 (PLP-324,
+[qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md)) : input et cache de ces
+requêtes égaux à ceux du snapshot terminal quand il existe, `output_tokens` très inférieur (observé) ; la borne basse reste donc la règle.
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
 sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
@@ -212,5 +214,5 @@ sous-agent Claude (`role_source: packet_header`, seul ce mot est lu) ; sinon le 
 `foundry_<identité>` (`role_source: agent_name`) ; sinon `null`. Le coordinateur n'a pas de rôle (`null`, `scope: coordinator`).
 Observé sur une session Claude locale (2026-10-22, 93 journaux de sous-agents) : l'en-tête `Resolved role:` est
 présent dans 92 d'entre eux ; l'enregistrement d'invocations lu avec la configuration par défaut contenait 0 entrée, donc le
-lien `exact` n'a pas été observé sur des données réelles (inconnu) et seul le test synthétique l'établit. Limite observée
+lien `exact` n'avait pas été observé sur des données réelles à cette date (inconnu) et seul le test synthétique l'établissait ; il l'a été le 2026-10-30 (35 tranches `exact`, toutes marquées `lower_bound_requests`, PLP-324). Limite observée
 sur la même session avant PLP-344 : 93 journaux de sous-agents sur 93 étaient refusés par `read_host_log` (« request has no terminal snapshot »). Depuis PLP-344 un tel journal est lu et sa tranche est marquée `lower_bound_requests` (« Complétude Claude ») ; le nombre de journaux désormais lisibles sur cette session n’a pas été mesuré (inconnu).
