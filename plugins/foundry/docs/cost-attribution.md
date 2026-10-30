@@ -88,7 +88,15 @@ et `request_parent_reported` (un booléen par entrée de `token_requests`), `dia
 d’outil du parent ». Sinon, le comportement PLP-344 est inchangé et `diagnostics` gagne `parent_refused_records`
 (`[{"reason", "count"}]`, raisons fermées `PARENT_REFUSAL_REASONS` : `parent_unreadable`, `no_agent_link`,
 `no_parent_result`, `ambiguous_parent_result`, `tool_use_mismatch`, `unreadable_parent_usage`, `input_differs`,
-`output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Sans `parent`
+`output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Les clés
+`parent_completed_records` et `parent_refused_records` n’existent qu’au niveau de `read_host_log` : son seul appelant
+qui passe `parent=` (`token_attribution.py`, ligne `read_host_log(..., parent=link)`) ne passe pas `diagnostics`, donc
+elles ne remontent ni dans `routing token-attribution` ni dans `routing kpi-export` (seul
+`tokens_parent_reported_requests` paraît dans `routing kpi-export`, voir [kpi-export.md](kpi-export.md)). La raison de
+dégradation du raisonnement d’une requête complétée est celle de l’`usage` du parent, jamais celle du journal : le
+compteur du journal est un instantané partiel, l’écart avec le parent n’est pas connu. Si le parent n’a pas le
+compteur de raisonnement, la requête compte `missing_reasoning_output_tokens` et `completeness` passe à `unavailable`,
+même si le journal l’avait (test `test_parent_usage_without_reasoning_degrades_even_if_the_log_had_it`). Sans `parent`
 (valeur par défaut), la sortie est inchangée. Avec `parent`, restent en borne basse (écart inconnu) les requêtes
 autres que la dernière et une dernière requête dont la complétion est refusée. Mesure : [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md), section « PLP-345 ».
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
@@ -223,7 +231,7 @@ tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `wi
 | `window` | requête du coordinateur dans exactement une fenêtre | appels Bash (Claude) ; pour Codex, les `arguments` de tout `function_call` et l'`input` de tout `custom_tool_call`, `apply_patch` compris (`_calls`, `token_attribution.py`) : `foundry_cli.py issue start <ID>` puis le premier `issue merge <ID>` suivant, du même journal. Limite : un patch qui contient littéralement `foundry_cli.py issue start <ID>` ouvre une fenêtre, et un patch qui contient `foundry_cli.py issue merge <ID>` peut la fermer plus tôt (`_WINDOW_CALL`, `token_attribution.py`) |
 | `approximate` | requête d'un sous-agent sans enregistrement, dans exactement une fenêtre de son coordinateur (historique antérieur à PLP-316) | idem ; c'est une présomption temporelle, pas un lien |
 | `overlap` | requête dans plusieurs fenêtres | `issues` nomme les issues ; les tokens ne sont jamais répartis |
-| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp`, `parent_unreadable` (sous-agent dont le journal de coordinateur n'a pas pu être lu : refusé par `read_host_log` (`CostAttributionError`), ou exception d'E/S ou d'UTF-8 rattrapée par `report()` : ses fenêtres ne sont pas calculées) |
+| `unattributed` | tout le reste | `reason` : `no_window`, `window_unclosed`, `no_request_timestamp`, `parent_unreadable` (même jeton que le refus de `PARENT_REFUSAL_REASONS` de `read_parent_results`, mais autre vocabulaire et autre sortie : ici une raison de tranche `unattributed` ; sous-agent dont le journal de coordinateur n'a pas pu être lu : refusé par `read_host_log` (`CostAttributionError`), ou exception d'E/S ou d'UTF-8 rattrapée par `report()` : ses fenêtres ne sont pas calculées) |
 
 Une fenêtre sans `issue merge` est ouverte (`closed: false`) : elle n'attribue rien seule (`window_unclosed`) et
 compte comme recouvrement avec toute fenêtre qui contient la requête. Un recouvrement est aussi déclaré dans
