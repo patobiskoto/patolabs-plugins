@@ -565,3 +565,43 @@ def test_both_partial_causes_are_each_said_in_the_provenance(tmp_path):
     data, records = _records(_build(state, claude_sessions=[main]))
     said = data["provenance"][records[0]["record_id"]]["from"]["amount"]
     assert "1h cache write" in said and "tokens are a lower bound" in said
+
+
+def test_parent_reported_last_request_makes_a_complete_record_and_a_still_partial_one_stays_partial(tmp_path):
+    """PLP-345: fully completed by the parent tool result: no longer partial; otherwise partial, new fingerprint."""
+    state = tmp_path / "state"
+    ident = invocation_log.claude_invocation_id(TOOL_USE)
+    _routed(state, "PLP-1", "implementer", ident, model="sonnet-5", at="2026-10-01T00:00:00.000000Z")
+    usage = {"input_tokens": 5, "cache_read_input_tokens": 50, "cache_creation_input_tokens": 500,
+             "output_tokens": 9000}
+
+    def request(suffix, at):
+        row = _claude_request(at, 5, "sub1", suffix)
+        row["agentId"] = "agent-synthetic-1"
+        row["message"]["stop_reason"] = None
+        row["message"]["usage"] = {**row["message"]["usage"], **usage, "output_tokens": 7}
+        return row
+
+    def parent(results):
+        return [{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": TOOL_USE}]},
+                 "toolUseResult": {"agentId": "agent-synthetic-1", "usage": usage}} for _ in range(results)]
+
+    def build(root, rows, results):
+        main = _claude_tree(root, parent(results), [("exact", rows, {"toolUseId": TOOL_USE}, "plain text")])
+        data, records = _records(_build(state, claude_sessions=[main]))
+        return data, records[0]
+
+    lower_data, lower = build(tmp_path / "a", [request("a", "2026-10-01T10:40:00.000Z")], 0)
+    done_data, done = build(tmp_path / "b", [request("a", "2026-10-01T10:40:00.000Z")], 1)
+    still_data, still = build(tmp_path / "c", [request("a", "2026-10-01T10:40:00.000Z"),
+                                               request("b", "2026-10-01T10:41:00.000Z")], 1)
+    _check(done)
+    assert lower["amount"]["completeness"] == "partial" and lower["tokens"]["output"] == 7
+    assert done["amount"]["completeness"] == "complete" and done["tokens"]["output"] == 9000
+    assert done["source"]["fingerprint"] != lower["source"]["fingerprint"] and done["record_id"] != lower["record_id"]
+    said = done_data["provenance"][done["record_id"]]["from"]
+    assert "parent tool result" in said["tokens.output"] and "lower bound" not in said["tokens.output"]
+    assert "lower bound" not in said["amount"]
+    assert still["amount"]["completeness"] == "partial" and still["tokens"]["output"] == 7 + 9000
+    assert "lower bound: 1 request(s)" in still_data["provenance"][still["record_id"]]["from"]["tokens.output"]
+    assert "parent tool result" in still_data["provenance"][still["record_id"]]["from"]["tokens.output"]

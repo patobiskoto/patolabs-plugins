@@ -13,7 +13,7 @@ import json
 import math
 from pathlib import Path
 import re
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, NamedTuple
 
 PROVENANCE = ("client_observed", "host_reported", "pricing_derived", "unavailable")
 TOKEN_KEYS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
@@ -27,6 +27,14 @@ EXCLUSION_REASONS = ("synthetic_model",)
 # PLP-344: a correlated Claude request with no record carrying a ``stop_reason`` (host side, cause
 # unknown) counts with the largest value observed for each counter: a lower bound, never exact.
 LOWER_BOUND_REASON = "no_terminal_snapshot"
+# PLP-345: the last request of a subagent log with no terminal record takes its counters from the
+# result the parent log holds for that subagent (``toolUseResult.usage``), when the link is strict.
+PARENT_SOURCE = "parent_tool_result"
+PARENT_REFUSAL_REASONS = (
+    "parent_unreadable", "no_agent_link", "no_parent_result", "ambiguous_parent_result",
+    "tool_use_mismatch", "unreadable_parent_usage", "input_differs", "output_below_log",
+)
+_INPUT_SIDE_KEYS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens")
 PLAN_OBSERVATION_RECORD_KEYS = frozenset({
     "record_type", "host", "session_id", "occurred_on",
     "plan_usage_observations", "provenance",
@@ -250,8 +258,81 @@ def _claude_usage(value: object) -> tuple[dict | None, str | None]:
     return {**billing, "reasoning_output_tokens": reasoning}, None
 
 
+class ParentLink(NamedTuple):
+    """What ``read_host_log`` is given to complete the last request of a subagent log (PLP-345).
+
+    ``results`` comes from ``read_parent_results`` (None: the parent log is unreadable);
+    ``tool_use_id`` is the ``toolUseId`` of the subagent's ``*.meta.json`` (None: no link).
+    """
+    results: dict | None
+    tool_use_id: str | None
+
+
+def read_parent_results(log_path: str | Path) -> dict | None:
+    """Index the Agent results of a parent Claude log by ``agentId`` (PLP-345, FOUNDRY-ADR-0015).
+
+    Only ``toolUseResult.agentId``, the counters of ``toolUseResult.usage`` and the identifier of the
+    tool call are kept: no prompt, response, path or command. A result with no ``usage`` (an async
+    launch) is not a figure and is ignored. Returns None when the log cannot be read; a malformed line
+    that holds a ``toolUseResult`` also makes it unreadable (fail closed).
+    """
+    index: dict[str, list[tuple]] = {}
+    try:
+        with Path(log_path).open(encoding="utf-8") as handle:
+            for line in handle:
+                if '"toolUseResult"' not in line:
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    return None
+                result = raw.get("toolUseResult") if isinstance(raw, Mapping) else None
+                if not isinstance(result, Mapping) or "usage" not in result:
+                    continue
+                agent = result.get("agentId")
+                if not isinstance(agent, str) or not agent:
+                    continue
+                message = raw.get("message")
+                content = message.get("content") if isinstance(message, Mapping) else None
+                calls = [block.get("tool_use_id") for block in content
+                         if isinstance(block, Mapping) and block.get("type") == "tool_result"] \
+                    if isinstance(content, list) else []
+                call = calls[0] if len(calls) == 1 and isinstance(calls[0], str) else None
+                tokens, reason = _claude_usage(result.get("usage"))
+                index.setdefault(agent, []).append((call, tokens, reason))
+    except (OSError, UnicodeError):
+        return None
+    return index
+
+
+def _parent_completion(agent: object, log_tokens: Mapping[str, object],
+                       parent: ParentLink) -> tuple[dict, str | None] | str:
+    """The parent counters for the last request, or the closed refusal reason (PLP-345)."""
+    if not isinstance(agent, str) or not agent or not parent.tool_use_id:
+        return "no_agent_link"
+    if parent.results is None:
+        return "parent_unreadable"
+    found = parent.results.get(agent, [])
+    if not found:
+        return "no_parent_result"
+    if len(found) > 1:
+        return "ambiguous_parent_result"
+    call, tokens, reason = found[0]
+    if call != parent.tool_use_id:
+        return "tool_use_mismatch"
+    if tokens is None:
+        return "unreadable_parent_usage"
+    if any(tokens[key] != log_tokens[key] for key in _INPUT_SIDE_KEYS):
+        return "input_differs"
+    if tokens["output_tokens"] < log_tokens["output_tokens"]:
+        return "output_below_log"
+    return tokens, reason
+
+
 def _reader_completeness(degraded: Mapping[str, int], excluded: Mapping[str, int],
-                         billable_records: int, lower_bound: int = 0) -> dict:
+                         billable_records: int, lower_bound: int = 0,
+                         parent_completed: int = 0,
+                         parent_refused: Mapping[str, int] | None = None) -> dict:
     """Return content-free reasoning completeness and billing-record coverage.
 
     ``lower_bound_records`` (PLP-344) is present only when ``lower_bound`` > 0, so the
@@ -266,7 +347,12 @@ def _reader_completeness(degraded: Mapping[str, int], excluded: Mapping[str, int
             "affected_records": affected,
             "excluded_records": exclusions,
             **({"lower_bound_records": [{"reason": LOWER_BOUND_REASON, "count": lower_bound}]}
-               if lower_bound else {})}
+               if lower_bound else {}),
+            **({"parent_completed_records": [{"source": PARENT_SOURCE, "count": parent_completed}]}
+               if parent_completed else {}),
+            **({"parent_refused_records": [{"reason": reason, "count": parent_refused[reason]}
+                                           for reason in PARENT_REFUSAL_REASONS if parent_refused.get(reason)]}
+               if parent_refused and any(parent_refused.values()) else {})}
 
 
 def _max_partial_usage(previous: Mapping[str, object], current: Mapping[str, object],
@@ -415,13 +501,20 @@ def resolve_project(host: str, *, claude_path_slug: str | None = None,
 
 def read_host_log(host: str, log_path: str | Path,
                   registry_data: Mapping[str, object] | None = None,
-                  diagnostics: dict | None = None, *, timestamps: bool = False) -> list[dict]:
+                  diagnostics: dict | None = None, *, timestamps: bool = False,
+                  parent: ParentLink | None = None) -> list[dict]:
     """Read one native session JSONL into sanitized usage and quota records.
 
     ``timestamps=True`` (PLP-317, off by default: rows are then byte-identical to the
     historical ones) adds ``request_at`` to each billable row, the host timestamp of each
     entry of ``token_requests`` in the same order; it is empty when ``token_requests`` is
     the single non-positional bucket chunk. No other counter or guarantee changes.
+
+    ``parent`` (PLP-345, Claude only, off by default: output then unchanged) lets the last request of
+    a subagent log that has no terminal record take its counters from the parent's tool result when
+    the link is strict (``_parent_completion``); that request is then no longer a lower bound, the row
+    gets ``parent_reported_requests`` and ``request_parent_reported`` and ``diagnostics`` gets
+    ``parent_completed_records`` or, when refused, ``parent_refused_records``.
     """
     if host not in {"claude", "codex"}:
         raise CostAttributionError("host differs")
@@ -446,6 +539,7 @@ def read_host_log(host: str, log_path: str | Path,
     claude_degradations = dict.fromkeys(REASONING_DEGRADATION_REASONS, 0)
     claude_exclusions = dict.fromkeys(EXCLUSION_REASONS, 0)
     claude_billable_records = 0
+    last_identity = None
     try:
         for line in handle:
             try:
@@ -568,6 +662,7 @@ def read_host_log(host: str, log_path: str | Path,
             correlated = all(isinstance(v, str) and v for v in (request_id, message_id))
             identity = ((event_session_id, raw.get("agentId"), request_id, message_id)
                         if correlated else ("legacy", len(claude_requests)))
+            last_identity = identity
             terminal = message.get("stop_reason") is not None
             value = (event_session_id, model, occurred_on, tokens, degradation_reason, terminal, correlated,
                      timestamp)
@@ -698,9 +793,21 @@ def read_host_log(host: str, log_path: str | Path,
                 row["position_data_ambiguous"] = True
             rows.append(row)
         return [*rows, *codex_plan_rows]
-    claude_lower_bound = 0
-    for (session, model, occurred_on, tokens, degradation_reason, terminal, correlated,
-         request_timestamp) in claude_requests.values():
+    claude_lower_bound = parent_completed = 0
+    parent_refused = dict.fromkeys(PARENT_REFUSAL_REASONS, 0)
+    parent_done: set = set()
+    if parent is not None and last_identity is not None:
+        last = claude_requests[last_identity]
+        if last[6] and not last[5]:
+            outcome = _parent_completion(last_identity[1], last[3], parent)
+            if isinstance(outcome, str):
+                parent_refused[outcome] += 1
+            else:
+                claude_requests[last_identity] = (*last[:3], outcome[0], outcome[1], True, *last[6:])
+                parent_done.add(last_identity)
+                parent_completed += 1
+    for identity, (session, model, occurred_on, tokens, degradation_reason, terminal, correlated,
+         request_timestamp) in claude_requests.items():
         partial = correlated and not terminal
         claude_billable_records += 1
         if degradation_reason is not None:
@@ -713,6 +820,10 @@ def read_host_log(host: str, log_path: str | Path,
         _add_tokens(row["tokens"], tokens)
         row["token_requests"].append(tokens)
         row.setdefault("request_lower_bound", []).append(partial)
+        from_parent = identity in parent_done
+        row.setdefault("request_parent_reported", []).append(from_parent)
+        if from_parent:
+            row["parent_reported_requests"] = row.get("parent_reported_requests", 0) + 1
         if partial:
             claude_lower_bound += 1
             row["lower_bound_requests"] = row.get("lower_bound_requests", 0) + 1
@@ -726,13 +837,16 @@ def read_host_log(host: str, log_path: str | Path,
     for row in rows:
         if not row.get("lower_bound_requests"):
             row.pop("request_lower_bound", None)
+        if not row.get("parent_reported_requests"):
+            row.pop("request_parent_reported", None)
         row.update({"project": resolve_project("claude", claude_path_slug=slug, codex_cwd=cwd,
                                                  registry_data=registry_data),
                     "epic": None, "issue": None, "provenance": "host_reported",
                     "plan_usage_percent": "unavailable"})
     if diagnostics is not None:
         diagnostics.update(_reader_completeness(
-            claude_degradations, claude_exclusions, claude_billable_records, claude_lower_bound))
+            claude_degradations, claude_exclusions, claude_billable_records, claude_lower_bound,
+            parent_completed, parent_refused))
     return rows
 
 

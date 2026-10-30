@@ -71,6 +71,23 @@ snapshot : inconnue (côté hôte) ; observé le 2026-10-29 sur des journaux de 
 2.1.286, 2.1.299 et 2.1.304, avec un `output_tokens` partiel. Mesure du 2026-10-30 (PLP-324,
 [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md)) : input et cache de ces
 requêtes : égaux à ceux du snapshot terminal de la même requête sur les requêtes qui en ont un, et à la figure du parent sur la dernière requête de 71 invocations (observé, deux écarts de cache non expliqués) ; pour les autres requêtes sans snapshot terminal c'est déduit, sans figure indépendante ; `output_tokens` très inférieur (observé) ; la borne basse reste donc la règle.
+Exception bornée (PLP-345) : la **dernière** requête d’un journal de sous-agent sans snapshot terminal peut prendre ses
+compteurs du résultat que le journal parent a reçu pour ce sous-agent (`toolUseResult.usage`). `token_attribution.report`
+indexe une fois chaque journal parent (`read_parent_results`) et donne à `read_host_log` un `ParentLink` (index,
+`toolUseId` du `*.meta.json` voisin). Le lecteur ne garde du parent que `toolUseResult.agentId`, les compteurs de
+`toolUseResult.usage` et l’identifiant d’appel du `tool_result` ; jamais prompt, réponse ni chemin. Un résultat sans
+`usage` (lancement asynchrone) est ignoré. La requête est complétée si et seulement si : un seul résultat porte l’`agentId`
+du journal, son identifiant d’appel égale le `toolUseId` du `meta`, son usage est lisible, ses compteurs `input_tokens`,
+`cached_input_tokens` et `cache_write_input_tokens` égalent ceux du journal et son `output_tokens` n’est pas inférieur à
+celui du journal. Elle n’est alors plus comptée dans `lower_bound_requests` ; la ligne gagne `parent_reported_requests`
+et `request_parent_reported` (un booléen par entrée de `token_requests`), `diagnostics` gagne `parent_completed_records`
+(`[{"source": "parent_tool_result", "count": N}]`, `PARENT_SOURCE`), et sa provenance reste `host_reported`, source « résultat
+d’outil du parent ». Sinon, le comportement PLP-344 est inchangé et `diagnostics` gagne `parent_refused_records`
+(`[{"reason", "count"}]`, raisons fermées `PARENT_REFUSAL_REASONS` : `parent_unreadable`, `no_agent_link`,
+`no_parent_result`, `ambiguous_parent_result`, `tool_use_mismatch`, `unreadable_parent_usage`, `input_differs`,
+`output_below_log`). Une dernière requête déjà terminale n’est pas touchée et ne produit aucune clé. Sans `parent`
+(valeur par défaut), la sortie est inchangée ; seules les requêtes autres que la dernière restent en borne basse
+(écart inconnu). Mesure : [qualification/plp-324-subagent-terminal-snapshots.md](qualification/plp-324-subagent-terminal-snapshots.md), section « PLP-345 ».
 Une requête traversant minuit est attribuée à la date de son premier snapshot terminal,
 sans recharger ses blocs intermédiaires. Sans ces
 identifiants, les journaux historiques conservent leur lecture par ligne ; sans
@@ -190,7 +207,7 @@ uniquement un identifiant d'issue, un rôle, un identifiant d'invocation opaque 
 ni prompt, ni chemin, ni commande, ni identifiant de session hôte (`test_replayable_deterministic_and_content_free`).
 
 Sortie (`schema: token-attribution.v1`) : `slices` (par `issue`, `method`, `role`, `role_source`, `host`,
-`scope` coordinator|subagent, `reason`, `issues`, `requests`, `tokens` = `BILLING_TOKEN_KEYS`, et `lower_bound_requests` seulement si > 0 : nombre de requêtes de la tranche sans snapshot terminal, dont les compteurs sont alors des bornes basses, PLP-344), `totals` (somme des
+`scope` coordinator|subagent, `reason`, `issues`, `requests`, `tokens` = `BILLING_TOKEN_KEYS`, et `lower_bound_requests` seulement si > 0 : nombre de requêtes de la tranche sans snapshot terminal et non complétées par le parent (PLP-345), dont les compteurs sont alors des bornes basses, PLP-344), `totals` (somme des
 tranches : égale à la somme des lignes lues, rien n'est perdu ni divisé), `windows`, `invocation_log`
 (`read`|`unreadable`), `unreadable_logs` (`coordinator`, `subagent`). `totals.lower_bound_requests` (somme des tranches) n’existe que si > 0 : le total est alors une borne basse.
 

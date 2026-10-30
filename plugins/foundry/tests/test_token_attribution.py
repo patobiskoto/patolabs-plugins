@@ -329,6 +329,24 @@ def test_requests_without_terminal_snapshot_mark_their_slice_as_a_lower_bound(tm
     assert all("lower_bound_requests" not in s for s in again["slices"])
 
 
+def test_parent_tool_result_completes_the_last_request_of_an_exact_slice(tmp_path):
+    """PLP-345: linked by the toolUseId of the meta file and the agentId; the slice is no longer a lower bound."""
+    state = tmp_path / "state"
+    _seed(state, "implementer", "PLP-1", invocation_log.claude_invocation_id(TOOL_USE), "claude")
+    request = _partial(_claude_request("2026-10-01T10:41:00.000Z", 2, "sub1", "b"))
+    request["agentId"] = "agent-synthetic-1"
+    usage = {**_tokens(2), "output_tokens": 5000}
+    parent = [{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": TOOL_USE}]},
+               "toolUseResult": {"agentId": "agent-synthetic-1", "usage": usage}}]
+    main = _claude_tree(tmp_path, parent, [("exact", [request], {"toolUseId": TOOL_USE}, "plain text")])
+    seen: dict = {}
+    result = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state, per_invocation=seen)
+    (exact,) = _by(result, method="exact")
+    assert "lower_bound_requests" not in exact and "lower_bound_requests" not in result["totals"]
+    assert exact["tokens"]["output_tokens"] == 5000
+    assert seen[invocation_log.claude_invocation_id(TOOL_USE)]["parent_reported_requests"] == 1
+
+
 def test_a_log_with_a_lower_bound_request_is_no_longer_unreadable(tmp_path):
     state = tmp_path / "state"
     main = _claude_tree(tmp_path, [_claude_request("2026-10-01T10:00:00.000Z")], [("x", [_partial(_claude_request("2026-10-01T10:40:00.000Z", 2, "sub1", "b"))],
