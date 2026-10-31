@@ -1417,6 +1417,35 @@ def test_public_audit_round_trips_exact_schema_and_refuses_empty_page():
         empty.audit(PROJECT)
 
 
+@pytest.mark.parametrize("extra,drop,valid", [
+    ({"reason": "version_conflict"}, None, True),
+    ({"reason": ""}, None, False),
+    ({"reason": 409}, None, False),
+    ({"reason": None}, None, False),
+    ({}, "result", False),
+    ({"unknown": "x"}, None, False),
+    ({"reason": "version_conflict", "unknown": "x"}, None, False),
+])
+def test_public_audit_optional_reason_only(extra, drop, valid):
+    event = {
+        "id": "10", "operation": "issue.comment", "resource": "issue:TRAME-1",
+        "resource_version": 7, "result": "success", "created": 1_000,
+    }
+    event.update(extra)
+    if drop:
+        del event[drop]
+    tracker = ScriptedTracker([{
+        "items": [event],
+        "page": {"schema_version": "devhub-application.v1", "returned_count": 1,
+                 "truncation": False, "cursor": None},
+    }])
+    if valid:
+        assert tracker.audit(PROJECT) == [event]
+    else:
+        with pytest.raises(DevHubTrackerError, match="invalid_response"):
+            tracker.audit(PROJECT)
+
+
 def test_smoke_audit_verification_fails_on_missing_receipt():
     resource = "issue:TRAME-1"
     events = [{
