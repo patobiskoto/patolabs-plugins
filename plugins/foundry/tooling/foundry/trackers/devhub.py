@@ -109,6 +109,7 @@ _RECEIPT_COORDINATES = ("pr_url", "head_sha", "base_sha", "review_digest")
 _VERSION_STATUSES = {"planned", "active", "release-pending", "released", "cancelled"}
 _UNFINISHED_STATES = {"backlog", "ready", "in-progress", "review", "blocked"}
 _AUDIT_KEYS = {"id", "operation", "resource", "resource_version", "result", "created"}
+_AUDIT_OPTIONAL_KEYS = {"reason"}
 _FIELD_MAP = {
     "Priority": "priority",
     "Estimate": "estimate",
@@ -3264,7 +3265,10 @@ class DevHubTracker(Tracker):
                     or page["returned_count"] != len(raw["items"])):
                 raise DevHubTrackerError("GET", "/projects/audit", None, "invalid_response")
             for event in raw["items"]:
-                if (not isinstance(event, dict) or set(event) != _AUDIT_KEYS
+                if (not isinstance(event, dict) or not (
+                            _AUDIT_KEYS <= set(event) <= _AUDIT_KEYS | _AUDIT_OPTIONAL_KEYS)
+                        or ("reason" in event and (not isinstance(event["reason"], str)
+                                                   or not event["reason"]))
                         or not isinstance(event.get("id"), str)
                         or not re.fullmatch(r"[1-9][0-9]*", event["id"])
                         or event["id"] in seen

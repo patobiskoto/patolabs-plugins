@@ -1174,6 +1174,14 @@ replay to fail, and races two writes at one version so exactly one wins. It then
 `GET /projects/:key/audit` through the configured transport and fails unless its own issue
 and ADR receipts are present in the sanitized public projection.
 
+`DevHubTracker.audit()` accepts an event only if it carries the six keys of `_AUDIT_KEYS`
+(`id`, `operation`, `resource`, `resource_version`, `result`, `created`) and, optionally,
+`reason` (`_AUDIT_OPTIONAL_KEYS`) as a non-empty string; a missing required key, any other
+key or an empty or non-string `reason` is refused as `invalid_response`. `reason` is kept in
+the returned event. DevHub says a refused mutation may carry it as a V1 error code (source:
+the DevHub deployment notice of 2026-10-31, additive, `schema_version` unchanged); the list of codes is not in this repository and the client does not restrict the
+value (unknown).
+
 ## Terminal campaign reconciliation
 
 The normal command worker publishes a typed `completed` event only after the ordinary
