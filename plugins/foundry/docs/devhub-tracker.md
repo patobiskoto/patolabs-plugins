@@ -1179,8 +1179,9 @@ and ADR receipts are present in the sanitized public projection.
 `reason` (`_AUDIT_OPTIONAL_KEYS`) as a non-empty string; a missing required key, any other
 key or an empty or non-string `reason` is refused as `invalid_response`. `reason` is kept in
 the returned event. DevHub says a refused mutation may carry it as a V1 error code (source:
-the DevHub deployment notice of 2026-10-31, additive, `schema_version` unchanged); the list of codes is not in this repository and the client does not restrict the
-value (unknown).
+the DevHub deployment notice of 2026-10-31, additive, `schema_version` unchanged); the
+list of V1 error codes is not in this repository (unknown here), and the client does not
+restrict the value.
 
 ## Terminal campaign reconciliation
 
