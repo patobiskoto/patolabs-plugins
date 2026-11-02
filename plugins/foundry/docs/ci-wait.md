@@ -42,7 +42,7 @@ python3 tooling/foundry_cli.py issue wait-ci <PR-NUMBER> [--timeout=SECONDS] [--
 
 R5 status (AGENTS.md#R5, FOUNDRY-ADR-0018): documents the check-run deduplication of
 `GitHubCodeHost.check_runs` (`tooling/foundry/codehosts/github.py`,
-`_newest_per_app_and_name`), which feeds `write.ci_gate` for `issue wait-ci` and
+`_newest_per_workflow`, key extended by PLP-347), which feeds `write.ci_gate` for `issue wait-ci` and
 `issue merge`, and also `evidence_plane.capture_ci_receipts` (`foundry-ci-receipt.v1`,
 source `check_runs`) and the `check_runs` of the review packet (`review_packet.py`): the
 counts of those two follow the deduplicated set too. The gate semantics of FOUNDRY-ADR-0002 are unchanged.
@@ -62,21 +62,33 @@ two `workflow_dispatch` runs and one `pull_request` run):
   older run's `cancelled` check was what blocked the gate at the time of the original report
   is deduced, not observed (the state at that moment was not captured).
 
-What `check_runs` now does, on the aggregate route and on the check-suites fallback alike:
-keep, for each (app, check name), the run with the highest check-run id.
+What `check_runs` now does, on the aggregate route and on the check-suites fallback alike
+(`_newest_per_workflow`, PLP-347): keep, for each (app, workflow, check name), the run with
+the highest check-run id. The workflow is the one behind the run's check suite
+(`check_suite.id` of the check-run, matched to `check_suite_id` and `workflow_id` of
+`actions/runs?head_sha=<sha>`, `_workflow_by_suite`).
+Observed on 2026-11-02 (read-only `gh api`, head sha of PR #296 of this repository): one
+workflow run whose `check_suite_id` equals the `check_suite.id` of each of its check-runs, with
+its `workflow_id`.
 
-- Deduplicated: the same app and the same check name across suites or workflow runs of one
-  sha; the highest id wins, a newer red run still blocks. Reruns inside a suite are already
-  superseded by GitHub's default filter.
-- Not deduplicated: the same check name published by two different apps (both kept, so a
-  red one from either app blocks); commit statuses (the combined status endpoint already
-  returns the latest per context, `commit_statuses`; no cross-source merge by name,
+- Deduplicated: the same app, the same workflow and the same check name across suites or
+  workflow runs of one sha; the highest id wins ("newest" is the highest id, not a
+  timestamp), a newer red run still blocks. Reruns inside a suite are already superseded by
+  GitHub's default filter. An app other than GitHub Actions has no workflow: its key is
+  (app, check name), as in PLP-336.
+- Not deduplicated: the same check name published by two different apps, or by two different
+  workflows of one app (all kept, so a red one blocks); a GitHub Actions run whose suite is
+  absent from the workflow runs read (or whose lookup answered 404): it is kept apart
+  by its own id, the fail-closed choice; commit statuses (the combined status endpoint
+  already returns the latest per context, `commit_statuses`; no cross-source merge by name,
   FOUNDRY-ADR-0002).
-- Residual risk, deduced: two different workflows of the same app that publish the same job
-  name collapse to the newest; a red one with the lower id is then not seen. "Newest" is the
-  highest id, not a timestamp (same rule as before on the fallback route).
-  This is a gate opening in a realistic configuration (deduced, not observed). Adding the workflow
-  identity to the key is a behaviour change, tracked by PLP-347 (AGENTS.md#R3), not made here.
+- Extra API calls: none when no two check-runs share (app, name); otherwise one
+  `actions/runs` call per `_PER_PAGE` (100) workflow runs of the sha. Non-404 errors of that
+  call propagate like those of the check-run reads. That the workflow-run list is complete
+  for the sha (GitHub documents a cap on `actions/runs` results) is not checked here: unknown.
+- Residual risk, deduced: a rerun of one workflow that GitHub files under a different
+  `workflow_id` (a workflow file renamed or recreated between runs) is read as a distinct
+  workflow, so an old red run of the previous file keeps blocking; this errs on the blocking side.
 - The jq expression of `_check_run_records` that names the app (`.app.slug // .app.name // "unknown"`)
   is run for real in `tests/test_pure.py`
   (`test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_unknown`) with the system

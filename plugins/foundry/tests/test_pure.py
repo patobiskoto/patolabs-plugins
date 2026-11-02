@@ -716,7 +716,7 @@ def test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_un
     host = GitHubCodeHost()
     page = {"total_count": 3, "check_runs": [
         {"id": 1, "name": "a", "status": "completed", "conclusion": "success",
-         "app": {"slug": "github-actions", "name": "GitHub Actions"}},
+         "check_suite": {"id": 55}, "app": {"slug": "github-actions", "name": "GitHub Actions"}},
         {"id": 2, "name": "b", "status": "completed", "conclusion": "failure", "app": {"name": "Legacy CI"}},
         {"id": 3, "name": "c", "status": "completed", "conclusion": "success", "app": None}]}
 
@@ -729,6 +729,7 @@ def test_check_run_records_jq_expression_names_the_app_by_slug_then_name_then_un
     monkeypatch.setattr(host, "_gh", gh_with_jq)
     records = host._check_run_records("repos/o/r/commits/sha/check-runs")
     assert [(r["id"], r["app"]) for r in records] == [(1, "github-actions"), (2, "Legacy CI"), (3, "unknown")]
+    assert [r["suite"] for r in records] == [55, None, None]  # PLP-347
 
 
 def test_ci_expected_paginates_until_active_suite_on_last_page(monkeypatch):
@@ -912,6 +913,11 @@ def test_check_runs_falls_back_to_suites_and_keeps_latest_per_app(monkeypatch):
                 {"id": 300, "name": "test", "status": "completed",
                  "conclusion": "success"},
             ]})
+        if "/actions/runs?head_sha=sha" in path:
+            # suites 10 and 20: two runs of the same workflow
+            return json.dumps({"total": 2, "batch": [
+                {"workflow_id": 7, "check_suite_id": 10},
+                {"workflow_id": 7, "check_suite_id": 20}]})
         raise AssertionError(path)
 
     monkeypatch.setattr(host, "_gh", fake_gh)
@@ -925,28 +931,91 @@ def test_check_runs_falls_back_to_suites_and_keeps_latest_per_app(monkeypatch):
     assert any("/commits/sha/check-suites" in call for call in calls)
 
 
-def _primary_check_runs(monkeypatch, runs):
+def _primary_check_runs(monkeypatch, runs, workflows=(), calls=None):
+    """Primary route fake: `workflows` is [(check_suite_id, workflow_id)]."""
     host = GitHubCodeHost()
-    monkeypatch.setattr(host, "_gh", lambda *_a, **_k: json.dumps(
-        {"total": len(runs), "batch": runs}))
+
+    def fake_gh(*args, **_kwargs):
+        if calls is not None:
+            calls.append(args[1])
+        if "/actions/runs" in args[1]:
+            return json.dumps({"total": len(workflows), "batch": [
+                {"check_suite_id": s, "workflow_id": w} for s, w in workflows]})
+        return json.dumps({"total": len(runs), "batch": runs})
+
+    monkeypatch.setattr(host, "_gh", fake_gh)
     return [(c.name, c.conclusion) for c in host.check_runs("owner/repo", "sha")]
 
 
 def test_check_runs_primary_route_keeps_newest_run_per_app_and_name(monkeypatch):
     # PLP-336: an older workflow run (other check suite) left cancelled/red next to a
-    # newer green run of the same check on the same sha
+    # newer green run of the same check on the same sha (same workflow: PLP-347 key)
     runs = [
-        {"id": 100, "name": "plan", "status": "completed",
+        {"id": 100, "name": "plan", "status": "completed", "suite": 1,
          "conclusion": "cancelled", "app": "github-actions"},
-        {"id": 200, "name": "plan", "status": "completed",
+        {"id": 200, "name": "plan", "status": "completed", "suite": 2,
          "conclusion": "success", "app": "github-actions"},
-        {"id": 150, "name": "build", "status": "completed",
+        {"id": 150, "name": "build", "status": "completed", "suite": 1,
          "conclusion": "failure", "app": "github-actions"},
     ]
-    assert _primary_check_runs(monkeypatch, runs) == [
+    workflows = [(1, 7), (2, 7)]
+    assert _primary_check_runs(monkeypatch, runs, workflows) == [
         ("plan", "success"), ("build", "failure")]
-    assert _primary_check_runs(monkeypatch, runs[::-1]) == [
+    assert _primary_check_runs(monkeypatch, runs[::-1], workflows) == [
         ("build", "failure"), ("plan", "success")]
+
+
+def test_check_runs_two_workflows_same_app_and_name_red_lower_id_blocks(monkeypatch):
+    # PLP-347: workflow 7 red (id 100), workflow 8 green and newer (id 200)
+    runs = [
+        {"id": 100, "name": "check", "status": "completed", "suite": 1,
+         "conclusion": "failure", "app": "github-actions"},
+        {"id": 200, "name": "check", "status": "completed", "suite": 2,
+         "conclusion": "success", "app": "github-actions"},
+    ]
+    checks = _primary_check_runs(monkeypatch, runs, [(1, 7), (2, 8)])
+    assert sorted(checks) == [("check", "failure"), ("check", "success")]
+    verdict = write.ci_gate(_FakeCodeHost([Check(n, "completed", c) for n, c in checks]),
+                            "o/r", "sha")
+    assert verdict["passed"] is False
+
+
+def test_check_runs_actions_run_with_unknown_workflow_is_never_collapsed(monkeypatch):
+    # fail closed: suites absent from the workflow runs keep both runs, the red one blocks
+    runs = [
+        {"id": 100, "name": "check", "status": "completed", "suite": 1,
+         "conclusion": "failure", "app": "github-actions"},
+        {"id": 200, "name": "check", "status": "completed", "suite": 2,
+         "conclusion": "success", "app": "github-actions"},
+    ]
+    assert sorted(_primary_check_runs(monkeypatch, runs, [])) == [
+        ("check", "failure"), ("check", "success")]
+
+
+def test_check_runs_non_actions_app_keeps_newest_per_app_and_name(monkeypatch):
+    runs = [
+        {"id": 100, "name": "t", "status": "completed", "suite": 1,
+         "conclusion": "failure", "app": "other-ci"},
+        {"id": 200, "name": "t", "status": "completed", "suite": 2,
+         "conclusion": "success", "app": "other-ci"},
+    ]
+    assert _primary_check_runs(monkeypatch, runs) == [("t", "success")]
+
+
+def test_check_runs_workflow_lookup_only_on_name_collision(monkeypatch):
+    calls = []
+    runs = [
+        {"id": 1, "name": "a", "status": "completed", "suite": 1,
+         "conclusion": "success", "app": "github-actions"},
+        {"id": 2, "name": "b", "status": "completed", "suite": 1,
+         "conclusion": "success", "app": "github-actions"},
+    ]
+    _primary_check_runs(monkeypatch, runs, calls=calls)
+    assert not any("/actions/runs" in c for c in calls)
+    runs.append(dict(runs[0], id=3, suite=2))
+    calls.clear()
+    _primary_check_runs(monkeypatch, runs, [(1, 7), (2, 7)], calls=calls)
+    assert sum("/actions/runs" in c for c in calls) == 1
 
 
 def test_check_runs_primary_route_keeps_same_name_from_two_apps(monkeypatch):
@@ -962,12 +1031,12 @@ def test_check_runs_primary_route_keeps_same_name_from_two_apps(monkeypatch):
 
 def test_check_runs_primary_route_newest_red_still_blocks(monkeypatch):
     runs = [
-        {"id": 100, "name": "plan", "status": "completed",
+        {"id": 100, "name": "plan", "status": "completed", "suite": 1,
          "conclusion": "success", "app": "github-actions"},
-        {"id": 200, "name": "plan", "status": "completed",
+        {"id": 200, "name": "plan", "status": "completed", "suite": 2,
          "conclusion": "failure", "app": "github-actions"},
     ]
-    assert _primary_check_runs(monkeypatch, runs) == [("plan", "failure")]
+    assert _primary_check_runs(monkeypatch, runs, [(1, 7), (2, 7)]) == [("plan", "failure")]
 
 
 def test_check_runs_does_not_mask_non_404_errors(monkeypatch):
