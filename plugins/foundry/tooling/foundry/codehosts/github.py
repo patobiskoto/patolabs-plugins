@@ -114,6 +114,7 @@ class GitHubCodeHost(CodeHost):
                            "--jq", "{total: .total_count, "
                                    "batch: [.check_runs[] "
                                    "| {id, name, status, conclusion, "
+                                   "suite: .check_suite.id, "
                                    "app: (.app.slug // .app.name "
                                    "// \"unknown\")}]}")
             d = json.loads(out or '{"total": 0, "batch": []}')
@@ -130,8 +131,8 @@ class GitHubCodeHost(CodeHost):
         """Fallback when the aggregate commit/check-runs route is unavailable.
 
         A SHA can have several suites for the same app (one per workflow run). Keep
-        the newest run (highest id) for each (suite app, check-name), the same rule
-        as `_newest_per_app_and_name` on the primary route, rather than letting an
+        the newest run (highest id) for each (suite app, workflow, check-name), the same
+        rule as `_newest_per_workflow` on the primary route, rather than letting an
         obsolete red run block a newer green one.
         """
         suites, page = [], 1
@@ -149,28 +150,76 @@ class GitHubCodeHost(CodeHost):
                 break
             page += 1
 
-        latest = {}
+        records = []
         for suite in suites:
             endpoint = f"repos/{repo}/check-suites/{suite['id']}/check-runs"
-            for run in self._check_run_records(endpoint):
-                key = (suite["app"], run["name"])
-                previous = latest.get(key)
-                if previous is None or int(run["id"]) > int(previous["id"]):
-                    latest[key] = run
+            records.extend(dict(run, suite=suite["id"], app=suite["app"])
+                           for run in self._check_run_records(endpoint))
+        return self._dedupe_checks(repo, sha, records)
+
+    _ACTIONS_APP = "github-actions"
+
+    def _workflow_by_suite(self, repo, sha) -> dict:
+        """Map check-suite id -> workflow id from the workflow runs of one sha (PLP-347).
+
+        A check-run carries its check suite but no workflow id; the workflow run behind
+        the suite does (`actions/runs`, `check_suite_id` and `workflow_id`). One call per
+        `_PER_PAGE` runs. A 404 gives an empty map: every Actions run is then kept apart.
+        """
+        mapping, seen, page = {}, 0, 1
+        while True:
+            try:
+                out = self._gh(
+                    "api",
+                    f"repos/{repo}/actions/runs?head_sha={sha}"
+                    f"&per_page={self._PER_PAGE}&page={page}",
+                    "--jq", "{total: .total_count, batch: [.workflow_runs[] "
+                            "| {workflow_id, check_suite_id}]}")
+            except RuntimeError as error:
+                if not self._not_found(error):
+                    raise
+                return {}
+            d = json.loads(out or '{"total": 0, "batch": []}')
+            for item in d["batch"]:
+                if item.get("check_suite_id") is not None \
+                        and item.get("workflow_id") is not None:
+                    mapping[item["check_suite_id"]] = item["workflow_id"]
+            seen += len(d["batch"])
+            if seen >= d["total"] or not d["batch"]:
+                return mapping
+            page += 1
+
+    def _dedupe_checks(self, repo, sha, records) -> list[Check]:
+        """Newest run per (app, workflow, check-name), as `Check`s (PLP-336, PLP-347).
+
+        The workflow lookup is made only when two runs share (app, name); otherwise
+        nothing can collapse. A GitHub Actions run whose workflow is unknown (suite not
+        found among the workflow runs) is never collapsed, so it cannot hide a red run.
+        """
+        pairs = [(r.get("app") or "unknown", r["name"]) for r in records]
+        workflows = (self._workflow_by_suite(repo, sha)
+                     if len(set(pairs)) < len(pairs) else {})
         return [Check(name=run["name"], status=run["status"],
                       conclusion=run.get("conclusion"))
-                for run in latest.values()]
+                for run in self._newest_per_workflow(records, workflows)]
 
-    @staticmethod
-    def _newest_per_app_and_name(records) -> list[dict]:
-        """Keep the highest-id run per (app, check-name); different apps both stay.
+    @classmethod
+    def _newest_per_workflow(cls, records, workflows) -> list[dict]:
+        """Keep the highest-id run per (app, workflow, check-name); other keys stay apart.
 
         GitHub's default `filter=latest` only supersedes reruns inside one check suite,
         not distinct workflow runs on the same sha (PLP-336, docs/ci-wait.md "Limits").
+        The workflow is the one behind the run's check suite. An app other than GitHub
+        Actions has no workflow: its key is (app, None, name). An Actions run with no
+        known workflow gets its own id in the key and is never collapsed.
         """
         latest = {}
         for run in records:
-            key = (run.get("app") or "unknown", run["name"])
+            app = run.get("app") or "unknown"
+            workflow = workflows.get(run.get("suite"))
+            if workflow is None and app == cls._ACTIONS_APP:
+                workflow = ("unmapped", run["id"])
+            key = (app, workflow, run["name"])
             previous = latest.get(key)
             if previous is None or int(run["id"]) > int(previous["id"]):
                 latest[key] = run
@@ -189,9 +238,7 @@ class GitHubCodeHost(CodeHost):
             records = None
         if records is None:
             return self._check_runs_via_suites(repo, sha)
-        return [Check(name=run["name"], status=run["status"],
-                      conclusion=run.get("conclusion"))
-                for run in self._newest_per_app_and_name(records)]
+        return self._dedupe_checks(repo, sha, records)
 
     def commit_statuses(self, repo, sha) -> list[Check]:
         # the legacy status API (Jenkins, CircleCI…) — invisible to check-runs.
