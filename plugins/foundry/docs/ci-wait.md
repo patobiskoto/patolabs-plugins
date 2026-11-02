@@ -85,7 +85,19 @@ its `workflow_id`.
 - Extra API calls: none when no two check-runs share (app, name); otherwise one
   `actions/runs` call per `_PER_PAGE` (100) workflow runs of the sha. Non-404 errors of that
   call propagate like those of the check-run reads. That the workflow-run list is complete
-  for the sha (GitHub documents a cap on `actions/runs` results) is not checked here: unknown.
+  for the sha (GitHub documents a cap on `actions/runs` results) is not checked here: unknown;
+  a suite missing from the list leaves its Actions run unmapped, kept apart by its own id
+  (`("unmapped", run["id"])` in `_newest_per_workflow`), which errs on the blocking side.
+- Permission: the `actions/runs` lookup needs read access to Actions for the token `gh` uses
+  (for a fine-grained token, "Actions: read"; from GitHub's REST documentation, not re-read
+  here). A token without it most likely gets 403 (deduced, not observed), which is not a 404
+  and so propagates out of `_workflow_by_suite` and `check_runs`; neither `issue wait-ci` nor
+  `issue merge` catches it around `write.ci_gate` (`tooling/foundry/issue.py`), nor does the
+  campaign `ci_gate` effect (`tooling/foundry/campaign_runtime.py`) or the cadencer's
+  observation (`campaign_cadence._ci_status`), so the gate does not open.
+  `routing prepare-review` turns it into a `RoutingConfigError` (`review_packet.py`) and the CI
+  capture of `evidence_plane.py` lets it propagate. The lookup is made only when two
+  check-runs share (app, name).
 - Residual risk, deduced: a rerun of one workflow that GitHub files under a different
   `workflow_id` (a workflow file renamed or recreated between runs) is read as a distinct
   workflow, so an old red run of the previous file keeps blocking; this errs on the blocking side.

@@ -1050,6 +1050,99 @@ def test_check_runs_does_not_mask_non_404_errors(monkeypatch):
         host.check_runs("owner/repo", "sha")
 
 
+def _colliding_actions_runs():
+    return [
+        {"id": 100, "name": "check", "status": "completed", "suite": 1,
+         "conclusion": "failure", "app": "github-actions"},
+        {"id": 200, "name": "check", "status": "completed", "suite": 2,
+         "conclusion": "success", "app": "github-actions"},
+    ]
+
+
+def test_workflow_by_suite_404_gives_empty_map_and_runs_stay_apart(monkeypatch):
+    # PLP-350: a 404 on actions/runs -> {} -> colliding Actions runs all kept
+    host = GitHubCodeHost()
+    runs = _colliding_actions_runs()
+
+    def fake_gh(*args, **_kwargs):
+        if "/actions/runs" in args[1]:
+            raise RuntimeError("gh: Not Found (HTTP 404)")
+        return json.dumps({"total": len(runs), "batch": runs})
+
+    monkeypatch.setattr(host, "_gh", fake_gh)
+    assert host._workflow_by_suite("owner/repo", "sha") == {}
+    checks = host.check_runs("owner/repo", "sha")
+    assert sorted((c.name, c.conclusion) for c in checks) == [
+        ("check", "failure"), ("check", "success")]
+
+
+def test_workflow_by_suite_non_404_error_propagates_out_of_check_runs(monkeypatch):
+    host = GitHubCodeHost()
+    runs = _colliding_actions_runs()
+
+    def fake_gh(*args, **_kwargs):
+        if "/actions/runs" in args[1]:
+            raise RuntimeError("gh: Resource not accessible (HTTP 403)")
+        return json.dumps({"total": len(runs), "batch": runs})
+
+    monkeypatch.setattr(host, "_gh", fake_gh)
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        host.check_runs("owner/repo", "sha")
+
+
+def test_workflow_by_suite_paginates_on_total_count(monkeypatch):
+    host = GitHubCodeHost()
+    pages = {
+        1: {"total": 3, "batch": [{"check_suite_id": 1, "workflow_id": 7},
+                                  {"check_suite_id": 2, "workflow_id": 8}]},
+        2: {"total": 3, "batch": [{"check_suite_id": 3, "workflow_id": 9}]},
+    }
+    calls = []
+
+    def fake_gh(*args, **_kwargs):
+        calls.append(args[1])
+        page = int(args[1].rsplit("page=", 1)[1])
+        return json.dumps(pages[page])
+
+    monkeypatch.setattr(host, "_gh", fake_gh)
+    assert host._workflow_by_suite("owner/repo", "sha") == {1: 7, 2: 8, 3: 9}
+    assert len(calls) == 2
+
+
+def test_check_runs_suites_fallback_keeps_two_workflows_and_red_lower_id_blocks(monkeypatch):
+    # PLP-350: fallback route, same app and job name, workflows 7 (red, id 100) and 8
+    host = GitHubCodeHost()
+
+    def fake_gh(*args, **_kwargs):
+        path = args[1]
+        if "/commits/sha/check-runs" in path:
+            raise RuntimeError("gh: Not Found (HTTP 404)")
+        if "/commits/sha/check-suites" in path:
+            return json.dumps({"total": 2, "batch": [
+                {"id": 10, "app": "github-actions"},
+                {"id": 20, "app": "github-actions"}]})
+        if "/check-suites/10/check-runs" in path:
+            return json.dumps({"total": 1, "batch": [
+                {"id": 100, "name": "check", "status": "completed",
+                 "conclusion": "failure"}]})
+        if "/check-suites/20/check-runs" in path:
+            return json.dumps({"total": 1, "batch": [
+                {"id": 200, "name": "check", "status": "completed",
+                 "conclusion": "success"}]})
+        if "/actions/runs?head_sha=sha" in path:
+            return json.dumps({"total": 2, "batch": [
+                {"workflow_id": 7, "check_suite_id": 10},
+                {"workflow_id": 8, "check_suite_id": 20}]})
+        raise AssertionError(path)
+
+    monkeypatch.setattr(host, "_gh", fake_gh)
+    checks = host.check_runs("owner/repo", "sha")
+    assert sorted((c.name, c.conclusion) for c in checks) == [
+        ("check", "failure"), ("check", "success")]
+    verdict = write.ci_gate(_FakeCodeHost(checks), "o/r", "sha")
+    assert verdict["passed"] is False
+
+
 def test_parse_owner_repo_https_ssh_and_alias():
     f = GitHubCodeHost.parse_owner_repo
     assert f("https://github.com/patobiskoto/foundry.git") == "patobiskoto/foundry"
