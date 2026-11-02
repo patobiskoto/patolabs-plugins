@@ -93,7 +93,8 @@ its `workflow_id`.
   here). A token without it most likely gets 403 (deduced, not observed), which is not a 404
   and so propagates out of `_workflow_by_suite` and `check_runs`; neither `issue wait-ci` nor
   `issue merge` catches it around `write.ci_gate` (`tooling/foundry/issue.py`), nor does the
-  campaign `ci_gate` effect (`tooling/foundry/campaign_runtime.py`), so the gate does not open.
+  campaign `ci_gate` effect (`tooling/foundry/campaign_runtime.py`) or the cadencer's
+  observation (`campaign_cadence._ci_status`), so the gate does not open.
   `routing prepare-review` turns it into a `RoutingConfigError` (`review_packet.py`) and the CI
   capture of `evidence_plane.py` lets it propagate. The lookup is made only when two
   check-runs share (app, name).
