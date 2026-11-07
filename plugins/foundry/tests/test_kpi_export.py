@@ -208,7 +208,8 @@ def test_existing_entries_keep_their_rate_version():
             hashlib.sha256(kpi_export._canonical(e).encode("utf-8")).hexdigest()[:12] for e in entries}
     assert {k: seen[k] for k in PINNED_RATE_VERSIONS} == PINNED_RATE_VERSIONS
     assert set(seen) - set(PINNED_RATE_VERSIONS) == {
-        ("claude", m, "2026-10-27") for m in ("sonnet-5.5", "haiku-5.5", "opus-5.5", "fable-5.1")}
+        ("claude", m, "2026-10-27") for m in ("sonnet-5.5", "haiku-5.5", "opus-5.5", "fable-5.1")} | {
+        ("codex", m, "2026-11-07") for m in ("gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra")}
 
 
 def _attempt_amount(tmp_path, name, model, day):

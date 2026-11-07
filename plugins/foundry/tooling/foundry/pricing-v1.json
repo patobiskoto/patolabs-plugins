@@ -255,6 +255,54 @@
         "cache_write_input": 25.0,
         "output": 75.0
       }
+    },
+    {
+      "host": "codex",
+      "model": "gpt-6-luna",
+      "aliases": [],
+      "billing_mode": "subscription",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+      "captured_at": "2026-11-07T00:00:00Z",
+      "effective_from": "2026-11-07",
+      "effective_to": "2026-12-31",
+      "rates": {
+        "input": 0.1,
+        "cached_input": 0.01,
+        "cache_write_input": 0.125,
+        "output": 0.5
+      }
+    },
+    {
+      "host": "codex",
+      "model": "gpt-6.1-sol",
+      "aliases": [],
+      "billing_mode": "subscription",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+      "captured_at": "2026-11-07T00:00:00Z",
+      "effective_from": "2026-11-07",
+      "effective_to": "2026-12-31",
+      "rates": {
+        "input": 2.0,
+        "cached_input": 0.1,
+        "cache_write_input": 2.5,
+        "output": 10.0
+      }
+    },
+    {
+      "host": "codex",
+      "model": "gpt-6.1-terra",
+      "aliases": [],
+      "billing_mode": "subscription",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+      "captured_at": "2026-11-07T00:00:00Z",
+      "effective_from": "2026-11-07",
+      "effective_to": "2026-12-31",
+      "rates": {
+        "input": 1.0,
+        "cached_input": 0.05,
+        "cache_write_input": 1.25,
+        "output": 5.0
+      }
     }
   ]
 }

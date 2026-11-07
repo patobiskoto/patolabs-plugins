@@ -3,7 +3,7 @@ import json
 import pytest
 
 from foundry.cost_attribution import (
-    KNOWN_MODELS, CostAttributionError, aggregate, cost_record, load_price_grid, price_for,
+    KNOWN_MODELS, PRICE_GRID_PATH, CostAttributionError, aggregate, cost_record, load_price_grid, price_for,
     main, read_host_log, reconcile_pilot_v1, resolve_project,
 )
 
@@ -455,7 +455,19 @@ def test_registered_project_resolution_never_guesses():
 
 
 def test_known_models_is_derived_from_the_committed_price_grid():
-    assert KNOWN_MODELS == {"haiku-4.5", "sonnet-5", "opus-5", "fable-5", "sonnet-5.5", "haiku-5.5", "opus-5.5", "fable-5.1", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"}
+    assert KNOWN_MODELS == {"haiku-4.5", "sonnet-5", "opus-5", "fable-5", "sonnet-5.5", "haiku-5.5", "opus-5.5", "fable-5.1", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"}
+
+
+def test_gpt_6_luna_and_6_1_sol_terra_resolve_a_catalogue_rate():
+    grid = load_price_grid(PRICE_GRID_PATH)
+    expected = {"gpt-6-luna": (0.1, 0.01, 0.125, 0.5), "gpt-6.1-sol": (2.0, 0.1, 2.5, 10.0),
+                "gpt-6.1-terra": (1.0, 0.05, 1.25, 5.0)}
+    for model, rates in expected.items():
+        price = price_for(grid, "codex", model, "2026-11-07")
+        assert (price["rates"]["input"], price["rates"]["cached_input"], price["rates"]["cache_write_input"],
+                price["rates"]["output"]) == rates, model
+        assert "context_threshold_tokens" not in price
+        assert price_for(grid, "codex", model, "2026-11-06") is None
 
 
 def test_aggregate_reports_unpriced_models_from_explicit_discovery_response(tmp_path):
