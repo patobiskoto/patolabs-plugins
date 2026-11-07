@@ -601,6 +601,7 @@ def test_claude_gate_cannot_be_demoted_by_user_model_or_effort(tmp_path, role):
     (
         "CLAUDE_CODE_SUBAGENT_MODEL",
         "CLAUDE_CODE_EFFORT_LEVEL",
+        "CLAUDE_CODE_SUBAGENT_EFFORT",
         *CLAUDE_ALIAS_MODEL_OVERRIDES,
     ),
 )
