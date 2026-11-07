@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 2.9.1 — 2026-11-07
+
+Patch release: `routing kpi-export` and `cost-attribution` now price the Codex models
+GPT-6 Luna, GPT-6.1 Sol and GPT-6.1 Terra (PLP-353); the Claude override detector also
+signals `CLAUDE_CODE_SUBAGENT_EFFORT` (PLP-351); the CI gate keys check-run deduplication
+on the workflow too (PLP-347); the DevHub adapter accepts the optional `reason` key of
+audit events (PLP-349). PLP-350 changes documentation and tests only. Sources are in
+the pages each entry cites.
+
+- PLP-353: `pricing-v1.json` now prices the Codex models `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6.1-terra` (read on 2026-11-07, effective from 2026-11-07), so `routing kpi-export` gives an estimated amount for sessions on them instead of `no_price_for_model_and_date`, and `cost-attribution` no longer lists them in `unpriced_models`; the long-context tier above 272K input is not in the grid (unknown cache-write rate, `docs/cost-attribution.md`).
+- PLP-351: The Claude override detector now also signals `CLAUDE_CODE_SUBAGENT_EFFORT` (value-free `HOST_OVERRIDE_NEUTRALIZES_POLICY`), and the observation on Claude Code 2.1.319 is recorded in `docs/qualification/plp-351-subagent-effort-env.md`: observed, it does not override the effort frontmatter of a routed profile; deduced, it would give an effort to the profiles without one (none, Haiku 4.5).
+- PLP-350: documentation and tests only, no behaviour change: `docs/ci-wait.md` names the Actions read permission the `actions/runs` lookup needs and the consequence of a suite missing from that list, `docs/devhub-tracker.md` rewraps the audit `reason` paragraph, and `tests/test_pure.py` covers `_workflow_by_suite` (404, non-404 error, pagination) and the check-suites fallback with two workflows.
+- PLP-349: `DevHubTracker.audit()` now accepts the optional `reason` key (a non-empty string) that DevHub may add to the audit event of a refused mutation, instead of refusing the page as `invalid_response` (which would have failed the live smoke audit read; deduced, not observed); any other extra key or a missing required key is still refused (`_AUDIT_OPTIONAL_KEYS`, `docs/devhub-tracker.md`).
+- PLP-347: the CI gate's check-run deduplication key now includes the workflow behind each check suite (`GitHubCodeHost._newest_per_workflow`, `_workflow_by_suite`), so two workflows of one app publishing the same job name are both kept and a red one with the lower id blocks; a rerun of the same job in the same workflow still collapses to the newest, and a GitHub Actions run whose workflow cannot be determined is never collapsed (`docs/ci-wait.md`).
+
 ## 2.9.0 — 2026-10-30
 
 Minor release for publishing KPI records at merge and for finding the session logs: a
