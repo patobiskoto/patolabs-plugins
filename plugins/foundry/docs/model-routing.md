@@ -1099,7 +1099,12 @@ does not pretend it observed availability.
 `CLAUDE_CODE_SUBAGENT_MODEL` supplies a default; with
 `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` it overrides injected model selection. Force alone
 can select the parent model. `CLAUDE_CODE_EFFORT_LEVEL` outranks subagent frontmatter
-effort. The alias targets
+effort. `CLAUDE_CODE_SUBAGENT_EFFORT` is detected the same way (`CLAUDE_SUBAGENT_EFFORT_OVERRIDE`,
+`tooling/foundry/routing_facades.py`): observed on Claude Code 2.1.319, it does not replace the effort
+frontmatter of a routed profile; deduced, not observed, it would give an effort to a subagent whose
+definition has none (the `routed-*-none[-haiku-4.5*]` profiles), whose transmitted effort Foundry reports as
+null; the effort the API receives is unknown ([qualification page](qualification/plp-351-subagent-effort-env.md)).
+The alias targets
 can also be repointed by `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, and
 `ANTHROPIC_DEFAULT_FABLE_MODEL`. Any of these signals can neutralize the policy. The
@@ -1122,7 +1127,7 @@ Bash guard allows the claimed readers and the explicit advisory postmerge reader
 
 `tooling/foundry/routing_facades.py` supplies the two concrete detection adapters:
 Claude detects `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`,
-`CLAUDE_CODE_EFFORT_LEVEL`, and the four
+`CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_SUBAGENT_EFFORT`, and the four
 `ANTHROPIC_DEFAULT_*_MODEL` alias-target signals listed above; Codex inspects the effective
 profile mapping for `model` and `model_reasoning_effort`. They return signal names only.
 The shared `host_override_warnings` function owns the value-free warning decision.

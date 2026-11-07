@@ -356,6 +356,15 @@ def _validate_claude_host_policy(
             )
 
 
+# PLP-351: precision for one signal, see docs/qualification/plp-351-subagent-effort-env.md.
+_OVERRIDE_NOTES = {
+    "CLAUDE_CODE_SUBAGENT_EFFORT": (
+        " Observé : il ne remplace pas l'effort du frontmatter d'un profil routé ; "
+        "déduit, non observé : il donnerait un effort aux profils sans effort "
+        "(none, Haiku 4.5) alors que l'effort transmis reste null."),
+}
+
+
 def host_override_warnings(host: str, active_overrides: Iterable[str]) -> tuple[RoutingWarning, ...]:
     """Turn façade-detected overrides into the common, value-free warning contract."""
     if host not in HOSTS:
@@ -366,7 +375,8 @@ def host_override_warnings(host: str, active_overrides: Iterable[str]) -> tuple[
         warnings.append(RoutingWarning(
             code="HOST_OVERRIDE_NEUTRALIZES_POLICY",
             message=(f"L'override hôte '{clean_name}' est actif sur {host} et peut "
-                     "neutraliser la politique Foundry résolue ; sa valeur est masquée."),
+                     "neutraliser la politique Foundry résolue ; sa valeur est masquée."
+                     + _OVERRIDE_NOTES.get(clean_name, "")),
         ))
     return tuple(warnings)
 
