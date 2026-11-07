@@ -204,6 +204,20 @@ malformée est ignorée.
 - Les entrées existantes (`haiku-4.5`, `sonnet-5`, `opus-5`, `fable-5`, `gpt-*`) ne changent pas d'un octet : leur `rate_version` est épinglé par `test_existing_entries_keep_their_rate_version` (`tests/test_kpi_export.py`).
 - Les alias historiques `claude-sonnet-5-*`, `claude-opus-5-*`, `claude-fable-5-*` sont des préfixes de `claude-sonnet-5-5`, etc. `_overlap` applique à présent, comme `_matches`, l'exclusion d'une version déclarée (`_declared_apart`, via `claude_policy_model`) : un joker historique ne capture pas une version nouvelle déclarée, quel que soit son suffixe (daté ou non), et `load_price_grid` n'y voit plus un recouvrement. Un vrai recouvrement (même motif, ou version non déclarée) reste refusé.
 
+## Entrées Codex GPT-6 Luna, GPT-6.1 Sol et Terra de la grille (PLP-353)
+
+`pricing-v1.json` porte, pour l'hôte `codex`, les entrées `gpt-6-luna`, `gpt-6.1-sol` et `gpt-6.1-terra`, avec pour source `https://developers.openai.com/api/docs/models/<modèle>`, lues le 2026-11-07 (`captured_at` ; la date seule est connue, la partie heure `T00:00:00Z` est un remplissage). Les taux d'entrée, de lecture de cache et de sortie sont ceux de `https://developers.openai.com/api/docs/pricing` (Standard, entrée jusqu'à 272K, USD par million de tokens) ; l'écriture de cache vient des pages modèles. `billing_mode` `subscription`, comme les autres entrées `codex`.
+
+| Modèle | `input` | `cache_write_input` | `cached_input` | `output` |
+|---|---|---|---|---|
+| `gpt-6-luna` | 0.1 | 0.125 | 0.01 | 0.5 |
+| `gpt-6.1-sol` | 2 | 2.5 | 0.1 | 10 |
+| `gpt-6.1-terra` | 1 | 1.25 | 0.05 | 5 |
+
+- Validité : `effective_from` 2026-11-07, `effective_to` 2026-12-31. Une requête datée avant le 2026-11-07 reste sans prix (`no_price_for_model_and_date`).
+- Palier au-delà de 272K tokens d'entrée : la page de prix donne d'autres taux (Luna 0.20 / 0.02 / 0.75, Sol 4 / 0.2 / 15, Terra 2 / 0.1 / 7.5 pour entrée / lecture de cache / sortie), mais aucun taux d'écriture de cache à ce palier n'a été relevé : inconnu. Or `load_price_grid` exige les quatre clés dans `over_threshold_rates` (`set(elevated) != set(rates)`), et aucune valeur n'est estimée. Les entrées n'ont donc pas de `context_threshold_tokens` : une requête de plus de 272K tokens de contexte serait chiffrée au tarif jusqu'à 272K, donc sous-estimée ; le montant n'est pas fiable pour de telles requêtes. Corriger demande soit le taux d'écriture de cache du palier, soit de rendre cette clé facultative dans le schéma (non fait ici).
+- Les entrées existantes ne changent pas d'un octet (`test_existing_entries_keep_their_rate_version`, `tests/test_kpi_export.py`).
+
 ## Rattachement des tokens à une issue et à un rôle
 
 Le verbe `routing kpi-export` (PLP-319, [kpi-export.md](kpi-export.md)) réutilise cette attribution (méthode `exact`, par invocation) et la grille `pricing-v1.json` pour écrire un montant `estimated`, jamais une facture.

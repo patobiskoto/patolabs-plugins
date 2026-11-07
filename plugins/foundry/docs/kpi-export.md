@@ -90,7 +90,7 @@ rate changes the version. The grid entries are billed as `subscription` (`billin
 API-equivalent estimate. It is `null` when the requested model has no entry for that day (observed in
 `pricing-v1.json` on 2026-10-27: the Claude entries are `haiku-4.5`, `sonnet-5`, `opus-5`, `fable-5`, `sonnet-5.5`,
 `haiku-5.5`, `opus-5.5`, `fable-5.1`; the last four are effective from 2026-10-27, so an attempt of one of them dated
-earlier, or a model outside this list, is not priced), when the entry has a context threshold (`context_threshold_tokens`) and the per-request counts of the invocation
+earlier, or a model outside this list, is not priced; PLP-353 added the Codex entries `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6.1-terra`, effective from 2026-11-07, without a threshold, see [cost-attribution.md](cost-attribution.md)), when the entry has a context threshold (`context_threshold_tokens`) and the per-request counts of the invocation
 are not available (a codex row without request granularity, `request_granularity` false in `cost_attribution.py`;
 `_amount` in `kpi_export.py` returns the reason `threshold_pricing_needs_per_request_tokens`), or when tokens are
 null. Of the Claude entries only `haiku-5.5` has a threshold (100000 tokens): the export prices it request by
