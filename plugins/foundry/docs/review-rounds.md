@@ -599,7 +599,10 @@ Consequences:
   explicite` comment is the override path, and so is `quality: blocked` on the last round with such a comment
   (the override does not read `quality`). On a tracker that projects the typed receipt the comment is
   best-effort and the receipt is the authority; it was not read here. A last round that is not validated with
-  neither comment nor receipt is a merge that nothing authorised and must be investigated.
+  neither comment nor receipt must be investigated; it is not by itself an unauthorised merge: when the
+  tracker criteria are all checked, `issue merge` reads a review proof only with `delivery_receipt_supported`
+  and a binding (`issue.py`), and the last proof can belong to a pull request closed without merge
+  ("Per-issue report").
 - No merge without a validated proof or an audited override was found among the ten (observed).
   Not established here: the typed `acceptance-override` receipt of each issue (`query issue` returned no
   `acceptance_status` for any of the ten, so the receipt, if any, is unread: unknown); and the CI
