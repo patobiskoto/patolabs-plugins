@@ -1592,6 +1592,25 @@ The declared policy name and its provenance stay intact; only effort validation 
 the effective target. This does not certify a custom alias's native version.
 
 
+### Agent profiles and why each family is kept (PLP-362)
+
+`plugins/foundry/agents/` holds 90 profiles and the host lists all of them at the start of
+every session (`session-context-load.md` measures the cost). None is removed or renamed by
+PLP-362. Counts are those of `ls plugins/foundry/agents`, and the families add up
+(4 + 12 + 74 = 90):
+
+| Family | Files | Why it is kept | Source |
+| --- | --- | --- | --- |
+| Role profiles `eiffel`, `lupin`, `maigret`, `vauban` | 4 | The logical roles a skill invokes; the routing hook rewrites the call to a routed profile. | `agents/*.md` |
+| Generic profiles `routed-<capability>-<effort>`, capability `readonly` or `worker`, effort `low`, `medium`, `high`, `xhigh`, `max`, `none` | 12 | Launch target of a short-alias route (`haiku`, `sonnet`, `opus`, `fable`), and the template from which every versioned profile is rendered and compared. | `claude_invocation_binding()` (profile `routed-<capability>-<effort or none>`) and `claude_pin_profile_text()` (reads `agents/<generic name>.md`), `routing_facades.py` |
+| Versioned profiles `routed-<capability>-<effort>-<version>` | 74 | One per declared pin, capability and effort: 7 versions (Sonnet 5, Opus 5, Fable 5, Sonnet 5.5, Opus 5.5, Fable 5.1, Haiku 5.5) with the 5 executable efforts and 2 capabilities (70), plus 2 Haiku 4.5 identifiers without effort and 2 capabilities (4). The Agent tool accepts only short aliases in `model`, so a version pin is carried by the frontmatter of a preloaded profile; an absent or divergent profile makes the launch fail closed. | `claude_pin_profile_documents()`, `claude_invocation_binding()` (`profile_frontmatter`), `routing_facades.py`; byte equality checked by `tests/test_claude_profiles.py` |
+
+No profile is provably unused: each versioned profile is reachable through a declaration in
+`_CLAUDE_MODEL_DECLARATION`, and removing one makes the launch of that pin fail. Whether a
+pin is ever chosen in practice by a project is unknown. Whether the host can hide a profile
+from the session's agent list without breaking its use as a launch target is unknown and not
+tried; reducing the exposed list is therefore a separate decision, not taken here.
+
 ### PAT-198 native qualification of the eight PAT-17 rollback lines
 
 PAT-17 proved the eight rollback configurations by CLI resolution only (zero native calls); that is configuration

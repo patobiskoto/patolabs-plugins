@@ -13,6 +13,32 @@ def _repo_text(relative_path):
     return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
 
 
+# PLP-362: the contract keeps R1..R9 as short citable rules; the detail of R7 and R9 (and the
+# full text of R1, R5, R6) was moved verbatim to these pages. The assertions below read each
+# sentence from the page that now holds it.
+_R7_PAGE = "plugins/foundry/docs/process-contract-r7.md"
+_R9_PAGE = "plugins/foundry/docs/process-contract-r9.md"
+_R1_R6_PAGE = "plugins/foundry/docs/process-contract-r1-r6.md"
+
+
+def test_contract_keeps_r1_to_r9_citable_and_points_at_the_detail_pages():
+    import re
+    contract = _repo_text("AGENTS.md")
+    headings = re.findall(r"(?m)^## (R\d) — ", contract)
+    assert headings == [f"R{n}" for n in range(1, 10)]
+    assert len(contract.encode("utf-8")) < 8700  # PLP-362: about 8 KB
+    for page in (_R7_PAGE, _R9_PAGE, _R1_R6_PAGE):
+        assert (REPOSITORY_ROOT / page).is_file()
+        assert page in contract
+    r7 = _repo_text(_R7_PAGE)
+    r9 = _repo_text(_R9_PAGE)
+    assert "## R7 — Claude model resolution at CLI boundaries (current state)" in r7
+    assert "## R9 — Fewer review rounds" in r9
+    r16 = _repo_text(_R1_R6_PAGE)
+    for heading in ("## R1 — ", "## R5 — ", "## R6 — "):
+        assert heading in r16
+
+
 def test_claude_and_agents_contracts_exist_and_are_byte_identical():
     # FOUNDRY-ADR-0005: one implementation, two host façades, never a content fork.
     claude = _repo_text("CLAUDE.md")
@@ -58,7 +84,8 @@ def test_process_contract_documents_oauth_machine_binding_operational_consequenc
 
 
 def test_process_contract_documents_current_claude_model_resolution_not_a_closed_table():
-    contract = _repo_text("AGENTS.md")
+    contract = _repo_text(_R7_PAGE)
+    assert "## R7 " in _repo_text("AGENTS.md")
 
     for marker in (
         "FOUNDRY-100",
@@ -84,7 +111,13 @@ def test_maigret_project_conventions_criterion_now_resolves_to_real_files():
 
 
 def test_process_contract_states_r9_checklist_deferral_and_minimal_corrections():
-    text = _repo_text("AGENTS.md")
+    contract = _repo_text("AGENTS.md")
+    assert "## R9 " in contract and "(c) Correction commits" in contract
+    for point in ("1. A sentence about what a tool launches", "2. A cause is stated",
+                  "3. A rule, threshold or quantity", "4. A comparison names",
+                  "5. A documented procedure", "6. No proper name"):
+        assert point in contract
+    text = _repo_text(_R9_PAGE)
     flat = " ".join(text.split())
     assert "## R9 " in text
     for point in ("1. A sentence about what a tool launches", "2. A cause is stated",
@@ -207,7 +240,7 @@ def test_only_the_deferral_effect_contains_the_companion_epic_name():
 
 def _r9_deferral_rule() -> str:
     """Rule R9 (b) alone: from its heading to the heading of (c)."""
-    text = _repo_text("AGENTS.md")
+    text = _repo_text(_R9_PAGE)
     return " ".join(text[text.index("**(b) "):text.index("**(c) ")].split())
 
 
@@ -335,7 +368,7 @@ def test_r9_defers_an_issue_with_no_origin_epic_to_nits_and_reads_the_partial_ra
             "decision of 2026-10-10 that gave such an issue no deferral); the rules of this "
             "paragraph apply to it unchanged") in rule
     assert "They apply to `Nits` as to any companion Epic (PAT-ADR-0029)" in rule
-    agents = " ".join(_repo_text("AGENTS.md").split())
+    agents = " ".join(_repo_text(_R9_PAGE).split())
     assert "the cadencer does not yet apply PAT-ADR-0029" not in agents
     assert ("a ticket with no origin Epic defers to the companion Epic named exactly `Nits` "
             "(PAT-291, PAT-ADR-0029") in agents
@@ -386,7 +419,7 @@ def test_r9_deferral_names_no_tracker_and_cites_supported_contract_rows():
 
 
 def test_r9_states_what_is_not_mechanical_and_what_is_not_coded_yet():
-    text = _repo_text("AGENTS.md")
+    text = _repo_text(_R9_PAGE)
     flat = " ".join(text[text.index("**What only the reviewer can judge.**"):].split())
     assert ("no gate checks that the companion Epic of (b) exists, that it has no tracker "
             "link with the origin Epic") in flat
