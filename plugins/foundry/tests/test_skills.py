@@ -208,6 +208,10 @@ def test_merge_pr_defers_to_an_unlinked_companion_epic_with_four_standing_writes
     assert "one per batch or per theme" not in text
     assert ("If that issue is already started or closed, create a new follow-up issue: never "
             "add a remark to a started or closed issue") in text
+    # PLP-ADR-0065: cap of 30 remarks, counted over `- ` items of deferral comments
+    assert "once it holds 30 remarks or more (PLP-ADR-0065" in text
+    assert "a manual deferral uses that same header and `- ` items so that it is counted" in text
+    assert "A deferral is never split" in text
     # same scope as R9 and intake: inside and outside a campaign, every repository
     assert ("Four writes are authorized in advance by this skill's rule, without human "
             "confirmation, inside and outside an Epic campaign (FOUNDRY-ADR-0013, "
@@ -405,6 +409,10 @@ def test_release_skill_names_every_step_and_every_stop():
         "AGENTS.md#R5", "not done and not claimed",
     ):
         assert token in text, token
+    # PLP-ADR-0065: triage of the open follow-up issues before a minor or major release PR
+    assert "Triage STOP, for a **minor** or **major** release only, before the PR is opened" in text
+    assert "`Nits <ID>` and `Nits`" in text and "not a gate" in text
+    assert "Do not open the PR before the verdict" in text
     assert "Do not merge without the maintainer's explicit agreement" in text
     assert "Do not tag without the maintainer's explicit agreement" in text
     assert "Do not create the GitHub Release without the maintainer's explicit agreement" in text

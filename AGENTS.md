@@ -125,7 +125,8 @@ merge", on a page frozen after publication, a missing or generic documentation s
 R5, the PR of a companion Epic and a durable refusal of a write are corrected before the
 merge. Four writes are pre-authorized, and the review after a validated round is partial
 (PAT-ADR-0022), unless the change goes beyond those corrections or the reviewer asks for a
-full one with a reason. The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
+full one with a reason. A follow-up issue holding 30 remarks is full, and a minor or major release
+stops for their triage (PLP-ADR-0065). The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
 
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.

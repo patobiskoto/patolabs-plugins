@@ -124,6 +124,16 @@ Release note, migration guide and the published CHANGELOG section are frozen by 
   (step 2) and replace the old one.
 
 ## 4. Pull request and review
+Triage STOP, for a **minor** or **major** release only, before the PR is opened (PLP-ADR-0065):
+list the project's open follow-up issues, the children of the companion Epics `Nits <ID>` and
+`Nits` (how to read them: `docs/review-rounds.md`, "Reading the deferred-remarks debt"), show
+them to the maintainer with their remark counts, and stop. The maintainer decides, for each
+remark, to keep it (it becomes an ordinary issue, or part of one) or to drop it; this is a human
+verdict (FOUNDRY-ADR-0014), not a write authorized in advance. A follow-up issue whose remarks
+are all triaged goes to `dropped`; a companion Epic whose children are all done or dropped is
+closed. Do not open the PR before the verdict. This is a step of the skill, not a gate: no code
+refuses a release whose triage was not done, and the review of the release PR judges it.
+
 Open the PR with `foundry:open-pr` and review it with `foundry:review-pr`, merge only
 through `foundry:merge-pr`. Expect several rounds on frozen pages: a false sentence there
 is "fix before merge" (`AGENTS.md#R9(b)`), never deferred.

@@ -406,6 +406,59 @@ def test_a_comment_that_went_through_is_not_posted_twice(env):
     assert verbs(env).count("comment") == 1
 
 
+def deferral_comment(count, ticket="APP-9"):
+    return {"text": cd.comment_text(ticket, f"{ticket}@abc", 1, 1,
+                                    [{"text": f"old {i}"} for i in range(count)]), "created": 1}
+
+
+def test_remark_count_counts_only_list_items_of_deferral_comments():
+    comments = [deferral_comment(3), {"text": "- not a deferral\n- neither", "created": 2},
+                deferral_comment(2)]
+    assert cd.MAX_FOLLOW_UP_REMARKS == 30
+    assert cd.remark_count(comments) == 5 and cd.remark_count([]) == 0
+
+
+def test_a_full_follow_up_is_skipped_and_a_new_one_is_created(env):
+    reviewed(env)
+    seed_companion(env, follow_state="backlog")
+    full = env.world.issues["APP-51"]
+    full.comments.append(deferral_comment(cd.MAX_FOLLOW_UP_REMARKS))
+    assert step(env).outcome == "executed"
+    new, = [i for i in follow_ups(env) if i.id != "APP-51"]
+    assert verbs(env) == ["create-issue", "comment"] and env.world.edits[1][1] == [new.id]
+    assert len(full.comments) == 1 and full.state == "backlog"  # untouched, still open
+
+
+def test_a_follow_up_one_below_the_cap_still_takes_a_whole_deferral(env):
+    reviewed(env, nits=5)
+    seed_companion(env, follow_state="backlog")
+    follow_up = env.world.issues["APP-51"]
+    follow_up.comments.append(deferral_comment(cd.MAX_FOLLOW_UP_REMARKS - 1))
+    assert step(env).outcome == "executed"
+    assert len(follow_ups(env)) == 1 and verbs(env) == ["comment"]
+    assert cd.remark_count(follow_up.comments) == cd.MAX_FOLLOW_UP_REMARKS + 4  # not split
+
+
+def test_a_full_follow_up_holding_the_comment_of_this_deferral_is_reused_on_retry(env):
+    reviewed(env)
+    seed_companion(env, follow_state="backlog")
+    follow_up = env.world.issues["APP-51"]
+    follow_up.comments.append(deferral_comment(cd.MAX_FOLLOW_UP_REMARKS))
+    ref = f"APP-2@{test_campaign_effects.DIFF_HASH[:16]}"
+    follow_up.comments.append({"text": f"x {ref} x", "created": 2})
+    assert step(env).outcome == "executed"
+    assert len(follow_ups(env)) == 1 and "comment" not in verbs(env)
+
+
+def test_non_deferral_comments_do_not_fill_a_follow_up(env):
+    reviewed(env)
+    seed_companion(env, follow_state="backlog")
+    follow_up = env.world.issues["APP-51"]
+    follow_up.comments.append({"text": "\n".join(f"- note {i}" for i in range(40)), "created": 1})
+    assert step(env).outcome == "executed"
+    assert len(follow_ups(env)) == 1 and verbs(env) == ["comment"]
+
+
 def test_an_orphan_follow_up_is_attached_to_the_companion(env):
     reviewed(env)
     seed_companion(env)

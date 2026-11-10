@@ -43,7 +43,18 @@ the remarks are held by a single follow-up issue, which gathers all the deferred
 of the origin Epic. In `Nits`, which has no origin Epic, that issue gathers the remarks of
 every issue of the project with no origin Epic. If that issue is already started or
 closed, a new follow-up issue is created: no remark is added to a started or closed issue
-(maintainer decision of 2026-10-11). The follow-up issue that receives the remarks of a
+(maintainer decision of 2026-10-11). A follow-up issue that already holds 30 remarks or more is
+full (PLP-ADR-0065, which amends PAT-ADR-0018 and PAT-ADR-0029): it is treated like a started or
+closed one, so no remark is added to it and the next deferral creates a new follow-up issue in the
+same companion Epic (write 2 below). A remark is one `- ` list item of a deferral comment; the
+count is made over the deferral comments of the issue, in the same format for the coordinator and
+for the `defer-remarks` effect. A deferral that would cross 30 is not split: it goes whole into an
+issue that is not yet full. A full issue stays open. Before the pull request of a minor or major
+release opened through `foundry:release`, the coordinator lists the open follow-up issues of the
+project (companion Epics `Nits <ID>` and `Nits`) and stops for the maintainer's triage: each remark
+is kept (an ordinary issue) or dropped; a follow-up issue whose remarks are all triaged goes to
+`dropped`, and a companion Epic whose children are all done or dropped is closed. That triage is a
+human verdict (FOUNDRY-ADR-0014), a step of the skill and not a gate. The follow-up issue that receives the remarks of a
 PR is cited in that PR's description before the merge. These three cases are still
 corrected before the merge; the
 rest of this rule adds two more (the PR of an issue of a companion Epic, `Nits` included,
@@ -197,7 +208,11 @@ companion Epic named exactly `Nits` (PAT-291, PAT-ADR-0029; `NO_ORIGIN_COMPANION
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
 `edit link` and `edit comment`, posts at most one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
-its attempt journal. The following are corrected by the correction loop and
+its attempt journal. A follow-up issue holding `MAX_FOLLOW_UP_REMARKS` (30) remarks, counted by
+`remark_count` over the comments that open with `DEFERRAL_HEADER` (both in `campaign_defer.py`), is
+skipped by `_find_follow_up` like a started one, so the effect creates a new follow-up issue; a
+full issue that already carries the comment of the deferral being retried stays usable, so a retry
+posts nothing twice (PLP-ADR-0065). The count only sees the comments the adapter's `get_issue` returns (the Linear adapter keeps the 10 most recent ordinary ones, so the cap may never apply there; other adapters unknown): `docs/review-rounds.md`, "Reading the deferred-remarks debt". The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
 targets the PR description alone: the correction then replaces the description, which is not
 re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),
