@@ -280,8 +280,186 @@ pull requests:
 - PAT-148 will be counted in full although it also holds remarks of PAT-137 and
   PAT-147, merged before the start.
 
-The rounds of the second window are not counted on this page yet; they are counted
-after the merge of the tenth origin issue, for that decision.
+### Second window: result (PLP-359, counted on 2026-11-10)
+
+The state above is kept as written; this section counts the window. The tenth origin issue
+is PAT-193 (PR 136, `81724f1`, the first origin issue merged after PAT-170 in `git log
+--first-parent origin/main`). The sixth follow-up issue is PAT-194 (PR 137): it settles the
+remarks deferred by PAT-193 (PR title). That it belongs to the companion Epic is deduced
+from that title and from its round line "follow-up none": the tracker of October 11 (ids
+`PAT-n`) can no longer be read, so its parent is unknown. All 16 pull requests below were
+merged on 2026-10-11 (`gh pr view`, `mergedAt`).
+
+Rounds per issue, read from the per-round lines (format of `skills/merge-pr/SKILL.md`) of the
+PR descriptions with `gh pr view` on 2026-11-10; the split is "follows first|blocking|remarks"
+as in the first window:
+
+| Issue | PR | Rounds | First | After blocking | After remarks |
+|---|---|---|---|---|---|
+| PAT-146 | 122 | 1 | 1 | 0 | 0 |
+| PAT-149 | 124 | 2 | 1 | 1 | 0 |
+| PAT-163 | 126 | 2 | 1 | 1 | 0 |
+| PAT-164 | 127 | 1 | 1 | 0 | 0 |
+| PAT-167 | 128 | 3 | 1 | 2 | 0 |
+| PAT-168 | 129 | 3 | 1 | 2 | 0 |
+| PAT-190 | 130 | 3 | 1 | 2 | 0 |
+| PAT-169 | 133 | 3 | 1 | 2 | 0 |
+| PAT-170 | 134 | 2 | 1 | 1 | 0 |
+| PAT-193 | 136 | 3 | 1 | 0 | 2 |
+| Ten origin issues | | 23 | 10 | 11 | 2 |
+| PAT-148 (follow-up) | 123 | 2 | 1 | 0 | 1 |
+| PAT-150 (follow-up) | 125 | 2 | 1 | 0 | 1 |
+| PAT-187 (follow-up) | 131 | 2 | 1 | 0 | 1 |
+| PAT-189 (follow-up) | 132 | 4 | 1 | 1 | 2 |
+| PAT-192 (follow-up) | 135 | 2 | 1 | 0 | 1 |
+| PAT-194 (follow-up) | 137 | 1 | 1 | 0 | 0 |
+| Six follow-up issues | | 13 | 6 | 1 | 6 |
+| Sixteen PRs | | 36 | 16 | 12 | 8 |
+
+Cross-check (observed on 2026-11-10): `routing review-rounds <ISSUE-ID> --json` on the local
+proof store, which still holds these proofs under their `PAT-n` ids, gives the same `rounds`,
+`validated_rounds` and `blocked_rounds` for all 16 issues.
+
+Result: complete in the sense of "Observation window", because the six follow-up issues
+that settle the deferred remarks of the ten origin issues were delivered (remarks of PAT-146
+settled by PAT-148, of PAT-149 by PAT-150, of PAT-163 and PAT-164 by PAT-187, of PAT-167,
+PAT-168 and PAT-190 by PAT-189, of PAT-169 and PAT-170 by PAT-192, of PAT-193 by PAT-194). 36 rounds over 10 origin issues, i.e.
+3.6 rounds per origin issue (arithmetic of the table), which is not below 3.2: the second
+return trigger of "Return to the previous practice" is met as written. The first trigger
+(a blocking-level defect found after the merge in a diff merged under rule (b)) was not
+searched for here: unknown.
+
+- Attribution, as in the first window: PAT-148 is counted in full although it also holds
+  the remarks of PAT-137 and PAT-147 (merged before the start) and of PAT-146. Without it,
+  34 rounds over 10 origin issues, i.e. 3.4. PAT-146 and PAT-149 with PAT-148 and PAT-150
+  belong to both windows; counting neither of the four, 29 rounds over 8 origin issues, i.e.
+  3.6 (3.625). No attribution brings the figure below 3.2.
+- What the window measures. All 16 pull requests were merged on 2026-10-11, before the
+  extension of the partial review to every pull request (PAT-172, PR 147, merged on
+  2026-10-15, see the section "Partial review on every pull request"). It measures
+  rule (b) as amended by PAT-144, not the current rule; PAT-193 itself ran full
+  re-reviews after its rounds 1 and 2 (its PR description). The effect of the extension on
+  the number of rounds is unknown and not counted.
+- Not comparable one to one: the baseline (PRs 102 to 111) and this window are different
+  issues; the figure says nothing on the cause of the difference (unknown). The rounds
+  per origin issue are counted by hand from declarations in PR descriptions, checked
+  against the proof store only for their totals.
+- For scale only, not a window figure: on 2026-11-10, the 25 issues of the local proof store
+  with the latest review completion have 52 rounds, 17 of them after an already validated
+  round (`routing review-rounds`, 2.1 rounds per issue, no follow-up issue added).
+
+## Cost of a round that follows a validated round (PLP-359, measured on 2026-11-10)
+
+What is measured: the wall-clock duration and the reviewer tokens of the review rounds whose
+previous round on the same issue was validated (`mergeable`, every criterion `pass`; the
+rounds that `AGENTS.md#R9` (b) reviews partially). It is a proxy: no local source says that
+these rounds were partial. Their `type` is unrecorded (`no_campaign_record` for the 28 rounds
+of the set: `routing kpi-export` omits their `review_round` records, so they were run outside a
+campaign, deduced), and whether a packet was prepared with `--previous-head` was not looked at: unknown.
+
+Sets, all from the local proof store of this repository (44 `PLP-n` issues, 91 rounds,
+2026-10-23 to 2026-11-07):
+
+- P: the 28 rounds that follow a validated round, over 22 issues.
+- F: the 22 first rounds of those same 22 issues (the same issues as P, checked equal).
+- B, a second reference: the 19 rounds that follow a blocked round, over 13 issues. The
+  rule makes them full reviews.
+
+Method and commands (run from `plugins/foundry/`, results kept outside the repository):
+
+1. `python3 tooling/foundry_cli.py routing review-rounds PLP-<n> --root <repo root> --json`
+   for each issue: `per_round` gives `validated`, `started_at` (claim start) and
+   `completed_at`; the duration of a round is their difference. The stored ledger order gives
+   the previous round.
+2. `python3 tooling/foundry_cli.py routing kpi-export <the 44 issues> --root <repo root>
+   --output <file>`: the `attempt` records of role `reviewer` carry `tokens` (`input`,
+   `cached_input`, `cache_write_input`, `output`, [kpi-export.md](kpi-export.md)). A round
+   is paired with the reviewer `attempt` of its issue whose `started_at` lies between the
+   claim start and the completion of the round. This pairing is a rule of this page, not a
+   recorded link (deduced): it gave exactly one attempt for 69 of the 91 rounds and none for
+   22, no attempt was paired twice and none was left over; the paired attempts start 19 to
+   97 seconds after the claim start.
+3. Statistics are medians, with minimum and maximum, over the rounds of a set that have the
+   value. The cache read figure is the volume re-read at every request, not new text.
+
+Unknown, stated per set (unknown is never counted as zero):
+
+- Tokens could not be paired for 22 rounds, all completed between 2026-10-23 and
+  2026-10-27: PLP-1, PLP-2, PLP-310 to PLP-314, PLP-316 to PLP-319 and PLP-327 (no reviewer
+  `attempt` in the window; the cause is unknown, the dates are those of the issues that introduced the
+  invocation record, PLP-316 and after, deduced). That is 7 of the 28 rounds of P, 7 of the 22
+  of F and 3 of the 19 of B; the statistics on tokens are over the 21, 15 and 16 others.
+- Most token figures are lower bounds: a request of the log with no terminal snapshot is
+  counted with the largest value observed (`lower_bound_requests`, [kpi-export.md](kpi-export.md),
+  "Tokens that are a lower bound"). 18 of the 21 rounds of P, 13 of the 15 of F and all 16 of B
+  are in that case; the size of the error is unknown and may differ between the sets, so the
+  ratios below are not reliable. Only 5 paired rounds have exact tokens: PLP-350 rounds 1 to 3
+  and PLP-353 rounds 1 and 2.
+
+Results (P against F; B for reference):
+
+| | Rounds | With tokens | Duration, median (min to max) | Cache read, median | Cache write, median | Input, median | Output, median |
+|---|---|---|---|---|---|---|---|
+| P, after a validated round | 28 | 21 | 219 s (123 to 4809) | 531,284 | 73,949 | 26 | 1,655 |
+| F, first round of the same issues | 22 | 15 | 463 s (230 to 869) | 1,311,794 | 105,517 | 44 | 4,527 |
+| B, after a blocked round | 19 | 16 | 379 s (104 to 23628) | 789,910 | 77,562 | 32 | 2,630 |
+
+- Duration: the median of P is 0.47 of that of F (219 s against 463 s); 23 of the 28 rounds
+  of P are shorter than the first round of the same issue. The means (441 s for P, 513 s for
+  F) are driven by one round of P, PLP-332 round 3 (4809 s), and, in B, by PLP-328 round 2
+  (23628 s): a duration is the span from claim to completion, so it includes any wait
+  inside it.
+- Tokens, in the 21 pairs where both the round of P and the first round of its issue have
+  tokens (15 issues), a round of P over the first round of its issue: median ratio 0.43 of
+  cache read (16 of 21 below 1), 0.61 of cache write, 0.62 of input, 0.43 of output.
+  Lower bounds on both sides.
+- On the exact pairs only (2 issues): PLP-350 rounds 2 and 3 read 884,696 and 757,083 cache
+  tokens against 725,444 for round 1, and wrote 9,034 and 9,646 output tokens against 11,047;
+  PLP-353 round 2 read 612,961 against 1,859,300 and wrote 10,093 against 17,961. So a
+  round after a validated one was not cheaper on cache read in one of the two issues; two
+  issues are too few to conclude.
+- What is not measured: the cost of the alternative, a full re-review of the same
+  correction (the figure for B is another set of issues, not that), the coordinator's own
+  work (building the packet, correcting, writing the description), the cost of a longer
+  chain of rounds, and any effect on the defects merged.
+
+The twelve most recent rounds of P (reviewer tokens `input` / cache read / cache write /
+`output`, `*` for a lower bound; duration of the first round of the same issue in the last
+column):
+
+| Round | Completed | Duration | Input | Cache read | Cache write | Output | First round |
+|---|---|---|---|---|---|---|---|
+| PLP-324 r2 | 2026-10-30 | 208 s | 26* | 540,433* | 65,171* | 1,367* | 454 s |
+| PLP-321 r2 | 2026-10-30 | 454 s | 50* | 1,876,558* | 111,135* | 4,802* | 869 s |
+| PLP-345 r2 | 2026-10-30 | 191 s | 20* | 465,759* | 83,708* | 1,628* | 295 s |
+| PLP-29 r2 | 2026-10-30 | 148 s | 22* | 387,711* | 54,041* | 1,350* | 393 s |
+| PLP-337 r2 | 2026-10-30 | 243 s | 22* | 531,284* | 85,182* | 1,382* | 824 s |
+| PLP-337 r3 | 2026-10-30 | 185 s | 18* | 378,549* | 76,752* | 1,655* | 824 s |
+| PLP-337 r4 | 2026-10-30 | 192 s | 18* | 342,561* | 74,050* | 2,358* | 824 s |
+| PLP-337 r5 | 2026-10-30 | 178 s | 20* | 482,024* | 83,886* | 2,774* | 824 s |
+| PLP-346 r3 | 2026-10-30 | 212 s | 26* | 530,744* | 63,259* | 1,140* | 275 s |
+| PLP-350 r2 | 2026-11-02 | 175 s | 38 | 884,696 | 84,193 | 9,034 | 230 s |
+| PLP-350 r3 | 2026-11-02 | 201 s | 34 | 757,083 | 64,630 | 9,646 | 230 s |
+| PLP-353 r2 | 2026-11-07 | 322 s | 30 | 612,961 | 60,660 | 10,093 | 488 s |
+
+The tokens of all 21 rounds of P with tokens: 648 input, 17,870,865 cache read, 1,613,534
+cache write and 71,566 output in total, over 10,108 s of the same rounds (lower bounds). This is
+the reviewer only, at the model requested at routing (`opus-5.5` for all 69 paired
+attempts, [kpi-export.md](kpi-export.md): the model served is not recorded).
+
+## Decision on rule R9 after these two measures (PLP-359)
+
+Decision of the maintainer (2026-11-10), taken on the figures of the two sections above:
+rule R9 is kept as it is. The second return trigger is met as written (3.6, not below 3.2)
+and does not lead to the return to the previous practice. Reasons given with the decision:
+the second window was merged before the extension of the partial review to every pull
+request (PAT-172, PR 147), so it does not measure the current rule; the 25 issues with the
+latest review completion have 2.1 rounds per issue (no follow-up issue added, so not the
+window figure); a round that follows a validated round has a median duration of 219 s
+against 463 s for the first round of the same issues. No third window is counted by hand:
+the rounds are read with `routing review-rounds` (section "Per-issue report"). `AGENTS.md`,
+`CLAUDE.md`, PAT-ADR-0018 and PAT-ADR-0022 are not changed; a later change to either ADR
+still goes through a new ADR.
 
 ## Return to the previous practice
 
@@ -330,8 +508,9 @@ relies on the previous round for the unchanged parts, and the PR description say
 mechanical check distinguishes a partial from a full review; the merge gate and the proof
 format are unchanged. The rule is in `AGENTS.md#R9` (b), `skills/merge-pr/SKILL.md` and
 `skills/review-pr/SKILL.md`. The partial and full review times quoted above are one
-observation each; the effect of this extension on the number of rounds is unknown and is
-not counted on this page. The only figure on what giving up the extra full look costs is
+observation each (the cost of a round that follows a validated round is measured in the
+section "Cost of a round that follows a validated round"); the effect of this extension on the
+number of rounds is unknown and is not counted on this page. The only figure on what giving up the extra full look costs is
 the one in "Limits" (one of 11 full re-reviews after the correction of remarks caught an
 old defect); it comes from that section, written before this extension, and is not
 re-counted for it. The previous round's verdict and remarks that the packet carries
