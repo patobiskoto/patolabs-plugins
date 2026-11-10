@@ -23,7 +23,9 @@ detail of the rule; a summary below never overrides it.
 Every PR opens through `foundry:open-pr` and merges through `foundry:merge-pr` — never
 `gh pr create`, `gh pr merge`, or a direct push to the default branch. Where the Foundry
 plugin is active, the `PreToolUse` Bash guard (`plugins/foundry/hooks/guard_bash.py::deny_reason`)
-and the `plugins/foundry/.githooks/` pre-push hook deny them (FOUNDRY-ADR-0001). Detail:
+denies them; the pre-push hook in `plugins/foundry/.githooks/`, once enabled with
+`git config core.hooksPath plugins/foundry/.githooks`, refuses a direct push to the default
+branch outside either agent (FOUNDRY-ADR-0001). Detail:
 `plugins/foundry/docs/process-contract-r1-r6.md`, section R1.
 
 ## R2 — Scan the ADR index before an architecture choice
@@ -122,7 +124,8 @@ or `Nits` with no origin Epic, PAT-ADR-0029), not into the PR. Remarks marked "f
 merge", on a page frozen after publication, a missing or generic documentation status under
 R5, the PR of a companion Epic and a durable refusal of a write are corrected before the
 merge. Four writes are pre-authorized, and the review after a validated round is partial
-(PAT-ADR-0022). The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
+(PAT-ADR-0022), unless the change goes beyond those corrections or the reviewer asks for a
+full one with a reason. The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
 
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.

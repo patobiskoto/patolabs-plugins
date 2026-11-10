@@ -197,7 +197,7 @@ supplémentaire qui n'a pas ce biais.
      pour le profil modifié aussi). Les cas de `tests/test_cache_ttl_trial.py` qui exécutent le mode d'essai (23 à ce jour) **se sautent
      d'eux-mêmes** (`skipped`), puisque le mode refuse ; les tests de la décision (`tests/test_cache_ttl_interactive.py`) nomment le modèle et
      passent tels quels, comme tous les autres ;
-  4. met à jour les phrases qui affirment le champ : la puce de R7 (`AGENTS.md` et `CLAUDE.md`, octet pour octet), la section PAT-134 de
+  4. met à jour les phrases qui affirment le champ : la puce de R7 (`docs/process-contract-r7.md` depuis PLP-362 ; avant, `AGENTS.md` et `CLAUDE.md`, octet pour octet), la section PAT-134 de
      `docs/model-routing.md`, une entrée de `CHANGELOG.md`, et cette page (date du retour, décision lue).
 
   **Ce qui reste en état de marche après le retour** : `python3 -m foundry.cache_ttl_replay` (modes de PAT-132 et PAT-133, et
