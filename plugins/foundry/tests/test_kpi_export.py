@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from foundry import escalation, invocation_log, kpi_export
+from foundry import escalation, invocation_log, kpi_export, kpi_publish, token_attribution
 from foundry.escalation import EscalationStore
 from foundry.routing import RoutingConfigError
 from test_review_turns import _attempt, _hex, _proof, _receipt, _snapshot
-from test_token_attribution import TOOL_USE, _claude_request, _claude_tree
+from test_token_attribution import TOOL_USE, _claude_call, _claude_request, _claude_tree, _cli
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPO = "synthetic-repo"
@@ -606,3 +606,121 @@ def test_parent_reported_last_request_makes_a_complete_record_and_a_still_partia
     assert still["amount"]["completeness"] == "partial" and still["tokens"]["output"] == 7 + 9000
     assert "lower bound: 1 request(s)" in still_data["provenance"][still["record_id"]]["from"]["tokens.output"]
     assert "parent tool result" in still_data["provenance"][still["record_id"]]["from"]["tokens.output"]
+
+
+def _coordinator_log(tmp_path, extra=()):
+    """PLP-1 [10:00, 10:30] overlaps PLP-2 [10:20, 10:40]; PLP-3 never merges; one request lies outside all."""
+    d = "2026-11-03T"
+    return _claude_tree(tmp_path, [
+        _claude_request(d + "09:00:00.000Z", 1),
+        _claude_call(d + "10:00:00.000Z", _cli("start", "PLP-1")),
+        _claude_request(d + "10:10:00.000Z", 2),
+        _claude_call(d + "10:20:00.000Z", _cli("start", "PLP-2")),
+        _claude_request(d + "10:25:00.000Z", 3),                       # PLP-1 and PLP-2
+        _claude_call(d + "10:30:00.000Z", _cli("merge", "PLP-1")),
+        _claude_request(d + "10:35:00.000Z", 4),                       # PLP-2 only
+        _claude_call(d + "10:40:00.000Z", _cli("merge", "PLP-2")),
+        _claude_call(d + "11:00:00.000Z", _cli("start", "PLP-3")),
+        _claude_request(d + "11:10:00.000Z", 5),                       # PLP-3 window unclosed
+        *extra,
+    ], [])
+
+
+def _coordinator_records(document):
+    data, records = _records(document)
+    return data, [r for r in records if r["role"] == "coordinator"]
+
+
+def test_coordinator_session_is_one_window_record_per_issue_and_nothing_is_counted_twice(tmp_path):
+    """PLP-357 criteria 1 and 2: the sharing rule, with totals that prove no request is counted twice."""
+    state = tmp_path / "state"
+    main = _coordinator_log(tmp_path)
+    data, records = _coordinator_records(_build(state, ("PLP-1", "PLP-2", "PLP-3"), claude_sessions=[main]))
+    for record in records:
+        _check(record)
+    by_issue = {r["anchor"]["issue_id"]: r for r in records}
+    assert sorted(by_issue) == ["PLP-1", "PLP-2"]  # PLP-3 has no closed window: unknown, no record
+    one, two = by_issue["PLP-1"], by_issue["PLP-2"]
+    assert (one["attribution"], one["status"], one["model"]) == (
+        "window", "unknown", {"configured": None, "served": "claude-sonnet-5-5"})
+    assert (one["tokens"]["output"], two["tokens"]["output"]) == (2000, 4000)  # the 3000 of the overlap is in neither
+    assert (one["tokens"]["input"], two["tokens"]["input"]) == (2, 4)
+    assert one["ended_at"] > one["started_at"] and one["observed_at"] == one["ended_at"]
+    assert one["amount"]["completeness"] == "partial" and two["amount"]["completeness"] == "partial"
+    assert int(one["amount"]["amount_micros"]) > 0
+    # an overlap is declared for each issue it touches, an open window is declared, nothing is split
+    omitted = [o for o in data["omitted"] if o["role"] == "coordinator"]
+    assert omitted == [
+        {"issue": "PLP-1", "kind": "attempt", "role": "coordinator", "requests": 3,
+         "reason": "coordinator_requests_in_overlapping_windows"},
+        {"issue": "PLP-2", "kind": "attempt", "role": "coordinator", "requests": 3,
+         "reason": "coordinator_requests_in_overlapping_windows"},
+        {"issue": "PLP-3", "kind": "attempt", "role": "coordinator", "reason": "coordinator_window_unclosed"}]
+    # every request of the log is in exactly one place: a record, the overlap, or outside the issues
+    report = token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state)
+    in_records = one["tokens"]["output"] + two["tokens"]["output"]
+    overlap = sum(s["tokens"]["output_tokens"] for s in report["slices"] if s["method"] == "overlap")
+    outside = sum(s["tokens"]["output_tokens"] for s in report["slices"] if s["method"] == "unattributed")
+    assert (in_records, overlap, outside) == (6000, 3000, 6000)
+    assert in_records + overlap + outside == report["totals"]["tokens"]["output_tokens"] == 15000
+    assert data["provenance"][one["record_id"]]["null"]["model.configured"]
+    assert "overlapping windows" in data["provenance"][one["record_id"]]["from"]["amount"]
+
+
+def test_a_lone_window_is_complete_and_a_later_source_change_is_a_revision_of_the_same_chain(tmp_path):
+    state = tmp_path / "state"
+    d = "2026-11-03T"
+    def opus(request):  # an Opus 5.5 request: no 1h cache-write rule, so the amount can be complete
+        return {**request, "message": {**request["message"], "model": "claude-opus-5-5"}}
+
+    rows = [_claude_call(d + "10:00:00.000Z", _cli("start", "PLP-1")), opus(_claude_request(d + "10:10:00.000Z", 2))]
+    closed = [_claude_call(d + "10:30:00.000Z", _cli("merge", "PLP-1"))]
+    first = _claude_tree(tmp_path, rows + closed, [])
+    _, (before,) = _coordinator_records(_build(state, claude_sessions=[first]))
+    assert before["amount"]["completeness"] == "complete" and before["tokens"]["output"] == 2000
+    same = _build(state, claude_sessions=[first])
+    assert _coordinator_records(same)[1] == [before]  # deterministic
+    # a request of the window found later (the log is read again): same chain, new fingerprint, new record_id
+    later = _claude_tree(tmp_path, rows + [opus(_claude_request(d + "10:20:00.000Z", 3))] + closed, [])
+    _, (after,) = _coordinator_records(_build(state, claude_sessions=[later]))
+    assert after["attempt_id"] == before["attempt_id"] and after["record_id"] != before["record_id"]
+    assert after["source"]["fingerprint"] != before["source"]["fingerprint"]
+    ledger = kpi_publish.PublishedLedger(tmp_path / "ledger", "https://example.invalid", "PLP")
+    ledger.note(before)
+    revised = ledger.revise(after)
+    assert (revised["revision"], revised["supersedes_id"]) == (2, before["record_id"])
+    assert revised["started_at"] == before["started_at"]  # DevHub requires the same start on a revision
+
+
+def test_requests_after_the_merge_are_not_in_the_window_and_an_unclosed_window_gives_no_record(tmp_path):
+    state = tmp_path / "state"
+    d = "2026-11-03T"
+    head = [_claude_call(d + "10:00:00.000Z", _cli("start", "PLP-1")), _claude_request(d + "10:10:00.000Z", 2)]
+    merged = _claude_tree(tmp_path, head + [_claude_call(d + "10:30:00.000Z", _cli("merge", "PLP-1")),
+                                            _claude_request(d + "12:00:00.000Z", 9)], [])
+    _, (record,) = _coordinator_records(_build(state, claude_sessions=[merged]))
+    assert record["tokens"]["output"] == 2000  # the session continued after the merge: not counted
+    data, none = _coordinator_records(_build(state, claude_sessions=[_claude_tree(tmp_path / "o", head, [])]))
+    assert none == [] and data["omitted"] == [{"issue": "PLP-1", "kind": "attempt", "role": "coordinator",
+                                               "reason": "coordinator_window_unclosed"}]
+
+
+def test_coordinator_without_log_or_window_is_unknown_never_zero(tmp_path):
+    state = tmp_path / "state"
+    data, records = _coordinator_records(_build(state))
+    assert records == [] and data["omitted"] == []  # no session log given: nothing is said, nothing is zero
+    log = _claude_tree(tmp_path, [_claude_request("2026-11-03T10:10:00.000Z", 2)], [])
+    data, records = _coordinator_records(_build(state, claude_sessions=[log]))
+    assert records == [] and data["omitted"] == [{"issue": "PLP-1", "kind": "attempt", "role": "coordinator",
+                                                  "reason": "no_coordinator_window_in_the_given_logs"}]
+
+
+def test_an_unpriced_coordinator_model_keeps_the_tokens_and_a_null_amount(tmp_path):
+    state = tmp_path / "state"
+    d = "2026-10-01T"  # before the sonnet-5.5 grid entry (effective 2026-10-27): no price for that day
+    main = _claude_tree(tmp_path, [_claude_call(d + "10:00:00.000Z", _cli("start", "PLP-1")),
+                                   _claude_request(d + "10:10:00.000Z", 2),
+                                   _claude_call(d + "10:30:00.000Z", _cli("merge", "PLP-1"))], [])
+    data, (record,) = _coordinator_records(_build(state, claude_sessions=[main]))
+    assert record["tokens"]["output"] == 2000 and record["amount"] is None
+    assert data["provenance"][record["record_id"]]["null"]["amount"] == "no_price_for_model_and_date"

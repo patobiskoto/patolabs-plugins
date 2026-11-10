@@ -232,6 +232,93 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
     return out, omitted
 
 
+def _coordinators(issue: str, coordinator: dict | None, windows: list, grid: dict) -> tuple[list, list]:
+    """Records of the coordinator session cost of ``issue`` (PLP-357, ``docs/kpi-export.md``).
+
+    One record per (issue, host session): the requests of the session inside the one ``issue start`` ->
+    ``issue merge`` window of the issue (method ``window``) that no other window, closed or open, also contains.
+    Requests in two or more windows are in no record (``omitted``, never split); requests outside any window of the
+    issue are not this issue's and are not mentioned.
+    """
+    if coordinator is None:
+        return [], []
+    out, omitted = [], []
+    mine = [w for w in windows if w["issue"] == issue]
+    omitted.extend({"issue": issue, "kind": "attempt", "role": "coordinator", "reason": "coordinator_window_unclosed"}
+                   for w in mine if not w["closed"])
+    if not mine:
+        omitted.append({"issue": issue, "kind": "attempt", "role": "coordinator",
+                        "reason": "no_coordinator_window_in_the_given_logs"})
+    for (named, host, session), seen in sorted(coordinator.items(), key=lambda kv: (kv[0][0], kv[0][1], _digest(kv[0][2]))):
+        if named != issue:
+            continue
+        if seen["overlap_requests"]:
+            omitted.append({"issue": issue, "kind": "attempt", "role": "coordinator", "requests": seen["overlap_requests"],
+                            "reason": "coordinator_requests_in_overlapping_windows"})
+        if not seen["requests"]:
+            continue
+        started, ended = _epoch_ms(seen["first"].isoformat()), _epoch_ms(seen["last"].isoformat())
+        groups = sorted(seen["groups"].items())
+        digest = _digest("coordinator", issue, host, session)[:32]
+        material = {"issue": issue, "host": host, "session": digest, "requests": seen["requests"],
+                    "first": started, "last": ended, "overlap_requests": seen["overlap_requests"],
+                    "lower_bound_requests": seen["lower_bound"],
+                    "groups": [[model, day, g["tokens"], g["lower_bound"]] for (model, day), g in groups]}
+        rec = _Record(issue, "attempt", "at-" + digest, "token-attribution.v1", material)
+        priced, versions, why = [], [], None
+        for (model, day), group in groups:
+            amount, why = _amount(grid, host, _id(model), day, group["tokens"],
+                                  group["token_requests"] if seen["granular"] else None, group["lower_bound"])
+            if amount is None:
+                break
+            priced.append(amount)
+            versions.append(amount["rate_version"])
+        amount = None
+        if why is None and priced:
+            amount = {"amount_micros": str(sum(int(a["amount_micros"]) for a in priced)), "currency": "USD",
+                      "unit": "micros", "method": "estimated",
+                      "completeness": "partial" if (seen["overlap_requests"] or seen["lower_bound"]
+                                                    or any(a["completeness"] == "partial" for a in priced))
+                      else "complete",
+                      "rate_version": versions[0] if len(set(versions)) == 1 else
+                      "pricing-v1-" + hashlib.sha256(_canonical(sorted(set(versions))).encode("utf-8")).hexdigest()[:12]}
+        models = {_id(m) for (m, _), _g in groups}
+        served = models.pop() if len(models) == 1 and None not in models else None
+        log, how = "token_attribution (routing token-attribution)", "coordinator requests of the issue window"
+        body = {
+            "role": rec.put("role", "coordinator", "constant: the main host session that drives the issue"),
+            "host": rec.put("host", host if host in ("claude", "codex") else None, log + " host of the log",
+                            "host_not_claude_or_codex"),
+            "tier": rec.put("tier", None, "", "the coordinator tier is not recorded locally"),
+            "effort": rec.put("effort", None, "", "the coordinator effort is not recorded locally"),
+            "model": {"configured": rec.put("model.configured", None, "", "the coordinator model is not routed by Foundry"),
+                      "served": rec.put("model.served", served, log + ": model of the host log requests",
+                                        "no_single_valid_model_in_the_window")},
+            "status": rec.put("status", "unknown", "constant: no completion of a coordinator session is observed"),
+            "failure_class": rec.put("failure_class", "unknown", "constant: see status"),
+            "tokens": {"input": None, "cached_input": None, "cache_write_input": None, "output": None,
+                       "reasoning_output": rec.put("tokens.reasoning_output", None, "",
+                                                   "per-invocation attachment carries billing keys only")},
+            "amount": rec.put("amount", amount, "pricing-v1.json grid applied per model and day to the window requests "
+                              "(cost_attribution.price_for); API-equivalent estimate, not an invoice"
+                              + ("; partial: " + ", ".join(c for c, on in (
+                                  ("requests of the session in overlapping windows are not counted", seen["overlap_requests"]),
+                                  ("some requests are a lower bound", seen["lower_bound"]),
+                                  ("a 1h cache write may be priced at the 5m rate",
+                                   any(a["completeness"] == "partial" for a in priced) and not seen["lower_bound"])) if on)
+                                 if amount and amount["completeness"] == "partial" else ""), why),
+        }
+        for key, name in _TOKEN_FIELDS:
+            body["tokens"][key] = rec.put(f"tokens.{key}", seen["tokens"][name], log + " (method window): " + how
+                                          + ("; lower bound: %d request(s) have no terminal snapshot"
+                                             % seen["lower_bound"] if seen["lower_bound"] else ""))
+        out.append((rec, rec.finish(started, ended, ended, "window",
+                                    "host log request times: first and last request of the window", body)))
+        rec.fields["attribution"] = "window: " + how + " (issue start to issue merge, one window of the issue)"
+        rec.fields["ended_at"] = "observed: time of the last request of the window in the host log"
+    return out, omitted
+
+
 def _implementer_model(issue: str, head: str, base: str | None, repository: str, state_dir) -> tuple[str | None, str]:
     found = invocation_log.invocations_for_diff(issue, head, base, repository=repository, state_dir=state_dir)
     if found is None:
@@ -403,14 +490,17 @@ def build(issues: list[str], repository: str, *, claude_sessions=(), codex_sessi
     journal = Path(state_dir if state_dir is not None else registry.data_dir()) / campaign_effects.ATTEMPTS_NAME
     grid = cost_attribution.load_price_grid(cost_attribution.PRICE_GRID_PATH)
     records = invocation_log.records_by_id(repository=repository, state_dir=state_dir)
-    usage = None
+    usage = coordinator = None
+    windows: list = []
     if claude_sessions or codex_sessions:
-        usage = {}
-        token_attribution.report(claude_sessions=claude_sessions, codex_sessions=codex_sessions,
-                                 repository=repository, state_dir=state_dir, per_invocation=usage)
+        usage, coordinator = {}, {}
+        windows = token_attribution.report(claude_sessions=claude_sessions, codex_sessions=codex_sessions,
+                                           repository=repository, state_dir=state_dir, per_invocation=usage,
+                                           per_coordinator=coordinator)["windows"]
     entries, omitted = [], []
     for issue in issues:
         for found, skipped in (_attempts(issue, records, usage, grid),
+                               _coordinators(issue, coordinator, windows, grid),
                                _rounds(issue, repository, state_dir, journal),
                                _escalations(issue, repository, state_dir, records)):
             entries.extend(found)
