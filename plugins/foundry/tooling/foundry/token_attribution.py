@@ -4,7 +4,8 @@ Read-only and replayable: the same logs and the same local invocation record giv
 same result. No network, no tracker write, no clock, no routing or gate input. Tokens come
 only from ``cost_attribution.read_host_log`` (FOUNDRY-ADR-0015, ``timestamps=True`` adds
 the per-request timestamp). Beside them the module extracts only closed-vocabulary
-identifiers: an issue id, a role, a Foundry invocation id, a timestamp. No prompt, path,
+identifiers: an issue id, a role, a Foundry invocation id, a timestamp, the status word of a host task
+notification (``claude_completions``). No prompt, path,
 command, host session id or secret is retained or emitted.
 
 Methods, strongest first:
@@ -42,6 +43,11 @@ _WINDOW_CALL = re.compile(r"foundry_cli\.py[\"'\\]*\s+issue\s+(start|merge)\s+("
 _ROLE_LINE = re.compile(r"Resolved role: (architect|implementer|reviewer|scout)\Z")
 _TOOL_USE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _CODEX_SUFFIX = re.compile(r"(.*)_([0-9a-f]{16})\Z")
+# Head of a host task notification (PLP-358): only the tool call id and the status word are read, from
+# a fixed layout; the summary and result that follow are never read.
+_NOTICE = re.compile(r"<task-notification>\s*<task-id>[A-Za-z0-9_-]{1,128}</task-id>\s*"
+                     r"<tool-use-id>([A-Za-z0-9_-]{1,128})</tool-use-id>\s*(?:<output-file>[^<\n]*</output-file>\s*)?"
+                     r"<status>(completed|failed|stopped|killed)</status>")
 _ROLES = tuple(sorted(AGENT_IDENTITIES))
 _CODEX_NAMES = {f"foundry_{identity.lower()}": role for role, identity in AGENT_IDENTITIES.items()}
 
@@ -65,6 +71,34 @@ def _json_lines(path: Path):
                 continue
             if isinstance(item, dict):
                 yield item
+
+
+def claude_completions(paths) -> dict[str, tuple[str, datetime]]:
+    """Last host notification of each background Agent call, by invocation id (PLP-358, ``docs/kpi-export.md``).
+
+    A Claude main log records, as a ``queue-operation`` / ``enqueue`` entry, the notification the host gives the
+    session when a background Agent call stops. Only the tool call id (hashed with
+    ``invocation_log.claude_invocation_id``), the status word (``completed``, ``failed``, ``stopped``, ``killed``)
+    and the entry timestamp are kept. The last notification by time wins (a stopped agent can be resumed and notify
+    again). A log that cannot be read gives nothing: the status stays unknown.
+    """
+    found: dict[str, tuple[str, datetime]] = {}
+    for raw in sorted({str(Path(p).resolve()) for p in paths}):
+        try:
+            for item in _json_lines(Path(raw)):
+                content = item.get("content")
+                if item.get("type") != "queue-operation" or item.get("operation") != "enqueue" \
+                        or not isinstance(content, str):
+                    continue
+                match, when = _NOTICE.match(content), _time(item.get("timestamp"))
+                if match is None or when is None:
+                    continue
+                key = invocation_log.claude_invocation_id(match.group(1))
+                if key not in found or when >= found[key][1]:
+                    found[key] = (match.group(2), when)
+        except (OSError, UnicodeDecodeError):
+            continue
+    return found
 
 
 def _calls(host: str, path: Path) -> list[tuple[datetime, str, str]]:
@@ -215,7 +249,8 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     invocation id (``requests``, ``tokens``, the per-request ``token_requests`` and
     ``request_granularity``, false when a host log cannot give them, see `cost_attribution.read_host_log`) and,
     only when above 0, ``lower_bound_requests`` and ``parent_reported_requests`` (PLP-344, PLP-345); the returned
-    report is unchanged (PLP-319, PLP-328).
+    report is unchanged (PLP-319, PLP-328). Each entry also has ``groups``, the same counters per
+    ``(model, day)`` of the log rows (the model the host served, PLP-358).
 
     ``per_coordinator`` (PLP-357), when a dict is given, is filled for the KPI export with the coordinator
     requests, keyed ``(issue, host, host session id)``: the requests classified ``window`` (``requests``, ``tokens``,
@@ -291,7 +326,14 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                 if per_invocation is not None:
                     seen = per_invocation.setdefault(record["id"], {
                         "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0),
-                        "token_requests": [], "request_granularity": True})
+                        "token_requests": [], "request_granularity": True, "groups": {}})
+                    group = seen["groups"].setdefault((row["model"], str(row["occurred_on"])), {
+                        "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0), "token_requests": [], "lower_bound": 0})
+                    group["lower_bound"] += row.get("lower_bound_requests", 0)  # PLP-358: served model, per day
+                    group["token_requests"].extend(
+                        {name: request[name] for name in BILLING_TOKEN_KEYS} for request in row["token_requests"])
+                    for name in BILLING_TOKEN_KEYS:
+                        group["tokens"][name] += row["tokens"][name]
                     seen["requests"] += len(row["token_requests"])
                     if row.get("parent_reported_requests"):  # PLP-345
                         seen["parent_reported_requests"] = (seen.get("parent_reported_requests", 0)

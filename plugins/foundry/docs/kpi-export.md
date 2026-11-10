@@ -72,13 +72,13 @@ issue and the opaque invocation id (the invocation id itself is not emitted).
 | `role` | record `role`; `corrector` when the implementer record has `correction` true (a claim made at routing, so `attribution` is `approximate`) | never |
 | `attribution` | `exact`: the record carries the issue; `approximate` for `corrector` (the format requires `window` or `approximate`) | never |
 | `host`, `tier`, `effort`, `model.configured` | record `host`, `tier`, `effort`, `model_requested` (the model requested at routing) | not a valid `id` or not recorded |
-| `model.served` | none | always: the served model is not recorded locally |
-| `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` (raw log status `routed`, every Codex attempt included; `provenance`: "no completion event"); a background Agent launch is also `unknown`/`unknown` (raw log status `unknown`, written by `hooks/observe_agent.py`; PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says "background launch" (`_attempts` in `kpi_export.py` branches on the raw status, PLP-14) | never |
+| `model.served` | the model named by the requests of the invocation's host log (`token_attribution` `groups`, observed), when it is one valid `id`, and only for an attempt whose requested model has no price, see [Status, alias price and review type (PLP-358)](#status-alias-price-and-review-type-outside-a-campaign-plp-358) | every other attempt: the invocation record does not hold it, and emitting it for all would change the fingerprint of every published attempt |
+| `status`, `failure_class` | last `completed` event: `completed`/`none`, `failed`/`host` (`hooks/observe_agent.py`); no completion event is `unknown`/`unknown` (raw log status `routed`, every Codex attempt included; `provenance`: "no completion event"), unless the host notification of a Claude call is in the session logs (PLP-358, same section: `completed`/`none` or `failed`/`unknown`); a background Agent launch is also `unknown`/`unknown`, with the same exception (raw log status `unknown`, written by `hooks/observe_agent.py`; PLP-329, [model-routing.md](model-routing.md), "Local invocation record"), and its `provenance` says "background launch" (`_attempts` in `kpi_export.py` branches on the raw status, PLP-14) | never |
 | `started_at`, `observed_at` | `at` of the `routed` event | never |
-| `ended_at` | none: the completion time is not kept by the reader, so a background launch has none either | always |
+| `ended_at` | timestamp of the host notification that a Claude call stopped (PLP-358, same section); the invocation record keeps no completion time of its own | the status is not set from a notification: the notification is absent, not mapped (`stopped`, `killed`), earlier than `at`, or the host is Codex |
 | `tokens.input`, `cached_input`, `cache_write_input`, `output` | `token_attribution.report(..., per_invocation=...)`, method `exact`, keys `BILLING_TOKEN_KEYS` of `cost_attribution.py`; a lower bound when `lower_bound_requests` is above 0 (see "Tokens that are a lower bound" below) | no log given or found (see [Finding the session logs](#finding-the-session-logs-plp-342)), or the invocation is absent from those logs, or the log was found but `cost_attribution.read_host_log` rejected it as a whole (`CostAttributionError`, counted as unreadable by `token_attribution.report`; `unavailable`, see "Tokens that are a lower bound" for what is no longer rejected since PLP-344) |
 | `tokens.reasoning_output` | none: the per-invocation attachment carries the billing keys only; it is part of `output` and never enters a total | always |
-| `amount` | see below | no tokens, no price, or a threshold entry (`haiku-5.5`) whose per-request counts are missing |
+| `amount` | see below | no tokens, no price for the requested model and none for the model the log served, or a threshold entry (`haiku-5.5`) whose per-request counts are missing |
 
 `amount` is `{amount_micros, currency: "USD", unit: "micros", method: "estimated", completeness: "complete" or "partial",
 rate_version}`, never a billed amount and never `provider_reported`: it applies the frozen price grid
@@ -149,6 +149,91 @@ Not exported as an invocation attempt: the tokens of sub-agents without an invoc
 Observed on 2026-10-27 on the maintainer machine: the invocation record held 0 entries for the default state directory,
 so no `attempt` record was exported on that run (no sample of it is committed here); the `exact` link and the amount are established by synthetic tests
 only (`test_attempts_tokens_and_estimated_amount`).
+
+## Status, alias price and review type outside a campaign (PLP-358)
+
+Three gaps seen in trial exports of 2026-11-10. Observed on the maintainer machine the same day, read-only, no paid call,
+one export of the 14 issues most recently routed in each of three repositories (counts only; this repository, a second one
+whose project mapping declares short aliases, and the DevHub repository). Sub-agent attempts, without the coordinator record:
+
+| Repository | Attempts | Status known before / after | Alias-routed attempts with an amount before / after | Review rounds emitted / omitted (before and after) |
+|---|---|---|---|---|
+| this one | 39 | 0 / 38 | 0 of 0 | 16 / 10 |
+| alias project | 39 | 0 / 38 | 0 of 39 / 39 of 39 | 23 / 5 |
+| DevHub | 44 | 0 / 44 | 0 of 0 | 21 / 7 |
+
+The remainder of the status column is one attempt in each of the first two repositories, with no notification in
+the logs found. Before and after are the same export run on the code before and after PLP-358.
+
+**Status and end of an attempt.**
+
+- Cause, observed: the hook records `unknown/unknown` for a background Agent launch and wires no hook for its end
+  ([model-routing.md](model-routing.md), "Local invocation record"); `_attempts` reads that record only, so `status` was
+  `unknown` and `ended_at` null. The Claude main session log does hold the end: a `queue-operation` entry with `operation`
+  `enqueue` whose `content` starts with a `<task-notification>` naming the Agent call (`tool-use-id`, the id whose hash is
+  the invocation id) and a `status`. Of the Claude invocation records of the three repositories whose status was `unknown`
+  or `routed` (80, 82 and 156), 79, 81 and 156 have exactly one such notification in the main logs of the repository's
+  project directory, all `completed`; no call has two, and `failed`, `stopped` and `killed` were not seen for these calls
+  (count by a throwaway script on 2026-11-10).
+- Fix: `token_attribution.claude_completions` reads, from the main logs given to the export, only the call id, the status
+  word and the entry timestamp (the last notification by time wins; the `summary` and the result are never read). For a Claude
+  attempt whose invocation record status is not `completed` or `failed`, `_attempts` maps `completed` to
+  `completed`/`none` and `failed` to `failed`/`unknown` (`_NOTICE_STATUS`; the notification does not name a failure class), and
+  sets `ended_at` to the notification time when it is not before `at`. `provenance` says "host notification" and "observed".
+  The hook's own `completed` or `failed` event is never replaced.
+- Limits, stated as such. `ended_at` is the time the host wrote the notification, an upper bound of the end (deduced; the
+  delay is not measured). `stopped` and `killed` are not mapped: what ended the call is not proved, and no such notification
+  was seen for a Foundry call; the status stays `unknown` and `provenance` says the notification is not mapped. A Codex
+  attempt has no source: its status stays `unknown` and `provenance` says "no completion event" (the rollout is not read for a
+  status; unknown whether it holds one). The notification format belongs to the host and can change: an unrecognised layout
+  gives `unknown`, never a value. Reading the status word is one more closed-vocabulary value beside the issue id, role and
+  timestamp already read by `token_attribution`; FOUNDRY-ADR-0015 lists counters, model alias, timestamp and session id, so
+  whether a status word is inside that list is a reading to confirm, not a decision taken here.
+
+**Price of an alias-routed attempt.**
+
+- Cause, observed: in the second repository `.foundry/model-routing.json` maps the tiers to the short aliases `haiku`,
+  `sonnet`, `opus`, `fable`, so `model_requested` is an alias, and `pricing-v1.json` has no entry for an alias
+  (`cost_attribution.price_for` returns none for `opus` and `haiku`, checked on 2026-11-10), hence
+  `no_price_for_model_and_date`. Rule R7 of the process contract: a short alias is not evidence of a precise version, so the
+  export never reads one from the alias.
+- Fix: when the requested model has no price and the host log of the invocation was found, `_served_amount` prices each
+  `(model, day)` group of the log requests (`per_invocation["groups"]`, the model the host served, observed) with the same
+  grid and sums them; one group with no price keeps the whole amount null. `model.configured` stays the alias,
+  `model.served` is the served model when it is one, and `provenance` of `amount` says it was priced per served model. The
+  token counts and the method are the existing ones; no price is assumed for the alias.
+- Limits: it needs the log (without one the amount is null as before, reason `no_tokens`); a served model with no grid entry
+  leaves the amount null. To avoid it for good, a project maps its tiers to versioned names under `mappings.claude.<tier>.model`
+  (`opus-5.5`, `sonnet-5.5`, [model-routing.md](model-routing.md)): then `model_requested` is priced at routing.
+
+**Review type outside a campaign.**
+
+- Cause, observed in the code: `review_type` is `full` or `partial` and never null in `devhub-observations.v2`
+  (`src/tracker/observation-contract.ts:70` of the DevHub repository, read, not run). The only durable local record of partial or
+  full is the campaign attempts journal (`review.partial`, `review_turns.SOURCES["type"]`). Outside a campaign,
+  `prepare-review --previous-head` writes the head into `coordinates.json` and `reviewer-send.txt` of the packet directory the
+  caller names (`review_packet.py`), `read-review --since` only emits a range diff (`routing.py`), and `record-review-proof`
+  accepts the keys `outcomes` and `quality` only (AGENTS.md#R9): none is kept per round. The 22 omitted rounds of the
+  table are all `review_type_unrecorded:no_campaign_record` (rank above 1 after a validated round).
+- Decision: wanted limit, the omission stays. A null is refused by the contract, and a `full` or `partial` deduced from the
+  rank would be a guess (AGENTS.md#R9: the review after a validated round is partial unless the change goes beyond the
+  corrections or the reviewer asks for a full one). The only other local trace, the reviewer's `read-review` command in
+  the sub-agent log, is a command, which FOUNDRY-ADR-0015 forbids the reader to extract. Recording the previous head per round
+  would be a new local store: an intake (AGENTS.md#R3), not part of PLP-358.
+  `test_a_review_round_after_a_validated_one_is_omitted_outside_a_campaign_whatever_the_invocation_record_says` pins it.
+
+**Records already published.** The `source.fingerprint` of an attempt gains `completion` (status word and end time) when its
+status is set from a notification, and `priced_by_served_model` when it is priced per served model; an attempt with neither
+keeps its material, fingerprint and `record_id`. The `attempt_id` does not change, so a changed attempt is published as the next
+revision of its chain (`PublishedLedger.revise`, [Revisions](#revisions-plp-342)), `started_at` and `observed_at` unchanged, never a
+second record; it is not the `idempotency_conflict` case of a grid change. Under the existing limits, a record published before
+PLP-342 or after a loss of the ledger is refused `correction_conflict`. Review-round records are unchanged. Tests:
+`test_background_attempt_takes_status_and_end_from_the_host_notification`,
+`test_a_host_notification_is_ignored_when_it_proves_nothing`,
+`test_an_alias_routed_attempt_is_priced_by_the_model_its_log_served`,
+`test_an_alias_routed_attempt_stays_unpriced_when_the_served_model_has_no_price` (`tests/test_kpi_export.py`),
+`test_claude_completions_keeps_only_the_tool_call_the_status_word_and_the_time` and
+`test_per_invocation_keeps_the_counters_by_served_model_and_day` (`tests/test_token_attribution.py`).
 
 ## Coordinator session (PLP-357)
 
@@ -245,7 +330,7 @@ of an issue"). `attempt_id` = `rr-` + 32 hex of sha256 of issue, head and rank, 
 | `verdict` | turn `verdict` (`validated` becomes `mergeable`) | never |
 | `ac_total`, `ac_pass` | turn `criteria`, `criteria_pass` | never |
 | `remark_count` | turn `remarks` | the turn `remarks` is `null`: no campaign receipt and no journal count, an unreadable receipt, or an unreadable or ambiguous journal (reason copied from the turn `unrecorded`, [review-rounds.md](review-rounds.md), "Per-turn data of an issue") |
-| `review_type` | turn `type` (campaign journal); else `full` for rank 1 and for a turn that follows a `blocked` turn, deduced from AGENTS.md#R9 (the first review and the review after a blocking round are full) | the record is omitted instead (`review_type_unrecorded:<reason>`): the format forbids `null`, and a turn after a validated one may be partial or full, which no local source tells outside a campaign |
+| `review_type` | turn `type` (campaign journal); else `full` for rank 1 and for a turn that follows a `blocked` turn, deduced from AGENTS.md#R9 (the first review and the review after a blocking round are full) | the record is omitted instead (`review_type_unrecorded:<reason>`): the format forbids `null`, and a turn after a validated one may be partial or full, which no local source tells outside a campaign. Wanted limit (PLP-358), see [Status, alias price and review type (PLP-358)](#status-alias-price-and-review-type-outside-a-campaign-plp-358) |
 | `reviewer_model` | turn `reviewer_model` (model requested) | no reviewer invocation recorded for the head |
 | `implementer_model` | `model_requested` of the implementer invocations of the window before that reviewer invocation (`invocation_log.invocations_for_diff`), when they all name the same model | no window, none, or several models |
 | `pr_number` | `fingerprint.pr` of the `started` `review` record of the campaign attempts journal whose `fingerprint.pr_head` equals the head, when exactly one number matches | outside a campaign, unreadable journal, or ambiguous |
