@@ -47,7 +47,9 @@ source.
   rounds. `outcome` is `validated` when the last round is `mergeable` with every criterion
   `pass`, `blocked` otherwise, `unknown` with no proof. `validated_rounds` counts the rounds
   that are `mergeable` with every criterion `pass`; `blocked_rounds` is every other round
-  (`rounds - validated_rounds`), including a `fail` criterion under `mergeable`.
+  (`rounds - validated_rounds`), including a `fail`, `contradicted` or `not_covered` criterion
+  under `mergeable`: `outcome: blocked` therefore does not mean the merge was refused or bypassed;
+  the merge path is read elsewhere ("Ten merged issues read `blocked`" below).
   Scope: one data directory (`FOUNDRY_DATA` or `~/.config/foundry`, `registry.data_dir()`) and
   one repository namespace (`--repository`). A review recorded on another machine, under
   another `FOUNDRY_DATA` or namespace is not seen; with no proof of the issue there, `rounds`,
@@ -546,6 +548,73 @@ was a declaration too, and the send text did not say that the review was partial
   gets `correct`/`review_blocked`, bounded by `_bounded` (`MAX_CORRECTIONS`); a correction that does
   not change the diff leaves the `blocked` proof, so `correct` recurs up to that bound (deduced from
   `_ticket_step` and `_bounded`, not run). Whether a blocked proof can be superseded without a diff change is unknown.
+
+## Ten merged issues read `blocked` (PLP-360, observed on 2026-11-10)
+
+Question: ten issues that reached the default branch read `outcome: blocked` in `routing review-rounds`
+(`validated` is `quality == "mergeable" and all_pass`, `review_rounds.py:76`; `outcome` is read from the
+last round, `review_rounds.py:140`). Answer, observed on the local proof store and on the trackers and
+pull requests: in all ten, the last round is `mergeable`; what makes it `blocked` is a criterion that is not
+`pass`. The merge went through the explicit human override of `issue merge`
+(`--allow-incomplete-ac --ac-override-reason=<code>`, `_ac_override_reason` and the `except` branch of
+the AC step in `tooling/foundry/issue.py`), not around the gate. That branch is reached only when the tracker
+criteria are not all checked and `AcceptanceProofStore.valid_for_merge` (`routing.py`, `quality` mergeable
+and every criterion `pass`) refused. What it then requires depends on the adapter (`issue.py`). With
+`delivery_receipt_supported` and an issue binding (set by `trackers/youtrack.py` only, `False` in
+`trackers/base.py`), `current_for_sync` (`routing.py`) must find one completed proof on the exact head, base
+and diff. With `acceptance_override_projection_supported` (`trackers/devhub.py` and `trackers/linear.py`; the
+ten issues are on DevHub today, their tracker at merge time was not checked), no review proof is read: `write.project_acceptance_override` writes, before
+the merge, a typed receipt with the public reason code, bound to the review coordinates held by the tracker
+(`docs/devhub-tracker.md`), and the audit comment is best-effort. Without that second capability the audit
+comment must be written before the merge.
+
+Table, last round only (verdict letters: p `pass`, f `fail`, c `contradicted`, n `not_covered`).
+"Last round head = PR head" was compared with `gh pr view --json headRefOid` for all ten. None
+of the ten has a carried proof (`carried_proofs` 0 for each).
+
+| Issue | Rounds | Last round | Merge path (reason code of the audit comment) | Established by |
+|---|---|---|---|---|
+| PLP-355 | 1 | mergeable, 1p 2n | audited override (`release-post-merge-steps`): tag and installation criteria are post-merge | proof store, `query issue` audit comment, PR head |
+| PLP-348 | 2 | mergeable, 1p 3n | same | same |
+| PLP-340 | 1 | mergeable, 1p 2n | same | same |
+| PLP-339 | 2 | mergeable, 1p 2n | same | same |
+| PLP-333 | 5 | mergeable, 1p 2n | same | same |
+| DEVHUB-202 | 1 | mergeable, 2p 1n | audited override (`post-deploy-prod-readback`): production readback after deploy | same, plus the round line of the PR description |
+| DEVHUB-199 | 3 (first `blocked`: 1p 1f 3n) | mergeable, 2p 3n | audited override (`release-post-merge-ac`): two post-merge criteria, three not coverable by the diff | same, plus the three round lines of the PR description |
+| RE-495 | 3 (first two `blocked`) | mergeable, 3p 1n | audited override (`owner-device-test-validated`): device test recorded on the issue before the merge | same |
+| RE-472 | 7 (two `blocked`, one of them after four `mergeable`) | mergeable, 4p 1f | audited override (`maintainer-waiver-serial-memory-20261028`): the failed criterion is the one the PR description records as waived | same, plus the round lines of the PR description |
+| RE-436 | 5 (two `blocked`) | mergeable, 3p 1c 1n | audited override (`maintainer-inclusion-beta-checks-20261028`): the contradicted criterion is the accepted deviation the PR description records | same |
+
+Consequences:
+
+- Cause (deduced from the table and `review_rounds.py:76`): `validated` requires every criterion `pass`,
+  so any criterion that cannot be met by the diff (`not_covered`) or that the maintainer waives (`fail`,
+  `contradicted`) reads `blocked` although the reviewer's `quality` is `mergeable`. The report is not wrong
+  by its own definition (the section "Per-issue report" above); its label does not tell the override path from
+  a refused merge. `outcome` and `blocked_rounds` count the legitimate path as blocked, and the counts of
+  the windows of this page, which use `validated_rounds` / `blocked_rounds`, are read with that limit.
+  No output key changed.
+- To tell a refused merge from an overridden one, read `per_round` (`quality`, `all_pass`) together with the audit
+  comment of the issue: `quality: mergeable` with `all_pass: false` and an `Audit merge: override humain
+  explicite` comment is the override path, and so is `quality: blocked` on the last round with such a comment
+  (the override does not read `quality`). On a tracker that projects the typed receipt the comment is
+  best-effort and the receipt is the authority; it was not read here. A last round that is not validated with
+  neither comment nor receipt must be investigated; it is not by itself an unauthorised merge: when the
+  tracker criteria are all checked, `issue merge` reads a review proof only with `delivery_receipt_supported`
+  and a binding (`issue.py`), and the last proof can belong to a pull request closed without merge
+  ("Per-issue report").
+- No merge without a validated proof or an audited override was found among the ten (observed).
+  Not established here: the typed `acceptance-override` receipt of each issue (`query issue` returned no
+  `acceptance_status` for any of the ten, so the receipt, if any, is unread: unknown); and the CI
+  gate of the two other repositories, which this check did not re-run for DEVHUB-202,
+  RE-495, RE-472 and RE-436 (unknown; CI of the merge commit is recorded on the issue for PLP-355,
+  PLP-348, PLP-340, PLP-339, PLP-333 and DEVHUB-199).
+- On a tracker with `delivery_receipt_supported` the override branch accepts any completed proof on the
+  exact coordinates, whatever its `quality` (`current_for_sync` does not read it); on the other trackers it
+  reads no review proof at all (deduced from the code, not exercised). The control is the typed receipt
+  where the adapter projects it, the audit comment elsewhere. It is the documented human escape hatch; in the
+  ten cases a `mergeable` proof existed on the PR head (table above), although an adapter of that
+  kind does not require one.
 
 ## Limits
 
