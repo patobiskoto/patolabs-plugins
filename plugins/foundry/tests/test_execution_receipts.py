@@ -558,13 +558,20 @@ def test_failed_ci_operation_still_refuses_merge_and_records_only_the_gate_fact(
     tracker = SimpleNamespace(
         bounded_transition_proofs=False,
         get_issue=lambda _issue: SimpleNamespace(
-            id="FOUNDRY-91", state="review", body="", ac_done=1, ac_total=1,
+            id="FOUNDRY-91", state="review", body="- [x] pilot\n", ac_done=1, ac_total=1,
         ),
     )
     codehost = SimpleNamespace(
         name="github", resolve_repo=lambda: REPOSITORY, get_pr=lambda *_args: open_pr(),
         merge_pr=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("merge")),
     )
+    # PLP-ADR-0064: a valid review proof lets the merge reach the CI gate.
+    monkeypatch.setattr(issue, "git_head", lambda: HEAD)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    monkeypatch.setattr(issue, "repository_identity", lambda: REPOSITORY)
+    monkeypatch.setattr(issue, "AcceptanceProofStore", lambda _repository: SimpleNamespace(
+        valid_for_merge=lambda **_coordinates: review_proof(),
+    ))
     monkeypatch.setattr(issue.foundry, "tracker", lambda: tracker)
     monkeypatch.setattr(issue.foundry, "codehost", lambda: codehost)
     monkeypatch.setattr(write, "issue_binding", lambda *_args: None)
