@@ -559,9 +559,14 @@ pull requests: in all ten, the last round is `mergeable`; what makes it `blocked
 (`--allow-incomplete-ac --ac-override-reason=<code>`, `_ac_override_reason` and the `except` branch of
 the AC step in `tooling/foundry/issue.py`), not around the gate. That branch is reached only when the tracker
 criteria are not all checked and `AcceptanceProofStore.valid_for_merge` (`routing.py`, `quality` mergeable
-and every criterion `pass`) refused; it then still requires `current_for_sync` (`routing.py`) to find one
-completed proof on the exact head, base and diff, and writes an audit comment with the public reason
-code before the merge (the typed receipt of `docs/devhub-tracker.md` where the adapter projects it).
+and every criterion `pass`) refused. What it then requires depends on the adapter (`issue.py`). With
+`delivery_receipt_supported` and an issue binding (set by `trackers/youtrack.py` only, `False` in
+`trackers/base.py`), `current_for_sync` (`routing.py`) must find one completed proof on the exact head, base
+and diff. With `acceptance_override_projection_supported` (`trackers/devhub.py` and `trackers/linear.py`; the
+ten issues are on DevHub today, their tracker at merge time was not checked), no review proof is read: `write.project_acceptance_override` writes, before
+the merge, a typed receipt with the public reason code, bound to the review coordinates held by the tracker
+(`docs/devhub-tracker.md`), and the audit comment is best-effort. Without that second capability the audit
+comment must be written before the merge.
 
 Table, last round only (verdict letters: p `pass`, f `fail`, c `contradicted`, n `not_covered`).
 "Last round head = PR head" was compared with `gh pr view --json headRefOid` for all ten. None
@@ -591,18 +596,22 @@ Consequences:
   No output key changed.
 - To tell a refused merge from an overridden one, read `per_round` (`quality`, `all_pass`) together with the audit
   comment of the issue: `quality: mergeable` with `all_pass: false` and an `Audit merge: override humain
-  explicite` comment is the override path; `quality: blocked` on the last round with no such comment is a
-  merge that the proof did not authorise and must be investigated.
+  explicite` comment is the override path, and so is `quality: blocked` on the last round with such a comment
+  (the override does not read `quality`). On a tracker that projects the typed receipt the comment is
+  best-effort and the receipt is the authority; it was not read here. A last round that is not validated with
+  neither comment nor receipt is a merge that nothing authorised and must be investigated.
 - No merge without a validated proof or an audited override was found among the ten (observed).
   Not established here: the typed `acceptance-override` receipt of each issue (`query issue` returned no
   `acceptance_status` for any of the ten, so the receipt, if any, is unread: unknown); and the CI
-  gate of the three repositories other than this one, which this check did not re-run for DEVHUB-202,
+  gate of the two other repositories, which this check did not re-run for DEVHUB-202,
   RE-495, RE-472 and RE-436 (unknown; CI of the merge commit is recorded on the issue for PLP-355,
   PLP-348, PLP-340, PLP-339, PLP-333 and DEVHUB-199).
-- The override branch accepts any completed proof on the exact coordinates, whatever its `quality`
-  (`current_for_sync` does not read it; deduced from the code, not exercised): the audit comment is the
-  control, which is why the reading rule above looks at it. It is the documented human escape hatch, not a
-  finding.
+- On a tracker with `delivery_receipt_supported` the override branch accepts any completed proof on the
+  exact coordinates, whatever its `quality` (`current_for_sync` does not read it); on the other trackers it
+  reads no review proof at all (deduced from the code, not exercised). The control is the typed receipt
+  where the adapter projects it, the audit comment elsewhere. It is the documented human escape hatch; in the
+  ten cases a `mergeable` proof existed on the PR head (table above), although an adapter of that
+  kind does not require one.
 
 ## Limits
 
