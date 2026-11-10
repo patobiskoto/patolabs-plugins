@@ -557,16 +557,18 @@ last round, `review_rounds.py:140`). Answer, observed on the local proof store a
 pull requests: in all ten, the last round is `mergeable`; what makes it `blocked` is a criterion that is not
 `pass`. The merge went through the explicit human override of `issue merge`
 (`--allow-incomplete-ac --ac-override-reason=<code>`, `_ac_override_reason` and the `except` branch of
-the AC step in `tooling/foundry/issue.py`), not around the gate. That branch is reached only when the tracker
-criteria are not all checked and `AcceptanceProofStore.valid_for_merge` (`routing.py`, `quality` mergeable
-and every criterion `pass`) refused. What it then requires depends on the adapter (`issue.py`). With
-`delivery_receipt_supported` and an issue binding (set by `trackers/youtrack.py` only, `False` in
-`trackers/base.py`), `current_for_sync` (`routing.py`) must find one completed proof on the exact head, base
-and diff. With `acceptance_override_projection_supported` (`trackers/devhub.py` and `trackers/linear.py`; the
-ten issues are on DevHub today, their tracker at merge time was not checked), no review proof is read: `write.project_acceptance_override` writes, before
-the merge, a typed receipt with the public reason code, bound to the review coordinates held by the tracker
-(`docs/devhub-tracker.md`), and the audit comment is best-effort. Without that second capability the audit
-comment must be written before the merge.
+the AC step in `tooling/foundry/issue.py`), not around the gate. In the code read for this check
+(`3079cee`, before PLP-368; the current rule is in "Merge gate since PLP-368" below), that branch was reached
+only when the tracker criteria were not all checked and `AcceptanceProofStore.valid_for_merge` (`routing.py`,
+`quality` mergeable and every criterion `pass`) refused. What it then required depended on the adapter
+(`issue.py`). With `delivery_receipt_supported` and an issue binding (set by `trackers/youtrack.py` only,
+`False` in `trackers/base.py`), `current_for_sync` (`routing.py`) had to find one completed proof on the exact
+head, base and diff. With `acceptance_override_projection_supported` (`trackers/devhub.py` and
+`trackers/linear.py`; the ten issues are on DevHub today, their tracker at merge time was not checked), no
+review proof was read: `write.project_acceptance_override` wrote, before the merge, a typed receipt with the
+public reason code, bound to the review coordinates held by the tracker (`docs/devhub-tracker.md`), and the
+audit comment was best-effort. Without that second capability the audit comment had to be written before the
+merge.
 
 Table, last round only (verdict letters: p `pass`, f `fail`, c `contradicted`, n `not_covered`).
 "Last round head = PR head" was compared with `gh pr view --json headRefOid` for all ten. None
@@ -599,22 +601,47 @@ Consequences:
   explicite` comment is the override path, and so is `quality: blocked` on the last round with such a comment
   (the override does not read `quality`). On a tracker that projects the typed receipt the comment is
   best-effort and the receipt is the authority; it was not read here. A last round that is not validated with
-  neither comment nor receipt must be investigated; it is not by itself an unauthorised merge: when the
-  tracker criteria are all checked, `issue merge` reads a review proof only with `delivery_receipt_supported`
-  and a binding (`issue.py`), and the last proof can belong to a pull request closed without merge
-  ("Per-issue report").
+  neither comment nor receipt must be investigated; it is not by itself an unauthorised merge: before
+  PLP-368, when the tracker criteria were all checked, `issue merge` read a review proof only with
+  `delivery_receipt_supported` and a binding (`issue.py` at `3079cee`), and the last proof can belong to a
+  pull request closed without merge ("Per-issue report").
 - No merge without a validated proof or an audited override was found among the ten (observed).
   Not established here: the typed `acceptance-override` receipt of each issue (`query issue` returned no
   `acceptance_status` for any of the ten, so the receipt, if any, is unread: unknown); and the CI
   gate of the two other repositories, which this check did not re-run for DEVHUB-202,
   RE-495, RE-472 and RE-436 (unknown; CI of the merge commit is recorded on the issue for PLP-355,
   PLP-348, PLP-340, PLP-339, PLP-333 and DEVHUB-199).
-- On a tracker with `delivery_receipt_supported` the override branch accepts any completed proof on the
-  exact coordinates, whatever its `quality` (`current_for_sync` does not read it); on the other trackers it
-  reads no review proof at all (deduced from the code, not exercised). The control is the typed receipt
-  where the adapter projects it, the audit comment elsewhere. It is the documented human escape hatch; in the
-  ten cases a `mergeable` proof existed on the PR head (table above), although an adapter of that
-  kind does not require one.
+- At `3079cee` (before PLP-368), on a tracker with `delivery_receipt_supported` the override branch accepted
+  any completed proof on the exact coordinates, whatever its `quality` (`current_for_sync` does not read it);
+  on the other trackers it read no review proof at all (deduced from the code, not exercised). The control
+  was the typed receipt where the adapter projects it, the audit comment elsewhere. It is the documented human
+  escape hatch; in the ten cases a `mergeable` proof existed on the PR head (table above), although an
+  adapter of that kind did not require one.
+
+## Merge gate since PLP-368 (PLP-ADR-0064)
+
+`issue merge` (`merge` in `tooling/foundry/issue.py`) now reads the local proof store
+(`AcceptanceProofStore`, `routing.py`, under `registry.data_dir()`) on every provider before it calls the
+code-host merge, whether the tracker criteria are checked or not:
+
+- without the override, it requires one proof `mergeable` with every criterion `pass` on the exact issue
+  criteria, head, base and diff (`valid_for_merge`). Otherwise it refuses and names the cause; when the
+  criteria are all checked the message also points to the override;
+- under `--allow-incomplete-ac --ac-override-reason=<code>`, when that proof is refused, it requires one
+  completed proof on the same coordinates, whatever its `quality` (`mergeable` or `blocked`) and its
+  per-criterion verdicts (`current_for_sync`), and refuses without one. The typed receipt where the adapter
+  sets `acceptance_override_projection_supported`, the audit comment elsewhere, is then written before the
+  merge, as before;
+- the local `HEAD` must equal the PR head: on the providers that set `bounded_transition_proofs`, or
+  `delivery_receipt_supported` with a binding, the merge is refused before the proof is read, as before; on
+  any other path the proof lookup fails, and the override is refused too;
+- a pull request already merged (`pr.merged`) calls no merge and needs no new proof; YouTrack with a binding
+  still reads one for its delivery receipt.
+
+Consequences (deduced from the code): a review recorded on another machine or under another data directory
+is not seen, and the override does not get around that; an issue with no readable criterion cannot be merged,
+because `acceptance_criteria` (`routing.py`) refuses an empty list, so no proof can exist for it. Tests:
+`tests/test_merge_review_proof_gate.py`.
 
 ## Limits
 
@@ -657,11 +684,11 @@ Not mechanical:
 - No gate checks that a PR of a companion Epic deferred nothing (no second-level
   deferral), that the fourth write was made when needed, that the companion Epic has a
   single follow-up issue, or that the review after a correction was limited to what
-  changed. The merge gate is not modified: when the criteria of the issue are not all
-  checked in the tracker, and also when they are all checked on a tracker whose adapter
-  sets `delivery_receipt_supported` if the issue has a binding (`write.issue_binding`),
-  it asks for a review proof of the exact diff (`valid_for_merge`, called twice by
-  `merge` in `tooling/foundry/issue.py`), and after
+  changed. The merge gate is not modified by this rule: on every provider, whether the
+  criteria of the issue are checked in the tracker or not (PLP-ADR-0064), it asks for a
+  review proof of the exact diff (`valid_for_merge`, called once by `merge` in
+  `tooling/foundry/issue.py`; under the human override, any completed proof on the same
+  coordinates, `current_for_sync`), and after
   such a partial review that proof relies on the previous round for the unchanged parts.
 - Nothing checks, outside the cadencer, that only one companion Epic carries a given
   name. The name and a mention in text are the only relation between the two Epics. In a
@@ -776,11 +803,11 @@ recomputes the diff on the head read under the lock.
 
 A proof carrying `carried_from` is accepted by the Linear projection
 (`LinearTracker._validate_acceptance_projection`), by `execution_receipts.review_receipt`
-and by `evidence_plane._review_evidence` (optional key, closed four-key shape). The merge
-gate asks for a proof only when the criteria are not all checked, or when the adapter sets
-`delivery_receipt_supported` and the issue has a binding (`merge` in
-`tooling/foundry/issue.py`); the context of PAT-ADR-0021 states it without these
-conditions, and the ADR is not edited here.
+and by `evidence_plane._review_evidence` (optional key, closed four-key shape). Since PLP-368
+(PLP-ADR-0064) the merge gate asks for a proof on every provider, whether the criteria
+are checked or not (`merge` in `tooling/foundry/issue.py`), as the context of
+PAT-ADR-0021 states it; before, it asked only when the criteria were not all checked, or
+when the adapter set `delivery_receipt_supported` and the issue had a binding.
 
 What this does not cover: a conflict resolution, an edit after the integration, a
 change of the issue criteria, or a main branch change to a file of the PR. Tests:

@@ -24,6 +24,25 @@ from foundry.trackers.devhub import DevHubTracker
 from foundry.trackers.youtrack import YouTrackTracker
 
 
+def _valid_review_proof(monkeypatch, calls=None):
+    """PLP-ADR-0064: every code merge reads a completed, mergeable, all-pass review proof."""
+
+    class Store:
+        def __init__(self, _repository):
+            pass
+
+        def valid_for_merge(self, **coordinates):
+            if calls is not None:
+                calls.append(coordinates)
+            return {
+                "proof_id": "d" * 64, "review": {"generation": 1},
+                "issue": {"ac_digest": "e" * 64},
+            }
+
+    monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
+    monkeypatch.setattr(issue, "repository_identity", lambda: "acme/demo")
+
+
 @pytest.mark.parametrize(
     ("current", "expected"),
     [
@@ -141,7 +160,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     events = []
     tracker = object.__new__(provider_class)
     tracker.get_issue = lambda _issue_id: events.append("tracker:get-issue") or SimpleNamespace(
-        id="DEMO-7", state="review", body="", ac_done=1, ac_total=1,
+        id="DEMO-7", state="review", body="- [x] pilot\n", ac_done=1, ac_total=1,
         pr_url="https://github.com/acme/demo/pull/12",
     )
     pull_request = SimpleNamespace(
@@ -188,6 +207,7 @@ def test_existing_real_provider_merge_path_is_unchanged_by_noop_preflight(
     monkeypatch.setattr(issue, "git_head", lambda: "a" * 40)
     monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    _valid_review_proof(monkeypatch)
 
     issue.merge("DEMO-7", "12")
 
@@ -440,7 +460,8 @@ def test_prepare_branch_reports_exact_recovery_when_owned_by_another_worktree(
 
 
 def test_merge_reports_the_merged_sha(monkeypatch, capsys):
-    head = SimpleNamespace(sha="headsha1234", head="chore/demo-7-release", merged=False)
+    head = SimpleNamespace(sha="headsha1234", base_sha="c" * 40,
+                           head="chore/demo-7-release", merged=False)
     landed = SimpleNamespace(sha="a1b2c3d4e5f6a7b8", head=head.head, merged=True)
     ch = SimpleNamespace(
         resolve_repo=lambda: "acme/demo",
@@ -456,6 +477,9 @@ def test_merge_reports_the_merged_sha(monkeypatch, capsys):
         "passed": True, "waived": False, "total": 2, "pending": 0, "failing": 0})
     monkeypatch.setattr(write, "transition", lambda *a, **k: None)
     monkeypatch.setattr(issue, "_cleanup_branch", lambda branch: "main-checkout")
+    monkeypatch.setattr(issue, "git_head", lambda: head.sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    _valid_review_proof(monkeypatch)
 
     issue.merge("DEMO-7", "12")
 
@@ -476,7 +500,8 @@ def _merge_with_failing_pull(monkeypatch, tmp_path):
         subprocess.run(cmd, cwd=tmp_path, check=True, capture_output=True)
     monkeypatch.chdir(tmp_path)
     events = []
-    head = SimpleNamespace(sha="headsha1234", head="chore/demo-7-release", merged=False)
+    head = SimpleNamespace(sha="headsha1234", base_sha="c" * 40,
+                           head="chore/demo-7-release", merged=False)
     landed = SimpleNamespace(sha="a1b2c3d4e5f6a7b8", head=head.head, merged=True)
     ch = SimpleNamespace(
         resolve_repo=lambda: "acme/demo",
@@ -494,6 +519,9 @@ def _merge_with_failing_pull(monkeypatch, tmp_path):
     monkeypatch.setattr(
         write, "transition", lambda _t, _i, state, **_k: events.append(state),
     )
+    monkeypatch.setattr(issue, "git_head", lambda: head.sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    _valid_review_proof(monkeypatch)
     return events
 
 
@@ -655,6 +683,7 @@ def test_proof_bound_merge_refreshes_review_before_done_receipt_and_branch_delet
 
     monkeypatch.setattr(write, "transition", transition)
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    _valid_review_proof(monkeypatch)
 
     issue.merge("DEMO-7", "12")
 
@@ -821,6 +850,9 @@ def test_youtrack_public_merge_checks_final_base_coordinates(monkeypatch, change
         "passed": True, "waived": False, "total": 1, "pending": [], "failing": [],
     })
     monkeypatch.setattr(issue, "_cleanup_branch", lambda _branch: "linked-worktree")
+    monkeypatch.setattr(issue, "git_head", lambda: original.sha)
+    monkeypatch.setattr(issue, "git_diff", lambda **_kwargs: b"exact-diff")
+    _valid_review_proof(monkeypatch)
     if change:
         with pytest.raises(SystemExit, match="coordonnées GitHub.*changé"):
             issue.merge("DEMO-7", "12")
@@ -1453,6 +1485,7 @@ def test_proof_bound_merge_refuses_a_base_that_moves_after_validation(monkeypatc
         write, "transition",
         lambda _tracker, _issue_id, state, context=None: events.append((state, context)),
     )
+    _valid_review_proof(monkeypatch)
 
     with pytest.raises(SystemExit, match="coordonnées GitHub.*changé"):
         issue.merge("DEMO-7", "12")
@@ -1597,7 +1630,8 @@ def _merge_proof(body, proof_id="d" * 64):
 def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
                               comment_error=None, sync_error=None,
                               sync_supported=True,
-                              body="- [ ] current contract\n"):
+                              body="- [ ] current contract\n",
+                              completed_proof=None, completed_error=None):
     """Install deterministic local fakes; no network or tracker writes are possible."""
     events = []
     current = SimpleNamespace(
@@ -1663,6 +1697,16 @@ def _incomplete_merge_harness(monkeypatch, *, proof=None, proof_error=None,
             if proof_error:
                 raise proof_error
             return proof
+
+        def current_for_sync(self, **kwargs):
+            # PLP-ADR-0064: the human override still needs a completed review proof.
+            events.append(("completed-proof", kwargs))
+            if completed_error:
+                raise completed_error
+            return completed_proof or {
+                **_merge_proof(body, "f" * 64), "quality": "blocked",
+                "review": {"generation": 1},
+            }
 
     monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
     return events, current
@@ -1845,8 +1889,10 @@ def test_human_ac_override_requires_public_reason_and_preserves_tracker_ac(monke
 
     issue.merge("DEMO-7", "12", flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"})
 
-    assert [event[0] for event in events] == ["proof", "proof", "comment", "merge", "delete", "done"]
-    assert "human_confirmed" in events[2][2]
+    assert [event[0] for event in events] == [
+        "proof", "proof", "completed-proof", "comment", "merge", "delete", "done",
+    ]
+    assert "human_confirmed" in events[3][2]
     assert (current.body, current.ac_done, current.ac_total) == original
 
 
@@ -1890,9 +1936,9 @@ def test_youtrack_human_ac_override_keeps_prose_audit_without_typed_receipt(
     )
 
     assert [event[0] for event in events] == [
-        "proof", "comment", "merge", "done", "delete",
+        "proof", "completed-proof", "comment", "merge", "done", "delete",
     ]
-    assert events[1][1] == (
+    assert events[2][1] == (
         "Audit merge: override humain explicite des AC incomplètes (human_confirmed)."
     )
     assert current.body == body
@@ -1934,10 +1980,10 @@ def test_typed_ac_override_receipt_is_durable_before_codehost_merge(
 
     names = [event[0] for event in events]
     assert names == [
-        "proof", "override-receipt", *(["comment"] if created else []),
+        "proof", "completed-proof", "override-receipt", *(["comment"] if created else []),
         "in-progress", "review", "merge", "done", "delete",
     ]
-    receipt = events[1]
+    receipt = events[2]
     assert receipt[1:3] == ("DEMO-7", "human_confirmed")
     assert receipt[3] == TransitionContext(
         pr_url="https://github.com/acme/demo/pull/12",
@@ -1958,7 +2004,7 @@ def test_typed_ac_override_receipt_failure_blocks_merge_without_prose(monkeypatc
             flags={"--allow-incomplete-ac", "--ac-override-reason=human_confirmed"},
         )
 
-    assert [event[0] for event in events] == ["proof", "override-receipt"]
+    assert [event[0] for event in events] == ["proof", "completed-proof", "override-receipt"]
 
 
 def test_unreadable_issue_is_not_recovered_without_override_port(monkeypatch):

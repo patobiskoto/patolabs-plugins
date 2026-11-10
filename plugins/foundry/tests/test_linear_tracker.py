@@ -3324,6 +3324,10 @@ def _override_merge_harness(monkeypatch, instance, pr, merge_pr):
         def valid_for_merge(self, **_coordinates):
             raise routing.RoutingConfigError("no structured proof")
 
+        def current_for_sync(self, **_coordinates):
+            # PLP-ADR-0064: the human override still needs a completed review proof.
+            return {"proof_id": "e" * 64, "quality": "blocked"}
+
     monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
     return events
 

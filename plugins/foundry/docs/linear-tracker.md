@@ -937,7 +937,13 @@ generation; `reason` must match `[a-z0-9_-]{3,80}`. Like an AC receipt it occupi
 deterministic issue+operation+generation comment slot, so a replay with the same reason
 is a no-op and a different reason for the same generation fails closed. The historical
 free-text line “Audit merge: override humain explicite …” is still written once, next
-to a newly created receipt, but carries no authority.
+to a newly created receipt, but carries no authority. Since PLP-368 (PLP-ADR-0064), the
+override first requires a completed review proof of the local proof store on the exact
+issue criteria, head, base and diff, whatever its `quality` (`current_for_sync`,
+`routing.py`), and is refused before the receipt without one; with every criterion
+checked, a merge without the override requires a `mergeable` all-pass proof
+(`docs/review-rounds.md`, "Merge gate since PLP-368"). The recovery below performs no
+merge and needs no new proof.
 
 The projection accepts `state-done` when the done generation has either a valid AC
 receipt or a valid override receipt. An override never checks a box and never counts as

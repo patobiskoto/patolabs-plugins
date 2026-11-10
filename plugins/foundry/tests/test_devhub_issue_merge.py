@@ -89,6 +89,10 @@ def _harness(monkeypatch, tracker):
         def valid_for_merge(self, **_kwargs):
             raise RoutingConfigError("no proof")
 
+        def current_for_sync(self, **_kwargs):
+            # PLP-ADR-0064: the human override still needs a completed review proof.
+            return {"proof_id": "e" * 64, "quality": "blocked"}
+
     monkeypatch.setattr(issue, "AcceptanceProofStore", Store)
     return events
 

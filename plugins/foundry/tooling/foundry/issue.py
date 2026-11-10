@@ -706,12 +706,18 @@ def merge(issue_id, pr_number, flags=()):
             review_digest=review_diff_hash(review_diff),
         )
 
-    if getattr(tr, "delivery_receipt_supported", False) and binding is not None:
+    # PLP-ADR-0064: on every provider, a code merge needs a completed review proof bound
+    # to the exact issue, head, base and diff; checked boxes no longer replace it.  The
+    # resume of an already merged PR calls no merge and needs no new proof, except the
+    # one YouTrack's delivery receipt has always carried.
+    if not pr.merged or (
+        getattr(tr, "delivery_receipt_supported", False) and binding is not None
+    ):
         proof_store = AcceptanceProofStore(repository_identity())
 
-    # AC checkboxes remain the normal tracker signal.  When they lag behind, only a
-    # structured, current review proof can replace that administrative signal.
-    if getattr(current, "ac_done", 0) < getattr(current, "ac_total", 0):
+    ac_complete = getattr(current, "ac_done", 0) >= getattr(current, "ac_total", 0)
+    if not ac_complete or proof_store is not None:
+        head = None
         try:
             head = git_head()
             if head != pr.sha:
@@ -726,6 +732,14 @@ def merge(issue_id, pr_number, flags=()):
             )
         except RoutingConfigError as exc:
             if "--allow-incomplete-ac" not in flags:
+                if ac_complete:
+                    raise SystemExit(
+                        "⛔ Merge refusé — AC tracker cochées mais aucune preuve de review "
+                        "terminée, mergeable et toute pass, sur le head, la base et le diff "
+                        f"exacts ({exc}). Cocher les cases ne remplace pas la review : "
+                        "lance-la ; si un critère ne peut pas être pass, utilise l'override "
+                        "humain explicite (--allow-incomplete-ac --ac-override-reason=<code>), "
+                        "qui exige aussi une preuve terminée.") from None
                 raise SystemExit(
                     "⛔ Merge refusé — AC tracker incomplètes et preuve structurée invalide "
                     f"({exc}). Utilise l'override humain explicite si nécessaire.") from None
@@ -733,6 +747,10 @@ def merge(issue_id, pr_number, flags=()):
             acceptance_override_reason = reason
             if proof_store is not None:
                 try:
+                    if head != pr.sha or review_diff is None or pr_base_sha is None:
+                        # Fail closed: never bind the override to coordinates the
+                        # proof lookup could not establish.
+                        raise RoutingConfigError("coordonnées exactes de la PR indisponibles")
                     proof = proof_store.current_for_sync(
                         issue_id=current.id,
                         issue_body=current.body,
@@ -740,10 +758,12 @@ def merge(issue_id, pr_number, flags=()):
                         diff=review_diff,
                         base=pr_base_sha,
                     )
-                except RoutingConfigError:
+                except RoutingConfigError as sync_exc:
                     raise SystemExit(
-                        "⛔ Override AC refusé — aucune preuve de review exacte et "
-                        "courante ne peut être liée au reçu de livraison."
+                        "⛔ Override AC refusé — aucune preuve de review terminée sur le "
+                        f"head, la base et le diff exacts ({sync_exc}). L'override exige "
+                        "une review terminée, quelle que soit sa qualité : lance-la puis "
+                        "relance le merge."
                     ) from None
             # This is deliberately an audit-only human escape hatch; it never modifies
             # checkboxes or turns prose into evidence.
@@ -777,62 +797,50 @@ def merge(issue_id, pr_number, flags=()):
                     raise SystemExit("⛔ Merge refusé — écriture de la note d'audit AC impossible.") from exc
                 acceptance_sync = {"status": "human-override", "checked": 0}
         else:
-            _observe_receipt(
-                issue_id, "review",
-                lambda: execution_receipts.review_receipt(ch.name, repo, pr, proof),
-            )
-            try:
-                acceptance_sync = write.sync_acceptance(
-                    tr, issue_id, current.body, proof,
+            # All-checked AC need nothing more than the valid proof read above.
+            if not ac_complete:
+                _observe_receipt(
+                    issue_id, "review",
+                    lambda: execution_receipts.review_receipt(ch.name, repo, pr, proof),
                 )
-            except AcceptanceSyncUnavailableError:
-                raise SystemExit(
-                    "⛔ Merge refusé — ce tracker ne sait pas synchroniser les AC "
-                    "atomiquement. Coche-les manuellement puis relance le merge."
-                ) from None
-            except TrackerConflictError:
-                raise SystemExit(
-                    "⛔ Merge refusé — le corps ou la version de l'issue a changé. "
-                    "Recharge l'issue, vérifie ses AC puis relance le merge."
-                ) from None
-            except RoutingConfigError as exc:
-                raise SystemExit(
-                    f"⛔ Merge refusé — synchronisation AC incompatible ({exc}). "
-                    "Relance la review sur l'issue courante."
-                ) from None
-            except Exception:
-                raise SystemExit(
-                    "⛔ Merge refusé — synchronisation AC indisponible. "
-                    "Vérifie le tracker puis relance le merge."
-                ) from None
-            # Audit before any irreversible code-host operation.  The proof identifier
-            # is a digest, so neither the diff nor the claim capability is disclosed.
-            # The provider mutation is already durably proof-bound; this human-facing
-            # note is best-effort and cannot orphan an otherwise valid receipt.
-            try:
-                write.add_comment(
-                    tr, issue_id,
-                    f"Audit merge: preuve AC structurée {proof['proof_id']} validée ; "
-                    f"synchronisation {acceptance_sync['status']} "
-                    f"({acceptance_sync['checked']} case(s)).",
-                )
-                acceptance_sync["audit_note"] = "recorded"
-            except Exception:
-                acceptance_sync["audit_note"] = "unavailable"
-    elif proof_store is not None:
-        try:
-            proof = proof_store.valid_for_merge(
-                issue_id=current.id,
-                issue_body=current.body,
-                head=transition_context.head_sha,
-                diff=review_diff,
-                base=transition_context.base_sha,
-            )
-        except RoutingConfigError as exc:
-            raise SystemExit(
-                "⛔ Merge refusé — preuve de review structurée invalide pour le "
-                f"reçu de livraison ({exc})."
-            ) from None
+                try:
+                    acceptance_sync = write.sync_acceptance(
+                        tr, issue_id, current.body, proof,
+                    )
+                except AcceptanceSyncUnavailableError:
+                    raise SystemExit(
+                        "⛔ Merge refusé — ce tracker ne sait pas synchroniser les AC "
+                        "atomiquement. Coche-les manuellement puis relance le merge."
+                    ) from None
+                except TrackerConflictError:
+                    raise SystemExit(
+                        "⛔ Merge refusé — le corps ou la version de l'issue a changé. "
+                        "Recharge l'issue, vérifie ses AC puis relance le merge."
+                    ) from None
+                except RoutingConfigError as exc:
+                    raise SystemExit(
+                        f"⛔ Merge refusé — synchronisation AC incompatible ({exc}). "
+                        "Relance la review sur l'issue courante."
+                    ) from None
+                except Exception:
+                    raise SystemExit(
+                        "⛔ Merge refusé — synchronisation AC indisponible. "
+                        "Vérifie le tracker puis relance le merge."
+                    ) from None
+                # Audit before any irreversible code-host operation.  The proof identifier
+                # is a digest, so neither the diff nor the claim capability is disclosed.
+                # The provider mutation is already durably proof-bound; this human-facing
+                # note is best-effort and cannot orphan an otherwise valid receipt.
+                try:
+                    write.add_comment(
+                        tr, issue_id,
+                        f"Audit merge: preuve AC structurée {proof['proof_id']} validée ; "
+                        f"synchronisation {acceptance_sync['status']} "
+                        f"({acceptance_sync['checked']} case(s)).",
+                    )
+                    acceptance_sync["audit_note"] = "recorded"
+                except Exception:
+                    acceptance_sync["audit_note"] = "unavailable"
 
     # --- INVARIANT: CI must be green. This refuses; it is not a suggestion. ---
     # The only waiver (zero checks + explicit flag) is decided INSIDE the gate.

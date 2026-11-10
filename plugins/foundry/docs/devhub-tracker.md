@@ -197,7 +197,7 @@ Foundry call is the set of `getattr(tr, "append_only_lifecycle_supported", ...)`
   below.
 - With the flag, `issue openpr` no longer writes the `GitHub PR` field (`issue.py:492-494`):
   the issue's `pr_url`, which `DevHubTracker` reads only from `raw["pr_url"]`
-  (`trackers/devhub.py:577`) and which `issue.py:607` and `issue.py:883`, `recover_done_projection`
+  (`trackers/devhub.py:577`) and which `issue.py:607` and `issue.py:891`, `recover_done_projection`
   and the release check compare with the PR URL, comes from the review proof. DevHub's proven
   transition runs `pr_url = COALESCE($3, pr_url)` with the proof's `pr_url`
   (`2edcea2:src/tracker/store.ts:1714-1716`, after `consumeProof` requires a non-empty one,
@@ -260,6 +260,14 @@ at `f347f38` (`devhub-requirements.md`, "Live run of PAT-318").
   recovery after the merge. On a DevHub that lacks the route the override merge is refused
   before any code-host merge (`issue.py`, "reçu typé d'override AC impossible";
   `tests/test_devhub_issue_merge.py`).
+- Since PLP-368 (PLP-ADR-0064), `issue merge` requires a completed review proof of the local
+  proof store on the exact issue criteria, head, base and diff before this receipt: under the
+  override, any completed proof whatever its `quality` and per-criterion verdicts
+  (`current_for_sync`, `routing.py`), and the override is refused before the receipt without
+  one. Criteria all checked on DevHub no longer replace the review: the merge then requires a
+  `mergeable` proof with every criterion `pass` (`valid_for_merge`). Rule in
+  `docs/review-rounds.md`, "Merge gate since PLP-368"; tests in
+  `tests/test_merge_review_proof_gate.py`.
 - `accept_issue(issue, decision, project=, verify_evidence=)` validates the decision
   (`acceptance_decision.validate`), reads the issue and the receipts, and refuses with
   `TrackerConflictError` a state other than the decision's `from_state`, any existing

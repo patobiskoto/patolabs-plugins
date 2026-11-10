@@ -299,12 +299,11 @@ checks of the full read (`claimed_review_diff` and `git_range_diff`,
 `plugins/foundry/tooling/foundry/routing.py`) and refuses a `--since` that is not a full
 40-hex ancestor of HEAD (after a rebase the review is full). The coordinator still chooses
 which head it passes: the tool checks that it is an ancestor, not that it is the previous
-round's head. When the criteria of the issue are
-not all checked in the tracker, and also when they are all checked on a tracker whose
-adapter sets `delivery_receipt_supported` if the issue has a binding
-(`write.issue_binding`), the merge gate asks for a review proof covering all criteria for
-the exact diff (`valid_for_merge`, called twice by `merge` in
-`plugins/foundry/tooling/foundry/issue.py`), so after such a partial review that proof
+round's head. On every provider, whether the criteria of the issue are checked in the
+tracker or not, the merge gate asks for a review proof covering all criteria for the
+exact diff (`valid_for_merge`, called once by `merge` in
+`plugins/foundry/tooling/foundry/issue.py`; under the human override, any completed proof
+on the same coordinates, `current_for_sync`; PLP-ADR-0064), so after such a partial review that proof
 relies on the previous round for the unchanged parts, and the PR description says so;
 no mechanical check distinguishes a partial from a full review, and the merge gate and
 the proof format are not modified (PAT-ADR-0018, PAT-ADR-0022).

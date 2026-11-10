@@ -18,9 +18,13 @@ derive `<foundry-root>` from this skill's absolute path by removing
 `/skills/merge-pr/SKILL.md`. Never pass the placeholder literally.
 
 ### 1. Acceptance criteria
-Load the issue; if AC are unchecked, the mechanical merge gate accepts them only with a
-current structured AC proof. It revalidates the current issue AC digest, local `HEAD`,
-exact diff, and immutable PR base SHA. For a tracker with an atomic acceptance-sync
+Load the issue. On every provider, whether AC are checked or not, the mechanical merge
+gate accepts the merge only with a current structured AC proof, `mergeable` with every
+criterion `pass`, read from the local proof store (PLP-ADR-0064): checked boxes never
+replace it, and a review recorded on another machine or under another data directory is
+not seen: the merge is refused until the review of step 2 records one here. It revalidates the current issue AC digest, local `HEAD`,
+exact diff, and immutable PR base SHA. Resuming a PR that is already merged calls no
+merge and needs no new proof. If AC are unchecked, for a tracker with an atomic acceptance-sync
 contract, Foundry then changes only unchecked Markdown markers whose structured verdict
 is `pass`, behind the provider's exact body/version boundary. It reports this
 administrative synchronization separately from CI and writes an audit note containing
@@ -28,8 +32,10 @@ only the proof identifier before attempting the code-host merge. A stale proof, 
 or version conflict, an unsupported provider, a malformed/mixed/legacy proof, or any
 silent truncation fails closed before merge. For a provider without this concurrency
 contract (currently YouTrack), check the boxes manually and rerun. The explicit human fallback is
-`--allow-incomplete-ac --ac-override-reason=<public-audit-code>`; it records an audit
-note but never changes tracker checkboxes or AC text. On a tracker with the typed
+`--allow-incomplete-ac --ac-override-reason=<public-audit-code>`; it still requires a
+completed review proof on the same exact coordinates, whatever its quality (`mergeable` or
+`blocked`) and its per-criterion verdicts (`current_for_sync`), and is refused without one.
+It records an audit note but never changes tracker checkboxes or AC text. On a tracker with the typed
 override port (currently Linear and DevHub), the authority is instead a deterministic append-only
 `acceptance-override` lifecycle receipt bound to the current review generation, PR URL,
 head/base SHAs, diff digest and reason code, written before the code-host merge; the
@@ -291,9 +297,9 @@ and remarks are declarations of the coordinator that the reviewer cannot confron
 any byte. The commit range is read from the bytes: pass `--previous-head <PREVIOUS-HEAD-SHA>`
 to `routing prepare-review` (the head the previous round saw, 40 lowercase hex characters);
 `reviewer-send.txt` then says that the review is partial and gives the `--since <PREVIOUS-HEAD-SHA>`
-argument to add to the `routing read-review` command of the reviewer's role contract (`foundry:review-pr`). When AC are unchecked (step 1 above), and also when they are all checked on a
-tracker whose adapter sets `delivery_receipt_supported` if the issue has a binding
-(`valid_for_merge`, called twice by `merge` in `<foundry-root>/tooling/foundry/issue.py`),
+argument to add to the `routing read-review` command of the reviewer's role contract (`foundry:review-pr`). On every provider, whether AC are checked or not (step 1 above;
+`valid_for_merge`, called once by `merge` in `<foundry-root>/tooling/foundry/issue.py`; under
+the human override, any completed proof on the same coordinates, `current_for_sync`),
 the merge gate asks for a review proof covering all criteria for the exact diff, so
 after such a partial review that proof relies on the previous round for the unchanged
 parts, and the PR description says so; no mechanical check distinguishes a partial from
