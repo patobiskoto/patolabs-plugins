@@ -220,7 +220,7 @@ malformée est ignorée.
 
 ## Rattachement des tokens à une issue et à un rôle
 
-Le verbe `routing kpi-export` (PLP-319, [kpi-export.md](kpi-export.md)) réutilise cette attribution (méthode `exact`, par invocation) et la grille `pricing-v1.json` pour écrire un montant `estimated`, jamais une facture.
+Le verbe `routing kpi-export` (PLP-319, [kpi-export.md](kpi-export.md)) réutilise cette attribution (méthode `exact`, par invocation, et, depuis PLP-357, méthode `window` pour la session coordinatrice, une fois par session et par issue, sans jamais répartir un recouvrement : règle dans [kpi-export.md](kpi-export.md), « Coordinator session ») et la grille `pricing-v1.json` pour écrire un montant `estimated`, jamais une facture.
 
 `python3 tooling/foundry_cli.py routing token-attribution [--session <journal-principal.jsonl>]...
 [--codex-session <rollout.jsonl>]... [--repository NS] [--root DIR]` (PLP-317,

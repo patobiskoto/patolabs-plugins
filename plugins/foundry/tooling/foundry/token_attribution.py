@@ -208,7 +208,7 @@ def _codex_units(paths: list[str]) -> list[dict]:
 
 
 def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
-           state_dir=None, per_invocation: dict | None = None) -> dict:
+           state_dir=None, per_invocation: dict | None = None, per_coordinator: dict | None = None) -> dict:
     """Attach every readable token slice of the given logs; see the module docstring.
 
     ``per_invocation``, when a dict is given, is filled with the ``exact`` tokens keyed by
@@ -216,6 +216,13 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     ``request_granularity``, false when a host log cannot give them, see `cost_attribution.read_host_log`) and,
     only when above 0, ``lower_bound_requests`` and ``parent_reported_requests`` (PLP-344, PLP-345); the returned
     report is unchanged (PLP-319, PLP-328).
+
+    ``per_coordinator`` (PLP-357), when a dict is given, is filled for the KPI export with the coordinator
+    requests, keyed ``(issue, host, host session id)``: the requests classified ``window`` (``requests``, ``tokens``,
+    ``groups`` of ``(model, day)`` with their per-request counters, ``first``/``last`` request time, ``lower_bound``,
+    ``granular``) and, apart, ``overlap_requests``, the requests of that session found in two or more windows, counted
+    for each issue of the overlap and in no ``window`` entry. Each request is in at most one ``window`` entry. The
+    returned report is unchanged.
     """
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])
@@ -307,6 +314,29 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                 bound = 1 if flags and flags[position] else 0
                 when = _time(times[position]) if len(times) == len(requests) else None
                 kind, value = _classify(when, parent_windows or [])
+                if per_coordinator is not None and not subagent and kind in ("one", "overlap"):
+                    for named in ([value] if kind == "one" else value):
+                        entry = per_coordinator.setdefault((named, host, row["session_id"]), {
+                            "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0), "groups": {},
+                            "first": None, "last": None, "lower_bound": 0, "granular": True,
+                            "overlap_requests": 0})
+                        if kind == "overlap":
+                            entry["overlap_requests"] += 1
+                            continue
+                        group = entry["groups"].setdefault((row["model"], str(row["occurred_on"])), {
+                            "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0), "token_requests": [],
+                            "lower_bound": 0})
+                        entry["requests"] += 1
+                        entry["lower_bound"] += bound
+                        group["lower_bound"] += bound
+                        entry["first"] = when if entry["first"] is None else min(entry["first"], when)
+                        entry["last"] = when if entry["last"] is None else max(entry["last"], when)
+                        if row.get("request_granularity") is False:
+                            entry["granular"] = False
+                        group["token_requests"].append({n: tokens[n] for n in BILLING_TOKEN_KEYS})
+                        for name in BILLING_TOKEN_KEYS:
+                            entry["tokens"][name] += tokens[name]
+                            group["tokens"][name] += tokens[name]
                 if kind == "one":
                     add(tokens, 1, issue=value, method="approximate" if subagent else "window", lower_bound=bound, **common)
                 elif kind == "overlap":

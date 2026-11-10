@@ -64,7 +64,7 @@ transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a r
 ## `attempt`
 
 One record per `routed` event of the PLP-316 invocation record for the issue (`invocation_log.records_by_id`,
-[model-routing.md](model-routing.md), "Local invocation record"). `attempt_id` = `at-` + 32 hex of sha256 of the
+[model-routing.md](model-routing.md), "Local invocation record"), plus the coordinator records of [Coordinator session](#coordinator-session-plp-357). `attempt_id` = `at-` + 32 hex of sha256 of the
 issue and the opaque invocation id (the invocation id itself is not emitted).
 
 | Field | Source | Null when |
@@ -142,12 +142,96 @@ publisher sends a revision of a record it already published ("Publication to Dev
 no completed request keeps its material, fingerprint and `record_id`
 (`test_parent_reported_last_request_makes_a_complete_record_and_a_still_partial_one_stays_partial`).
 
-Not exported: the coordinator's own tokens and the tokens of sub-agents without an invocation record (methods `window`,
-`approximate`, `overlap`, `unattributed` of `routing token-attribution`). No coordinator attempt is emitted.
+Not exported as an invocation attempt: the tokens of sub-agents without an invocation record (methods `approximate`,
+`unattributed` of `routing token-attribution`). The coordinator session is exported as its own record, see
+[Coordinator session](#coordinator-session-plp-357).
 
 Observed on 2026-10-27 on the maintainer machine: the invocation record held 0 entries for the default state directory,
 so no `attempt` record was exported on that run (no sample of it is committed here); the `exact` link and the amount are established by synthetic tests
 only (`test_attempts_tokens_and_estimated_amount`).
+
+## Coordinator session (PLP-357)
+
+The coordinator is the main host session that drives the issue. Its requests are in the main log, not in the
+`subagents/` logs that give the `exact` attempts above, so they were not exported before PLP-357. `_coordinators` in
+`kpi_export.py` now emits, per issue and per host session, one `attempt` record of role `coordinator`, built from the
+`window` slices of `token_attribution.report(..., per_coordinator=...)` (`token_attribution.py`, method `window` of
+`docs/cost-attribution.md`, "Rattachement des tokens à une issue et à un rôle"). Only requests of non-sub-agent logs
+enter it (`not subagent` in `report`), so no request is in both a coordinator record and an `exact` attempt.
+
+Contract (PLP-ADR-0061, PLP-ADR-0063): the receiving schema was read in `src/tracker/observation-contract.ts` of the DevHub
+repository (read, not run): `role` accepts `coordinator` (line 19), `attribution` is `exact`, `window`, `approximate` or
+`unattributed` (line 37), a `project` anchor goes with `unattributed` and conversely (line 49). The record uses `role`
+`coordinator`, `attribution` `window` and the `issue` anchor, so `devhub-observations.v2` is unchanged and neither an ADR nor an
+amendment is needed. The context line of PLP-ADR-0063 "les tokens du coordinateur ne sont pas exportés" described Foundry 2.8.1;
+an accepted ADR is not edited and this page is the current state.
+
+**Sharing rule (every coordinator request is counted at most once).** `_classify` in `token_attribution.py` gives each
+request of a coordinator log one outcome. Window of an issue = first `issue start <ISSUE>` to the first later
+`issue merge <ISSUE>` call of the same log (`_windows`).
+
+- A request inside exactly one window and inside no unclosed window is `window` for that issue: it is in that issue's
+  record and in no other.
+- A request inside two or more windows, or inside a closed window and an unclosed one, is `overlap`: it is in no record. The
+  DevHub enum has no `overlap` value and splitting it would be a guess. Each issue of the overlap gets an `omitted` entry
+  `{issue, kind: "attempt", role: "coordinator", reason: "coordinator_requests_in_overlapping_windows", requests: N}`, and the
+  `amount.completeness` of that issue's record is `partial`.
+- A request in no window, or only in an unclosed one, belongs to no issue: it is exported nowhere. A `project`-anchored
+  `unattributed` record was not chosen: `kpi_publish.validate_document` refuses a record whose `anchor.issue_id` does not start
+  with the project key (so a record with a null `issue_id` is refused before any request), the unattributed requests are the
+  rest of a session and not the cost of the exported issue, and they would be repeated at every merge.
+- The same log given twice is one log (`_claude_units`, PLP-321). Windows are per log and read for all issues of the log whatever
+  the issues exported, so exporting the issues one at a time (the merge step) or together gives the same records.
+
+Proved by `test_coordinator_session_is_one_window_record_per_issue_and_nothing_is_counted_twice`
+(`tests/test_kpi_export.py`): a log with two overlapping windows, one unclosed window and one request outside any window;
+record tokens + overlap tokens + unattributed tokens equal the total of the log, so nothing is counted twice or lost.
+
+| Field | Value | Null when |
+|---|---|---|
+| `role`, `attribution` | `coordinator`, `window` | never |
+| `attempt_id` | `at-` + 32 hex of sha256 of `coordinator`, issue, host and the host session id (the session id is not emitted) | never |
+| `host` | host of the log | not `claude` or `codex` |
+| `model.served` | the model named by the log requests of the window, when it is one valid `id` | several models or an invalid id |
+| `model.configured`, `tier`, `effort` | none | always: Foundry does not route the coordinator, nothing local records them |
+| `status`, `failure_class` | `unknown`, `unknown`: no completion of a coordinator session is observed | never |
+| `tokens.input`, `cached_input`, `cache_write_input`, `output` | sum of the window requests of the session | never (a record exists only with at least one request) |
+| `started_at`, `ended_at`, `observed_at` | observed: first request time, last request time and last request time of the window in the log | never |
+| `amount` | `estimated`, the grid of `cost_attribution.price_for` applied per (model, day) group of requests and summed; `rate_version` is the version of the one group, or a digest of the sorted versions | a group has no price for its model and day, or has a threshold entry without per-request counts: the whole amount is `null` with the `_amount` reason, never a partial sum; the tokens are kept |
+
+`amount.completeness` is `complete` unless the session has `overlap` requests for the issue, a request that is a lower bound
+(`lower_bound_requests`, PLP-344) or a 1h cache-write model (`_amount`, PLP-14); then `partial` and `provenance.from.amount` says
+which. `provenance` gives the attribution method and the window rule (`from.attribution`). The `source` schema is
+`token-attribution.v1` and `source.fingerprint` hashes the issue, host, hashed session id, request count, first and last time, overlap
+count, lower-bound count and the per-(model, day) token sums; the price grid is not in it, as for the other attempts.
+
+Not exported or unknown, stated as such:
+
+- Without a session log (`--session`/`--codex-session` or the discovery) no coordinator record and no `omitted` entry are
+  produced: unknown, not zero. With logs, an issue without any window in them gets `omitted` reason
+  `no_coordinator_window_in_the_given_logs` (the cause, a coordinator in another session or an unreadable log, is not told apart),
+  and an issue with a window never closed in a log gets `coordinator_window_unclosed`.
+- Logs found by `kpi_sessions.discover` are those holding a sub-agent invocation of the issue, so a coordinator log without
+  one is not found; a Codex coordinator rollout is not found either (residual limit of "Finding the session logs").
+- A start and a merge in two different sessions give an unclosed window in one and no window in the other: no record. In a campaign
+  `issue start` and `issue merge` run in sub-processes of the cadencer, so the session has no window
+  (`docs/cost-attribution.md`, same section): no record.
+- The window is a temporal presumption: the session may have worked on something else between start and merge (deduced);
+  a refused `issue merge` still closes the window (`docs/cost-attribution.md`).
+- Observed on 2026-11-10 on the maintainer machine (state of the day, discovery of the logs, no paid call), one export of
+  PLP-353, PLP-355 and PLP-359: 7 `attempt` records, one of them `coordinator` (PLP-359, `window`, `complete`); PLP-353 had no window in the logs found (`omitted`), PLP-355 had only 18 requests in
+  overlapping windows (`omitted`, no record). Plausible, not compared with an invoice.
+
+**Revisions and merge time.** `attempt_id` does not depend on the fingerprint, so the chain `attempt|<issue>|<attempt_id>` of
+`PublishedLedger` is stable for a session; a changed source (a log read again with more requests in the window)
+changes `source.fingerprint` and `record_id` and the publisher sends it as the next revision, never a duplicate
+([Revisions](#revisions-plp-342); `test_a_lone_window_is_complete_and_a_later_source_change_is_a_revision_of_the_same_chain`).
+Requests after the closing `issue merge` are outside the window, so the session continuing after the merge does not change a
+closed window's record (`test_requests_after_the_merge_are_not_in_the_window_and_an_unclosed_window_gives_no_record`). At the
+publication of `issue merge` (PLP-343) the window is closed if the log already holds the merge call of that very command and then
+the record is published; otherwise the window is unclosed, no record is made and `omitted` says so, and the next manual
+`routing kpi-export` then `routing kpi-publish` publishes it as a first record. Whether the log holds the call at that time is
+unknown (not observed). While another issue's window is unclosed, requests common to both are `overlap`, so the record is `partial`.
 
 ## `review_round`
 
