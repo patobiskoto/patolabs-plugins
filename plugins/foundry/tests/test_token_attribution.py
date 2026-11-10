@@ -371,3 +371,36 @@ def test_the_same_log_in_absolute_and_relative_spelling_is_counted_once(tmp_path
     codex_twice = token_attribution.report(codex_sessions=[rollout, Path("r.jsonl")],
                                            repository=REPO, state_dir=state)
     assert codex_twice["totals"] == codex_once["totals"]
+
+
+def test_claude_completions_keeps_only_the_tool_call_the_status_word_and_the_time(tmp_path):
+    """PLP-358: the last enqueue notification per call; the summary is never kept; an unreadable log gives nothing."""
+    def row(at, status, tool_use=TOOL_USE, operation="enqueue"):
+        return {"type": "queue-operation", "operation": operation, "timestamp": at, "content": (
+            f"<task-notification>\n<task-id>x1</task-id>\n<tool-use-id>{tool_use}</tool-use-id>\n"
+            f"<output-file>/p/q.output</output-file>\n<status>{status}</status>\n<summary>SECRET</summary>\n"
+            "</task-notification>")}
+
+    main = _write(tmp_path / "s.jsonl", [row("2026-10-01T10:00:00.000Z", "completed"),
+                                         row("2026-10-01T10:05:00.000Z", "stopped"),
+                                         row("2026-10-01T10:09:00.000Z", "completed", operation="remove"),
+                                         row("2026-10-01T10:09:00.000Z", "weird")])
+    found = token_attribution.claude_completions([main, main])
+    key = invocation_log.claude_invocation_id(TOOL_USE)
+    assert list(found) == [key] and found[key][0] == "stopped" and found[key][1].minute == 5
+    assert "SECRET" not in repr(found)
+    bad = tmp_path / "bad.jsonl"
+    bad.write_bytes(b"\xff\xfe\n")
+    assert token_attribution.claude_completions([bad, tmp_path / "missing.jsonl"]) == {}
+
+
+def test_per_invocation_keeps_the_counters_by_served_model_and_day(tmp_path):
+    state = tmp_path / "state"
+    _seed(state, "implementer", "PLP-1", invocation_log.claude_invocation_id(TOOL_USE), "claude")
+    rows = [_claude_request("2026-10-01T10:40:00.000Z", 1, "sub1", "a"), _claude_request("2026-10-02T10:40:00.000Z", 2, "sub1", "b")]
+    main = _claude_tree(tmp_path, [], [("exact", rows, {"toolUseId": TOOL_USE}, "plain text")])
+    seen: dict = {}
+    token_attribution.report(claude_sessions=[main], repository=REPO, state_dir=state, per_invocation=seen)
+    groups = seen[invocation_log.claude_invocation_id(TOOL_USE)]["groups"]
+    assert sorted(groups) == [("claude-sonnet-5-5", "2026-10-01"), ("claude-sonnet-5-5", "2026-10-02")]
+    assert sum(g["tokens"]["output_tokens"] for g in groups.values()) == 3000

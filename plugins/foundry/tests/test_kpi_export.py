@@ -724,3 +724,125 @@ def test_an_unpriced_coordinator_model_keeps_the_tokens_and_a_null_amount(tmp_pa
     data, (record,) = _coordinator_records(_build(state, claude_sessions=[main]))
     assert record["tokens"]["output"] == 2000 and record["amount"] is None
     assert data["provenance"][record["record_id"]]["null"]["amount"] == "no_price_for_model_and_date"
+
+
+# PLP-358: status and end of a background attempt, price of an alias-routed attempt, review type outside a campaign
+
+def _notice(at, status, tool_use=TOOL_USE, operation="enqueue", extra=""):
+    content = (f"<task-notification>\n<task-id>aabbcc</task-id>\n<tool-use-id>{tool_use}</tool-use-id>\n"
+               f"<status>{status}</status>\n<summary>SECRET-SUMMARY</summary>{extra}\n</task-notification>")
+    return {"type": "queue-operation", "operation": operation, "timestamp": at, "sessionId": "s-main",
+            "content": content}
+
+
+def _background(state, tmp_path, notices, *, host="claude", status="unknown", model="claude-sonnet-5",
+                at="2026-10-28T00:00:00.000000Z"):
+    ident = invocation_log.claude_invocation_id(TOOL_USE)
+    _routed(state, "PLP-1", "reviewer", ident, host=host, model=model, at=at, status="routed")
+    if status:
+        invocation_log._append(invocation_log._path(REPO, state), {
+            "event": "completed", "id": ident, "at": at, "status": status,
+            "failure_class": "none" if status == "completed" else "unknown"})
+    main = _claude_tree(tmp_path, notices, [("exact", [_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a")],
+                                             {"toolUseId": TOOL_USE}, "plain text")])
+    data, records = _records(_build(state, claude_sessions=[main]))
+    (record,) = records
+    _check(record)
+    return data, record
+
+
+def test_background_attempt_takes_status_and_end_from_the_host_notification(tmp_path):
+    base = _background(tmp_path / "s0", tmp_path / "t0", [])[1]
+    assert (base["status"], base["ended_at"]) == ("unknown", None)
+    data, done = _background(tmp_path / "s1", tmp_path / "t1", [_notice("2026-10-28T00:05:00.000Z", "completed")])
+    assert (done["status"], done["failure_class"]) == ("completed", "none")
+    assert done["ended_at"] - done["started_at"] == 300000
+    from_ = data["provenance"][done["record_id"]]["from"]
+    assert "host notification" in from_["status"] and "observed" in from_["ended_at"]
+    assert "ended_at" not in data["provenance"][done["record_id"]]["null"]
+    assert done["source"]["fingerprint"] != base["source"]["fingerprint"]  # published as a revision of the chain
+    assert done["attempt_id"] == base["attempt_id"]
+    assert "SECRET-SUMMARY" not in json.dumps(data)
+    # a failed notification does not name the class; the last notification by time wins; the remove entry is ignored
+    _, failed = _background(tmp_path / "s2", tmp_path / "t2", [
+        _notice("2026-10-28T00:05:00.000Z", "completed"), _notice("2026-10-28T00:09:00.000Z", "failed"),
+        _notice("2026-10-28T00:20:00.000Z", "completed", operation="remove")])
+    assert (failed["status"], failed["failure_class"]) == ("failed", "unknown")
+    assert failed["ended_at"] - failed["started_at"] == 540000
+
+
+def test_a_host_notification_is_ignored_when_it_proves_nothing(tmp_path):
+    stamp = "2026-10-28T00:05:00.000Z"
+    # stopped / killed are not mapped; the reason says so
+    for n, word in enumerate(("stopped", "killed")):
+        data, record = _background(tmp_path / f"s{n}", tmp_path / f"t{n}", [_notice(stamp, word)])
+        assert (record["status"], record["ended_at"]) == ("unknown", None)
+        assert "not mapped" in data["provenance"][record["record_id"]]["from"]["status"]
+    # another call, a notification before the launch, a body that is not a notification head, a Codex attempt
+    for n, row in enumerate((_notice(stamp, "completed", tool_use="toolu_OTHER"), _notice("2026-10-27T00:00:00.000Z", "completed"),
+                             {**_notice(stamp, "completed"), "content": "text <status>completed</status>"},
+                             {**_notice(stamp, "completed"), "type": "user"})):
+        _, record = _background(tmp_path / f"o{n}", tmp_path / f"p{n}", [row])
+        assert (record["status"], record["ended_at"]) == ("unknown", None)
+    _, codex = _background(tmp_path / "cx", tmp_path / "cy", [_notice(stamp, "completed")], host="codex", status=None)
+    assert (codex["status"], codex["ended_at"]) == ("unknown", None)
+    # a completion event written by the hook is never replaced
+    _, hooked = _background(tmp_path / "hk", tmp_path / "hl", [_notice(stamp, "failed")], status="completed")
+    assert (hooked["status"], hooked["failure_class"], hooked["ended_at"]) == ("completed", "none", None)
+
+
+def _alias_record(tmp_path, name, requests, model="opus", day="2026-10-28"):
+    state = tmp_path / f"state-{name}"
+    _routed(state, "PLP-1", "implementer", invocation_log.claude_invocation_id(TOOL_USE), model=model,
+            at=f"{day}T00:00:00.000000Z")
+    main = _claude_tree(tmp_path / name, [], [("exact", requests, {"toolUseId": TOOL_USE}, "plain text")])
+    data, records = _records(_build(state, claude_sessions=[main]))
+    _check(records[0])
+    return data, records[0]
+
+
+def _served(request, model):
+    request["message"]["model"] = model
+    return request
+
+
+def test_an_alias_routed_attempt_is_priced_by_the_model_its_log_served(tmp_path):
+    request = _claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a")
+    data, record = _alias_record(tmp_path, "a", [request])
+    assert record["model"] == {"configured": "opus", "served": "claude-sonnet-5-5"}  # the alias is not rewritten
+    pinned = _alias_record(tmp_path, "p", [request], model="claude-sonnet-5-5")[1]
+    assert record["amount"]["amount_micros"] == pinned["amount"]["amount_micros"] == "51265"
+    assert record["amount"]["completeness"] == "partial"  # 1h cache write of a Sonnet 5.5 pin (PLP-14)
+    from_ = data["provenance"][record["record_id"]]["from"]
+    assert "per (model, day)" in from_["amount"] and "model.served" in from_
+    assert record["source"]["fingerprint"] != pinned["source"]["fingerprint"]
+    # a pinned model is untouched: served stays null with its reason and the fingerprint is the one of before
+    assert pinned["model"]["served"] is None and "priced_by_served_model" not in json.dumps(pinned)
+    # two models over two days: each group at its own rate, summed
+    second = _served(_claude_request("2026-10-29T10:40:00.000Z", 5, "sub1", "b"), "claude-opus-5-5")
+    _, mixed = _alias_record(tmp_path, "m", [request, second])
+    assert mixed["model"]["served"] is None
+    assert mixed["amount"]["amount_micros"] == str(51265 + 102530)
+
+
+def test_an_alias_routed_attempt_stays_unpriced_when_the_served_model_has_no_price(tmp_path):
+    odd = _served(_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a"), "claude-unknown-9")
+    data, record = _alias_record(tmp_path, "u", [odd])
+    assert (record["amount"], record["model"]["served"]) == (None, None)
+    assert data["provenance"][record["record_id"]]["null"]["amount"] == "no_price_for_model_and_date"
+    # one group without a price makes the whole amount null, never a partial sum
+    good = _claude_request("2026-10-28T10:41:00.000Z", 5, "sub1", "b")
+    assert _alias_record(tmp_path, "v", [good, odd])[1]["amount"] is None
+
+
+def test_a_review_round_after_a_validated_one_is_omitted_outside_a_campaign_whatever_the_invocation_record_says(tmp_path):
+    """PLP-358, wanted limit: the contract forbids a null `review_type` and no local store says partial or full."""
+    first = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable", "2026-10-01T10:00:00Z")
+    _routed(tmp_path, "PLP-1", "reviewer", "d" * 16, head=first["coordinates"]["head"], model="claude-opus-5")
+    _proof(tmp_path, "PLP-1", "2", ["pass"], "mergeable", "2026-10-02T10:00:00Z", generation=2)
+    _routed(tmp_path, "PLP-1", "reviewer", "e" * 16, head=_hex("2", 40), model="claude-opus-5",
+            at="2026-10-02T00:00:00.000000Z")
+    data, records = _records(_build(tmp_path))
+    assert [r["rank"] for r in records if r["kind"] == "review_round"] == [1]
+    assert data["omitted"] == [{"issue": "PLP-1", "kind": "review_round", "rank": 2,
+                                "reason": "review_type_unrecorded:no_campaign_record"}]

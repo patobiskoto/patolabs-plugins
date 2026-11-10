@@ -35,6 +35,9 @@ _ISSUE = re.compile(r"[A-Z][A-Z0-9_]*-[1-9][0-9]*\Z")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 ESCALATION_ROLES = ("coordinator", "implementer", "reviewer", "scout", "architect")
 ESCALATION_SIGNALS = ("test_red", "review_blocking", "review_blocking_after_fix")
+# Host task notification word -> (status, failure_class). `stopped` and `killed` are not mapped: what ended the
+# call is not proved (PLP-358, docs/kpi-export.md). A `failed` notice does not name the class.
+_NOTICE_STATUS = {"completed": ("completed", "none"), "failed": ("failed", "unknown")}
 _TOKEN_FIELDS = (("input", "input_tokens"), ("cached_input", "cached_input_tokens"),
                  ("cache_write_input", "cache_write_input_tokens"), ("output", "output_tokens"))
 
@@ -153,7 +156,37 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
             "completeness": "partial" if one_hour or lower_bound else "complete", "rate_version": version}, None
 
 
-def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) -> tuple[list, list]:
+def _combine(priced: list[dict], partial: bool = False) -> dict:
+    """One amount from the amounts of several (model, day) groups: micros summed, ``rate_version`` of the one
+    group or a digest of the sorted versions; ``partial`` when asked or when any group is."""
+    versions = [a["rate_version"] for a in priced]
+    return {"amount_micros": str(sum(int(a["amount_micros"]) for a in priced)), "currency": "USD",
+            "unit": "micros", "method": "estimated",
+            "completeness": "partial" if partial or any(a["completeness"] == "partial" for a in priced) else "complete",
+            "rate_version": versions[0] if len(set(versions)) == 1 else
+            "pricing-v1-" + hashlib.sha256(_canonical(sorted(set(versions))).encode("utf-8")).hexdigest()[:12]}
+
+
+def _served_amount(grid: dict, host: str | None, usage: dict) -> tuple[dict | None, str | None, list]:
+    """Price an attempt whose requested model has no price by the model(s) its host log served (PLP-358).
+
+    ``usage`` is the ``per_invocation`` entry. The model is the one the log requests name (observed), never
+    deduced from the requested alias. Returns (amount, reason, [(model, day)]); one group without a price makes
+    the whole amount null, as for the coordinator record.
+    """
+    groups = sorted(usage.get("groups", {}).items())
+    priced = []
+    for (model, day), group in groups:
+        amount, why = _amount(grid, host, _id(model), day, group["tokens"],
+                              group["token_requests"] if usage["request_granularity"] else None, group["lower_bound"])
+        if amount is None:
+            return None, why, []
+        priced.append(amount)
+    return (_combine(priced), None, [list(key) for key, _ in groups]) if priced else (None, None, [])
+
+
+def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict,
+              completions: dict | None = None) -> tuple[list, list]:
     if records is None:
         return [], [{"issue": issue, "kind": "attempt", "reason": "invocation_log_unreadable"}]
     out, omitted = [], []
@@ -167,13 +200,27 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         status, failure = (("completed", "none") if status == "completed"
                            else ("failed", "host") if status == "failed" else ("unknown", "unknown"))
         log_source = "invocation record (invocation_log.py)"
+        notice = (completions or {}).get(item["id"]) if item.get("host") == "claude" and status == "unknown" else None
+        ended = _epoch_ms(notice[1].isoformat()) if notice else None
         if status != "unknown":
             status_source = log_source + " (last completion event)"
         elif raw_status == "unknown":  # written only by hooks/observe_agent.py for a background launch
             status_source = (log_source + ": background launch whose end the PostToolUse hook "
-                             "does not observe (PLP-329); no end time is emitted")
+                             "does not observe (PLP-329)")
         else:  # `routed`: no completion event, every Codex attempt included
-            status_source = log_source + ": no completion event; no end time is emitted"
+            status_source = log_source + ": no completion event"
+        if notice and notice[0] in _NOTICE_STATUS and ended is not None and ended >= started:
+            status, failure = _NOTICE_STATUS[notice[0]]
+            status_source = ("host notification of the background Agent call in the main session log "
+                             "(token_attribution.claude_completions, queue-operation status '%s'); observed" % notice[0])
+        else:
+            ended = None
+            if notice:
+                status_source += "; the host notification '%s' is not mapped to a status" % notice[0]
+            elif item.get("host") == "claude":
+                status_source += "; no host notification of the call in the session logs " + (
+                    "given" if completions is not None else "(none given)")
+            status_source += "; no end time is emitted"
         material = {k: item.get(k) for k in invocation_log._FIELDS if k != "event"}
         attempt_id = "at-" + _digest("attempt", issue, item["id"])[:32]
         tokens = None
@@ -186,12 +233,27 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
         reported = usage[item["id"]].get("parent_reported_requests", 0) if tokens is not None else 0
         if reported:  # PLP-345: the last request's counters come from the parent tool result
             material["tokens_parent_reported_requests"] = reported
-        rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
+        if ended is not None:  # PLP-358: only an attempt with a mapped host notification changes its fingerprint
+            material["completion"] = [notice[0], ended]
         model = _id(item.get("model_requested"))
         seen = usage[item["id"]] if tokens is not None else {}
         requests = seen["token_requests"] if seen.get("request_granularity") is True else None
         causes: dict = {}
         amount, why = _amount(grid, item.get("host"), model, item["at"], tokens, requests, bounded, causes)
+        served, by_served = None, []
+        if why == "no_price_for_model_and_date" and seen.get("groups"):
+            # PLP-358: the requested model (a short alias, for example) has no price; the model the host log
+            # served is observed, so it prices the attempt. The alias is never read as a version.
+            priced, why_served, by_served = _served_amount(grid, item.get("host"), seen)
+            if priced is not None:
+                amount, why = priced, None
+                names = {_id(m) for m, _ in seen["groups"]}
+                served = names.pop() if len(names) == 1 and None not in names else None
+                material["priced_by_served_model"] = by_served
+                causes["one_hour"] = amount["completeness"] == "partial" and not bounded
+            else:
+                why = why_served or why
+        rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
         log, host = "invocation record (invocation_log.py)", item.get("host")
         no_tokens = ("no session log given" if usage is None else "invocation absent from the given session logs")
         body = {
@@ -200,7 +262,10 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
             "tier": rec.put("tier", _id(item.get("tier")), log, "tier_not_recorded"),
             "effort": rec.put("effort", _id(item.get("effort")), log, "effort_not_recorded"),
             "model": {"configured": rec.put("model.configured", model, log + " (model requested)", "model_not_recorded"),
-                      "served": rec.put("model.served", None, "", "the served model is not recorded locally")},
+                      "served": rec.put("model.served", served, "host log of the invocation: model of its requests "
+                                "(token_attribution), emitted where it prices an attempt whose requested model has no price",
+                                "the served model is not recorded in the invocation record; it is emitted only "
+                                "where it prices an attempt whose requested model has no price (PLP-358)")},
             "status": rec.put("status", status, status_source),
             "failure_class": rec.put("failure_class", failure, status_source),
             "tokens": {
@@ -208,8 +273,10 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                 "reasoning_output": rec.put("tokens.reasoning_output", None, "",
                                             "per-invocation attachment carries billing keys only"),
             },
-            "amount": rec.put("amount", amount, "pricing-v1.json grid applied to the tokens (cost_attribution.price_for); "
-                              "API-equivalent estimate, not an invoice"
+            "amount": rec.put("amount", amount, "pricing-v1.json grid applied to the tokens (cost_attribution.price_for)"
+                              + ("; the requested model has no price, so the grid is applied per (model, day) of the "
+                                 "requests of the host log, the model it served (PLP-358)" if by_served else "")
+                              + "; API-equivalent estimate, not an invoice"
                               + ("; partial: a 1h cache write of this model would be priced at the 5m rate, "
                                  "so the amount is a lower bound" if amount and causes.get("one_hour")
                                  else "")
@@ -225,8 +292,11 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict) 
                 + (f"; {reported} request(s) of the log, the last one of the subagent, take their counters from the "
                    "parent tool result (toolUseResult.usage, host_reported)" if reported else ""), no_tokens)
         corrector = role == "corrector"
-        out.append((rec, rec.finish(started, None, started, "approximate" if corrector else "exact",
+        out.append((rec, rec.finish(started, ended, started, "approximate" if corrector else "exact",
                                     "at of the routed event of the invocation record", body)))
+        if ended is not None:
+            rec.fields["ended_at"] = ("observed: timestamp of the host notification that the call stopped (an upper "
+                                      "bound of its end), main session log")
         if corrector:
             rec.fields["attribution"] = "approximate: the corrector role is a claim made at routing (correction flag)"
     return out, omitted
@@ -265,23 +335,16 @@ def _coordinators(issue: str, coordinator: dict | None, windows: list, grid: dic
                     "lower_bound_requests": seen["lower_bound"],
                     "groups": [[model, day, g["tokens"], g["lower_bound"]] for (model, day), g in groups]}
         rec = _Record(issue, "attempt", "at-" + digest, "token-attribution.v1", material)
-        priced, versions, why = [], [], None
+        priced, why = [], None
         for (model, day), group in groups:
             amount, why = _amount(grid, host, _id(model), day, group["tokens"],
                                   group["token_requests"] if seen["granular"] else None, group["lower_bound"])
             if amount is None:
                 break
             priced.append(amount)
-            versions.append(amount["rate_version"])
         amount = None
         if why is None and priced:
-            amount = {"amount_micros": str(sum(int(a["amount_micros"]) for a in priced)), "currency": "USD",
-                      "unit": "micros", "method": "estimated",
-                      "completeness": "partial" if (seen["overlap_requests"] or seen["lower_bound"]
-                                                    or any(a["completeness"] == "partial" for a in priced))
-                      else "complete",
-                      "rate_version": versions[0] if len(set(versions)) == 1 else
-                      "pricing-v1-" + hashlib.sha256(_canonical(sorted(set(versions))).encode("utf-8")).hexdigest()[:12]}
+            amount = _combine(priced, bool(seen["overlap_requests"] or seen["lower_bound"]))
         models = {_id(m) for (m, _), _g in groups}
         served = models.pop() if len(models) == 1 and None not in models else None
         log, how = "token_attribution (routing token-attribution)", "coordinator requests of the issue window"
@@ -490,8 +553,10 @@ def build(issues: list[str], repository: str, *, claude_sessions=(), codex_sessi
     journal = Path(state_dir if state_dir is not None else registry.data_dir()) / campaign_effects.ATTEMPTS_NAME
     grid = cost_attribution.load_price_grid(cost_attribution.PRICE_GRID_PATH)
     records = invocation_log.records_by_id(repository=repository, state_dir=state_dir)
-    usage = coordinator = None
+    usage = coordinator = completions = None
     windows: list = []
+    if claude_sessions:  # PLP-358: the host notifications that end the background Agent calls
+        completions = token_attribution.claude_completions(claude_sessions)
     if claude_sessions or codex_sessions:
         usage, coordinator = {}, {}
         windows = token_attribution.report(claude_sessions=claude_sessions, codex_sessions=codex_sessions,
@@ -499,7 +564,7 @@ def build(issues: list[str], repository: str, *, claude_sessions=(), codex_sessi
                                            per_coordinator=coordinator)["windows"]
     entries, omitted = [], []
     for issue in issues:
-        for found, skipped in (_attempts(issue, records, usage, grid),
+        for found, skipped in (_attempts(issue, records, usage, grid, completions),
                                _coordinators(issue, coordinator, windows, grid),
                                _rounds(issue, repository, state_dir, journal),
                                _escalations(issue, repository, state_dir, records)):
