@@ -500,9 +500,8 @@ comments that open with `Non-blocking review remarks deferred from` (`DEFERRAL_H
 `remark_count` in `campaign_defer.py`); other comments count for nothing. From 30 remarks
 (`MAX_FOLLOW_UP_REMARKS`) the issue is full and receives no more: the next deferral creates a new
 follow-up issue in the same companion Epic, and the full one stays open. A follow-up issue created
-before PLP-ADR-0065 that already holds more than 30 is full at once. The size of the debt is
-therefore the number of open follow-up issues times 30 at most, plus at most one deferral over
-the cap per issue.
+before PLP-ADR-0065 whose remarks already count 30 or more by this rule is full at once. The count only sees the comments the adapter's `get_issue` returns: the Linear adapter keeps the 10 most recent ordinary comments (`trackers/linear.py`, normalisation of `comments`), so there a follow-up issue may never reach 30 and the cap may never apply (deduced from the code, not observed); whether the other adapters return every comment is unknown. Remarks written in another format (another header, numbered items) are not counted either. The
+cap therefore bounds only the remarks it counts; it is not a bound on the debt.
 
 Triage before a minor or major release: `skills/release/SKILL.md`, step 4, stops for the
 maintainer's verdict before the release PR. A repository that does not release through

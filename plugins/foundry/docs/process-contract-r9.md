@@ -212,7 +212,7 @@ its attempt journal. A follow-up issue holding `MAX_FOLLOW_UP_REMARKS` (30) rema
 `remark_count` over the comments that open with `DEFERRAL_HEADER` (both in `campaign_defer.py`), is
 skipped by `_find_follow_up` like a started one, so the effect creates a new follow-up issue; a
 full issue that already carries the comment of the deferral being retried stays usable, so a retry
-posts nothing twice (PLP-ADR-0065). The following are corrected by the correction loop and
+posts nothing twice (PLP-ADR-0065). The count only sees the comments the adapter's `get_issue` returns (the Linear adapter keeps the 10 most recent ordinary ones, so the cap may never apply there; other adapters unknown): `docs/review-rounds.md`, "Reading the deferred-remarks debt". The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
 targets the PR description alone: the correction then replaces the description, which is not
 re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),
