@@ -489,6 +489,26 @@ is unknown and not counted here. Since PAT-291 the campaign cadencer defers such
 companion Epic (`campaign_defer._COMPANION_NAME`), so a ticket of `Nits` is corrected, never
 deferred again (`docs/campaign-effects.md`).
 
+## Reading the deferred-remarks debt (PLP-361, PLP-ADR-0065)
+
+The deferred remarks are not counted by any tool; the debt is read in the tracker, by hand.
+List the project (`query backlog`, `skills/merge-pr/SKILL.md`, "Commands to look and to read
+back"): the companion Epics are the issues titled `Nits <ORIGIN-EPIC-ID>` and exactly `Nits`
+(`COMPANION_PREFIX`, `NO_ORIGIN_COMPANION` in `campaign_defer.py`); their follow-up issues are
+their children. For each open follow-up issue count the remarks: the `- ` list items of the
+comments that open with `Non-blocking review remarks deferred from` (`DEFERRAL_HEADER`,
+`remark_count` in `campaign_defer.py`); other comments count for nothing. From 30 remarks
+(`MAX_FOLLOW_UP_REMARKS`) the issue is full and receives no more: the next deferral creates a new
+follow-up issue in the same companion Epic, and the full one stays open. A follow-up issue created
+before PLP-ADR-0065 that already holds more than 30 is full at once. The size of the debt is
+therefore the number of open follow-up issues times 30 at most, plus at most one deferral over
+the cap per issue.
+
+Triage before a minor or major release: `skills/release/SKILL.md`, step 4, stops for the
+maintainer's verdict before the release PR. A repository that does not release through
+`foundry:release` has only the cap; its triage stays manual. Unknown: whether the cap alone
+keeps the debt contained there (PLP-ADR-0065).
+
 ## Partial review on every pull request (PAT-172, PAT-ADR-0022)
 
 Until PAT-172, only the PR of an issue of a companion Epic had a partial review after the

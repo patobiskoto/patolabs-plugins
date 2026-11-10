@@ -270,7 +270,13 @@ which gathers all the deferred remarks of the origin Epic (in `Nits`, which has 
 Epic, those of every issue of the project with no origin Epic), and cite that issue in the PR
 description before the merge. If that issue is already started or closed, create a new
 follow-up issue: never add a remark to a started or closed issue (maintainer decision of
-2026-10-11). These three cases are still corrected before the merge; the rest of this
+2026-10-11). A follow-up issue is also full once it holds 30 remarks or more (PLP-ADR-0065,
+which amends PAT-ADR-0018): treat it like a started one and create a new follow-up issue in the
+same companion Epic. A remark is one `- ` list item of a deferral comment, a deferral comment opens
+with the line `Non-blocking review remarks deferred from <ISSUE-ID> (AGENTS.md#R9 (b)).`
+(`DEFERRAL_HEADER`, `comment_text` in `tooling/foundry/campaign_defer.py`), and a manual deferral
+uses that same header and `- ` items so that it is counted. A deferral is never split: if it would
+cross 30, it still goes whole into an issue that is not yet full. A full issue stays open. These three cases are still corrected before the merge; the rest of this
 section adds two more (the PR of an issue of a companion Epic, `Nits` included, and a
 durable refusal of one of the writes), corrected the same way. The first three
 cases are:

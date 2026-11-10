@@ -45,6 +45,8 @@ DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or t
 # so a ticket never waits for a far or wrong date.  A Foundry choice: not measured, and the
 # Linear quota window is not established (docs/linear-tracker.md).
 MAX_RESET_WAIT_SECONDS = 3600
+MAX_FOLLOW_UP_REMARKS = 30  # PLP-ADR-0065: a follow-up issue holding this many remarks is full
+DEFERRAL_HEADER = "Non-blocking review remarks deferred from "  # first words of a deferral comment
 MAX_DEFER_TRIES = 5  # attempts per diff; beyond them the campaign waits for a human
 STATES = ("pending", "done", "refused", "transient", "exhausted")
 DEFERRAL_KEYS = {"state", "follow_up", "companion", "reason", "diff_hash", "remarks", "writes",
@@ -365,9 +367,27 @@ def _find_companion(listing: Listing, name: str, known: list[str] = ()) -> str |
     return epics[0].id if epics else None
 
 
+def remark_count(comments) -> int:
+    """PLP-ADR-0065: the remarks a follow-up issue holds: the ``- `` list items of its deferral
+    comments (the ones that open with ``DEFERRAL_HEADER``); any other comment counts for nothing."""
+    return sum(1 for c in comments
+               if str(c.get("text", "")).startswith(DEFERRAL_HEADER)
+               for line in str(c.get("text", "")).splitlines() if line.startswith("- "))
+
+
+def _usable(issue, ref: str) -> bool:
+    """Open, unstarted and not full (PLP-ADR-0065).  A full issue that already carries the
+    comment of this very deferral (``ref``) stays usable, so a retry posts nothing twice."""
+    if issue.state not in cadence.READY_STATES:
+        return False
+    return (remark_count(issue.comments) < MAX_FOLLOW_UP_REMARKS
+            or any(ref in str(c.get("text", "")) for c in issue.comments))
+
+
 def _find_follow_up(listing: Listing, companion: str, title: str,
-                    scan_orphans: bool = True) -> tuple[str | None, bool]:
+                    scan_orphans: bool = True, ref: str = "") -> tuple[str | None, bool]:
     """(open follow-up of the companion Epic or an orphan to attach, whether to attach it).
+    A full follow-up (``MAX_FOLLOW_UP_REMARKS``, PLP-ADR-0065) is skipped like a started one.
 
     The orphan scan (a creation whose parent link failed) reads the listing; it is skipped when
     that would cost a new listing and no earlier attempt of this Epic can have created a
@@ -376,23 +396,23 @@ def _find_follow_up(listing: Listing, companion: str, title: str,
     children = [link.target for link in _read(tracker.get_issue, companion).links
                 if link.type == "parent-of"]
     unstarted = [c for c in (_read(tracker.get_issue, child) for child in children)
-                 if c.state in cadence.READY_STATES]
+                 if _usable(c, ref)]
     if unstarted:
         return min(unstarted, key=lambda c: cadence._id_key(c.id)).id, False
     if not scan_orphans:
         return None, False
     for issue in listing.issues():  # a creation whose parent link failed
         if issue.title == title and issue.state in cadence.READY_STATES:
-            parents = [link.target for link in _read(tracker.get_issue, issue.id).links
-                       if link.type == "subtask-of"]
-            if not parents:
+            full = _read(tracker.get_issue, issue.id)
+            parents = [link.target for link in full.links if link.type == "subtask-of"]
+            if not parents and _usable(full, ref):
                 return issue.id, True
     return None, False
 
 
 def comment_text(ticket, receipt_ref: str, pr: int, rounds: int, remarks: list[dict]) -> str:
     lines = [
-        f"Non-blocking review remarks deferred from {ticket} (AGENTS.md#R9 (b)).",
+        f"{DEFERRAL_HEADER}{ticket} (AGENTS.md#R9 (b)).",
         f"Pull request #{pr}, issue {ticket}, review round {rounds}.",
         f"Deferral reference: {receipt_ref}",
         "",
@@ -458,8 +478,9 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
     ledger["companion"] = companion
     title = (NO_ORIGIN_FOLLOW_UP_TITLE if origin is None
              else FOLLOW_UP_TITLE.format(origin=origin))
+    ref = f"{ticket.id}@{facts.diff_hash[:16]}"
     follow_up, attach = _find_follow_up(listing, companion, title,
-                                        maybe_created or listing.loaded)
+                                        maybe_created or listing.loaded, ref)
     if follow_up is None:
         follow_up = _create(runtime, worktree, {
             "title": title, "body": FOLLOW_UP_BODY, "parent": companion},
@@ -469,7 +490,6 @@ def run_deferral(runtime, tracker, project, epic: str, ticket, attempts: Path,
         if done.returncode != 0:
             raise classify(done.stderr or "")
         ledger["writes"].append(WRITE_ATTACH)
-    ref = f"{ticket.id}@{facts.diff_hash[:16]}"
     existing = _read(tracker.get_issue, follow_up).comments
     if deferrable and not any(ref in str(c.get("text", "")) for c in existing):
         rounds = len(review.review_records(fx.read_attempts(attempts), epic, ticket.id))
