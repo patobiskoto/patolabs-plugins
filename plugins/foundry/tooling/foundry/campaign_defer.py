@@ -380,14 +380,21 @@ def _usable(issue, ref: str) -> bool:
     comment of this very deferral (``ref``) stays usable, so a retry posts nothing twice."""
     if issue.state not in cadence.READY_STATES:
         return False
-    return (remark_count(issue.comments) < MAX_FOLLOW_UP_REMARKS
-            or any(ref in str(c.get("text", "")) for c in issue.comments))
+    return (remark_count(issue.comments) < MAX_FOLLOW_UP_REMARKS or _carries(issue, ref))
+
+
+def _carries(issue, ref: str) -> bool:
+    """The issue holds the comment of the deferral ``ref``; an empty ``ref`` matches nothing
+    (``"" in text`` is always true and would lift the cap, PLP-372)."""
+    return bool(ref) and any(ref in str(c.get("text", "")) for c in issue.comments)
 
 
 def _find_follow_up(listing: Listing, companion: str, title: str,
-                    scan_orphans: bool = True, ref: str = "") -> tuple[str | None, bool]:
+                    scan_orphans: bool, ref: str) -> tuple[str | None, bool]:
     """(open follow-up of the companion Epic or an orphan to attach, whether to attach it).
     A full follow-up (``MAX_FOLLOW_UP_REMARKS``, PLP-ADR-0065) is skipped like a started one.
+    The child that already carries ``ref`` comes first, whatever its identifier (PLP-372), so a
+    replayed deferral posts nothing elsewhere.
 
     The orphan scan (a creation whose parent link failed) reads the listing; it is skipped when
     that would cost a new listing and no earlier attempt of this Epic can have created a
@@ -397,6 +404,9 @@ def _find_follow_up(listing: Listing, companion: str, title: str,
                 if link.type == "parent-of"]
     unstarted = [c for c in (_read(tracker.get_issue, child) for child in children)
                  if _usable(c, ref)]
+    carrying = [c for c in unstarted if _carries(c, ref)]
+    if carrying:
+        return min(carrying, key=lambda c: cadence._id_key(c.id)).id, False
     if unstarted:
         return min(unstarted, key=lambda c: cadence._id_key(c.id)).id, False
     if not scan_orphans:

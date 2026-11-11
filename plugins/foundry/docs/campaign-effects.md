@@ -677,7 +677,7 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    of the same name). None: `edit create-issue` with the field `Type: Epic`, state
    `backlog`, no `parent`; no link to the origin Epic is made.
 3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
-   with the lowest identifier; a started or closed child is never used, nor a full one (30 remarks or
+   with the lowest identifier, the child that already carries the comment of this deferral coming first (PLP-372, `_find_follow_up`); a started or closed child is never used, nor a full one (30 remarks or
    more, `MAX_FOLLOW_UP_REMARKS` and `remark_count` in `campaign_defer.py`, PLP-ADR-0065; a full child that
    already carries the comment of this deferral stays usable, so a retry posts nothing twice; the count sees only the comments the tracker returns, see step 4 and `docs/review-rounds.md`, "Reading the deferred-remarks debt"). Otherwise an issue titled
    `Review remarks deferred from <ORIGIN-EPIC-ID>` (`Review remarks deferred from tickets with no origin Epic`

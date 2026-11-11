@@ -147,7 +147,8 @@ def lookups(linear, known, maybe_created):
     linear.wire.calls.clear()
     listing = cd.Listing(linear.tracker, linear.project)
     companion = cd._find_companion(listing, COMPANION, known)
-    found = cd._find_follow_up(listing, companion, FOLLOW_UP, maybe_created or listing.loaded)
+    found = cd._find_follow_up(listing, companion, FOLLOW_UP, maybe_created or listing.loaded,
+                               "APP-2@abc")
     operations = collections.Counter(
         _OPERATION.search(document).group(1) for document, _v in linear.wire.calls)
     return companion, found, operations
