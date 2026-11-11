@@ -150,7 +150,7 @@ def _amount(grid: dict, host: str, model: str | None, at: str, tokens: dict | No
     one_hour = (host == "claude" and price["model"] in CLAUDE_CACHE_TTL_1H_PINS
                 and tokens["cache_write_input_tokens"] > 0)
     if causes is not None:  # the caller words the provenance from the cause, not from ``completeness``
-        causes["one_hour"] = one_hour
+        causes["one_hour"] = causes.get("one_hour", False) or one_hour  # any group of a several-group amount
     return {"amount_micros": str(total.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
             "currency": "USD", "unit": "micros", "method": "estimated",
             "completeness": "partial" if one_hour or lower_bound else "complete", "rate_version": version}, None
@@ -167,7 +167,8 @@ def _combine(priced: list[dict], partial: bool = False) -> dict:
             "pricing-v1-" + hashlib.sha256(_canonical(sorted(set(versions))).encode("utf-8")).hexdigest()[:12]}
 
 
-def _served_amount(grid: dict, host: str | None, usage: dict) -> tuple[dict | None, str | None, list]:
+def _served_amount(grid: dict, host: str | None, usage: dict,
+                   causes: dict | None = None) -> tuple[dict | None, str | None, list]:
     """Price an attempt whose requested model has no price by the model(s) its host log served (PLP-358).
 
     ``usage`` is the ``per_invocation`` entry. The model is the one the log requests name (observed), never
@@ -178,9 +179,10 @@ def _served_amount(grid: dict, host: str | None, usage: dict) -> tuple[dict | No
     priced = []
     for (model, day), group in groups:
         amount, why = _amount(grid, host, _id(model), day, group["tokens"],
-                              group["token_requests"] if usage["request_granularity"] else None, group["lower_bound"])
-        if amount is None:
-            return None, why, []
+                              group["token_requests"] if usage["request_granularity"] else None, group["lower_bound"],
+                              causes)
+        if amount is None:  # PLP-370: a served model absent or invalid is no price, not a missing configured model
+            return None, "no_price_for_model_and_date" if why == "no_configured_model" else why, []
         priced.append(amount)
     return (_combine(priced), None, [list(key) for key, _ in groups]) if priced else (None, None, [])
 
@@ -244,13 +246,12 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict,
         if why == "no_price_for_model_and_date" and seen.get("groups"):
             # PLP-358: the requested model (a short alias, for example) has no price; the model the host log
             # served is observed, so it prices the attempt. The alias is never read as a version.
-            priced, why_served, by_served = _served_amount(grid, item.get("host"), seen)
+            priced, why_served, by_served = _served_amount(grid, item.get("host"), seen, causes)
             if priced is not None:
                 amount, why = priced, None
                 names = {_id(m) for m, _ in seen["groups"]}
                 served = names.pop() if len(names) == 1 and None not in names else None
                 material["priced_by_served_model"] = by_served
-                causes["one_hour"] = amount["completeness"] == "partial" and not bounded
             else:
                 why = why_served or why
         rec = _Record(issue, "attempt", attempt_id, "foundry-invocation-log", material)
@@ -277,7 +278,7 @@ def _attempts(issue: str, records: dict | None, usage: dict | None, grid: dict,
                               + ("; the requested model has no price, so the grid is applied per (model, day) of the "
                                  "requests of the host log, the model it served (PLP-358)" if by_served else "")
                               + "; API-equivalent estimate, not an invoice"
-                              + ("; partial: a 1h cache write of this model would be priced at the 5m rate, "
+                              + ("; partial: a 1h cache write would be priced at the 5m rate, "
                                  "so the amount is a lower bound" if amount and causes.get("one_hour")
                                  else "")
                               + ("; partial: the tokens are a lower bound (see tokens.*), so the amount is too"
@@ -335,11 +336,13 @@ def _coordinators(issue: str, coordinator: dict | None, windows: list, grid: dic
                     "lower_bound_requests": seen["lower_bound"],
                     "groups": [[model, day, g["tokens"], g["lower_bound"]] for (model, day), g in groups]}
         rec = _Record(issue, "attempt", "at-" + digest, "token-attribution.v1", material)
-        priced, why = [], None
+        priced, why, causes = [], None, {}
         for (model, day), group in groups:
             amount, why = _amount(grid, host, _id(model), day, group["tokens"],
-                                  group["token_requests"] if seen["granular"] else None, group["lower_bound"])
+                                  group["token_requests"] if seen["granular"] else None, group["lower_bound"], causes)
             if amount is None:
+                if why == "no_configured_model":  # PLP-370: the served model is absent or invalid in the log
+                    why = "no_price_for_model_and_date"
                 break
             priced.append(amount)
         amount = None
@@ -361,14 +364,13 @@ def _coordinators(issue: str, coordinator: dict | None, windows: list, grid: dic
             "failure_class": rec.put("failure_class", "unknown", "constant: see status"),
             "tokens": {"input": None, "cached_input": None, "cache_write_input": None, "output": None,
                        "reasoning_output": rec.put("tokens.reasoning_output", None, "",
-                                                   "per-invocation attachment carries billing keys only")},
+                                                   "the window tokens carry billing keys only (BILLING_TOKEN_KEYS)")},
             "amount": rec.put("amount", amount, "pricing-v1.json grid applied per model and day to the window requests "
                               "(cost_attribution.price_for); API-equivalent estimate, not an invoice"
                               + ("; partial: " + ", ".join(c for c, on in (
                                   ("requests of the session in overlapping windows are not counted", seen["overlap_requests"]),
                                   ("some requests are a lower bound", seen["lower_bound"]),
-                                  ("a 1h cache write may be priced at the 5m rate",
-                                   any(a["completeness"] == "partial" for a in priced) and not seen["lower_bound"])) if on)
+                                  ("a 1h cache write would be priced at the 5m rate", causes.get("one_hour"))) if on)
                                  if amount and amount["completeness"] == "partial" else ""), why),
         }
         for key, name in _TOKEN_FIELDS:

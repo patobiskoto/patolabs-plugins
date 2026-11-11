@@ -31,7 +31,7 @@ Guarantees, each proved by a test of `tests/test_kpi_export.py`:
 |---|---|
 | `batches` | list of `{schema_version: "devhub-observations.v2", records: [...]}` of at most `BATCH_SIZE` (100) records each, the batch size DevHub accepts; each batch is a ready request body for `POST /observations:batch`. Records are sorted by issue, kind (`attempt`, `review_round`, `escalation`), `started_at`, `record_id`. |
 | `provenance` | by `record_id`: `from` maps every non-null field path to its source, `null` maps every null field path to a reason. It is outside the records because the DevHub record is `strict`. |
-| `omitted` | records that were not emitted, each with `issue`, `kind`, `reason` (and `rank`, `role`). |
+| `omitted` | records that were not emitted, each with `issue`, `kind`, `reason` (and `rank`, `role`, `requests`). |
 | `counts`, `issues`, `export_schema` | records per kind, the sorted issue list, the schema id. |
 
 Records are not stored as JSON Lines because the DevHub batch body is an object `{schema_version, records}`; a
@@ -43,7 +43,8 @@ transmitter takes `batches[i]` as is (`kpi-publish` rewrites three fields of a r
 - `source` = `{system: "foundry", producer: "foundry-kpi-export", schema, fingerprint}`; `fingerprint` is the sha256
   of the canonical JSON of the source material of the record (listed per kind in `kpi_export.py`: the invocation
   record fields and tokens, the review-turn fields, the escalation receipt fields); `schema` names the source:
-  `foundry-invocation-log`, `review-turns.v1`, `escalation-ledger.v1`.
+  `foundry-invocation-log`, `review-turns.v1`, `escalation-ledger.v1`, and `token-attribution.v1` for a coordinator record
+  (`_coordinators` in `kpi_export.py`, see "Coordinator session").
 - `anchor` = `{type: "issue", command_id: null, issue_id}`: no command plan is recorded locally.
 - `revision` 1, `supersedes_id` null, always, in the export (`provenance.null`, not `from`, PLP-321): no source holds a revision and the export cannot know
   what was published. A source that changes after publication (a completion event, tokens found later) changes the
@@ -104,7 +105,10 @@ Claude attempt whose grid entry is one of those pins and whose `cache_write_inpu
 `partial` (DevHub's enum is `complete`, `partial`, `unknown`: `src/tracker/observation-contract.ts:29` in the DevHub
 repository, read, not run), and `provenance` says the amount is a lower bound. An attempt whose slice has `lower_bound_requests`
 above 0 is also `partial`, whatever the model ("Tokens that are a lower bound" below); in every other case it is
-`complete`. The number is
+`complete`. A Codex request above 272K input tokens is a known limit of this rule: the three `codex` entries of
+PLP-353 have no `context_threshold_tokens`, so such a request is priced at the rates up to 272K and the amount is still marked
+`complete` (`docs/cost-attribution.md`, "Entrées Codex GPT-6 Luna, GPT-6.1 Sol et Terra de la grille"): an underestimate, not
+flagged `partial`. The behaviour is not changed here. The number is
 unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write rate is 2 times the base input rate
 against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0 against 2.5 USD per million tokens for `sonnet-5.5`
 (the 2.5 is the grid value, `pricing-v1.json`); the 1h rate is not a grid key and is not applied. Whether the 1h cache
@@ -187,8 +191,8 @@ the logs found. Before and after are the same export run on the code before and 
   attempt has no source: its status stays `unknown` and `provenance` says "no completion event" (the rollout is not read for a
   status; unknown whether it holds one). The notification format belongs to the host and can change: an unrecognised layout
   gives `unknown`, never a value. Reading the status word is one more closed-vocabulary value beside the issue id, role and
-  timestamp already read by `token_attribution`; FOUNDRY-ADR-0015 lists counters, model alias, timestamp and session id, so
-  whether a status word is inside that list is a reading to confirm, not a decision taken here.
+  timestamp already read by `token_attribution`. Decision of the maintainer, 2026-11-10: reading the notification status is
+  compatible with FOUNDRY-ADR-0015 and needs no new ADR.
 
 **Price of an alias-routed attempt.**
 
@@ -298,6 +302,12 @@ Not exported or unknown, stated as such:
   and an issue with a window never closed in a log gets `coordinator_window_unclosed`.
 - Logs found by `kpi_sessions.discover` are those holding a sub-agent invocation of the issue, so a coordinator log without
   one is not found; a Codex coordinator rollout is not found either (residual limit of "Finding the session logs").
+- A request without a readable timestamp is classified `none` (`no_request_timestamp`, `_classify` in `token_attribution.py`)
+  and belongs to no issue: if every request of a closed window lacks a timestamp, the issue gets no record and no `omitted`
+  entry, because no `omitted` reason of this export names that case (observed in the code, not reported by a real log).
+- Two main logs given with the same host session id and the same requests count each request once in a coordinator record
+  (PLP-370, `counted` in `token_attribution.report`; same model, time and counters); the other slices of `report` are not
+  deduplicated.
 - A start and a merge in two different sessions give an unclosed window in one and no window in the other: no record. In a campaign
   `issue start` and `issue merge` run in sub-processes of the cadencer, so the session has no window
   (`docs/cost-attribution.md`, same section): no record.

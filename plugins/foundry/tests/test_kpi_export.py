@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -667,6 +668,38 @@ def test_coordinator_session_is_one_window_record_per_issue_and_nothing_is_count
     assert "overlapping windows" in data["provenance"][one["record_id"]]["from"]["amount"]
 
 
+def test_two_logs_of_one_session_id_count_each_coordinator_request_once(tmp_path):
+    """PLP-370: the same session id in two main logs (a copy) does not sum the same requests twice."""
+    state = tmp_path / "state"
+    main = _coordinator_log(tmp_path / "a")
+    copy = tmp_path / "b" / "copy.jsonl"
+    copy.parent.mkdir()
+    shutil.copy(main, copy)
+    _, (once,) = _coordinator_records(_build(state, ("PLP-1",), claude_sessions=[main]))
+    data, (twice,) = _coordinator_records(_build(state, ("PLP-1",), claude_sessions=[main, copy]))
+    assert twice["tokens"] == once["tokens"] and twice["amount"] == once["amount"]
+    assert [o["requests"] for o in data["omitted"] if o["reason"] == "coordinator_requests_in_overlapping_windows"] == [3]
+
+
+def test_coordinator_amount_provenance_names_both_causes_and_a_null_reason_fits_the_coordinator(tmp_path):
+    """PLP-370: a lower bound and a 1h cache write are both said; an invalid served model is a missing price."""
+    state = tmp_path / "state"
+    d = "2026-11-03T"
+    def log(root, request):
+        return _claude_tree(root, [_claude_call(d + "10:00:00.000Z", _cli("start", "PLP-1")), request,
+                                   _claude_call(d + "10:30:00.000Z", _cli("merge", "PLP-1"))], [])
+    partial = _claude_request(d + "10:10:00.000Z", 2)
+    partial["message"]["stop_reason"] = None  # no terminal snapshot: a lower bound
+    data, (record,) = _coordinator_records(_build(state, claude_sessions=[log(tmp_path / "a", partial)]))
+    said = data["provenance"][record["record_id"]]["from"]["amount"]
+    assert "some requests are a lower bound" in said and "a 1h cache write would be priced at the 5m rate" in said
+    bad = _served(_claude_request(d + "10:10:00.000Z", 2), "not a valid id")
+    data, (record,) = _coordinator_records(_build(state, claude_sessions=[log(tmp_path / "b", bad)]))
+    assert record["amount"] is None and record["model"]["served"] is None
+    null = data["provenance"][record["record_id"]]["null"]
+    assert null["amount"] == "no_price_for_model_and_date" and "BILLING_TOKEN_KEYS" in null["tokens.reasoning_output"]
+
+
 def test_a_lone_window_is_complete_and_a_later_source_change_is_a_revision_of_the_same_chain(tmp_path):
     state = tmp_path / "state"
     d = "2026-11-03T"
@@ -728,9 +761,9 @@ def test_an_unpriced_coordinator_model_keeps_the_tokens_and_a_null_amount(tmp_pa
 
 # PLP-358: status and end of a background attempt, price of an alias-routed attempt, review type outside a campaign
 
-def _notice(at, status, tool_use=TOOL_USE, operation="enqueue", extra=""):
+def _notice(at, status, tool_use=TOOL_USE, operation="enqueue"):
     content = (f"<task-notification>\n<task-id>aabbcc</task-id>\n<tool-use-id>{tool_use}</tool-use-id>\n"
-               f"<status>{status}</status>\n<summary>SECRET-SUMMARY</summary>{extra}\n</task-notification>")
+               f"<status>{status}</status>\n<summary>SECRET-SUMMARY</summary>\n</task-notification>")
     return {"type": "queue-operation", "operation": operation, "timestamp": at, "sessionId": "s-main",
             "content": content}
 

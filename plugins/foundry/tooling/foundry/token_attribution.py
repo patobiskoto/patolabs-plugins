@@ -301,6 +301,7 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
         for name in BILLING_TOKEN_KEYS:
             entry["tokens"][name] += row_tokens[name]
 
+    counted: set = set()
     for index, unit in enumerate(units):
         host, subagent = unit["host"], unit["subagent"]
         role = role_source = record = None
@@ -358,6 +359,12 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
                 kind, value = _classify(when, parent_windows or [])
                 if per_coordinator is not None and not subagent and kind in ("one", "overlap"):
                     for named in ([value] if kind == "one" else value):
+                        # PLP-370: two logs of one session id hold the same request: it is counted once
+                        signature = (named, host, row["session_id"], row["model"], when,
+                                     tuple(tokens[n] for n in BILLING_TOKEN_KEYS))
+                        if signature in counted:
+                            continue
+                        counted.add(signature)
                         entry = per_coordinator.setdefault((named, host, row["session_id"]), {
                             "requests": 0, "tokens": dict.fromkeys(BILLING_TOKEN_KEYS, 0), "groups": {},
                             "first": None, "last": None, "lower_bound": 0, "granular": True,
