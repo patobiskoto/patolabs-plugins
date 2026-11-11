@@ -48,7 +48,7 @@ cost of each merge, not of each session, and it is left unchanged by PLP-362.
 ## What changed
 
 - The contract keeps `R1` to `R9` as headings, so `AGENTS.md#R<n>` citations resolve. R1, R5
-  and R6 are shortened; R7 and R9 are summarised, with R9 (a) kept verbatim. The full text,
+  and R6 are shortened; R7 and R9 are summarised, with R9 (a) and (c) kept verbatim. The full text,
   moved verbatim, is in the three `process-contract-*.md` pages.
 - Tests that asserted a sentence now moved read it from its page
   (`tests/test_process_contract.py`); the assertions are unchanged.

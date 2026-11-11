@@ -24,8 +24,8 @@ Every PR opens through `foundry:open-pr` and merges through `foundry:merge-pr` â
 `gh pr create`, `gh pr merge`, or a direct push to the default branch. Where the Foundry
 plugin is active, the `PreToolUse` Bash guard (`plugins/foundry/hooks/guard_bash.py::deny_reason`)
 denies them; the pre-push hook in `plugins/foundry/.githooks/`, once enabled with
-`git config core.hooksPath plugins/foundry/.githooks`, refuses a direct push to the default
-branch outside either agent (FOUNDRY-ADR-0001). Detail:
+`git config core.hooksPath plugins/foundry/.githooks`, refuses a direct push to `main` or
+`master` outside either agent (FOUNDRY-ADR-0001). Detail:
 `plugins/foundry/docs/process-contract-r1-r6.md`, section R1.
 
 ## R2 â€” Scan the ADR index before an architecture choice
@@ -101,7 +101,8 @@ comment.
 
 Applies to the implementer, every correction commit and the coordinator when it writes
 files. It changes nothing about the reviewer's minimum tier (FOUNDRY-ADR-0006), the first
-full review, or the full review after any blocking round. Detail:
+full review, or the full review after any blocking round; every code merge still needs a finished
+review proof (PLP-ADR-0064). Detail:
 `plugins/foundry/docs/process-contract-r9.md`; baseline and windows:
 `plugins/foundry/docs/review-rounds.md`.
 
@@ -125,8 +126,8 @@ merge", on a page frozen after publication, a missing or generic documentation s
 R5, the PR of a companion Epic and a durable refusal of a write are corrected before the
 merge. Four writes are pre-authorized, and the review after a validated round is partial
 (PAT-ADR-0022), unless the change goes beyond those corrections or the reviewer asks for a
-full one with a reason. A follow-up issue holding 30 remarks is full, and a minor or major release
-stops for their triage (PLP-ADR-0065). The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
+full one with a reason. A follow-up issue holding 30 remarks or more is full, and a minor or major
+release stops for the triage of the open follow-up issues (PLP-ADR-0065). The rule is the detail page, section (b). No gate checks (a) or (b): the reviewer judges them.
 
 **(c) Correction commits.** A correction commit changes as few sentences as possible, and
 every new sentence is re-checked against the code before the work is handed back.
