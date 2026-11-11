@@ -49,8 +49,8 @@ environment read is added under `tooling/`).
   ([release skill](../skills/release/SKILL.md), step 4). No code refuses a release without it.
 - **KPI export.** `routing kpi-export`, and the publication at `issue merge`, emit one
   `coordinator` attempt per issue and host session (PLP-357,
-  [kpi-export.md](kpi-export.md#coordinator-session-plp-357)) and set the status, end time and
-  alias price of attempts from the host log (PLP-358,
+  [kpi-export.md](kpi-export.md#coordinator-session-plp-357)), and set the status and end time
+  of a Claude background attempt and the alias price from the host log (PLP-358,
   [kpi-export.md](kpi-export.md#status-alias-price-and-review-type-outside-a-campaign-plp-358)).
   A changed attempt is published as a revision; contract `devhub-observations.v2` is unchanged.
 - **Process contract.** In this monorepo `AGENTS.md` / `CLAUDE.md` keep short rules R1 to R9;
