@@ -95,7 +95,7 @@ exact diff (`valid_for_merge`, called once by `merge` in
 on the same coordinates, `current_for_sync`; PLP-ADR-0064), so after such a partial review that proof
 relies on the previous round for the unchanged parts, and the PR description says so;
 no mechanical check distinguishes a partial from a full review, and the merge gate and
-the proof format are not modified (PAT-ADR-0018, PAT-ADR-0022).
+the proof format are not modified by this rule (PAT-ADR-0018, PAT-ADR-0022).
 
 Four writes are authorized in advance, without human confirmation, inside and outside
 an Epic campaign (FOUNDRY-ADR-0013, FOUNDRY-ADR-0016), in every repository where the

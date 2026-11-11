@@ -24,7 +24,8 @@ criterion `pass`, read from the local proof store (PLP-ADR-0064): checked boxes 
 replace it, and a review recorded on another machine or under another data directory is
 not seen: the merge is refused until the review of step 2 records one here. It revalidates the current issue AC digest, local `HEAD`,
 exact diff, and immutable PR base SHA. Resuming a PR that is already merged calls no
-merge and needs no new proof. If AC are unchecked, for a tracker with an atomic acceptance-sync
+merge and, with every AC checked, needs no new proof; with unchecked AC the gate still asks
+for the proof (or the override), as for any merge. If AC are unchecked, for a tracker with an atomic acceptance-sync
 contract, Foundry then changes only unchecked Markdown markers whose structured verdict
 is `pass`, behind the provider's exact body/version boundary. It reports this
 administrative synchronization separately from CI and writes an audit note containing

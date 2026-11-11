@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from foundry import issue, write
+from foundry import issue, registry, write
 from foundry.models import Project
 from foundry.routing import (
     AcceptanceProofStore,
@@ -208,6 +208,38 @@ def test_override_without_any_proof_is_refused(monkeypatch, repo, provider, body
         issue.merge(ISSUE, "12", flags=OVERRIDE)
 
     _no_effect(events)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize(
+    "body, flags",
+    [(CHECKED, set()), (PARTIAL, set()), (CHECKED, OVERRIDE), (PARTIAL, OVERRIDE)],
+    ids=["checked", "partial", "checked-override", "partial-override"],
+)
+def test_the_refusal_for_lack_of_proof_names_the_data_directory_read(
+    monkeypatch, repo, provider, body, flags,
+):
+    events = _world(monkeypatch, provider, repo, body=body)
+
+    with pytest.raises(SystemExit) as refusal:
+        issue.merge(ISSUE, "12", flags=flags)
+
+    assert f"Dossier de données lu : {registry.data_dir()}" in str(refusal.value)
+    _no_effect(events)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_override_audit_text_does_not_say_incomplete_when_every_box_is_checked(
+    monkeypatch, repo, provider,
+):
+    proof = _record_proof(repo, quality="blocked", verdicts=["pass", "fail"])
+    events = _world(monkeypatch, provider, repo, body=CHECKED)
+
+    issue.merge(ISSUE, "12", flags=OVERRIDE)
+
+    _assert_override_trace_before_merge(events, provider, proof)
+    texts = [event[1] for event in events if event[0] == "comment"]
+    assert all("AC incomplètes" not in text for text in texts)
 
 
 def _assert_override_trace_before_merge(events, provider, proof):

@@ -514,6 +514,12 @@ def _ac_override_reason(flags) -> str:
     return reason
 
 
+def _proof_data_dir_note() -> str:
+    """Name the data directory the proof store reads (`registry.data_dir`)."""
+    return (f"Dossier de données lu : {registry.data_dir()} (FOUNDRY_DATA ou "
+            "~/.config/foundry) ; une preuve enregistrée ailleurs n'est pas vue.")
+
+
 def merge(issue_id, pr_number, flags=()):
     allow_no_ci = "--allow-no-ci" in flags
     tr, ch = foundry.tracker(), foundry.codehost()
@@ -739,10 +745,12 @@ def merge(issue_id, pr_number, flags=()):
                         f"exacts ({exc}). Cocher les cases ne remplace pas la review : "
                         "lance-la ; si un critère ne peut pas être pass, utilise l'override "
                         "humain explicite (--allow-incomplete-ac --ac-override-reason=<code>), "
-                        "qui exige aussi une preuve terminée.") from None
+                        "qui exige aussi une preuve terminée. "
+                        f"{_proof_data_dir_note()}") from None
                 raise SystemExit(
                     "⛔ Merge refusé — AC tracker incomplètes et preuve structurée invalide "
-                    f"({exc}). Utilise l'override humain explicite si nécessaire.") from None
+                    f"({exc}). Utilise l'override humain explicite si nécessaire. "
+                    f"{_proof_data_dir_note()}") from None
             reason = _ac_override_reason(flags)
             acceptance_override_reason = reason
             if proof_store is not None:
@@ -763,11 +771,13 @@ def merge(issue_id, pr_number, flags=()):
                         "⛔ Override AC refusé — aucune preuve de review terminée sur le "
                         f"head, la base et le diff exacts ({sync_exc}). L'override exige "
                         "une review terminée, quelle que soit sa qualité : lance-la puis "
-                        "relance le merge."
+                        f"relance le merge. {_proof_data_dir_note()}"
                     ) from None
             # This is deliberately an audit-only human escape hatch; it never modifies
             # checkboxes or turns prose into evidence.
-            audit_text = f"Audit merge: override humain explicite des AC incomplètes ({reason})."
+            what = ("de la preuve de review non mergeable ou non toute pass"
+                    if ac_complete else "des AC incomplètes")
+            audit_text = f"Audit merge: override humain explicite {what} ({reason})."
             if getattr(tr, "acceptance_override_projection_supported", False):
                 # The typed receipt, bound to this exact review generation, is the only
                 # authority; it is durable before any code-host effect so a replay can
