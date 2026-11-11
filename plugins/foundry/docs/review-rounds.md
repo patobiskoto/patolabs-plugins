@@ -656,7 +656,8 @@ code-host merge, whether the tracker criteria are checked or not:
   any other path the proof lookup fails, and the override is refused too;
 - a pull request already merged (`pr.merged`) calls no merge and, with every criterion checked, needs no new
   proof; YouTrack with a binding still reads one for its delivery receipt. With unchecked criteria the block in
-  `issue.py` (`ac_complete` false) still requires `valid_for_merge` or the override, as for any merge.
+  `issue.py` (`ac_complete` false) still requires `valid_for_merge` or the override; on that path, except
+  YouTrack with a binding, the override needs no completed proof (`proof_store` is `None`).
 
 Consequences (deduced from the code): a review recorded on another machine or under another data directory
 is not seen, and the override does not get around that; an issue with no readable criterion cannot be merged,
