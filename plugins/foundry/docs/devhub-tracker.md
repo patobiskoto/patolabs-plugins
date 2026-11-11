@@ -547,9 +547,13 @@ from `src`, `target`, `target_version`), the source version and one idempotency 
 The route and its errors are those of DEVHUB-171 (DevHub's `docs/TRACKER_API.md`, section
 "Removing a dependency (DEVHUB-171, DEVHUB-ADR-0019)", not read in this repository): a
 missing link is 409 `resource_conflict`, a stale version 409 `version_conflict`, and both
-propagate as `DevHubTrackerError`. Each call of `unlink` builds a new idempotency key (`_application_req`; the default factory is `uuid.uuid4().hex`), so a
-rerun after a lost response is not a replay: if the first removal was applied, the rerun gets the 409
-`resource_conflict` of a missing link (raw `DevHubTrackerError`), which means the link is already removed (deduced: the 409 only says the link is missing). The CLI is `edit unlink <SRC-ID> <link-type> <DST-ID>`
+propagate as `DevHubTrackerError`. Within one call, a transport error is retried once with
+the same idempotency key (`_req`, `attempts = 2 if idempotent`), a replay. Each call of
+`unlink` builds a new key (`_req`, `idempotency_key or f"foundry-{...}"`; default factory
+`uuid.uuid4().hex`), so a rerun of `edit unlink` after a lost response is not a replay: if
+the first removal was applied, the rerun gets the 409 `resource_conflict` of a missing link
+(raw `DevHubTrackerError`), which means the link is already removed (deduced: the 409 only
+says the link is missing). The CLI is `edit unlink <SRC-ID> <link-type> <DST-ID>`
 (`edit.py`); a tracker without the capability refuses before any call
 (`write.unlink`). Offline tests: `tests/test_link_removal.py`. Live need DHN-51
 (`devhub-requirements.md`): green at `7686ba5` ("Live run of PLP-363").
