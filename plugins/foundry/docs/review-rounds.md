@@ -654,12 +654,19 @@ code-host merge, whether the tracker criteria are checked or not:
 - the local `HEAD` must equal the PR head: on the providers that set `bounded_transition_proofs`, or
   `delivery_receipt_supported` with a binding, the merge is refused before the proof is read, as before; on
   any other path the proof lookup fails, and the override is refused too;
-- a pull request already merged (`pr.merged`) calls no merge and needs no new proof; YouTrack with a binding
-  still reads one for its delivery receipt.
+- a pull request already merged (`pr.merged`) calls no merge and, with every criterion checked, needs no new
+  proof; YouTrack with a binding still reads one for its delivery receipt. With unchecked criteria the block in
+  `issue.py` (`ac_complete` false) still requires `valid_for_merge` or the override; on that path, except
+  YouTrack with a binding, the override needs no completed proof (`proof_store` is `None`).
 
 Consequences (deduced from the code): a review recorded on another machine or under another data directory
 is not seen, and the override does not get around that; an issue with no readable criterion cannot be merged,
-because `acceptance_criteria` (`routing.py`) refuses an empty list, so no proof can exist for it. Tests:
+because `acceptance_criteria` (`routing.py`) refuses an empty list, so no proof can exist for it;
+`current_for_sync` validates every marker of the proof store (`_validated_proof`) before filtering by issue, so a
+corrupt marker of any issue blocks every merge, the override included (`ProofIntegrityError`). The refusal for
+lack of proof names the data directory read (`registry.data_dir`: `FOUNDRY_DATA`, else `~/.config/foundry`), to
+explain a proof recorded elsewhere. Under the override with every criterion checked, the audit text no longer
+says the criteria are incomplete. Tests:
 `tests/test_merge_review_proof_gate.py`.
 
 ## Limits
