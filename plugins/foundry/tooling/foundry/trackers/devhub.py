@@ -3299,8 +3299,9 @@ class DevHubTracker(Tracker):
             for event in raw["items"]:
                 if (not isinstance(event, dict) or not (
                             _AUDIT_KEYS <= set(event) <= _AUDIT_KEYS | _AUDIT_OPTIONAL_KEYS)
-                        or ("reason" in event and (not isinstance(event["reason"], str)
-                                                   or not event["reason"]))
+                        or ("reason" in event and event["reason"] is not None
+                            and (not isinstance(event["reason"], str)
+                                 or not event["reason"]))
                         or not isinstance(event.get("id"), str)
                         or not re.fullmatch(r"[1-9][0-9]*", event["id"])
                         or event["id"] in seen
