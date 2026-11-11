@@ -259,7 +259,7 @@ Test names are in `tests/integration/test_devhub_live_conformance.py`.
 | DHN-13 | Add comments; read them back in order with a creation time | `test_dhn_13_comments_round_trip_in_order` | green | - | observed, run of 2026-10-20 |
 | DHN-14 | Return every comment of an issue past 100 | `test_dhn_14_every_comment_is_returned_past_one_hundred` | green | - | observed, run of 2026-10-20; the issue read has no row limit in `src/tracker/store.ts:457` (server, observed; `2edcea2:src/tracker/store.ts:458`, answer 4) |
 | DHN-15 | Bounded Epic subgraph projection holding the Epic and its children | `test_dhn_15_epic_subgraph_projection_is_bounded_and_complete` | green | - | observed, run of 2026-10-20 |
-| DHN-16 | One public audit receipt per create, update, transition, link, comment | `test_dhn_16_audit_projection_holds_one_receipt_per_operation` | green | - | observed, run of 2026-10-20 |
+| DHN-16 | One public audit receipt per create, update, transition, link, comment | `test_dhn_16_audit_projection_holds_one_receipt_per_operation` | green | - | observed, run of 2026-10-20; red at `7686ba5` (`reason: null`, "Live run of PLP-363"), green again at `267abcf` ("Live run of PLP-374") |
 | DHN-17 | Start path `backlog` to `in-progress`; resume from `blocked` | `test_dhn_17_start_path_and_resume_from_blocked` | green | - | observed, run of 2026-10-20 |
 | DHN-18 | `review` only with a valid signed proof (forged secret refused); return to `in-progress` | `test_dhn_18_review_needs_a_valid_proof_and_can_return_to_in_progress` | green | - | observed, run of 2026-10-20 |
 | DHN-19 | `done` with merge proof; `done` is terminal; a jump without a valid path is refused (409) | `test_dhn_19_done_is_terminal_and_unproven_jumps_are_refused` | green | - | observed, run of 2026-10-20 |
@@ -437,6 +437,15 @@ PAT-303", `DEVHUB_LIVE_WORKFLOW_PUBLISH` as in "Live run of PAT-328": 47 passed,
 estimate for the issue imported without them, and DHN-46 imported a `superseded` ADR whose
 replacement is `unknown` as `superseded`, with `unknown_relations` naming `superseded_by`. No
 status changed. The instance was removed (`down -v`).
+
+### Live run of PLP-374
+
+Run on 2026-11-11 (observed) on a fresh disposable instance built from the local image of DevHub
+`267abcf60931cb0bd6ebbd6f08ba13b3a33207f0` (merge of DEVHUB-215, the revision DevHub production
+runs since 2026-11-11, stated by DevHub; never production), same setup as "Live run of
+PLP-363": 50 passed, 1 skipped (DHN-42, local accounts only), twice, then DHN-16 alone
+(`-k dhn_16`): 1 passed. DHN-16 passed because `audit` of `trackers/devhub.py` now accepts
+`reason: null` (PLP-374). The instance was removed (`down -v`).
 
 ### Live run of PLP-363
 
