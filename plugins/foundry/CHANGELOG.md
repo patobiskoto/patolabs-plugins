@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 2.10.0 — 2026-11-11
+
+Minor release for review and deferral rules: `issue merge` now refuses a code merge on
+every provider unless a completed review proof exists for the exact issue criteria, head,
+base and diff, and checked acceptance boxes no longer replace it (PLP-368, PLP-ADR-0064);
+a follow-up issue of deferred remarks holding 30 remarks or more is full and a minor or
+major release through `foundry:release` stops for the maintainer's triage (PLP-361,
+PLP-ADR-0065); `routing kpi-export` emits a `coordinator` attempt per issue and host session
+(PLP-357), sets the status and end time of a Claude background attempt and the alias price
+from the host log (PLP-358). PLP-362
+moves the long text of the process contract to `docs/`; PLP-359 and PLP-360 change
+documentation only. Preparation status and upgrade references are in
+`docs/release-2.10.0.md` and `docs/migration-2.10.0.md`.
+
+- PLP-368: **behaviour change on DevHub, Linear and GitHub Projects.** `issue merge` now refuses a code merge, on every provider, unless the local proof store holds a completed review proof bound to the exact issue criteria, head, base and diff (PLP-ADR-0064). Checked acceptance boxes no longer replace the review: with every box checked, the proof must be `mergeable` with every criterion `pass`, as YouTrack with a binding already required. The human override `--allow-incomplete-ac --ac-override-reason=<code>` now also requires a completed proof on the same coordinates, whatever its quality (`mergeable` or `blocked`) and its per-criterion verdicts; its typed receipt or audit comment is still written before the merge. When a merge is refused: run the review (`foundry:merge-pr` step 2) on the current head so that a proof is recorded, then run `issue merge` again; if a criterion cannot be `pass` (a step after the merge), use the override, which needs that recorded proof too. A review recorded on another machine or under another data directory is not seen. An issue with no readable acceptance criterion cannot be merged, since no proof can exist for it. Resuming a PR already merged needs no new proof; `issue accept`, Epic closure and the CI gate are unchanged. Rule and tests in `docs/review-rounds.md`, "Merge gate since PLP-368".
+- PLP-362: the process contract (`AGENTS.md`, identical `CLAUDE.md`) drops from 32,328 to about 7.5 KB by keeping R1 to R9 as short citable rules; the full text of R1, R5, R6, R7 and R9 is moved verbatim to `docs/process-contract-r1-r6.md`, `docs/process-contract-r7.md` and `docs/process-contract-r9.md`. The context loaded at every session (contract, 90 agent profiles, merge-pr skill) is measured in `docs/session-context-load.md`, and the reason to keep each family of agent profiles is written in `docs/model-routing.md`. No profile is removed or renamed and no behaviour changes.
+- PLP-361: a follow-up issue of deferred non-blocking remarks that holds 30 remarks or more is full (PLP-ADR-0065, amends PAT-ADR-0018 and PAT-ADR-0029): neither the `foundry:merge-pr` deferral nor the campaign `defer-remarks` effect (`campaign_defer.py`) adds to it, and the next deferral creates a new follow-up issue in the same companion Epic; a minor or major release through `foundry:release` stops for the maintainer's triage of the open follow-up issues before the release PR. This changes the behaviour of the plugin in every repository where it is installed; no new command or option.
+- PLP-360: `docs/review-rounds.md` explains why ten merged issues read `outcome: blocked` in `routing review-rounds` (last round `mergeable`, a criterion not `pass`, merged through the audited human override with a proof on the exact head) and how to tell that path from a refused merge. No bypass found. Documentation only, no tool change.
+- PLP-359: `docs/review-rounds.md` counts the second observation window of rule R9 (36 rounds over 10 origin issues, 3.6 per origin issue, complete, dated 2026-11-10) and measures the duration and the reviewer tokens of 28 review rounds that follow a validated round against the first rounds of the same issues; the maintainer's decision of 2026-11-10 to keep the rule as it is is recorded there. Documentation only, no tool or rule changes.
+- PLP-358: `routing kpi-export` (and the publication at `issue merge`) now sets the `status` and `ended_at` of a Claude background attempt from the host notification in the main session log, prices an attempt routed by a short alias by the model its host log served, and documents as a wanted limit that a review round after a validated one stays omitted outside a campaign (the format forbids a null `review_type` and no local source records it). A changed attempt is published as a revision of its chain, never a duplicate; contract `devhub-observations.v2` is unchanged. Causes, limits and tests in `docs/kpi-export.md`, "Status, alias price and review type outside a campaign".
+- PLP-357: `routing kpi-export` (and the publication at `issue merge`) now emits, per issue and per host session, one `attempt` record of role `coordinator` with attribution `window`, built from the requests of the session between `issue start` and `issue merge`; a request in two or more windows is in no record (declared in `omitted`), what is not attributable stays unknown, and the amount is `partial` when it is a lower bound. Contract `devhub-observations.v2` is unchanged; rule, limits and tests in `docs/kpi-export.md`, "Coordinator session".
+
 ## 2.9.1 — 2026-11-07
 
 Patch release: `routing kpi-export` and `cost-attribution` now price the Codex models
