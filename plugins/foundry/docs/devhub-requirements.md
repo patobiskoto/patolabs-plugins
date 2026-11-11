@@ -451,7 +451,7 @@ then set to `green`. The failure is DHN-16: `audit` of `trackers/devhub.py` refu
 DevHub's `src/tracker/application-contract.ts` at `7686ba5` declares `reason` nullable). The
 `reason: null` field dates from DEVHUB-181 (`b9544ce`, found with `git log -S` in DevHub),
 after the last green run of DHN-16; this change does not touch `audit`. DHN-16 keeps its
-`green` row until that defect is handled outside PLP-363. The instance was removed (`down -v`).
+`green` row until that defect is handled in PLP-374. The instance was removed (`down -v`).
 
 ### Live run of PAT-331
 

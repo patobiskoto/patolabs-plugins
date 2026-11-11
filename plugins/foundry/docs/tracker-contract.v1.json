@@ -329,7 +329,7 @@
         },
         "devhub": {
           "status": "supported",
-          "evidence": "link_removal_supported is True; unlink sends DELETE /issues/:id/links with type, target, target_version, the source version and one idempotency key through _application_req, the server removing the inverse in the same transaction (devhub.py; DEVHUB-171, DEVHUB-ADR-0019). Offline: test_link_removal.py. Live: DHN-51, status unknown until a live run (devhub-requirements.md)"
+          "evidence": "link_removal_supported is True; unlink sends DELETE /issues/:id/links with type, target, target_version, the source version and one idempotency key through _application_req, the server removing the inverse in the same transaction (devhub.py; DEVHUB-171, DEVHUB-ADR-0019). Offline: test_link_removal.py. Live: DHN-51, green at 7686ba5 (devhub-requirements.md, Live run of PLP-363)"
         }
       },
       "note": "Optional write, removal of depends-on or blocks only (relates and the hierarchy links are not removable through this verb). The Tracker ABC default refuses."
