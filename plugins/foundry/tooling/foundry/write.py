@@ -362,6 +362,20 @@ def link(tracker, src_id: str, link_type: str, dst_id: str) -> None:
     tracker.link(src_id, link_type, dst_id, **kwargs)
 
 
+def unlink(tracker, src_id: str, link_type: str, dst_id: str) -> None:
+    """Remove a ``depends-on``/``blocks`` link (PLP-363); refused before any tracker call
+    unless the tracker declares ``link_removal_supported``."""
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    if getattr(tracker, "link_removal_supported", False) is not True:
+        raise TrackerCapabilityUnavailableError(tracker.name, "link_removal")
+    if link_type not in ("depends-on", "blocks"):
+        raise ValueError("type de lien non retirable : depends-on ou blocks")
+    binding = issue_binding(tracker, src_id, dst_id)
+    kwargs = {"project": binding} if binding is not None else {}
+    tracker.unlink(src_id, link_type, dst_id, **kwargs)
+
+
 def add_comment(tracker, issue_id: str, text: str, *, cwd=None, _before_write=None) -> None:
     """Append a comment with the current repository binding when required."""
     binding = (issue_binding(tracker, issue_id) if cwd is None

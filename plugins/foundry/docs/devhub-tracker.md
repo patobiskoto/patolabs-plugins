@@ -537,6 +537,21 @@ no second write. The import itself is described in "Selective import" below (PAT
 the live test of PAT-314 links two issues created normally, by decision for PAT-314.
 Row DHN-35 of `devhub-requirements.md`.
 
+## Removing a dependency (PLP-363, DHN-51)
+
+`unlink(src, type, dst)` (`trackers/devhub.py`, `link_removal_supported`) removes a
+`depends-on` or `blocks` link; any other type is a `ValueError` before any request. It
+checks both ids against the project, reads both issues and sends `DELETE
+/issues/:id/links` through `_application_req` with the body of the creation (`type` seen
+from `src`, `target`, `target_version`), the source version and one idempotency key.
+The route and its errors are those of DEVHUB-171 (DevHub's `docs/TRACKER_API.md`, section
+"Removing a dependency (DEVHUB-171, DEVHUB-ADR-0019)", not read in this repository): a
+missing link is 409 `resource_conflict`, a stale version 409 `version_conflict`, and both
+propagate as `DevHubTrackerError`. The CLI is `edit unlink <SRC-ID> <link-type> <DST-ID>`
+(`edit.py`); a tracker without the capability refuses before any call
+(`write.unlink`). Offline tests: `tests/test_link_removal.py`. Live need DHN-51
+(`devhub-requirements.md`): green at `7686ba5` ("Live run of PLP-363").
+
 ## Selective import (PAT-319, DHN-34, DHN-36)
 
 Routes of DEVHUB-105, merged in DevHub as `b0231d9` (its page `docs/TRACKER_API.md`, section

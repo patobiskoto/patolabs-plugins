@@ -185,6 +185,9 @@ class Tracker(ABC):
     epic_subgraph_supported: bool = False
     # PLP-325 / PLP-ADR-0061: `routing kpi-publish` may send a foundry-kpi-export.v1 document.
     kpi_publication_supported: bool = False
+    # PLP-363: `edit unlink` removes a `depends-on`/`blocks` link; only DevHub declares it
+    # (DEVHUB-171, DEVHUB-ADR-0019).  Any other provider refuses before a tracker call.
+    link_removal_supported: bool = False
     append_only_lifecycle_supported: bool = False
     acceptance_proof_projection_supported: bool = False
     acceptance_override_projection_supported: bool = False
@@ -612,6 +615,16 @@ class Tracker(ABC):
         self, src_id: str, link_type: str, dst_id: str, project: Project | None = None
     ) -> None:
         """Create a typed link (subtask-of, relates, depends-on…) src → dst."""
+
+    def unlink(
+        self, src_id: str, link_type: str, dst_id: str, project: Project | None = None
+    ) -> None:
+        """Remove a ``depends-on``/``blocks`` link src -> dst (PLP-363).
+
+        Optional capability, advertised by ``link_removal_supported``: the default
+        refuses without any tracker call.
+        """
+        raise TrackerCapabilityUnavailableError(self.name, "link_removal")
 
     @abstractmethod
     def add_comment(

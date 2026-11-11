@@ -308,6 +308,33 @@
       }
     },
     {
+      "id": "dependency-removal",
+      "journey": "epics/enfants/dépendances (optional removal of a dependency, PLP-363)",
+      "core": false,
+      "tracker_abc": [
+        "unlink(depends-on|blocks)"
+      ],
+      "cells": {
+        "youtrack": {
+          "status": "refused",
+          "evidence": "link_removal_supported is False (base.py); write.unlink raises TrackerCapabilityUnavailableError before any tracker call and edit unlink exits with a refusal that writes nothing (write.py; edit.py). Offline: test_link_removal.py"
+        },
+        "linear": {
+          "status": "refused",
+          "evidence": "link_removal_supported is False (base.py); write.unlink raises TrackerCapabilityUnavailableError before any tracker call and edit unlink exits with a refusal that writes nothing (write.py; edit.py). Offline: test_link_removal.py"
+        },
+        "ghprojects": {
+          "status": "refused",
+          "evidence": "link_removal_supported is False (base.py); write.unlink raises TrackerCapabilityUnavailableError before any tracker call and edit unlink exits with a refusal that writes nothing (write.py; edit.py). Offline: test_link_removal.py"
+        },
+        "devhub": {
+          "status": "supported",
+          "evidence": "link_removal_supported is True; unlink sends DELETE /issues/:id/links with type, target, target_version, the source version and one idempotency key through _application_req, the server removing the inverse in the same transaction (devhub.py; DEVHUB-171, DEVHUB-ADR-0019). Offline: test_link_removal.py. Live: DHN-51, status unknown until a live run (devhub-requirements.md)"
+        }
+      },
+      "note": "Optional write, removal of depends-on or blocks only (relates and the hierarchy links are not removable through this verb). The Tracker ABC default refuses."
+    },
+    {
       "id": "epic-subgraph-projection",
       "journey": "epics/enfants/dépendances (optional bounded projection)",
       "core": false,

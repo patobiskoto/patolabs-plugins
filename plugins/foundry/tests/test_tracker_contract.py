@@ -231,7 +231,7 @@ def test_ghprojects_cells_match_delivered_reads_writes_adrs_and_lifecycle():
             continue
         if operation["id"] in {
             "native-free-text-search", "acceptance-override-receipt",
-            "human-acceptance-decision",
+            "human-acceptance-decision", "dependency-removal",
         }:
             assert cell["status"] == "refused"
             continue
@@ -414,7 +414,7 @@ def test_devhub_is_a_v1_provider_with_one_cell_per_operation():
     declared = {name for name, p in contract["providers"].items() if p["v1_core"] is True}
     assert declared == set(registry._V1_TRACKERS)
     assert all("devhub" in operation["cells"] for operation in contract["operations"])
-    assert len(contract["operations"]) == 25
+    assert len(contract["operations"]) == 26
     assert sum(1 for operation in contract["operations"] if operation["core"]) == 19
 
 

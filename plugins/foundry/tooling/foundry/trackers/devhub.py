@@ -83,6 +83,7 @@ _INVERSE_LINK_TYPES = {
     "depends-on": "blocks",
     "blocks": "depends-on",
 }
+_UNLINK_TYPES = {"depends-on", "blocks"}
 _ADR_STATES = {"proposed", "accepted", "deprecated", "superseded"}
 # Historical imports and reads have a wider vocabulary than native decisions.
 _ADR_IMPORT_STATES = _ADR_STATES | {"rejected"}
@@ -372,6 +373,8 @@ class DevHubTracker(Tracker):
     project_provisioning_supported = True
     project_provisioning_requires_repository = True
     epic_subgraph_supported = True
+    # PLP-363 / DEVHUB-171: DELETE /issues/:id/links (DEVHUB-ADR-0019).
+    link_removal_supported = True
     kpi_publication_supported = True  # PLP-325: POST /api/economics/v2/.../observations:batch
     # PAT-309 / DHN-38: every proven review and done transition appends one
     # receipt in the server transaction, read by `read_proof_receipts`.
@@ -2072,6 +2075,35 @@ class DevHubTracker(Tracker):
         source = self._bound_issue_raw(src_id, project)
         target = self._bound_issue_raw(dst_id, project)
         self._post_link(src_id, link_type, dst_id, source, target)
+
+    def unlink(
+        self, src_id: str, link_type: str, dst_id: str,
+        project: Project | None = None,
+    ) -> None:
+        """Remove a ``depends-on``/``blocks`` link with ``DELETE /issues/:id/links``.
+
+        Same body and headers as the creation (``type`` seen from ``src_id``, the target
+        version, the source version, one idempotency key); the server removes the stored
+        link and its inverse in one transaction.  A missing link is its 409
+        ``resource_conflict``, a stale version its 409 ``version_conflict``; both
+        propagate unchanged.
+        """
+        if link_type not in _UNLINK_TYPES:
+            raise ValueError("type de lien non retirable sur DevHub (depends-on ou blocks)")
+        self._require_issue_binding(src_id, project)
+        self._require_issue_binding(dst_id, project)
+        source = self._bound_issue_raw(src_id, project)
+        target = self._bound_issue_raw(dst_id, project)
+        self._application_req(
+            "DELETE", f"/issues/{urllib.parse.quote(src_id, safe='')}/links",
+            {
+                "type": link_type,
+                "target": dst_id,
+                "target_version": target["version"],
+            },
+            version=source["version"],
+            idempotent=True,
+        )
 
     def _post_link(self, src_id: str, link_type: str, dst_id: str, source, target) -> None:
         self._application_req(
