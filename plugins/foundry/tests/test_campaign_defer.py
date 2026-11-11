@@ -450,6 +450,24 @@ def test_a_full_follow_up_holding_the_comment_of_this_deferral_is_reused_on_retr
     assert len(follow_ups(env)) == 1 and "comment" not in verbs(env)
 
 
+def test_an_empty_ref_never_makes_a_full_follow_up_usable(env):
+    seed_companion(env, follow_state="backlog")
+    full = env.world.issues["APP-51"]
+    full.comments.append(deferral_comment(cd.MAX_FOLLOW_UP_REMARKS))
+    listing = SimpleNamespace(tracker=SimpleNamespace(get_issue=env.world.issues.__getitem__))
+    assert cd._find_follow_up(listing, "APP-50", "t", False, "") == (None, False)
+
+
+def test_a_replayed_deferral_finds_the_child_that_carries_its_ref_first(env):
+    seed_companion(env, follow_state="backlog")
+    env.world.add_issue("APP-52", "Review remarks deferred from APP-1", "Task", "backlog",
+                        parent="APP-50")
+    env.world.issues["APP-52"].comments.append({"text": "x APP-2@abc x", "created": 1})
+    listing = SimpleNamespace(tracker=SimpleNamespace(get_issue=env.world.issues.__getitem__))
+    assert cd._find_follow_up(listing, "APP-50", "t", False, "APP-2@abc") == ("APP-52", False)
+    assert cd._find_follow_up(listing, "APP-50", "t", False, "APP-2@zzz") == ("APP-51", False)
+
+
 def test_non_deferral_comments_do_not_fill_a_follow_up(env):
     reviewed(env)
     seed_companion(env, follow_state="backlog")
