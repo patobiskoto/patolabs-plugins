@@ -1594,6 +1594,25 @@ def test_dhn_49_terminal_issues_are_imported_frozen_and_read_back_exactly(suite,
     assert tracker.get_issue(ids["PAT-4"]).state == "done"
 
 
+@need("DHN-51")
+def test_dhn_51_a_dependency_link_is_removed_with_its_inverse(suite):
+    """PLP-363: DELETE /issues/:id/links for both removable link types."""
+    inverse = {"depends-on": "blocks", "blocks": "depends-on"}
+    for link_type, back in inverse.items():
+        source = _create(suite, _unique(f"live unlink {link_type} src"), "")
+        target = _create(suite, _unique(f"live unlink {link_type} dst"), "")
+        suite.tracker.link(source.id, link_type, target.id, project=suite.project)
+        assert _has_link(suite.tracker.get_issue(target.id), back, source.id), link_type
+        suite.tracker.unlink(source.id, link_type, target.id, project=suite.project)
+        assert not _has_link(suite.tracker.get_issue(source.id), link_type, target.id)
+        assert not _has_link(suite.tracker.get_issue(target.id), back, source.id)
+        _refused(
+            lambda: suite.tracker.unlink(
+                source.id, link_type, target.id, project=suite.project),
+            statuses=[409], code="resource_conflict",
+        )
+
+
 @need("DHN-50")
 def test_dhn_50_explicit_source_numbers_and_rejected_adr_round_trip(suite):
     """PLP-311: synthetic same-key corpus only, without registry activation."""

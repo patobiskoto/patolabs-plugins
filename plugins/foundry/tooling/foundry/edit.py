@@ -22,6 +22,8 @@ CLI:
        `transition <ISSUE-ID> backlog <expected-state>` puts a started or in-review issue
        back to the backlog, expected state `in-progress` or `review`, PAT-165)
   python3 -m foundry.edit link <SRC-ID> <link-type> <DST-ID>
+  python3 -m foundry.edit unlink <SRC-ID> <link-type> <DST-ID>
+      (PLP-363: removes a `depends-on` or `blocks` link; DevHub only, other trackers refuse)
   python3 -m foundry.edit comment <ISSUE-ID> < note.md   (progress note, body on stdin)
   python3 -m foundry.edit body <ISSUE-ID> <expected-body.md> <updated-body.md>
 
@@ -111,6 +113,21 @@ def link(src, link_type, dst):
     print(f"🔗 {src} {link_type} {dst}")
 
 
+def unlink(src, link_type, dst):
+    from foundry.trackers.base import TrackerCapabilityUnavailableError
+
+    tracker = foundry.tracker()
+    try:
+        write.unlink(tracker, src, link_type, dst)
+    except TrackerCapabilityUnavailableError:
+        raise SystemExit(
+            f"⛔ Retrait de lien non supporté par le tracker {tracker.name} "
+            "(DevHub uniquement) : rien n'a été écrit.") from None
+    except ValueError as exc:
+        raise SystemExit(f"⛔ {exc} : rien n'a été écrit.") from None
+    print(f"✂️  {src} {link_type} {dst} retiré")
+
+
 def comment(issue_id):
     text = sys.stdin.read().strip()
     if not text:
@@ -132,7 +149,7 @@ def body(issue_id, expected_path, updated_path):
 
 
 _COMMANDS = {"create-issue": create_issue, "reconcile-create": reconcile_create, "set-field": set_field,
-             "transition": transition, "link": link, "comment": comment, "body": body}
+             "transition": transition, "link": link, "unlink": unlink, "comment": comment, "body": body}
 
 
 def _command_usage(cmd):
