@@ -407,9 +407,10 @@ Results (P against F; B for reference):
 | B, after a blocked round | 19 | 16 | 379 s (104 to 23628) | 789,910 | 77,562 | 32 | 2,630 |
 
 - Duration: the median of P is 0.47 of that of F (219 s against 463 s); 23 of the 28 rounds
-  of P are shorter than the first round of the same issue. The means (441 s for P, 513 s for
-  F) are driven by one round of P, PLP-332 round 3 (4809 s), and, in B, by PLP-328 round 2
-  (23628 s): a duration is the span from claim to completion, so it includes any wait
+  of P are shorter than the first round of the same issue. The mean of P (441 s) is driven by
+  one of its rounds, PLP-332 round 3 (4809 s); the mean of F (513 s) is not, its longest round
+  being 869 s (table above); the mean of B is not given on this page, only its longest round,
+  PLP-328 round 2 (23628 s): a duration is the span from claim to completion, so it includes any wait
   inside it.
 - Tokens, in the 21 pairs where both the round of P and the first round of its issue have
   tokens (15 issues), a round of P over the first round of its issue: median ratio 0.43 of
@@ -491,7 +492,8 @@ deferred again (`docs/campaign-effects.md`).
 
 ## Reading the deferred-remarks debt (PLP-361, PLP-ADR-0065)
 
-The deferred remarks are not counted by any tool; the debt is read in the tracker, by hand.
+`remark_count` (`campaign_defer.py`) counts the remarks of one follow-up issue, for the cap and for
+`_find_follow_up`; no command reports the debt of a project, which is read in the tracker, by hand.
 List the project (`query backlog`, `skills/merge-pr/SKILL.md`, "Commands to look and to read
 back"): the companion Epics are the issues titled `Nits <ORIGIN-EPIC-ID>` and exactly `Nits`
 (`COMPANION_PREFIX`, `NO_ORIGIN_COMPANION` in `campaign_defer.py`); their follow-up issues are
@@ -500,7 +502,7 @@ comments that open with `Non-blocking review remarks deferred from` (`DEFERRAL_H
 `remark_count` in `campaign_defer.py`); other comments count for nothing. From 30 remarks
 (`MAX_FOLLOW_UP_REMARKS`) the issue is full and receives no more: the next deferral creates a new
 follow-up issue in the same companion Epic, and the full one stays open. A follow-up issue created
-before PLP-ADR-0065 whose remarks already count 30 or more by this rule is full at once. The count only sees the comments the adapter's `get_issue` returns: the Linear adapter keeps the 10 most recent ordinary comments (`trackers/linear.py`, normalisation of `comments`), so there a follow-up issue may never reach 30 and the cap may never apply (deduced from the code, not observed); whether the other adapters return every comment is unknown. Remarks written in another format (another header, numbered items) are not counted either. The
+before PLP-ADR-0065 whose remarks already count 30 or more by this rule is full at once. The count only sees the comments the adapter's `get_issue` returns: the Linear adapter keeps the 10 most recent ordinary comments (`trackers/linear.py`, normalisation of `comments`), so there a follow-up issue may never reach 30 and the cap may never apply (deduced from the code, not observed); the DevHub adapter returns every comment (observed, DHN-14, `docs/devhub-requirements.md`); whether the other adapters (YouTrack, GitHub Projects) return every comment is unknown. Remarks written in another format (another header, numbered items) are not counted either. The
 cap therefore bounds only the remarks it counts; it is not a bound on the debt.
 
 Triage before a minor or major release: `skills/release/SKILL.md`, step 4, stops for the

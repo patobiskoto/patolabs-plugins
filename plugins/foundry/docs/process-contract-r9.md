@@ -1,7 +1,7 @@
 # Process contract: rule R9, fewer review rounds (PAT-136, PAT-139)
 
 Since PLP-362 the repository contract (`AGENTS.md`, identical in `CLAUDE.md`, at the
-repository root) keeps the checklist (a) verbatim and a short version of (b) and (c) to limit the
+repository root) keeps the checklist (a) and the correction rule (c) verbatim and a short version of (b) to limit the
 context loaded at every session. The heading `R9` stays in the contract, so `AGENTS.md#R9`,
 `AGENTS.md#R9(a)`, `AGENTS.md#R9(b)` and `AGENTS.md#R9(c)` citations still resolve. The text
 below is moved verbatim from `AGENTS.md` R9; it is the detail of the rule, and the contract's
@@ -212,7 +212,7 @@ its attempt journal. A follow-up issue holding `MAX_FOLLOW_UP_REMARKS` (30) rema
 `remark_count` over the comments that open with `DEFERRAL_HEADER` (both in `campaign_defer.py`), is
 skipped by `_find_follow_up` like a started one, so the effect creates a new follow-up issue; a
 full issue that already carries the comment of the deferral being retried stays usable, so a retry
-posts nothing twice (PLP-ADR-0065). The count only sees the comments the adapter's `get_issue` returns (the Linear adapter keeps the 10 most recent ordinary ones, so the cap may never apply there; other adapters unknown): `docs/review-rounds.md`, "Reading the deferred-remarks debt". The following are corrected by the correction loop and
+posts nothing twice (PLP-ADR-0065). The count only sees the comments the adapter's `get_issue` returns (the Linear adapter keeps the 10 most recent ordinary ones, so the cap may never apply there; DevHub returns every comment, observed, DHN-14 in `docs/devhub-requirements.md`; the other adapters unknown): `docs/review-rounds.md`, "Reading the deferred-remarks debt". The following are corrected by the correction loop and
 re-reviewed: a remark marked "fix before merge" (except when every such remark of the round
 targets the PR description alone: the correction then replaces the description, which is not
 re-reviewed because the diff is unchanged, PAT-227, `plugins/foundry/docs/campaign-effects.md`),

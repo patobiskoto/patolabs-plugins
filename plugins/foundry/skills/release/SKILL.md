@@ -131,7 +131,7 @@ them to the maintainer with their remark counts, and stop. The maintainer decide
 remark, to keep it (it becomes an ordinary issue, or part of one) or to drop it; this is a human
 verdict (FOUNDRY-ADR-0014), not a write authorized in advance. A follow-up issue whose remarks
 are all triaged goes to `dropped`; a companion Epic whose children are all done or dropped is
-closed. Do not open the PR before the verdict. This is a step of the skill, not a gate: no code
+closed. Do not open the PR before the verdict, and write the result of the triage (what was kept, dropped or left open, with the issue identifiers) in the description of the release PR. This is a step of the skill, not a gate: no code
 refuses a release whose triage was not done, and the review of the release PR judges it.
 
 Open the PR with `foundry:open-pr` and review it with `foundry:review-pr`, merge only

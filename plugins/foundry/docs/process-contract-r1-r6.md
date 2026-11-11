@@ -44,7 +44,7 @@ Every PR opens through `foundry:open-pr` and merges through `foundry:merge-pr`
 plugin is active, this is not just policy: `gh pr create` / `gh pr merge` and a direct
 push to the default branch are denied by the `PreToolUse` Bash guard
 (`plugins/foundry/hooks/guard_bash.py::deny_reason`), and a git `pre-push` hook in
-`plugins/foundry/.githooks/` gives the same guarantee outside either agent (enable it
+`plugins/foundry/.githooks/` refuses, outside either agent, a push to `refs/heads/main` or `refs/heads/master` (`main()` in `plugins/foundry/.githooks/pre-push`; enable it
 with `git config core.hooksPath plugins/foundry/.githooks`). See FOUNDRY-ADR-0001 for
 why the tracker must stay authoritative over the merge path. The guard's usual fail-open
 on internal errors has one exception (PAT-42): an invalid, drifted, or ambiguous repo
