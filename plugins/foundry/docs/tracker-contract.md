@@ -60,7 +60,6 @@ closed vocabulary:
 | Frame/intake/groom: evolve an existing issue | `update_fields`, `update_body` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) | supported |
 | Epics/enfants/dépendances: child creation, relations | `create_issue(parent=…)`, `link(depends-on\|blocks\|relates)` | supported | supported | supported (PAT-66) | supported |
 | Epics/enfants/dépendances: reparent an existing issue | `link(subtask-of\|parent-of)` | supported (bounded detection, §4) | supported (bounded detection, §4) | supported (bounded detection, §4; PAT-66) | supported |
-| Epics/enfants/dépendances: remove a dependency (optional, PLP-363) | `unlink(depends-on\|blocks)`, CLI `edit unlink <SRC-ID> <link-type> <DST-ID>` | refused | refused | refused | supported (DELETE `/issues/:id/links`, DEVHUB-171; live need DHN-51, green at `7686ba5`) |
 | Lecture/création/évolution ADR | `list_adrs`, `create_adr`, `set_adr_status` | supported | supported for native ADRs and successors of batch-qualified historical ADRs (PAT-47) | supported (PAT-58, qualified private personal-project Issue/comment codec) | supported |
 | Start/resume/review/merge | `set_state` | supported (bounded predecessor projection, §4) | supported (`in-progress`/`review`/`done`, native State plus receipt) | supported (private personal Project; GHQUAL-13 / PR #14, receipt-first, exact-SHA CI and merge) | supported (proof-bound `review` and `done`, append-only receipts) |
 | État et AC | `sync_acceptance_body` | supported (level 1, §4) | supported (append-only proof projection, §4) | supported (GHQUAL-13, independent review proof and 2/2 AC readback) | supported |
@@ -84,6 +83,12 @@ relations, and `migration.capture_manifest` exports every ADR; since PAT-327 the
 `unknown` family or a source-only reference as such (`docs/devhub-tracker.md`, "Source-only references and unknown relations"), and a preflight of this repository toward DevHub has not been run.
 
 **Capability work and remaining qualification limits:**
+- **PLP-363** — `unlink(depends-on|blocks)` (operation `dependency-removal`, non-core, optional)
+  removes a dependency; the CLI is `edit unlink <SRC-ID> <link-type> <DST-ID>`. YouTrack, Linear and
+  `ghprojects` refuse it (`link_removal_supported` is `False` in `trackers/base.py`; `write.unlink`
+  raises `TrackerCapabilityUnavailableError` before any tracker call). DevHub supports it with
+  `DELETE /issues/:id/links` (DEVHUB-171; `trackers/devhub.py`, `docs/devhub-tracker.md`, "Removing a
+  dependency (PLP-363, DHN-51)"); live need DHN-51 is green at `7686ba5`.
 - **PAT-206** — `accept_issue` (operation `human-acceptance-decision`, non-core) accepts a
   non-code issue by one closed human decision file, without a PR (PAT-ADR-0025, proposed
   at the time of writing; accepted at the merge that delivers it). Linear declares it
