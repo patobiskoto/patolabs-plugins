@@ -12,9 +12,9 @@ ledgers, receipts and review history; the existing
 [data and rollback rules](migration-1.0.0.md#overrides-and-rollback-scope) remain the
 reference. From this release the review proofs kept there are required by every code merge
 (next section): a merge run with another data directory, or on another machine, does not see
-them. No new file, option or configuration key is added by this release (read from the diff
-between the tag `foundry-v2.9.1` and this candidate: no `add_argument` and no environment read
-is added under `tooling/`).
+them. No new data file, CLI option or configuration key is added by this release (read from
+the diff between the tag `foundry-v2.9.1` and this candidate: no `add_argument` and no
+environment read is added under `tooling/`).
 
 ## What changes for a user
 
@@ -38,10 +38,12 @@ is added under `tooling/`).
   `foundry:merge-pr` deferral nor the campaign `defer-remarks` effect adds to it, and the next
   deferral creates a new follow-up issue in the same companion Epic (`MAX_FOLLOW_UP_REMARKS`,
   `remark_count` in [campaign_defer.py](../tooling/foundry/campaign_defer.py)). Remarks are
-  counted only in deferral comments of the new format described in the
-  [merge-pr skill](../skills/merge-pr/SKILL.md) and in
-  [review-rounds.md](review-rounds.md#reading-the-deferred-remarks-debt-plp-361-plp-adr-0065);
-  older comments are not counted.
+  counted only in comments that open with `DEFERRAL_HEADER` (`campaign_defer.py`), whatever
+  their date, as the `- ` items they hold; a comment in another format counts for nothing. The
+  format is described in the [merge-pr skill](../skills/merge-pr/SKILL.md) and in
+  [review-rounds.md](review-rounds.md#reading-the-deferred-remarks-debt-plp-361-plp-adr-0065),
+  which also gives the Linear limit: the adapter keeps only the 10 most recent ordinary
+  comments, so the cap may never apply there (deduced from the code, not observed).
 - **`foundry:release` stops for a triage before a minor or major release PR.** The
   maintainer triages each open deferred remark (kept as an issue, or dropped)
   ([release skill](../skills/release/SKILL.md), step 4). No code refuses a release without it.

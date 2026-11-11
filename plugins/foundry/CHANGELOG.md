@@ -10,7 +10,8 @@ base and diff, and checked acceptance boxes no longer replace it (PLP-368, PLP-A
 a follow-up issue of deferred remarks holding 30 remarks or more is full and a minor or
 major release through `foundry:release` stops for the maintainer's triage (PLP-361,
 PLP-ADR-0065); `routing kpi-export` emits a `coordinator` attempt per issue and host session
-(PLP-357) and sets status, end time and alias price from the host log (PLP-358). PLP-362
+(PLP-357), sets the status and end time of a Claude background attempt and the alias price
+from the host log (PLP-358). PLP-362
 moves the long text of the process contract to `docs/`; PLP-359 and PLP-360 change
 documentation only. Preparation status and upgrade references are in
 `docs/release-2.10.0.md` and `docs/migration-2.10.0.md`.
