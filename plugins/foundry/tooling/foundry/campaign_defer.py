@@ -45,7 +45,7 @@ DEFER_RETRY_SECONDS = 60  # a transient failure is retried after this wait, or t
 # so a ticket never waits for a far or wrong date.  A Foundry choice: not measured, and the
 # Linear quota window is not established (docs/linear-tracker.md).
 MAX_RESET_WAIT_SECONDS = 3600
-MAX_FOLLOW_UP_REMARKS = 30  # PLP-ADR-0065: a follow-up issue holding this many remarks is full
+MAX_FOLLOW_UP_REMARKS = 30  # PLP-ADR-0065: a follow-up issue holding this many remarks or more is full
 DEFERRAL_HEADER = "Non-blocking review remarks deferred from "  # first words of a deferral comment
 MAX_DEFER_TRIES = 5  # attempts per diff; beyond them the campaign waits for a human
 STATES = ("pending", "done", "refused", "transient", "exhausted")

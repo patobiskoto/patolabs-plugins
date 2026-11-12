@@ -714,8 +714,9 @@ def merge(issue_id, pr_number, flags=()):
 
     # PLP-ADR-0064: on every provider, a code merge needs a completed review proof bound
     # to the exact issue, head, base and diff; checked boxes no longer replace it.  The
-    # resume of an already merged PR calls no merge and needs no new proof, except the
-    # one YouTrack's delivery receipt has always carried.
+    # resume of an already merged PR calls no merge and, with every criterion checked,
+    # needs no new proof (with unchecked criteria the gate below still asks for the proof
+    # or the override), except the one YouTrack's delivery receipt has always carried.
     if not pr.merged or (
         getattr(tr, "delivery_receipt_supported", False) and binding is not None
     ):

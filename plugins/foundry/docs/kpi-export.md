@@ -105,14 +105,17 @@ Claude attempt whose grid entry is one of those pins and whose `cache_write_inpu
 `partial` (DevHub's enum is `complete`, `partial`, `unknown`: `src/tracker/observation-contract.ts:29` in the DevHub
 repository, read, not run), and `provenance` says the amount is a lower bound. An attempt whose slice has `lower_bound_requests`
 above 0 is also `partial`, whatever the model ("Tokens that are a lower bound" below); in every other case it is
-`complete`. A Codex request above 272K input tokens is a known limit of this rule: the three `codex` entries of
-PLP-353 have no `context_threshold_tokens`, so such a request is priced at the rates up to 272K and the amount is still marked
-`complete` (`docs/cost-attribution.md`, "Entrées Codex GPT-6 Luna, GPT-6.1 Sol et Terra de la grille"): an underestimate, not
-flagged `partial`. The behaviour is not changed here. The number is
-unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write rate is 2 times the base input rate
+`complete`. The number is unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write rate is 2 times the base input rate
 against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0 against 2.5 USD per million tokens for `sonnet-5.5`
 (the 2.5 is the grid value, `pricing-v1.json`); the 1h rate is not a grid key and is not applied. Whether the 1h cache
 lifetime applies on a given host or subscription state is unknown (R7 of the process contract).
+
+A request above 272K input tokens to one of the three `codex` entries of PLP-353 (`gpt-6-luna`,
+`gpt-6.1-sol`, `gpt-6.1-terra`) is a known limit of the amount rule: those entries have no
+`context_threshold_tokens` (`gpt-6-astra` carries `272000`, `pricing-v1.json:251`), so such a request is
+priced at the rates up to 272K and the amount is still marked `complete`
+(`docs/cost-attribution.md`, "Entrées Codex GPT-6 Luna, GPT-6.1 Sol et Terra de la grille"): an
+underestimate, not flagged `partial`. The behaviour is not changed here.
 
 ### Tokens that are a lower bound (PLP-344)
 
@@ -286,7 +289,7 @@ record tokens + overlap tokens + unattributed tokens equal the total of the log,
 | `status`, `failure_class` | `unknown`, `unknown`: no completion of a coordinator session is observed | never |
 | `tokens.input`, `cached_input`, `cache_write_input`, `output` | sum of the window requests of the session | never (a record exists only with at least one request) |
 | `started_at`, `ended_at`, `observed_at` | observed: first request time, last request time and last request time of the window in the log | never |
-| `amount` | `estimated`, the grid of `cost_attribution.price_for` applied per (model, day) group of requests and summed; `rate_version` is the version of the one group, or a digest of the sorted versions | a group has no price for its model and day, or has a threshold entry without per-request counts: the whole amount is `null` with the `_amount` reason, never a partial sum; the tokens are kept |
+| `amount` | `estimated`, the grid of `cost_attribution.price_for` applied per (model, day) group of requests and summed; `rate_version` is the version of the one group, or a digest of the sorted versions | a group has no price for its model and day, or has a threshold entry without per-request counts: the whole amount is `null` with the `_amount` reason (`no_price_for_model_and_date` when the model is absent or invalid, `kpi_export.py:344-345`), never a partial sum; the tokens are kept |
 
 `amount.completeness` is `complete` unless the session has `overlap` requests for the issue, a request that is a lower bound
 (`lower_bound_requests`, PLP-344) or a 1h cache-write model (`_amount`, PLP-14); then `partial` and `provenance.from.amount` says

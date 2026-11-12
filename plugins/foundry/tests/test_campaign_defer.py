@@ -468,6 +468,20 @@ def test_a_replayed_deferral_finds_the_child_that_carries_its_ref_first(env):
     assert cd._find_follow_up(listing, "APP-50", "t", False, "APP-2@zzz") == ("APP-51", False)
 
 
+def test_a_replay_through_the_effect_writes_nothing_to_the_older_child(env):
+    """PLP-379: end to end, the child that carries the ref is reused and the older one is left alone."""
+    reviewed(env)
+    seed_companion(env, follow_state="backlog")
+    env.world.add_issue("APP-52", "Review remarks deferred from APP-1", "Task", "backlog", parent="APP-50")
+    ref = f"APP-2@{test_campaign_effects.DIFF_HASH[:16]}"
+    carrying = env.world.issues["APP-52"]
+    carrying.comments.append({"text": f"x {ref} x", "created": 1})
+    older = env.world.issues["APP-51"]
+    assert step(env).outcome == "executed"
+    assert "comment" not in verbs(env) and "create-issue" not in verbs(env)
+    assert older.comments == [] and len(carrying.comments) == 1 and len(follow_ups(env)) == 2
+
+
 def test_non_deferral_comments_do_not_fill_a_follow_up(env):
     reviewed(env)
     seed_companion(env, follow_state="backlog")
