@@ -260,17 +260,17 @@ the tag and the host update each need the maintainer's explicit authorization, a
 are recorded on the release ticket (`skills/release/SKILL.md`, steps 6 to 9). Not
 verified: the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host.
 
-**Release 2.11.0, minor source candidate prepared under PLP-378:** both Foundry
-manifests declare **2.11.0**. This preparation carries PLP-376, PLP-374, PLP-373, PLP-372,
-PLP-371, PLP-370 and PLP-363 into the dated [CHANGELOG](CHANGELOG.md) and removes their fragments;
-it adds the [release note](docs/release-2.11.0.md) (`docs/release-2.11.0.md`) and the
-[migration guide](docs/migration-2.11.0.md) (`docs/migration-2.11.0.md`), the freeze
-entry, and updates the README references and CI release-version comment. Behaviour changes:
-the new verb `edit unlink` removes a dependency on DevHub only (PLP-363); four more
-(PLP-374, PLP-372, PLP-371, PLP-370) are named in the CHANGELOG 2.11.0 section. 2.10.0 is
-published and tagged (`foundry-v2.10.0`). The tag `foundry-v2.11.0`, the GitHub Release, host
-installation and listed/installed/loaded-version readbacks are not done or claimed here.
-Merge, tag, GitHub Release and host update retain separate agreements
+**Release 2.11.1, patch source candidate prepared under PLP-383:** both Foundry
+manifests declare **2.11.1**. This preparation carries PLP-381, PLP-380 and PLP-379 into the
+dated [CHANGELOG](CHANGELOG.md) and removes their fragments, adds the freeze entry, and
+updates the README references and CI release-version comment; as a patch it has no release
+note and no migration guide (`release_requirements`, `tests/test_release_contract.py`). No
+CLI verb, configuration key or runtime behaviour changes: the CI test selections deselect the
+tests of the frozen local-first workstream (marker `frozen`, PLP-381), and PLP-380 and PLP-379
+change documentation, comments and tests. 2.11.0 is published and tagged (`foundry-v2.11.0`).
+The tag `foundry-v2.11.1`, the GitHub Release, host installation and
+listed/installed/loaded-version readbacks are not done or claimed here. Merge, tag, GitHub
+Release and host update retain separate agreements
 ([release skill](skills/release/SKILL.md), steps 5–8).
 
 ## Why
@@ -397,7 +397,7 @@ from 2.6.0 to 2.7.0 is in [`docs/migration-2.7.0.md`](docs/migration-2.7.0.md); 
 from 2.7.0 to 2.8.0 is in [`docs/migration-2.8.0.md`](docs/migration-2.8.0.md); the 2.8.1 patch has no migration guide; the upgrade
 from 2.8.1 to 2.9.0 is in [`docs/migration-2.9.0.md`](docs/migration-2.9.0.md); the 2.9.1 patch has no migration guide; the upgrade
 from 2.9.1 to 2.10.0 is in [`docs/migration-2.10.0.md`](docs/migration-2.10.0.md); the upgrade
-from 2.10.0 to 2.11.0 is in [`docs/migration-2.11.0.md`](docs/migration-2.11.0.md). The former
+from 2.10.0 to 2.11.0 is in [`docs/migration-2.11.0.md`](docs/migration-2.11.0.md); the 2.11.1 patch has no migration guide. The former
 [`0.9.0 migration`](docs/migration-0.9.0.md),
 [`0.8.0 migration`](docs/migration-0.8.0.md) and
 [`0.7.0 migration`](docs/migration-0.7.0.md) remain historical release evidence.
@@ -906,7 +906,7 @@ Which CI jobs run on a pull request is decided by `scripts/ci_plan.py` (unit-tes
   `.codex-plugin` or `.agents/plugins` directory, at any depth (so also a fixture or a
   combination such as `.codex-plugin/marketplace.json`, matched on the safe side). It is
   derived from the release pull requests of this repository (Foundry 0.9.0, 1.0.0, 1.1.0,
-  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.4.0, 2.5.0, 2.6.0, 2.7.0, 2.8.0, 2.8.1, 2.9.0, 2.9.1 and 2.10.0, all published and tagged, and the prepared 2.11.0), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
+  1.1.1, 1.2.0, 1.3.0, 1.4.0, 1.5.0, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.4.0, 2.5.0, 2.6.0, 2.7.0, 2.8.0, 2.8.1, 2.9.0, 2.9.1, 2.10.0 and 2.11.0, all published and tagged, and the prepared 2.11.1), which all changed `plugins/foundry/.claude-plugin/plugin.json`; the title or
   the branch name is not used. The rule is deliberately broader than "version bumped": a
   manifest edit that is not a release also runs everything (safe side).
 - Freeze rule: the pull request that publishes a version must carry its entry in
