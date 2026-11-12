@@ -276,6 +276,13 @@ _CAMPAIGN_TESTS = frozenset(
 )
 
 
+# PLP-381: the local-first workstream (``local_first_*`` modules) is frozen since 2026-11-10
+# (PLP-364): its tests keep running on request (``pytest -m frozen tests``) but CI no longer
+# requires them. The tests of the two functions live code uses (``campaign_effects.py``) are in
+# ``test_native_sandbox_settings.py``, which is not frozen.
+_FROZEN_TEST_PREFIX = "test_local_first_"
+
+
 def _benchmark_campaign_requested(config: pytest.Config) -> bool:
     """Return whether this invocation explicitly asks to collect the replay suite."""
     markexpr = config.getoption("markexpr") or ""
@@ -338,6 +345,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.tracker_conformance)
         if file_name in _CAMPAIGN_FILES or (file_name, test_name) in _CAMPAIGN_TESTS:
             item.add_marker(pytest.mark.benchmark_campaign)
+        if file_name.startswith(_FROZEN_TEST_PREFIX):
+            item.add_marker(pytest.mark.frozen)
 
     if _benchmark_campaign_requested(config):
         return

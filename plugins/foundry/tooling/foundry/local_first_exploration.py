@@ -1,5 +1,8 @@
 """PAT-114: pure pieces of the PAT-19 protocol v2 (read-only exploration), used by the launcher.
 
+FROZEN since 2026-11-10 (PLP-364, PLP-381): the local-first workstream is abandoned; this
+module is neither maintained nor required by CI, and is not deleted.
+
 Ground truth of a task from its merged diff, the explorer report format and its parsing, the
 deterministic localization judge (file recall, file precision, function recall), the pre-registered
 screening rule, the dedicated-machine check, the quality and economy rules of the comparison and the

@@ -12,6 +12,10 @@ below was exercised on test doubles only (`tests/test_campaign_review.py`,
 `tests/test_campaign_effects.py`, `tests/test_campaign_defer.py`), never against a real
 tracker, code host or `claude`.
 
+Note: `local_first_runner.py` is frozen since 2026-11-10 (the local-first workstream was
+abandoned, PLP-364, PLP-381); this page uses only its `native_sandbox_settings` and
+`with_native_sandbox`, still tested in `tests/test_native_sandbox_settings.py`.
+
 ## Commands
 
 ```text

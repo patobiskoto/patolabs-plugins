@@ -78,14 +78,14 @@ jobs:
         # PAT-142: one worker per core (pytest-xdist); a worker is a separate process,
         # so the tests that signal their own process do not touch each other.
         run: >-
-          pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests
+          pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not frozen and not timing_sensitive" tests
           --ignore=tests/test_routing_contract.py
       - name: Run timing-sensitive tests (serial)
         # Tests that assert a wall-clock bound or race a reader thread against a producer;
         # run alone so a loaded runner cannot fail them. Selected by the marker declared
         # in pytest.ini.
         run: >-
-          pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
+          pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture and not frozen" tests
 
   ship-ios:
     if: >-
@@ -137,11 +137,11 @@ jobs:
         run: pytest -q tests/test_routing_contract.py
       - name: Run public pure-logic tests under the minimum Python
         run: >-
-          pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests
+          pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not frozen and not timing_sensitive" tests
           --ignore=tests/test_routing_contract.py
       - name: Run timing-sensitive tests under the minimum Python (serial)
         run: >-
-          pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
+          pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture and not frozen" tests
 
   gauge:
     # PAT-246: stdlib-only, offline tests on recorded responses (no network, no paid call).

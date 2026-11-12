@@ -811,15 +811,22 @@ The public suite (the exact selection the CI job `foundry` runs) can run in para
 with `pytest-xdist` (`pip install pytest-xdist`), one worker process per core:
 
 ```
-pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not timing_sensitive" tests --ignore=tests/test_routing_contract.py
-pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture" tests
+pytest -q -n auto -m "not integration and not benchmark_campaign and not historical_fixture and not frozen and not timing_sensitive" tests --ignore=tests/test_routing_contract.py
+pytest -q -p no:xdist -m "timing_sensitive and not integration and not benchmark_campaign and not historical_fixture and not frozen" tests
 ```
 
-The second command runs, alone, the four tests marked `timing_sensitive` (declared in
-`pytest.ini`): three in `tests/test_local_scout.py` that assert a wall-clock bound on a
-short deadline, and
-`tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`,
-which races a reader thread against a producer. Only the last one was observed to fail
+Both commands exclude the tests marked `frozen` (declared in `pytest.ini`, applied in
+`tests/conftest.py` to `tests/test_local_first_*.py`): the local-first workstream is frozen
+since 2026-11-10 (PLP-364, PLP-381). They stay runnable with `pytest -q -m frozen tests`.
+The tests of `native_sandbox_settings` and `with_native_sandbox`, which
+`tooling/foundry/campaign_effects.py` uses, are in `tests/test_native_sandbox_settings.py`
+and stay required.
+
+The second command runs, alone, the tests marked `timing_sensitive` (declared in
+`pytest.ini`) that are not frozen: three in `tests/test_local_scout.py` that assert a
+wall-clock bound on a short deadline. A fourth,
+`tests/test_local_first_runner.py::test_local_attempt_is_bounded_in_steps_when_the_stream_exposes_them`
+(frozen, so no longer run by CI), races a reader thread against a producer. Only the last one was observed to fail
 under parallel load: one local `-n 4` run during PAT-142 (200 steps seen, bound is below
 200; that run was not recorded). The three scout tests were marked because they assert a
 wall-clock bound, not because a failure was observed; one of them,
