@@ -311,8 +311,9 @@ the merge gate asks for a review proof covering all criteria for the exact diff,
 after such a partial review that proof relies on the previous round for the unchanged
 parts, and the PR description says so; no mechanical check distinguishes a partial from
 a full review, and the merge gate and the proof format are not modified by this rule. After a
-validated round the reviewer's mark "fix before merge" decides the first case and the coordinator applies the two other cases (a
-frozen page, a missing or generic documentation status): no reviewer re-reads that second
+validated round the reviewer's mark "fix before merge" decides the first case and the
+coordinator applies the two other cases (a frozen page, a missing or generic documentation
+status): no reviewer re-reads that second
 step before the merge, and no gate checks it. This is an accepted risk (maintainer
 decision of 2026-10-11).
 

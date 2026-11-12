@@ -105,8 +105,9 @@ Claude attempt whose grid entry is one of those pins and whose `cache_write_inpu
 `partial` (DevHub's enum is `complete`, `partial`, `unknown`: `src/tracker/observation-contract.ts:29` in the DevHub
 repository, read, not run), and `provenance` says the amount is a lower bound. An attempt whose slice has `lower_bound_requests`
 above 0 is also `partial`, whatever the model ("Tokens that are a lower bound" below); in every other case it is
-`complete`. The number is unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write rate is 2 times the base input rate
-against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0 against 2.5 USD per million tokens for `sonnet-5.5`
+`complete`. The number is unchanged. The remaining error is an underestimate (deduced): the Anthropic 1h write
+rate is 2 times the base input rate against 1.25 times for 5m (not re-verified for PLP-14), which is 4.0
+against 2.5 USD per million tokens for `sonnet-5.5`
 (the 2.5 is the grid value, `pricing-v1.json`); the 1h rate is not a grid key and is not applied. Whether the 1h cache
 lifetime applies on a given host or subscription state is unknown (R7 of the process contract).
 

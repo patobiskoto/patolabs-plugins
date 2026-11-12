@@ -680,10 +680,15 @@ that an earlier attempt of this journal or the project listing shows (limit in s
    `companion_epic_ambiguous` (a companion kept from the journal is not compared with other Epics
    of the same name). None: `edit create-issue` with the field `Type: Epic`, state
    `backlog`, no `parent`; no link to the origin Epic is made.
-3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic
-   with the lowest identifier, the child that already carries the comment of this deferral coming first (PLP-372, `_find_follow_up`); a started or closed child is never used, nor a full one (30 remarks or
-   more, `MAX_FOLLOW_UP_REMARKS` and `remark_count` in `campaign_defer.py`, PLP-ADR-0065; a full child that
-   already carries the comment of this deferral stays usable, so a retry posts nothing twice; the count sees only the comments the tracker returns, see step 4 and `docs/review-rounds.md`, "Reading the deferred-remarks debt"). If the child that carries the comment of this deferral was started or closed since, a replay does not find it (`_usable`) and posts to another child (deduced from `_find_follow_up`, not tested). Otherwise an issue titled
+3. Find the follow-up issue: the unstarted child (`backlog` or `ready`) of the companion Epic with
+   the lowest identifier, the child that already carries the comment of this deferral coming first
+   (PLP-372, `_find_follow_up`); a started or closed child is never used, nor a full one (30 remarks
+   or more, `MAX_FOLLOW_UP_REMARKS` and `remark_count` in `campaign_defer.py`, PLP-ADR-0065; a full
+   child that already carries the comment of this deferral stays usable, so a retry posts nothing
+   twice; the count sees only the comments the tracker returns, see step 4 and
+   `docs/review-rounds.md`, "Reading the deferred-remarks debt"). If the child that carries the
+   comment of this deferral was started or closed since, a replay does not find it (`_usable`) and
+   posts to another child (deduced from `_find_follow_up`, not tested). Otherwise an issue titled
    `Review remarks deferred from <ORIGIN-EPIC-ID>` (`Review remarks deferred from tickets with no origin Epic`
    under `Nits`, `NO_ORIGIN_FOLLOW_UP_TITLE`) in `backlog` or `ready` with no parent is an
    orphan of a creation whose parent link failed: write 4, `edit link <FOLLOW-UP> subtask-of
