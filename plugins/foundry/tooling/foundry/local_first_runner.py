@@ -1,7 +1,8 @@
 """PAT-108: comparison launcher of the PAT-19 local-first qualification (protocol v1).
 
 FROZEN since 2026-11-10 (PLP-364, PLP-381): the local-first workstream is abandoned; this
-module is neither maintained nor required by CI, and is not deleted. Exception:
+module is no longer maintained, its tests are deselected by CI (marker `frozen`,
+`tests/conftest.py`), and it is not deleted. Exception:
 `native_sandbox_settings` and `with_native_sandbox` are used by `campaign_effects.py` and stay
 covered by `tests/test_native_sandbox_settings.py`.
 

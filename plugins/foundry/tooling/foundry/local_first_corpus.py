@@ -1,7 +1,8 @@
 """PAT-107: replayable corpus for the PAT-19 local-first qualification (protocol v1).
 
 FROZEN since 2026-11-10 (PLP-364, PLP-381): the local-first workstream is abandoned; this
-module is neither maintained nor required by CI, and is not deleted.
+module is no longer maintained, its tests are deselected by CI (marker `frozen`,
+`tests/conftest.py`), and it is not deleted.
 
 Pure local git + pytest. No model is launched, no cloud/tracker/network call is made:
 the candidate PRs come from a committed snapshot, the draw is a seeded hash ranking over

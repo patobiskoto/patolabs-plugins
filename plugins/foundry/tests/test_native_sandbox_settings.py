@@ -17,6 +17,7 @@ from foundry import local_first_runner as lfr
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "docs" / "qualification"
 
+
 def _zone(tmp_path, in_home=False):
     home = tmp_path / "home"
     work = (home / "work") if in_home else tmp_path / "work"

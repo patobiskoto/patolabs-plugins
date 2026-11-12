@@ -277,8 +277,9 @@ _CAMPAIGN_TESTS = frozenset(
 
 
 # PLP-381: the local-first workstream (``local_first_*`` modules) is frozen since 2026-11-10
-# (PLP-364): its tests keep running on request (``pytest -m frozen tests``) but CI no longer
-# requires them. The tests of the two functions live code uses (``campaign_effects.py``) are in
+# (PLP-364): its tests keep running on request (``pytest -m frozen tests``) but CI deselects
+# them. The marker is added here, after import, so CI still collects them; ruff still lints
+# them. The tests of the two functions live code uses (``campaign_effects.py``) are in
 # ``test_native_sandbox_settings.py``, which is not frozen.
 _FROZEN_TEST_PREFIX = "test_local_first_"
 
