@@ -305,17 +305,17 @@ no gain. Statuses:
 - **Not verified:** the Foundry 2.3.0 / Ship-iOS 0.3.0 pair on a host, and the return to
   2.2.0 through an official manager (not tried, PAT-162).
 
-**Release 2.11.0, minor source candidate prepared under PLP-378:** both Foundry
-manifests declare **2.11.0**. This preparation carries PLP-376, PLP-374, PLP-373, PLP-372,
-PLP-371, PLP-370 and PLP-363 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md) and removes their fragments;
-it adds the [release note](plugins/foundry/docs/release-2.11.0.md) (`docs/release-2.11.0.md`) and the
-[migration guide](plugins/foundry/docs/migration-2.11.0.md) (`docs/migration-2.11.0.md`), the freeze
-entry, and updates the README references and CI release-version comment. Behaviour changes:
-the new verb `edit unlink` removes a dependency on DevHub only (PLP-363); four more
-(PLP-374, PLP-372, PLP-371, PLP-370) are named in the CHANGELOG 2.11.0 section. 2.10.0 is
-published and tagged (`foundry-v2.10.0`). The tag `foundry-v2.11.0`, the GitHub Release, host
-installation and listed/installed/loaded-version readbacks are not done or claimed here.
-Merge, tag, GitHub Release and host update retain separate agreements
+**Release 2.11.1, patch source candidate prepared under PLP-383:** both Foundry
+manifests declare **2.11.1**. This preparation carries PLP-381, PLP-380 and PLP-379 into the
+dated [CHANGELOG](plugins/foundry/CHANGELOG.md) and removes their fragments, adds the freeze entry, and
+updates the README references and CI release-version comment; as a patch it has no release
+note and no migration guide (`release_requirements`, `tests/test_release_contract.py`). No
+CLI verb, configuration key or runtime behaviour changes: the CI test selections deselect the
+tests of the frozen local-first workstream (marker `frozen`, PLP-381), and PLP-380 and PLP-379
+change documentation, comments and tests. 2.11.0 is published and tagged (`foundry-v2.11.0`).
+The tag `foundry-v2.11.1`, the GitHub Release, host installation and
+listed/installed/loaded-version readbacks are not done or claimed here. Merge, tag, GitHub
+Release and host update retain separate agreements
 ([release skill](plugins/foundry/skills/release/SKILL.md), steps 5–8).
 
 ## Public scope
@@ -353,7 +353,7 @@ remains separate planned work.
 
 | Plugin | Owns | In one line |
 |---|---|---|
-| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.11.0 (both host manifests; source candidate). |
+| [**foundry**](plugins/foundry/) | idea → merge | ADR-backed framing, roadmap and gated delivery on the four qualified tracker variants. Version 2.11.1 (both host manifests; source candidate). |
 | [**ship-ios**](plugins/ship-ios/) | merge → live | The iOS release loop: locale-neutral changelog → per-locale release notes → Xcode Cloud build → TestFlight gate → App Store submit. |
 | [**gauge**](plugins/gauge/) | quotas | Read-only gauge of the Codex, Claude, Linear and GitHub Actions quota counters; unreadable data is unknown, never zero. |
 | [**relay**](plugins/relay/) | session hand-over | Writes a verified, secret-free resume state at the end of a session, as an owner-only local file outside git tracking, and reloads it re-verified at session start. |

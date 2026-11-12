@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.11.1 — 2026-11-12
+
+Patch release with no change to a CLI verb, a configuration key or a runtime behaviour: the CI test selections now deselect the tests of the frozen local-first workstream (marker `frozen`, PLP-381); PLP-380 and PLP-379 change documentation, comments and tests only. Sources are in the pages each entry cites.
+
+- PLP-381: freeze the abandoned local-first workstream (`local_first_*` modules): tests/test_local_first_*.py get a `frozen` pytest marker (tagged in `tests/conftest.py`) and the CI `-m` selections deselect it (the modules are still imported at collection and linted by ruff), no file deleted; the tests of `native_sandbox_settings` and `with_native_sandbox`, used by `campaign_effects.py`, move to `tests/test_native_sandbox_settings.py` and stay required. See PLP-364.
+- PLP-380: review remarks deferred from PLP-378 and PLP-381: the README 2.11.0 paragraphs name the four other behaviour changes of the CHANGELOG header (PLP-374, PLP-372, PLP-371, PLP-370), the `frozen` wording says CI deselects those tests but still imports and lints them, and an E302 blank line is added in `tests/test_native_sandbox_settings.py`.
+- PLP-379: review remarks deferred from PLP-370 to PLP-374 corrected: wording of the 30-remark cap ("or more"), the cause and the section cited for the DHN-16 runs, the Codex 272K and coordinator null reason sentences of `docs/kpi-export.md`, an end-to-end test of the deferral replay and two `kpi_export` tests (non-last 1h group, served-model reason rewrite), the dedup limit of `token_attribution.report` documented.
+
 ## 2.11.0 — 2026-11-11
 
 Minor release adding one CLI verb and changing four behaviours: `edit unlink` removes a `depends-on` or `blocks` dependency on DevHub only, the other trackers refuse it before any tracker call (PLP-363); the DevHub audit accepts an event whose `reason` is `null` (PLP-374); a replayed deferral goes to the follow-up issue that already carries its reference and an empty reference no longer lifts the 30-remark cap (PLP-372); the `issue merge` refusal for lack of review proof names the data directory read and the override audit text no longer says the acceptance criteria are incomplete when every box is checked (PLP-371); `routing kpi-export` no longer counts one coordinator request twice across two main logs of a host session id, words the provenance of `amount` from the cause, and gives `no_price_for_model_and_date` to an absent or invalid served model (PLP-370). PLP-373 and PLP-376 change documentation only. Preparation status and upgrade references are in `docs/release-2.11.0.md` and `docs/migration-2.11.0.md`.
