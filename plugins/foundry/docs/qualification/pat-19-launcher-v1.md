@@ -1,5 +1,8 @@
 # PAT-19 — Lanceur de comparaison, version 1
 
+> Gelé depuis le 2026-11-10 (PLP-364, PLP-381) : `local_first_runner.py` n'est plus maintenu et
+> ses tests (marqueur `frozen`, `pytest.ini`) ne sont plus lancés par la CI.
+
 PAT-108. Cadre : PAT-ADR-0015 (coût net par tâche acceptée, trois verdicts séparés, aucune
 promotion), FOUNDRY-ADR-0019 (comparaison bornée, règle fixée d'avance, arrêt séquentiel, pas de
 matrice ni de second cadre), FOUNDRY-ADR-0010 (enveloppe d'autorisation vérifiée avant toute
