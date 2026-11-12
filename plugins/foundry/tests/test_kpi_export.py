@@ -876,6 +876,8 @@ def test_an_alias_routed_attempt_stays_partial_when_the_one_hour_group_is_not_th
     assert record["amount"]["completeness"] == "partial"
     assert record["amount"]["amount_micros"] == "51265"  # the second group adds nothing
     assert "lower bound" in data["provenance"][record["record_id"]]["from"]["amount"]
+    # the 1h cause itself, not only the partial mark that any single cause would set
+    assert "a 1h cache write would be priced at the 5m rate" in data["provenance"][record["record_id"]]["from"]["amount"]
     only_second = _alias_record(tmp_path, "h", [without_write])[1]
     assert only_second["amount"]["completeness"] == "complete"
 
