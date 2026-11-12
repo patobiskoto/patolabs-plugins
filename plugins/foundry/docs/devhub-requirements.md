@@ -444,7 +444,8 @@ Run on 2026-11-11 (observed) on a fresh disposable instance built from the local
 `267abcf60931cb0bd6ebbd6f08ba13b3a33207f0` (merge of DEVHUB-215, the revision DevHub production
 runs since 2026-11-11, stated by DevHub; never production), same setup as "Live run of
 PLP-363": 50 passed, 1 skipped (DHN-42, local accounts only), twice, then DHN-16 alone
-(`-k dhn_16`): 1 passed. DHN-16 passed because `audit` of `trackers/devhub.py` now accepts
+(`-k dhn_16`): 1 passed. Cause of the pass (deduced, not isolated: DevHub revision and adapter
+both differ from "Live run of PLP-363"): `audit` of `trackers/devhub.py` now accepts
 `reason: null` (PLP-374). The instance was removed (`down -v`).
 
 ### Live run of PLP-363

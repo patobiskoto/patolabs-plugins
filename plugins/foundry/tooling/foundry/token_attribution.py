@@ -256,8 +256,10 @@ def report(*, claude_sessions=(), codex_sessions=(), root=None, repository=None,
     requests, keyed ``(issue, host, host session id)``: the requests classified ``window`` (``requests``, ``tokens``,
     ``groups`` of ``(model, day)`` with their per-request counters, ``first``/``last`` request time, ``lower_bound``,
     ``granular``) and, apart, ``overlap_requests``, the requests of that session found in two or more windows, counted
-    for each issue of the overlap and in no ``window`` entry. Each request is in at most one ``window`` entry. The
-    returned report is unchanged.
+    for each issue of the overlap and in no ``window`` entry. Each request is in at most one ``window`` entry. A
+    request seen again is dropped by its signature (issue, host, session id, model, request time as logged and the
+    four counters), across logs and also within one log, so two distinct requests with the same signature merge
+    into one (deduced from the code, not observed). The returned report is unchanged.
     """
     records = invocation_log.records_by_id(root=root, repository=repository, state_dir=state_dir)
     units = _claude_units([str(p) for p in claude_sessions]) + _codex_units([str(p) for p in codex_sessions])

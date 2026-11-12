@@ -868,6 +868,33 @@ def test_an_alias_routed_attempt_stays_unpriced_when_the_served_model_has_no_pri
     assert _alias_record(tmp_path, "v", [good, odd])[1]["amount"] is None
 
 
+def test_an_alias_routed_attempt_stays_partial_when_the_one_hour_group_is_not_the_last(tmp_path):
+    """PLP-379: `causes["one_hour"]` is sticky over the (model, day) groups, whatever their order."""
+    with_write = _claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a")
+    without_write = _claude_request("2026-10-29T10:40:00.000Z", 0, "sub1", "b")  # sorted after the first
+    data, record = _alias_record(tmp_path, "g", [with_write, without_write])
+    assert record["amount"]["completeness"] == "partial"
+    assert record["amount"]["amount_micros"] == "51265"  # the second group adds nothing
+    assert "lower bound" in data["provenance"][record["record_id"]]["from"]["amount"]
+    only_second = _alias_record(tmp_path, "h", [without_write])[1]
+    assert only_second["amount"]["completeness"] == "complete"
+
+
+def test_an_invalid_served_model_of_an_alias_routed_attempt_is_a_missing_price_not_a_missing_model(tmp_path):
+    """PLP-379: `_served_amount` rewrites `no_configured_model` (PLP-370); `_amount` itself still says it."""
+    bad = _served(_claude_request("2026-10-28T10:40:00.000Z", 5, "sub1", "a"), "not a valid id")
+    data, record = _alias_record(tmp_path, "i", [bad])
+    assert record["amount"] is None
+    assert data["provenance"][record["record_id"]]["null"]["amount"] == "no_price_for_model_and_date"
+    grid = json.loads((PLUGIN_ROOT / "tooling" / "foundry" / "pricing-v1.json").read_text())
+    tokens = {"input_tokens": 1, "cached_input_tokens": 1, "cache_write_input_tokens": 1, "output_tokens": 1}
+    assert kpi_export._amount(grid, "claude", None, "2026-10-28", tokens)[1] == "no_configured_model"
+    usage = {"request_granularity": True,
+             "groups": {("not a valid id", "2026-10-28"): {"tokens": tokens, "token_requests": [tokens],
+                                                           "lower_bound": 0}}}
+    assert kpi_export._served_amount(grid, "claude", usage)[:2] == (None, "no_price_for_model_and_date")
+
+
 def test_a_review_round_after_a_validated_one_is_omitted_outside_a_campaign_whatever_the_invocation_record_says(tmp_path):
     """PLP-358, wanted limit: the contract forbids a null `review_type` and no local store says partial or full."""
     first = _proof(tmp_path, "PLP-1", "1", ["pass"], "mergeable", "2026-10-01T10:00:00Z")

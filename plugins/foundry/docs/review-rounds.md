@@ -408,10 +408,9 @@ Results (P against F; B for reference):
 
 - Duration: the median of P is 0.47 of that of F (219 s against 463 s); 23 of the 28 rounds
   of P are shorter than the first round of the same issue. The mean of P (441 s) is driven by
-  one of its rounds, PLP-332 round 3 (4809 s); the mean of F (513 s) is not, its longest round
-  being 869 s (table above); the mean of B is not given on this page, only its longest round,
-  PLP-328 round 2 (23628 s): a duration is the span from claim to completion, so it includes any wait
-  inside it.
+  one of its rounds, PLP-332 round 3 (4809 s); the mean of F (513 s) is not (deduced from its
+  longest round, 869 s, table above). The longest round of B is PLP-328 round 2 (23628 s). In the
+  three sets a duration is the span from claim to completion, so it includes any wait inside it.
 - Tokens, in the 21 pairs where both the round of P and the first round of its issue have
   tokens (15 issues), a round of P over the first round of its issue: median ratio 0.43 of
   cache read (16 of 21 below 1), 0.61 of cache write, 0.62 of input, 0.43 of output.

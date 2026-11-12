@@ -208,7 +208,7 @@ companion Epic named exactly `Nits` (PAT-291, PAT-ADR-0029; `NO_ORIGIN_COMPANION
 effect reads the tracker before each write, makes the writes through `edit create-issue`,
 `edit link` and `edit comment`, posts at most one comment per validated round, never one per
 remark, cites every follow-up issue in the PR description and records the deferral in
-its attempt journal. A follow-up issue holding `MAX_FOLLOW_UP_REMARKS` (30) remarks, counted by
+its attempt journal. A follow-up issue holding `MAX_FOLLOW_UP_REMARKS` (30) remarks or more, counted by
 `remark_count` over the comments that open with `DEFERRAL_HEADER` (both in `campaign_defer.py`), is
 skipped by `_find_follow_up` like a started one, so the effect creates a new follow-up issue; a
 full issue that already carries the comment of the deferral being retried stays usable, so a retry

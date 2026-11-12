@@ -240,6 +240,7 @@ def test_override_audit_text_does_not_say_incomplete_when_every_box_is_checked(
     _assert_override_trace_before_merge(events, provider, proof)
     texts = [event[1] for event in events if event[0] == "comment"]
     assert all("AC incomplètes" not in text for text in texts)
+    assert any("de la preuve de review non mergeable ou non toute pass" in text for text in texts)
 
 
 def _assert_override_trace_before_merge(events, provider, proof):
