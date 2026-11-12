@@ -310,8 +310,9 @@ manifests declare **2.11.0**. This preparation carries PLP-376, PLP-374, PLP-373
 PLP-371, PLP-370 and PLP-363 into the dated [CHANGELOG](plugins/foundry/CHANGELOG.md) and removes their fragments;
 it adds the [release note](plugins/foundry/docs/release-2.11.0.md) (`docs/release-2.11.0.md`) and the
 [migration guide](plugins/foundry/docs/migration-2.11.0.md) (`docs/migration-2.11.0.md`), the freeze
-entry, and updates the README references and CI release-version comment. Behaviour change:
-the new verb `edit unlink` removes a dependency on DevHub only (PLP-363). 2.10.0 is
+entry, and updates the README references and CI release-version comment. Behaviour changes:
+the new verb `edit unlink` removes a dependency on DevHub only (PLP-363); four more (PLP-374, PLP-372, PLP-371,
+PLP-370) are named in the CHANGELOG 2.11.0 section. 2.10.0 is
 published and tagged (`foundry-v2.10.0`). The tag `foundry-v2.11.0`, the GitHub Release, host
 installation and listed/installed/loaded-version readbacks are not done or claimed here.
 Merge, tag, GitHub Release and host update retain separate agreements
