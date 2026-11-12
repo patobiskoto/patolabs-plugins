@@ -1,5 +1,8 @@
 """PAT-124: the bounded REAL trial of Claude Code's native Bash sandbox under the PAT-19 launcher.
 
+FROZEN since 2026-11-10 (PLP-364, PLP-381): the local-first workstream is abandoned; this
+module is neither maintained nor required by CI, and is not deleted.
+
 ``native-sandbox-trial`` (verb of ``foundry.local_first_runner``) is run once, by hand, on the maintainer's machine.
 It plays two real cloud executions through the launcher's own path (``Runner.cloud_execution``, so the envelope, the
 ledger, the audit and the settings are the ones a campaign would use): a probe session that does a fixed list of

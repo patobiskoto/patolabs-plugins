@@ -1,5 +1,10 @@
 """PAT-108: comparison launcher of the PAT-19 local-first qualification (protocol v1).
 
+FROZEN since 2026-11-10 (PLP-364, PLP-381): the local-first workstream is abandoned; this
+module is neither maintained nor required by CI, and is not deleted. Exception:
+`native_sandbox_settings` and `with_native_sandbox` are used by `campaign_effects.py` and stay
+covered by `tests/test_native_sandbox_settings.py`.
+
 A campaign tool, not a product role (FOUNDRY-ADR-0007): it never touches routing, mappings, roles
 or defaults and promotes nothing. It plays one task per path (A current cloud, B economy cloud,
 C hybrid = one bounded local attempt then cloud validation, with the A path taking over) from the
